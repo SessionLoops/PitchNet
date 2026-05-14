@@ -8,11 +8,14 @@
 #include "Commands.h"
 #include "PianoRoll/BoxSelector.h"
 #include "PianoRoll/CoordinateMapper.h"
+#include "PianoRoll/GridRenderer.h"
+#include "PianoRoll/NoteRenderer.h"
 #include "PianoRoll/NoteSplitter.h"
-#include "PianoRoll/PianoRollInteractionContext.h"
-#include "PianoRoll/PianoRollRenderer.h"
-#include "PianoRoll/PianoRollViewState.h"
+#include "PianoRoll/PianoKeysRenderer.h"
+#include "PianoRoll/PitchCurveRenderer.h"
 #include "PianoRoll/PitchEditor.h"
+#include "PianoRoll/TimelineRenderer.h"
+#include "PianoRoll/WaveformBackgroundRenderer.h"
 #include "PianoRoll/PitchToolController.h"
 #include "PianoRoll/PitchToolHandles.h"
 #include "PianoRoll/ScrollZoomController.h"
@@ -212,7 +215,6 @@ private:
   void drawLoopTimeline(juce::Graphics &g);
   void drawNotes(juce::Graphics &g, NoteRenderPass pass);
   void drawPitchCurves(juce::Graphics &g);
-  void drawCursor(juce::Graphics &g);
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawLoopOverlay(juce::Graphics &g);
@@ -236,7 +238,6 @@ private:
 
   Note *findNoteAt(float x, float y);
   void updateScrollBars();
-  void updateBasePitchCacheIfNeeded();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   void reapplyBasePitchForNote(
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
@@ -246,7 +247,12 @@ private:
 
   // New modular components
   std::unique_ptr<CoordinateMapper> coordMapper;
-  std::unique_ptr<PianoRollRenderer> renderer;
+  std::unique_ptr<PianoKeysRenderer> pianoKeysRenderer;
+  std::unique_ptr<GridRenderer> gridRenderer;
+  std::unique_ptr<TimelineRenderer> timelineRenderer;
+  std::unique_ptr<WaveformBackgroundRenderer> waveformBackgroundRenderer;
+  std::unique_ptr<NoteRenderer> noteRenderer;
+  std::unique_ptr<PitchCurveRenderer> pitchCurveRenderer;
   std::unique_ptr<ScrollZoomController> scrollZoomController;
   std::unique_ptr<PitchEditor> pitchEditor;
   std::unique_ptr<BoxSelector> boxSelector;
@@ -308,39 +314,11 @@ private:
   juce::ScrollBar horizontalScrollBar{false};
   juce::ScrollBar verticalScrollBar{true};
 
-  // Waveform cache for performance
-  juce::Image waveformCache;
-  double cachedScrollX = -1.0;
-  float cachedPixelsPerSecond = -1.0f;
-  int cachedWidth = 0;
-  int cachedHeight = 0;
-
-  // Base pitch curve cache for performance
-  // Only recalculates when notes change, not on every repaint
-  std::vector<float> cachedBasePitch;
-  size_t cachedNoteCount = 0;
-  int cachedTotalFrames = 0;
-  bool &cacheInvalidated = viewState.cacheInvalidated;
-
 public:
-  void invalidateWaveformCache()
-  {
-    cachedScrollX = -1.0;
-  }
-
-  void invalidateBasePitchCache()
-  {
-    cacheInvalidated = true;
-    cachedNoteCount = 0;
-    cachedBasePitch.clear();
-    cachedBasePitch.shrink_to_fit(); // Release memory
-  }
+  void invalidateWaveformCache();
+  void invalidateBasePitchCache();
 
 private:
-  // Optional: disable base pitch rendering for performance testing
-  static constexpr bool ENABLE_BASE_PITCH_DEBUG =
-      true; // Set to false to disable
-
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
   juce::int64 lastStretchPreviewTime = 0;
