@@ -32,9 +32,6 @@ class InteractionHandler;
 class LoopDragHandler;
 class SelectHandler;
 class DrawHandler;
-#if PITCHNET_ENABLE_STRETCH
-class StretchHandler;
-#endif
 class SplitHandler;
 
 /**
@@ -132,24 +129,6 @@ public:
   void setEditMode(EditMode mode);
   EditMode getEditMode() const { return editMode; }
 
-#if PITCHNET_ENABLE_STRETCH
-  // Stretch sub-mode (Absorb vs Ripple)
-  void setStretchMode(StretchMode mode)
-  {
-    stretchMode = mode;
-    repaint();
-  }
-  StretchMode getStretchMode() const { return stretchMode; }
-
-  // Get effective stretch mode (accounts for Alt modifier override)
-  StretchMode getEffectiveStretchMode(const juce::ModifierKeys &mods) const
-  {
-    if (mods.isAltDown())
-      return stretchMode == StretchMode::Absorb ? StretchMode::Ripple : StretchMode::Absorb;
-    return stretchMode;
-  }
-#endif
-
   // Cancel current drawing operation (used when undo is triggered during
   // drawing)
   void cancelDrawing();
@@ -197,9 +176,6 @@ public:
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
   std::function<void(const LoopRange &)> onLoopRangeChanged;
-#if PITCHNET_ENABLE_STRETCH
-  std::function<void(StretchMode)> onStretchModeChanged;
-#endif
   std::function<void(int, int)>
       onReinterpolateUV; // Called to re-infer UV regions (startFrame, endFrame)
 
@@ -222,9 +198,6 @@ private:
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
-#if PITCHNET_ENABLE_STRETCH
-  void drawStretchGuides(juce::Graphics &g);
-#endif
   void updatePitchToolHandlesFromSelection();
 
   float midiToY(float midiNote) const;
@@ -276,9 +249,6 @@ private:
 
   // Edit mode
   EditMode &editMode = viewState.editMode;
-#if PITCHNET_ENABLE_STRETCH
-  StretchMode &stretchMode = viewState.stretchMode;
-#endif
 
   // View settings
   bool &showDeltaPitch = viewState.showDeltaPitch;
@@ -306,9 +276,6 @@ private:
   std::unique_ptr<LoopDragHandler> loopDragHandler_;
   std::unique_ptr<SelectHandler> selectHandler_;
   std::unique_ptr<DrawHandler> drawHandler_;
-#if PITCHNET_ENABLE_STRETCH
-  std::unique_ptr<StretchHandler> stretchHandler_;
-#endif
   std::unique_ptr<SplitHandler> splitHandler_;
   InteractionHandler *currentHandler_ = nullptr;
 
@@ -323,8 +290,6 @@ public:
 private:
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
-  juce::int64 lastStretchPreviewTime = 0;
-  static constexpr juce::int64 minStretchPreviewInterval = 120;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollComponent)
 };

@@ -15,9 +15,6 @@ ToolbarComponent::ToolbarComponent()
     auto startIcon = SvgUtils::loadSvg(BinaryData::movestartline_svg, BinaryData::movestartline_svgSize, juce::Colours::white);
     auto endIcon = SvgUtils::loadSvg(BinaryData::moveendline_svg, BinaryData::moveendline_svgSize, juce::Colours::white);
     auto cursorIcon = SvgUtils::loadSvg(BinaryData::cursor_24_filled_svg, BinaryData::cursor_24_filled_svgSize, juce::Colours::white);
-#if PITCHNET_ENABLE_STRETCH
-    auto stretchIcon = SvgUtils::loadSvg(BinaryData::stretch_24_filled_svg, BinaryData::stretch_24_filled_svgSize, juce::Colours::white);
-#endif
     auto pitchEditIcon = SvgUtils::loadSvg(BinaryData::pitch_edit_24_filled_svg, BinaryData::pitch_edit_24_filled_svgSize, juce::Colours::white);
     auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
@@ -26,34 +23,16 @@ ToolbarComponent::ToolbarComponent()
         R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="2" width="2" height="20" rx="1"/><circle cx="4" cy="9" r="3"/><rect x="11" y="2" width="2" height="20" rx="1"/><circle cx="12" cy="15" r="3"/><rect x="19" y="2" width="2" height="20" rx="1"/><circle cx="20" cy="6" r="3"/></svg>)";
     auto parametersIcon = SvgUtils::createDrawableFromSvg(parametersIconSvg, juce::Colours::white);
 
-#if PITCHNET_ENABLE_STRETCH
-    // Absorb mode icon: two opposing arrows (←|→) representing zero-sum stretch
-    const juce::String absorbIconSvg =
-        R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M3 12l5-4v3h3v2H8v3L3 12z"/><path d="M21 12l-5-4v3h-3v2h3v3l5-4z"/><rect x="11.25" y="5" width="1.5" height="14" rx="0.75" opacity="0.5"/></svg>)";
-    auto absorbIcon = SvgUtils::createDrawableFromSvg(absorbIconSvg, juce::Colours::white);
-
-    // Ripple mode icon: arrow pushing blocks rightward (→|→→)
-    const juce::String rippleIconSvg =
-        R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M2 12l5-4v3h4v2H7v3L2 12z"/><rect x="12" y="6" width="3" height="12" rx="1"/><rect x="16.5" y="7" width="2.5" height="10" rx="0.75" opacity="0.6"/><rect x="20" y="8" width="2" height="8" rx="0.75" opacity="0.35"/></svg>)";
-    auto rippleIcon = SvgUtils::createDrawableFromSvg(rippleIconSvg, juce::Colours::white);
-#endif
-
     playButton.setImages(playIcon.get());
     stopButton.setImages(stopIcon.get());
     goToStartButton.setImages(startIcon.get());
     goToEndButton.setImages(endIcon.get());
     selectModeButton.setImages(cursorIcon.get());
-#if PITCHNET_ENABLE_STRETCH
-    stretchModeButton.setImages(stretchIcon.get());
-#endif
     drawModeButton.setImages(pitchEditIcon.get());
     splitModeButton.setImages(scissorsIcon.get());
     followButton.setImages(followIcon.get());
     loopButton.setImages(loopIcon.get());
     parametersButton.setImages(parametersIcon.get());
-#if PITCHNET_ENABLE_STRETCH
-    rippleToggleButton.setImages(absorbIcon.get()); // Default: Absorb mode
-#endif
 
     // Set edge indent for icon padding (makes icons smaller within button bounds)
     goToStartButton.setEdgeIndent(4);
@@ -61,25 +40,15 @@ ToolbarComponent::ToolbarComponent()
     stopButton.setEdgeIndent(6);
     goToEndButton.setEdgeIndent(4);
     selectModeButton.setEdgeIndent(6);
-#if PITCHNET_ENABLE_STRETCH
-    stretchModeButton.setEdgeIndent(6);
-#endif
     drawModeButton.setEdgeIndent(6);
     splitModeButton.setEdgeIndent(6);
     followButton.setEdgeIndent(6);
     loopButton.setEdgeIndent(6);
     parametersButton.setEdgeIndent(6);
-#if PITCHNET_ENABLE_STRETCH
-    rippleToggleButton.setEdgeIndent(6);
-#endif
 
     // Store pause icon for later use
     pauseDrawable = std::move(pauseIcon);
     playDrawable = SvgUtils::loadSvg(BinaryData::playline_svg, BinaryData::playline_svgSize, juce::Colours::white);
-#if PITCHNET_ENABLE_STRETCH
-    absorbDrawable = std::move(absorbIcon);
-    rippleDrawable = std::move(rippleIcon);
-#endif
 
     // Configure buttons
     addAndMakeVisible(goToStartButton);
@@ -87,17 +56,11 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(stopButton);
     addAndMakeVisible(goToEndButton);
     addAndMakeVisible(selectModeButton);
-#if PITCHNET_ENABLE_STRETCH
-    addAndMakeVisible(stretchModeButton);
-#endif
     addAndMakeVisible(drawModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(loopButton);
     addAndMakeVisible(parametersButton);
-#if PITCHNET_ENABLE_STRETCH
-    addChildComponent(rippleToggleButton); // Hidden by default, shown in Stretch mode
-#endif
 
     // Plugin mode buttons (hidden by default)
     addChildComponent(reanalyzeButton);
@@ -114,32 +77,20 @@ ToolbarComponent::ToolbarComponent()
     stopButton.addListener(this);
     goToEndButton.addListener(this);
     selectModeButton.addListener(this);
-#if PITCHNET_ENABLE_STRETCH
-    stretchModeButton.addListener(this);
-#endif
     drawModeButton.addListener(this);
     splitModeButton.addListener(this);
     followButton.addListener(this);
     loopButton.addListener(this);
     parametersButton.addListener(this);
     reanalyzeButton.addListener(this);
-#if PITCHNET_ENABLE_STRETCH
-    rippleToggleButton.addListener(this);
-#endif
 
     // Set localized text (tooltips for icon buttons)
     selectModeButton.setTooltip(TR("toolbar.select"));
-#if PITCHNET_ENABLE_STRETCH
-    stretchModeButton.setTooltip(TR("toolbar.stretch"));
-#endif
     drawModeButton.setTooltip(TR("toolbar.draw"));
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
     loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
-#if PITCHNET_ENABLE_STRETCH
-    rippleToggleButton.setTooltip(TR("toolbar.stretch_absorb"));
-#endif
     reanalyzeButton.setButtonText(TR("toolbar.reanalyze"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
 
@@ -236,10 +187,6 @@ void ToolbarComponent::paint(juce::Graphics &g)
         if (!pluginMode)
         {
             int dividerAfterEditTools = splitModeButton.getRight() + 1;
-#if PITCHNET_ENABLE_STRETCH
-            if (rippleToggleButton.isVisible())
-                dividerAfterEditTools = rippleToggleButton.getRight() + 1;
-#endif
             if (followButton.isVisible() && dividerAfterEditTools > toolBounds.getX() && dividerAfterEditTools < toolBounds.getRight())
             {
                 g.setColour(APP_COLOR_BORDER.withAlpha(0.35f));
@@ -248,21 +195,6 @@ void ToolbarComponent::paint(juce::Graphics &g)
                 g.fillRect(juce::Rectangle<float>((float)dividerAfterEditTools, divY, 1.0f, divH));
             }
         }
-
-#if PITCHNET_ENABLE_STRETCH
-        // Draw divider between edit tools and ripple toggle (when visible)
-        if (rippleToggleButton.isVisible())
-        {
-            int dividerX = splitModeButton.getRight() + 1;
-            if (dividerX > toolBounds.getX() && dividerX < toolBounds.getRight())
-            {
-                g.setColour(APP_COLOR_BORDER.withAlpha(0.35f));
-                float divY = toolBounds.getY() + 6.0f;
-                float divH = toolBounds.getHeight() - 12.0f;
-                g.fillRect(juce::Rectangle<float>((float)dividerX, divY, 1.0f, divH));
-            }
-        }
-#endif
     }
 
     // Time display — centered inset card
@@ -402,19 +334,11 @@ void ToolbarComponent::resized()
     // Tool container measurements (need these to center time between left section and tools)
     const int toolButtonSize = 32;
     const int toolContainerPadding = 5;
-#if PITCHNET_ENABLE_STRETCH
-    const int numEditTools = 4; // select, stretch, draw, split
-    const bool showRippleToggle = rippleToggleButton.isVisible();
-#else
     const int numEditTools = 3; // select, draw, split
-    const bool showRippleToggle = false;
-#endif
-    const int numRippleToggle = showRippleToggle ? 1 : 0;
     const int numPlaybackTools = pluginMode ? 0 : 2;         // follow + loop
-    const int rippleDividerWidth = showRippleToggle ? 8 : 0; // divider before ripple toggle
     const int dividerWidth = numPlaybackTools > 0 ? 8 : 0;   // space for divider between groups
-    const int numAllTools = numEditTools + numRippleToggle + numPlaybackTools;
-    const int toolContainerWidth = toolButtonSize * numAllTools + toolContainerPadding * 2 + rippleDividerWidth + dividerWidth;
+    const int numAllTools = numEditTools + numPlaybackTools;
+    const int toolContainerWidth = toolButtonSize * numAllTools + toolContainerPadding * 2 + dividerWidth;
 
     // Layout: [leftSection] [time] [gap] [tools] [rightSection]
     // Center the time+tools group together in the available center space
@@ -437,26 +361,13 @@ void ToolbarComponent::resized()
     int toolBtnY = toolArea.getY();
     int toolX = toolArea.getX();
 
-    // Edit tools group: select, stretch, draw, split
+    // Edit tools group: select, draw, split
     selectModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
-#if PITCHNET_ENABLE_STRETCH
-    stretchModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
-#endif
     drawModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
     splitModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
-#if PITCHNET_ENABLE_STRETCH
-    // Ripple mode toggle (visible only in Stretch mode)
-    if (showRippleToggle)
-    {
-        toolX += rippleDividerWidth;
-        rippleToggleButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-        toolX += toolButtonSize;
-    }
-#endif
 
     // Playback tools group (standalone only): follow, loop — with divider gap
     if (!pluginMode)
@@ -497,14 +408,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onEditModeChanged)
             onEditModeChanged(EditMode::Select);
     }
-#if PITCHNET_ENABLE_STRETCH
-    else if (button == &stretchModeButton)
-    {
-        setEditMode(EditMode::Stretch);
-        if (onEditModeChanged)
-            onEditModeChanged(EditMode::Stretch);
-    }
-#endif
     else if (button == &drawModeButton)
     {
         setEditMode(EditMode::Draw);
@@ -536,16 +439,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onToggleParameters)
             onToggleParameters(parametersVisible);
     }
-#if PITCHNET_ENABLE_STRETCH
-    else if (button == &rippleToggleButton)
-    {
-        isRippleStretchMode = !isRippleStretchMode;
-        rippleToggleButton.setImages(isRippleStretchMode ? rippleDrawable.get() : absorbDrawable.get());
-        rippleToggleButton.setTooltip(isRippleStretchMode ? TR("toolbar.stretch_ripple") : TR("toolbar.stretch_absorb"));
-        if (onRippleModeToggled)
-            onRippleModeToggled(isRippleStretchMode);
-    }
-#endif
 }
 
 void ToolbarComponent::sliderValueChanged(juce::Slider *slider)
@@ -576,15 +469,8 @@ void ToolbarComponent::setEditMode(EditMode mode)
 {
     currentEditModeInt = static_cast<int>(mode);
     selectModeButton.setActive(mode == EditMode::Select);
-#if PITCHNET_ENABLE_STRETCH
-    stretchModeButton.setActive(mode == EditMode::Stretch);
-#endif
     drawModeButton.setActive(mode == EditMode::Draw);
     splitModeButton.setActive(mode == EditMode::Split);
-#if PITCHNET_ENABLE_STRETCH
-    // Show ripple toggle only in Stretch mode
-    rippleToggleButton.setVisible(mode == EditMode::Stretch);
-#endif
     resized();
 }
 
@@ -605,15 +491,6 @@ void ToolbarComponent::setParametersVisible(bool visible)
     parametersVisible = visible;
     parametersButton.setActive(parametersVisible);
 }
-
-#if PITCHNET_ENABLE_STRETCH
-void ToolbarComponent::setRippleMode(bool ripple)
-{
-    isRippleStretchMode = ripple;
-    rippleToggleButton.setImages(ripple ? rippleDrawable.get() : absorbDrawable.get());
-    rippleToggleButton.setTooltip(ripple ? TR("toolbar.stretch_ripple") : TR("toolbar.stretch_absorb"));
-}
-#endif
 
 void ToolbarComponent::showProgress(const juce::String &message)
 {

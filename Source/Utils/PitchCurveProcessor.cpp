@@ -296,9 +296,7 @@ namespace PitchCurveProcessor
             if (numFrames <= 0)
                 continue;
 
-            // If the note has been time-stretched, resample its stored delta
-            // to match the current output frame count so the pitch shape scales
-            // together with the note duration.
+            // Resample stored delta to match the current output frame count.
             std::vector<float> resampledBuf;
             const std::vector<float>* sourceDataPtr = &rawSourceData;
             if (static_cast<int>(rawSourceData.size()) != numFrames)
@@ -477,8 +475,7 @@ namespace PitchCurveProcessor
             if (numFrames <= 0)
                 continue;
 
-            // If the note has been time-stretched, resample its stored delta
-            // to match the current output frame count.
+            // Resample stored delta to match the current output frame count.
             std::vector<float> resampledBuf;
             const std::vector<float>* sourceDataPtr = &rawSourceData;
             if (static_cast<int>(rawSourceData.size()) != numFrames)

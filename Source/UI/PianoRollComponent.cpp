@@ -10,9 +10,6 @@
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
 #include "PianoRoll/States/DrawHandler.h"
-#if PITCHNET_ENABLE_STRETCH
-#include "PianoRoll/States/StretchHandler.h"
-#endif
 #include "PianoRoll/States/SplitHandler.h"
 #include <array>
 #include <algorithm>
@@ -83,9 +80,6 @@ PianoRollComponent::PianoRollComponent()
   loopDragHandler_ = std::make_unique<LoopDragHandler>(*this);
   selectHandler_ = std::make_unique<SelectHandler>(*this);
   drawHandler_ = std::make_unique<DrawHandler>(*this);
-#if PITCHNET_ENABLE_STRETCH
-  stretchHandler_ = std::make_unique<StretchHandler>(*this);
-#endif
   splitHandler_ = std::make_unique<SplitHandler>(*this);
   currentHandler_ = selectHandler_.get();
 
@@ -248,9 +242,6 @@ void PianoRollComponent::paint(juce::Graphics &g)
     drawNotes(g, NoteRenderPass::Body);
     drawPitchCurves(g);
     drawNotes(g, NoteRenderPass::Overlay);
-#if PITCHNET_ENABLE_STRETCH
-    drawStretchGuides(g);
-#endif
     drawGameValuesDebugOverlay(g);
     drawSelectionRect(g);
 
@@ -677,42 +668,6 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
   const bool splitModeActive = editMode == EditMode::Split;
   noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
 }
-
-#if PITCHNET_ENABLE_STRETCH
-void PianoRollComponent::drawStretchGuides(juce::Graphics &g)
-{
-  if (!project || editMode != EditMode::Stretch || !stretchHandler_)
-    return;
-
-  auto boundaries = stretchHandler_->collectStretchBoundaries();
-  if (boundaries.empty())
-    return;
-
-  const auto &dragState = stretchHandler_->getDragState();
-  const float height =
-      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
-  const int hoveredIdx = stretchHandler_->getHoveredBoundaryIndex();
-
-  for (size_t i = 0; i < boundaries.size(); ++i)
-  {
-    int frame = boundaries[i].frame;
-    const bool isActive =
-        dragState.active && boundaries[i].left == dragState.boundary.left &&
-        boundaries[i].right == dragState.boundary.right;
-    if (isActive)
-      frame = dragState.currentBoundary;
-
-    float x = framesToSeconds(frame) * pixelsPerSecond;
-
-    const bool isHovered = static_cast<int>(i) == hoveredIdx;
-    float alpha = isHovered || isActive ? 0.8f : 0.35f;
-    float thickness = isHovered || isActive ? 2.0f : 1.0f;
-
-    g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha));
-    g.drawLine(x, 0.0f, x, height, thickness);
-  }
-}
-#endif
 
 void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
 {
@@ -1609,15 +1564,6 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
 
 void PianoRollComponent::setEditMode(EditMode mode)
 {
-  // Cancel active handler interaction if leaving its mode
-#if PITCHNET_ENABLE_STRETCH
-  if (editMode == EditMode::Stretch && mode != EditMode::Stretch &&
-      stretchHandler_ && stretchHandler_->isActive())
-  {
-    stretchHandler_->cancel();
-  }
-#endif
-
   editMode = mode;
 
   // Clear split guide when leaving split mode
@@ -1660,11 +1606,6 @@ void PianoRollComponent::setEditMode(EditMode mode)
   case EditMode::Draw:
     currentHandler_ = drawHandler_.get();
     break;
-#if PITCHNET_ENABLE_STRETCH
-  case EditMode::Stretch:
-    currentHandler_ = stretchHandler_.get();
-    break;
-#endif
   case EditMode::Split:
     currentHandler_ = splitHandler_.get();
     break;

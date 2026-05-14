@@ -60,10 +60,6 @@ public:
   double xToTime(float x) const;
   double snapTimeToTimelineGrid(double timeSeconds) const;
 
-#if PITCHNET_ENABLE_STRETCH
-  StretchMode getEffectiveStretchMode(const juce::ModifierKeys &mods) const;
-#endif
-
   Note *findNoteAt(float x, float y);
   std::vector<Note *> getSelectedNotes() const;
   void updatePitchToolHandlesFromSelection();

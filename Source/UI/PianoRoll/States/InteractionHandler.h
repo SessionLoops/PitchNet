@@ -6,7 +6,7 @@
 
 /**
  * Base class for PianoRoll interaction handlers.
- * Each handler encapsulates a specific interaction mode (select, draw, stretch, etc.).
+ * Each handler encapsulates a specific interaction mode (select, draw, split, etc.).
  * Handlers access editor state through PianoRollInteractionContext.
  */
 class InteractionHandler {

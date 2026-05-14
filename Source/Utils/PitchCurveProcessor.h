@@ -28,7 +28,7 @@ namespace PitchCurveProcessor
     void rebuildDeltaForNotes(Project& project, const std::vector<Note*>& affectedNotes);
 
     /**
-     * Lightweight rebuild for interactive stretch drag.
+     * Lightweight rebuild for interactive note drag.
      * Regenerates basePitch from ALL notes (needed for correct pitch display),
      * but only processes deltaPitch for the specified affected notes instead
      * of iterating every note.  Recomposes f0 only for the affected range.
@@ -60,5 +60,4 @@ namespace PitchCurveProcessor
                           bool applyUvMask,
                           float globalPitchOffset = 0.0f);
 } // namespace PitchCurveProcessor
-
 

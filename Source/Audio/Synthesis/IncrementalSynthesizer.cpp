@@ -465,7 +465,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 if (globalFrame >= overlapStart && globalFrame < overlapEnd)
                   continue;
 
-                // Map destination sample to source sample (handle stretch)
+                // Map destination sample to source sample.
                 float srcPos;
                 if (dstFrames > 0 && srcFrames > 0) {
                   srcPos = static_cast<float>(i) * static_cast<float>(srcSamples) /

@@ -10,8 +10,7 @@ PitchNet is a standalone app and audio plugin for editing vocal pitch in a piano
 
 ## Features
 
-- Piano roll editing with select, draw, split, and stretch modes
-- Note timing stretch with absorb (zero-sum) and ripple (shift subsequent) modes
+- Piano roll editing with select, draw, and split modes
 - Neural pitch detection (RMVPE default, FCPE optional)
 - GAME-based note segmentation with D3PM diffusion model
 - Pitch curve editing with per-note delta, scale, offset, tilt, and variance controls
@@ -96,9 +95,8 @@ Notes:
 1. Open an audio file (WAV/MP3/FLAC/OGG).
 2. Analyze to detect pitch and segment notes.
 3. Edit notes in the piano roll — adjust pitch, timing, and expression.
-4. Use stretch mode to fine-tune note boundaries (absorb or ripple).
-5. Preview changes in real time via the neural vocoder.
-6. Export the edited audio or MIDI.
+4. Preview changes in real time via the neural vocoder.
+5. Export the edited audio or MIDI.
 
 ### Plugin modes
 

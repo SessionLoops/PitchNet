@@ -8,7 +8,6 @@
  *   - Undo/NoteActions.h       (note-related actions)
  *   - Undo/F0Actions.h         (pitch curve actions)
  *   - Undo/DragActions.h       (drag actions)
- *   - Undo/TimingActions.h     (timing/stretch actions)
  *   - Undo/PitchToolAction.h   (pitch tool action)
  *   - Undo/PitchUndoManager.h  (undo manager class)
  *   - Undo/UndoActions.h       (convenience include-all)

@@ -129,12 +129,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
-#if PITCHNET_ENABLE_STRETCH
-  toolbar.onRippleModeToggled = [this](bool isRipple)
-  {
-    pianoRoll.setStretchMode(isRipple ? StretchMode::Ripple : StretchMode::Absorb);
-  };
-#endif
   toolbar.onLoopToggled = [this](bool enabled)
   {
     auto *project = getProject();

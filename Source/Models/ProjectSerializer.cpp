@@ -185,8 +185,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     // The serializer may not have persisted it (older format), or
     // rebuildCurvesFromSource was skipped because basePitch/deltaPitch
     // were already loaded from the file.  Extract from global deltaPitch
-    // so that rebuildBaseFromNotes() (called during stretch/undo) can
-    // resample correctly instead of producing zero delta.
+    // so that rebuildBaseFromNotes() can resample correctly instead of
+    // producing zero delta.
     {
         const int totalFrames = static_cast<int>(audioData.deltaPitch.size());
         for (auto& note : project.getNotes())

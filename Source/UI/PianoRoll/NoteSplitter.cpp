@@ -133,7 +133,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         secondNote.setClipMel(std::move(rightMel));
     }
 
-    // Split originalDeltaPitch if available (pristine curve for non-destructive stretch)
+    // Split originalDeltaPitch if available.
     if (note->hasOriginalDeltaPitch()) {
         const auto& origDelta = note->getOriginalDeltaPitch();
         int splitOffset = splitFrame - startFrame;

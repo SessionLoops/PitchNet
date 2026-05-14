@@ -61,14 +61,6 @@ double PianoRollInteractionContext::snapTimeToTimelineGrid(
   return component.snapTimeToTimelineGrid(timeSeconds);
 }
 
-#if PITCHNET_ENABLE_STRETCH
-StretchMode PianoRollInteractionContext::getEffectiveStretchMode(
-    const juce::ModifierKeys &mods) const
-{
-  return component.getEffectiveStretchMode(mods);
-}
-#endif
-
 Note *PianoRollInteractionContext::findNoteAt(float x, float y)
 {
   return component.findNoteAt(x, y);

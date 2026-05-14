@@ -427,8 +427,8 @@ void Project::setTimelineSnapCycle(bool enabled)
 // per-note synthWaveforms, mapping each segment (gap/note) from its source
 // position in originalWaveform to its output position in the timeline.
 //
-// This ensures that non-note regions (breaths, consonants, silence) shift
-// along with notes during ripple stretch, and the buffer grows as needed.
+// This ensures that non-note regions (breaths, consonants, silence) are
+// placed from source coordinates into the output timeline.
 // ---------------------------------------------------------------------------
 void Project::composeGlobalWaveform()
 {
@@ -517,10 +517,10 @@ void Project::composeGlobalWaveform()
         }
     };
 
-    // Helper: time-stretch (linear interpolation) from origWaveform[srcOff..srcOff+srcLen)
-    //         into waveform[dstOff..dstOff+dstLen).  Handles srcLen != dstLen gracefully
+    // Helper: resample from origWaveform[srcOff..srcOff+srcLen) into
+    //         waveform[dstOff..dstOff+dstLen). Handles length mismatches
     //         so that gaps/segments are never truncated with trailing zeros.
-    auto stretchFromOrig = [&](int srcOff, int dstOff, int srcLen, int dstLen)
+    auto resampleFromOrig = [&](int srcOff, int dstOff, int srcLen, int dstLen)
     {
         if (srcLen <= 0 || dstLen <= 0)
             return;
@@ -592,7 +592,7 @@ void Project::composeGlobalWaveform()
         {
             int srcLen = sortedNotes[0]->getSrcStartFrame() * HOP_SIZE;
             int dstLen = sortedNotes[0]->getStartFrame() * HOP_SIZE;
-            stretchFromOrig(0, 0, srcLen, dstLen);
+            resampleFromOrig(0, 0, srcLen, dstLen);
         }
 
         for (size_t i = 0; i < sortedNotes.size(); ++i)
@@ -608,7 +608,7 @@ void Project::composeGlobalWaveform()
                 int srcLen = (note->getSrcEndFrame() - note->getSrcStartFrame()) * HOP_SIZE;
                 int dstStart = note->getStartFrame() * HOP_SIZE;
                 int dstLen = (note->getEndFrame() - note->getStartFrame()) * HOP_SIZE;
-                stretchFromOrig(srcStart, dstStart, srcLen, dstLen);
+                resampleFromOrig(srcStart, dstStart, srcLen, dstLen);
             }
 
             // Gap after this note → before next note (or trailing gap)
@@ -623,16 +623,15 @@ void Project::composeGlobalWaveform()
             else
             {
                 // Trailing gap: preserve original gap length (1:1 copy),
-                // don't stretch to fill the entire buffer which may be
-                // larger than needed from a previous longer stretch.
+                // don't resample to fill the entire buffer.
                 gapSrcEnd = origSamples;
                 gapDstEnd = gapDstStart + std::max(0, gapSrcEnd - gapSrcStart);
             }
             int gapSrcLen = gapSrcEnd - gapSrcStart;
             int gapDstLen = gapDstEnd - gapDstStart;
             if (gapSrcLen > 0 && gapDstLen > 0)
-                stretchFromOrig(gapSrcStart, gapDstStart,
-                                gapSrcLen, gapDstLen);
+                resampleFromOrig(gapSrcStart, gapDstStart,
+                                  gapSrcLen, gapDstLen);
         }
     }
 

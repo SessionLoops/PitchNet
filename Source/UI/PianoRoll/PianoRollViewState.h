@@ -8,20 +8,9 @@
 enum class EditMode
 {
   Select,
-#if PITCHNET_ENABLE_STRETCH
-  Stretch,
-#endif
   Draw,
   Split
 };
-
-#if PITCHNET_ENABLE_STRETCH
-enum class StretchMode
-{
-  Absorb,
-  Ripple
-};
-#endif
 
 struct PianoRollViewState
 {
@@ -35,9 +24,6 @@ struct PianoRollViewState
   double scrollY = 0.0;
 
   EditMode editMode = EditMode::Select;
-#if PITCHNET_ENABLE_STRETCH
-  StretchMode stretchMode = StretchMode::Absorb;
-#endif
 
   bool showDeltaPitch = true;
   bool showBasePitch = false;

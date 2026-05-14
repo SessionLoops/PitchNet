@@ -6,10 +6,9 @@
 /**
  * Represents a single note/pitch segment.
  *
- * Time stretching model:
+ * Timing model:
  * - srcStartFrame/srcEndFrame: Position in original waveform (fixed after detection)
- * - startFrame/endFrame: Position in output timeline (can be changed by dragging)
- * - stretchRatio = (endFrame - startFrame) / (srcEndFrame - srcStartFrame)
+ * - startFrame/endFrame: Position in output timeline
  *
  * Pitch model:
  * - midiNote: The base pitch of the note (can be changed by dragging)
@@ -21,10 +20,6 @@
  * - deltaPitch stays the same
  * - Actual pitch = midiNote + deltaPitch[frame]
  *
- * When stretching a note:
- * - srcStartFrame/srcEndFrame stay the same (original position)
- * - startFrame/endFrame change (output position)
- * - deltaPitch is resampled to match new length
  */
 class Note
 {
@@ -45,18 +40,6 @@ public:
     void setStartFrame(int frame) { startFrame = frame; }
     void setEndFrame(int frame) { endFrame = frame; }
     int getDurationFrames() const { return endFrame - startFrame; }
-
-    // Time stretch ratio (output length / source length)
-    float getStretchRatio() const {
-        int srcLen = srcEndFrame - srcStartFrame;
-        if (srcLen <= 0) return 1.0f;
-        return float(endFrame - startFrame) / float(srcLen);
-    }
-
-    // Check if note is stretched (ratio != 1.0)
-    bool isStretched() const {
-        return std::abs(getStretchRatio() - 1.0f) > 0.001f;
-    }
 
     // Pitch
     float getMidiNote() const { return midiNote; }
@@ -181,7 +164,7 @@ private:
     int srcStartFrame = 0;
     int srcEndFrame = 0;
 
-    // Destination position (in output timeline, can be changed by stretching)
+    // Destination position in the output timeline
     int startFrame = 0;
     int endFrame = 0;
 

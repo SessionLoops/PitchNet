@@ -14,7 +14,6 @@ option(USE_DIRECTML "Enable DirectML execution provider (Windows only)" OFF)
 option(USE_BUNDLED_CUDA_RUNTIME "Bundle minimal CUDA runtime DLLs (Windows only)" OFF)
 option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)" OFF)
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
-option(ENABLE_NOTE_STRETCH "Enable note timing stretch feature (experimental, has known issues)" ON)
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
 set(ONNXRUNTIME_VERSION "1.24.3" CACHE STRING "ONNX Runtime version")
@@ -577,16 +576,6 @@ else()
     target_compile_definitions(pitchnet_core PUBLIC
         JUCE_ALSA=1
         JUCE_JACK=1)
-endif()
-
-# Feature flags
-if(ENABLE_NOTE_STRETCH)
-    target_compile_definitions(pitchnet_core PUBLIC
-        PITCHNET_ENABLE_STRETCH=1
-        HACHITUNE_ENABLE_STRETCH=1)
-    message(STATUS "Note stretch feature: ENABLED")
-else()
-    message(STATUS "Note stretch feature: DISABLED")
 endif()
 
 # Common definitions

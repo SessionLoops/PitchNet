@@ -10,6 +10,5 @@
 #include "NoteActions.h"
 #include "F0Actions.h"
 #include "DragActions.h"
-#include "TimingActions.h"
 #include "PitchToolAction.h"
 #include "PitchUndoManager.h"
