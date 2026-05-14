@@ -3,8 +3,8 @@
 #if HACHITUNE_ENABLE_STRETCH
 
 #include "../../PianoRollComponent.h"
+#include "../../../Utils/UI/Theme.h"
 #include "../../../Utils/CurveResampler.h"
-#include "../../../Utils/HNSepCurveProcessor.h"
 #include "../../../Utils/PitchCurveProcessor.h"
 
 StretchHandler::StretchHandler(PianoRollComponent &owner)
@@ -1228,7 +1228,6 @@ void StretchHandler::finishStretchDrag()
             if (!ownerPtr->project)
               return;
             PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
-            HNSepCurveProcessor::rebuildCurvesFromNotes(*ownerPtr->project);
             ownerPtr->invalidateBasePitchCache();
             const int f0Size =
                 static_cast<int>(ownerPtr->project->getAudioData().f0.size());
@@ -1257,7 +1256,6 @@ void StretchHandler::finishStretchDrag()
             if (!ownerPtr->project)
               return;
             PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
-            HNSepCurveProcessor::rebuildCurvesFromNotes(*ownerPtr->project);
             ownerPtr->invalidateBasePitchCache();
             const int f0Size =
                 static_cast<int>(ownerPtr->project->getAudioData().f0.size());
@@ -1273,7 +1271,6 @@ void StretchHandler::finishStretchDrag()
   // Full rebuild to ensure correctness after drag (the drag used a
   // lightweight targeted version that only updated affected notes).
   PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  HNSepCurveProcessor::rebuildCurvesFromNotes(*project);
   owner_.invalidateBasePitchCache();
 
   // Mark affected notes' synthWaveforms as dirty so the next synthesis
@@ -1421,7 +1418,6 @@ void StretchHandler::cancelStretchDrag()
   }
 
   PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  HNSepCurveProcessor::rebuildCurvesFromNotes(*project);
   owner_.invalidateBasePitchCache();
 
   project->composeGlobalWaveform();

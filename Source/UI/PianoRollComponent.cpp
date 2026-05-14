@@ -721,7 +721,7 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
   params.showBasePitch = showBasePitch;
   params.showUvInterpolationDebug = showUvInterpolationDebug;
   params.showActualF0Debug = showActualF0Debug;
-  params.isParameterMode = editMode == EditMode::Parameter;
+  params.hidePitchCurves = false;
   params.componentWidth = getWidth();
   pitchCurveRenderer->draw(g, params);
 }
@@ -1667,9 +1667,6 @@ void PianoRollComponent::setEditMode(EditMode mode)
 #endif
   case EditMode::Split:
     currentHandler_ = splitHandler_.get();
-    break;
-  case EditMode::Parameter:
-    currentHandler_ = nullptr; // Drawing handled by HNSepLaneComponent
     break;
   }
 

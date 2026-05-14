@@ -18,12 +18,14 @@
 #include "PianoRoll/WaveformBackgroundRenderer.h"
 #include "PianoRoll/PitchToolController.h"
 #include "PianoRoll/PitchToolHandles.h"
+#include "PianoRoll/PianoRollViewState.h"
 #include "PianoRoll/ScrollZoomController.h"
 
 #include <memory>
 #include <optional>
 
 class PitchUndoManager;
+class PianoRollInteractionContext;
 
 // Interaction handler forward declarations
 class InteractionHandler;

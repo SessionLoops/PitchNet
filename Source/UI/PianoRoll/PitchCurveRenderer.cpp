@@ -85,9 +85,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
   if (!project || !coordMapper)
     return;
 
-  // Hide pitch curves in Parameter mode to avoid visual clashing
-  // with the HNSep overlay that occupies the same viewport area.
-  if (params.isParameterMode)
+  if (params.hidePitchCurves)
     return;
 
   const auto &audioData = project->getAudioData();

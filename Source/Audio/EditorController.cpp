@@ -2,7 +2,6 @@
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/Constants.h"
 #include "../Utils/F0Smoother.h"
-#include "../Utils/HNSepCurveProcessor.h"
 #include "../Utils/Localization.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -21,7 +20,6 @@ EditorController::EditorController(bool enableAudioDevice)
   fcpePitchDetector = std::make_unique<FCPEPitchDetector>();
   rmvpePitchDetector = std::make_unique<RMVPEPitchDetector>();
   gameDetector = std::make_unique<GAMEDetector>();
-  hnsepModel = std::make_unique<HNSepModel>();
   vocoder = std::make_unique<Vocoder>();
   audioAnalyzer = std::make_unique<AudioAnalyzer>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
@@ -32,7 +30,6 @@ EditorController::EditorController(bool enableAudioDevice)
   centTablePath = PlatformPaths::getModelFile("cent_table.bin");
   rmvpeModelPath = PlatformPaths::getModelFile("rmvpe.onnx");
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
-  hnsepModelDir = PlatformPaths::getModelSubDir("hnsep", "hnsep_VR.onnx");
 
   audioAnalyzer->setFCPEDetector(fcpePitchDetector.get());
   audioAnalyzer->setRMVPEDetector(rmvpePitchDetector.get());
@@ -87,8 +84,6 @@ void EditorController::reloadInferenceModels(bool async)
   auto centPath = centTablePath;
   auto rmvpePath = rmvpeModelPath;
   auto gamePath = gameModelDir;
-  auto hnsepPath = hnsepModelDir;
-
   auto reloadTask = [device = device,
                      provider,
                      resolvedDeviceId,
@@ -96,8 +91,7 @@ void EditorController::reloadInferenceModels(bool async)
                      melPath,
                      centPath,
                      rmvpePath,
-                     gamePath,
-                     hnsepPath](EditorController *self)
+                     gamePath](EditorController *self)
   {
     if (!self)
       return;
@@ -107,7 +101,6 @@ void EditorController::reloadInferenceModels(bool async)
     std::thread fcpeThread;
     std::thread rmvpeThread;
     std::thread gameThread;
-    std::thread hnsepThread;
 
     if (self->fcpePitchDetector && fcpePath.existsAsFile())
     {
@@ -169,35 +162,6 @@ void EditorController::reloadInferenceModels(bool async)
       LOG("GAME detector not created (gameDetector is null)");
     }
 
-    // Load hnsep (harmonic-noise separation) model in parallel
-    if (self->hnsepModel && hnsepPath.isDirectory())
-    {
-      auto hnsepFile = hnsepPath.getChildFile("hnsep_VR.onnx");
-      if (hnsepFile.existsAsFile())
-      {
-        hnsepThread = std::thread([&, hnsepFile]()
-                                  {
-          LOG("EditorController: loading hnsep model from " +
-              hnsepFile.getFullPathName() + " (device " + device +
-              ", id " + juce::String(resolvedDeviceId) + ")...");
-          if (self->hnsepModel->loadModel(hnsepFile, provider,
-                                          resolvedDeviceId)) {
-            LOG("hnsep model loaded successfully");
-          } else {
-            LOG("Failed to load hnsep model from " +
-                hnsepFile.getFullPathName());
-          } });
-      }
-      else
-      {
-        LOG("hnsep model file not found: " + hnsepFile.getFullPathName());
-      }
-    }
-    else if (self->hnsepModel)
-    {
-      LOG("hnsep model directory not found: " + hnsepPath.getFullPathName());
-    }
-
     // Wait for all parallel loads to complete
     if (fcpeThread.joinable())
       fcpeThread.join();
@@ -205,8 +169,6 @@ void EditorController::reloadInferenceModels(bool async)
       rmvpeThread.join();
     if (gameThread.joinable())
       gameThread.join();
-    if (hnsepThread.joinable())
-      hnsepThread.join();
   };
 
   if (!async)
@@ -576,8 +538,7 @@ void EditorController::resynthesizeIncrementalAsync(
     return;
   }
 
-  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange() &&
-      !project.hasParamDirtyRange())
+  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())
   {
     if (onComplete)
       onComplete(false);
@@ -851,55 +812,6 @@ void EditorController::analyzeAudio(
         audioData.f0, audioData.voicedMask);
   }
 
-  // -----------------------------------------------------------------------
-  // Harmonic-noise separation (hnsep): split waveform into harmonic + noise
-  // components so that voicing/breath/tension adjustments can be applied
-  // per-note during synthesis.
-  // -----------------------------------------------------------------------
-  if (hnsepModel && hnsepModel->isLoaded() &&
-      audioData.waveform.getNumSamples() > 0)
-  {
-    onProgress(0.70, "Separating harmonic/noise...");
-    const float *samples = audioData.waveform.getReadPointer(0);
-    const int numSamples = audioData.waveform.getNumSamples();
-
-    std::vector<float> harmonicVec;
-    std::vector<float> noiseVec;
-
-    bool ok = hnsepModel->separateWithProgress(
-        samples, numSamples, harmonicVec, noiseVec,
-        [&onProgress](double p)
-        {
-          // Map hnsep progress 0..1 into overall progress 0.70..0.75
-          onProgress(0.70 + p * 0.05, "Separating harmonic/noise...");
-        });
-
-    if (ok)
-    {
-      // Store results as mono AudioBuffers in audioData
-      audioData.harmonicWaveform.setSize(1, numSamples);
-      juce::FloatVectorOperations::copy(
-          audioData.harmonicWaveform.getWritePointer(0),
-          harmonicVec.data(), numSamples);
-
-      audioData.noiseWaveform.setSize(1, numSamples);
-      juce::FloatVectorOperations::copy(
-          audioData.noiseWaveform.getWritePointer(0),
-          noiseVec.data(), numSamples);
-
-      LOG("hnsep separation complete: " + juce::String(numSamples) +
-          " samples separated into harmonic + noise");
-    }
-    else
-    {
-      LOG("hnsep separation failed — harmonic/noise buffers left empty");
-    }
-  }
-  else if (hnsepModel && !hnsepModel->isLoaded())
-  {
-    LOG("hnsep model not loaded — skipping harmonic-noise separation");
-  }
-
   onProgress(0.75, TR("progress.loading_vocoder"));
   auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
 
@@ -929,7 +841,6 @@ void EditorController::analyzeAudio(
   segmentIntoNotes(targetProject);
 
   PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
-  HNSepCurveProcessor::initializeCurves(targetProject);
 
   if (onComplete)
     onComplete();
@@ -969,17 +880,6 @@ void EditorController::analyzeAudioAsync(
           projectCopy->getAudioData().basePitch;
       project->getAudioData().deltaPitch =
           projectCopy->getAudioData().deltaPitch;
-      project->getAudioData().voicingCurve =
-          projectCopy->getAudioData().voicingCurve;
-      project->getAudioData().breathCurve =
-          projectCopy->getAudioData().breathCurve;
-      project->getAudioData().tensionCurve =
-          projectCopy->getAudioData().tensionCurve;
-      project->getAudioData().harmonicWaveform.makeCopyOf(
-          projectCopy->getAudioData().harmonicWaveform);
-      project->getAudioData().noiseWaveform.makeCopyOf(
-          projectCopy->getAudioData().noiseWaveform);
-
       if (onProjectReady)
         onProjectReady(*project);
       if (onProjectChanged)
@@ -1027,47 +927,6 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
   if (audioData.f0.empty())
     return;
-
-  // -----------------------------------------------------------------------
-  // Helper: slice per-note harmonic/noise clips from global hnsep buffers.
-  // Called after note boundaries are finalized (both GAME and fallback paths).
-  // Each note's srcStartFrame/srcEndFrame are in *frame* units (HOP_SIZE
-  // samples per frame). The clip waveforms are sample-level slices.
-  // -----------------------------------------------------------------------
-  const int harmonicSamples = audioData.harmonicWaveform.getNumSamples();
-  const int noiseSamples = audioData.noiseWaveform.getNumSamples();
-  const bool hasHNSep = harmonicSamples > 0 && noiseSamples > 0;
-
-  auto sliceHNSepClips = [&]()
-  {
-    if (!hasHNSep)
-      return;
-
-    const float *harmonicPtr = audioData.harmonicWaveform.getReadPointer(0);
-    const float *noisePtr = audioData.noiseWaveform.getReadPointer(0);
-
-    for (auto &note : notes)
-    {
-      const int sampleStart = note.getSrcStartFrame() * HOP_SIZE;
-      const int sampleEnd = note.getSrcEndFrame() * HOP_SIZE;
-      const int clampedStart = std::max(0, std::min(sampleStart, harmonicSamples));
-      const int clampedEnd = std::max(clampedStart, std::min(sampleEnd, harmonicSamples));
-      const int clipLen = clampedEnd - clampedStart;
-
-      if (clipLen > 0)
-      {
-        std::vector<float> hClip(harmonicPtr + clampedStart,
-                                 harmonicPtr + clampedEnd);
-        note.setClipHarmonicWaveform(std::move(hClip));
-
-        const int nClampedEnd = std::min(clampedEnd, noiseSamples);
-        const int nClampedStart = std::min(clampedStart, noiseSamples);
-        std::vector<float> nClip(noisePtr + nClampedStart,
-                                 noisePtr + nClampedEnd);
-        note.setClipNoiseWaveform(std::move(nClip));
-      }
-    }
-  };
 
   if (!gameDetector || !gameDetector->isLoaded())
   {
@@ -1311,11 +1170,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
     juce::Thread::sleep(100);
 
-    sliceHNSepClips();
-
     if (!audioData.f0.empty())
       PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
-    HNSepCurveProcessor::initializeCurves(targetProject);
 
     return;
   }
@@ -1418,10 +1274,6 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     finalizeNote(noteStart, static_cast<int>(audioData.f0.size()));
   }
 
-  // Slice harmonic/noise waveforms into per-note clips (fallback path)
-  sliceHNSepClips();
-
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
-  HNSepCurveProcessor::initializeCurves(targetProject);
 }

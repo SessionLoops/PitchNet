@@ -24,7 +24,7 @@ public:
     bool showBasePitch;
     bool showUvInterpolationDebug;
     bool showActualF0Debug;
-    bool isParameterMode; // hides curves entirely when true
+    bool hidePitchCurves = false;
     int componentWidth;
   };
 

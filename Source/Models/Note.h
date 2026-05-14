@@ -105,43 +105,6 @@ public:
     float getVibratoPhaseRadians() const { return vibratoPhaseRadians; }
     void setVibratoPhaseRadians(float radians) { vibratoPhaseRadians = radians; }
 
-    // -----------------------------------------------------------------------
-    // Harmonic-Noise Separation (hnsep) parameters
-    // Per-frame curves controlling voicing (harmonic), breath (noise), and
-    // tension (spectral tilt). Curves are indexed by note-local frame and
-    // have the same length as getDurationFrames().
-    //   voicing: 0..maxVoicing  (default 100 = unity)
-    //   breath:  0..maxBreath   (default 100 = unity)
-    //   tension: -100..100      (default 0   = neutral)
-    // -----------------------------------------------------------------------
-
-    // Voicing curve (harmonic energy in %, note-local editable copy).
-    // The dense master curve lives in AudioData::voicingCurve and is rebuilt
-    // from these note-local copies before synthesis / serialization.
-    const std::vector<float>& getVoicingCurve() const { return voicingCurve; }
-    void setVoicingCurve(std::vector<float> curve) { voicingCurve = std::move(curve); }
-    bool hasVoicingCurve() const { return !voicingCurve.empty(); }
-
-    // Breath curve (noise energy in %, note-local editable copy).
-    const std::vector<float>& getBreathCurve() const { return breathCurve; }
-    void setBreathCurve(std::vector<float> curve) { breathCurve = std::move(curve); }
-    bool hasBreathCurve() const { return !breathCurve.empty(); }
-
-    // Tension curve (spectral tilt adjustment, note-local editable copy).
-    const std::vector<float>& getTensionCurve() const { return tensionCurve; }
-    void setTensionCurve(std::vector<float> curve) { tensionCurve = std::move(curve); }
-    bool hasTensionCurve() const { return !tensionCurve.empty(); }
-
-    // Per-note harmonic clip waveform (sliced from global harmonicWaveform)
-    const std::vector<float>& getClipHarmonicWaveform() const { return clipHarmonicWaveform; }
-    void setClipHarmonicWaveform(std::vector<float> samples) { clipHarmonicWaveform = std::move(samples); }
-    bool hasClipHarmonicWaveform() const { return !clipHarmonicWaveform.empty(); }
-
-    // Per-note noise clip waveform (sliced from global noiseWaveform)
-    const std::vector<float>& getClipNoiseWaveform() const { return clipNoiseWaveform; }
-    void setClipNoiseWaveform(std::vector<float> samples) { clipNoiseWaveform = std::move(samples); }
-    bool hasClipNoiseWaveform() const { return !clipNoiseWaveform.empty(); }
-
     // F0 values (original detected values)
     const std::vector<float>& getF0Values() const { return f0Values; }
     void setF0Values(std::vector<float> values) { f0Values = std::move(values); }
@@ -252,12 +215,6 @@ private:
     int synthPreroll = 0;                // Margin samples prepended before noteStart in synthWaveform
     std::vector<std::vector<float>> clipMel;  // Mel spectrogram clip [T, numMels]
 
-    // Harmonic-noise separation curves (per note-local frame)
-    std::vector<float> voicingCurve;          // 0..maxVoicing (default 100 = unity)
-    std::vector<float> breathCurve;           // 0..maxBreath  (default 100 = unity)
-    std::vector<float> tensionCurve;          // -100..100     (default 0 = neutral)
-    std::vector<float> clipHarmonicWaveform;  // Per-note harmonic component samples
-    std::vector<float> clipNoiseWaveform;     // Per-note noise component samples
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)

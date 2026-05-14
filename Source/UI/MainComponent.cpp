@@ -185,12 +185,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRoll.onZoomChanged = [this](float pps)
   {
     onZoomChanged(pps);
-    pianoRollView.getHNSepLane().setPixelsPerSecond(pps);
     pianoRollView.refreshOverview();
   };
   pianoRoll.onScrollChanged = [this](double x)
   {
-    pianoRollView.getHNSepLane().setScrollX(x);
+    juce::ignoreUnused(x);
     pianoRollView.refreshOverview();
   };
   pianoRoll.onLoopRangeChanged = [this](const LoopRange &range)
@@ -274,21 +273,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     pianoRoll.setTimelineSnapCycle(enabled);
   };
   parameterPanel.setProject(getProject());
-
-  // Setup HNSep parameter lane callbacks
-  {
-    auto &hnsepLane = pianoRollView.getHNSepLane();
-    hnsepLane.setUndoManager(undoManager.get());
-    hnsepLane.onParamEdited = [this]()
-    { onPitchEdited(); };
-    hnsepLane.onParamEditFinished = [this](int /*minNote*/, int /*maxNote*/)
-    {
-      resynthesizeIncremental();
-      notifyProjectDataChanged();
-      if (isPluginMode() && onPitchEditFinished)
-        onPitchEditFinished();
-    };
-  }
 
   // Sync toolbar toggle with panel visibility
   toolbar.setParametersVisible(workspace.isPanelVisible("parameters"));
@@ -1320,9 +1304,6 @@ void MainComponent::setEditMode(EditMode mode)
 {
   pianoRoll.setEditMode(mode);
   toolbar.setEditMode(mode);
-
-  // Show/hide HNSep parameter lanes when toggling Parameter edit mode
-  pianoRollView.setHNSepVisible(mode == EditMode::Parameter);
 
   // Update command states (draw mode toggle state changed)
   if (commandManager)

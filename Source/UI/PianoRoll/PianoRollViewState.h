@@ -12,8 +12,7 @@ enum class EditMode
   Stretch,
 #endif
   Draw,
-  Split,
-  Parameter
+  Split
 };
 
 #if PITCHNET_ENABLE_STRETCH

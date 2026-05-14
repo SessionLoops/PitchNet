@@ -34,10 +34,6 @@ struct AudioData
     juce::AudioBuffer<float> waveform;
     juce::AudioBuffer<float> originalWaveform; // pristine copy for blend (never modified after analysis)
 
-    // Harmonic-noise separation buffers (same length as waveform, set during hnsep analysis)
-    juce::AudioBuffer<float> harmonicWaveform;  // harmonic (voiced) component
-    juce::AudioBuffer<float> noiseWaveform;     // noise (breath) component
-
     int sampleRate = 44100;
 
     // Extracted features
@@ -46,9 +42,6 @@ struct AudioData
     std::vector<float> baseF0;                           // [T] (cached base pitch in Hz)
     std::vector<float> basePitch;                        // [T] base pitch in MIDI (dense)
     std::vector<float> deltaPitch;                       // [T] delta pitch in MIDI (dense)
-    std::vector<float> voicingCurve;                     // [T] hnsep harmonic energy in % (dense)
-    std::vector<float> breathCurve;                      // [T] hnsep noise energy in % (dense)
-    std::vector<float> tensionCurve;                     // [T] hnsep spectral tilt control (dense)
     std::vector<bool> voicedMask;                        // [T] uv mask (true = voiced, F0-based)
     std::vector<bool> vadMask;                           // [T] energy-based VAD (true = has audio energy, captures consonants)
     std::vector<std::pair<int, int>> segmentChunkRanges; // [N] GAME slicer chunks in frame range [start, end)
@@ -199,12 +192,6 @@ public:
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
 
-    // Parameter curve dirty tracking (voicing/breath/tension edits)
-    void setParamDirtyRange(int startFrame, int endFrame);
-    void clearParamDirtyRange();
-    bool hasParamDirtyRange() const;
-    std::pair<int, int> getParamDirtyRange() const;
-
     // Modified state
     bool isModified() const { return modified; }
     void setModified(bool mod) { modified = mod; }
@@ -258,10 +245,6 @@ private:
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
-
-    // Parameter curve edit dirty range (voicing/breath/tension)
-    int paramDirtyStart = -1;
-    int paramDirtyEnd = -1;
 
     bool modified = false;
 

@@ -125,9 +125,6 @@ void Project::clearAllDirty()
     // Also clear F0 dirty range
     f0DirtyStart = -1;
     f0DirtyEnd = -1;
-    // Also clear parameter dirty range
-    paramDirtyStart = -1;
-    paramDirtyEnd = -1;
 }
 
 bool Project::hasDirtyNotes() const
@@ -164,30 +161,6 @@ std::pair<int, int> Project::getF0DirtyRange() const
     return {f0DirtyStart, f0DirtyEnd};
 }
 
-void Project::setParamDirtyRange(int startFrame, int endFrame)
-{
-    if (paramDirtyStart < 0 || startFrame < paramDirtyStart)
-        paramDirtyStart = startFrame;
-    if (paramDirtyEnd < 0 || endFrame > paramDirtyEnd)
-        paramDirtyEnd = endFrame;
-}
-
-void Project::clearParamDirtyRange()
-{
-    paramDirtyStart = -1;
-    paramDirtyEnd = -1;
-}
-
-bool Project::hasParamDirtyRange() const
-{
-    return paramDirtyStart >= 0 && paramDirtyEnd >= 0;
-}
-
-std::pair<int, int> Project::getParamDirtyRange() const
-{
-    return {paramDirtyStart, paramDirtyEnd};
-}
-
 std::pair<int, int> Project::getDirtyFrameRange() const
 {
     int minStart = -1;
@@ -215,18 +188,6 @@ std::pair<int, int> Project::getDirtyFrameRange() const
     {
         if (maxEnd < 0 || f0DirtyEnd > maxEnd)
             maxEnd = f0DirtyEnd;
-    }
-
-    // Also include parameter curve dirty range
-    if (paramDirtyStart >= 0)
-    {
-        if (minStart < 0 || paramDirtyStart < minStart)
-            minStart = paramDirtyStart;
-    }
-    if (paramDirtyEnd >= 0)
-    {
-        if (maxEnd < 0 || paramDirtyEnd > maxEnd)
-            maxEnd = paramDirtyEnd;
     }
 
     return {minStart, maxEnd};

@@ -139,7 +139,6 @@ private:
 #endif
     ToolButton drawModeButton{"Draw"};
     ToolButton splitModeButton{"Split"};
-    ToolButton hnsepModeButton{"HNSep"}; // Harmonic-noise parameter editing mode
 #if PITCHNET_ENABLE_STRETCH
     ToolButton rippleToggleButton{"RippleToggle"}; // Absorb/Ripple stretch sub-mode toggle
 #endif
@@ -175,7 +174,7 @@ private:
 #if PITCHNET_ENABLE_STRETCH
     bool isRippleStretchMode = false;
 #endif
-    int currentEditModeInt = 0; // 0 = Select, 1 = Stretch, 2 = Draw, 3 = Split, 4 = Parameter
+    int currentEditModeInt = 0; // 0 = Select, 1 = Stretch, 2 = Draw, 3 = Split
 
 #if JUCE_MAC
     juce::ComponentDragger dragger;
