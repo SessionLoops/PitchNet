@@ -196,6 +196,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       onComplete(false);
     return;
   }
+  const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
+  const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
 
   // Compute synthesis range (voiced segments + padding)
   auto [startFrame, endFrame] = computeSynthesisRange(dirtyStart, dirtyEnd);
@@ -276,6 +278,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       std::move(melRange), std::move(adjustedF0Range),
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
+       hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
        blendMask = std::move(blendMask),
        originalSegment = std::move(originalSegment)](
           std::vector<float> synthesizedAudio) {
@@ -296,7 +299,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
         std::thread([this, capturedCancelFlag, capturedProject,
                      capturedStartFrame, capturedEndFrame, hopSize,
-                     currentJobId, onComplete, blendMask, originalSegment,
+                     currentJobId, onComplete, hasDirtyNoteAnchors,
+                     f0DirtyStart, f0DirtyEnd, blendMask, originalSegment,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
           if (currentJobId != jobId.load())
             return;
@@ -386,6 +390,40 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // each side so that composeGlobalWaveform() can crossfade with real
           // audio instead of held-value extrapolation at note boundaries.
           constexpr int kSynthMarginSamples = 256; // margin each side
+          constexpr int kAdjacentFrameTolerance = 1;
+
+          const bool hasF0DirtyRange = f0DirtyStart >= 0 && f0DirtyEnd >= 0;
+          auto overlapsF0DirtyRange = [&](const Note &note) {
+            return hasF0DirtyRange && note.getStartFrame() < f0DirtyEnd &&
+                   note.getEndFrame() > f0DirtyStart;
+          };
+          auto isCommitAnchor = [&](const Note &note) {
+            if (note.isRest())
+              return false;
+            if (note.isDirty())
+              return true;
+
+            // Draw/F0 edits may not mark a specific note dirty. In that case,
+            // notes overlapping the F0 dirty range are the edited anchors.
+            return !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
+          };
+          auto isDirectlyAdjacentToAnchor = [&](const Note &candidate) {
+            for (const auto &anchor : capturedProject->getNotes()) {
+              if (&anchor == &candidate || !isCommitAnchor(anchor))
+                continue;
+
+              const int gapAfterCandidate =
+                  anchor.getStartFrame() - candidate.getEndFrame();
+              const int gapBeforeCandidate =
+                  candidate.getStartFrame() - anchor.getEndFrame();
+              if ((gapAfterCandidate >= 0 &&
+                   gapAfterCandidate <= kAdjacentFrameTolerance) ||
+                  (gapBeforeCandidate >= 0 &&
+                   gapBeforeCandidate <= kAdjacentFrameTolerance))
+                return true;
+            }
+            return false;
+          };
 
           for (auto &note : capturedProject->getNotes()) {
             if (note.isRest())
@@ -398,10 +436,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (overlapEnd <= overlapStart)
               continue;
 
-            // Only update notes that overlap the synthesis range and are dirty
-            // (or have no synthWaveform yet).
-            if (!note.isDirty() && !note.isSynthDirty() &&
-                note.hasSynthWaveform())
+            // Only commit rendered context back to edited notes, or to
+            // uncached notes that are directly adjacent to edited anchors.
+            const bool shouldCommit =
+                isCommitAnchor(note) ||
+                (!note.hasSynthWaveform() && isDirectlyAdjacentToAnchor(note));
+            if (!shouldCommit)
               continue;
 
             // Full note range in samples (the "body")

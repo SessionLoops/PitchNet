@@ -97,7 +97,6 @@ public:
     std::function<void()> onGoToEnd;
     std::function<void(float)> onZoomChanged;
     std::function<void(EditMode)> onEditModeChanged;
-    std::function<void(bool)> onLoopToggled;
 
     // Plugin mode callbacks
     std::function<void()> onReanalyze;
@@ -124,10 +123,8 @@ private:
 
     // Edit mode buttons
     ToolButton selectModeButton{"Select"};
-    ToolButton drawModeButton{"Draw"};
     ToolButton splitModeButton{"Split"};
     ToolButton followButton{"Follow"};
-    ToolButton loopButton{"Loop"};
     ToolButton parametersButton{"Parameters"};
     juce::Rectangle<int> toolContainerBounds;    // For drawing container background
     juce::Rectangle<int> transportCapsuleBounds; // For drawing transport capsule background
@@ -155,7 +152,7 @@ private:
     bool isPlaying = false;
     bool followPlayback = true;
     bool loopEnabled = false;
-    int currentEditModeInt = 0; // 0 = Select, 1 = Draw, 2 = Split
+    int currentEditModeInt = 0;
 
 #if JUCE_MAC
     juce::ComponentDragger dragger;

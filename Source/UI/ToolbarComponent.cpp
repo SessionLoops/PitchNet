@@ -15,10 +15,8 @@ ToolbarComponent::ToolbarComponent()
     auto startIcon = SvgUtils::loadSvg(BinaryData::movestartline_svg, BinaryData::movestartline_svgSize, juce::Colours::white);
     auto endIcon = SvgUtils::loadSvg(BinaryData::moveendline_svg, BinaryData::moveendline_svgSize, juce::Colours::white);
     auto cursorIcon = SvgUtils::loadSvg(BinaryData::cursor_24_filled_svg, BinaryData::cursor_24_filled_svgSize, juce::Colours::white);
-    auto pitchEditIcon = SvgUtils::loadSvg(BinaryData::pitch_edit_24_filled_svg, BinaryData::pitch_edit_24_filled_svgSize, juce::Colours::white);
     auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
-    auto loopIcon = SvgUtils::loadSvg(BinaryData::loop24filled_svg, BinaryData::loop24filled_svgSize, juce::Colours::white);
     const juce::String parametersIconSvg =
         R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="2" width="2" height="20" rx="1"/><circle cx="4" cy="9" r="3"/><rect x="11" y="2" width="2" height="20" rx="1"/><circle cx="12" cy="15" r="3"/><rect x="19" y="2" width="2" height="20" rx="1"/><circle cx="20" cy="6" r="3"/></svg>)";
     auto parametersIcon = SvgUtils::createDrawableFromSvg(parametersIconSvg, juce::Colours::white);
@@ -28,10 +26,8 @@ ToolbarComponent::ToolbarComponent()
     goToStartButton.setImages(startIcon.get());
     goToEndButton.setImages(endIcon.get());
     selectModeButton.setImages(cursorIcon.get());
-    drawModeButton.setImages(pitchEditIcon.get());
     splitModeButton.setImages(scissorsIcon.get());
     followButton.setImages(followIcon.get());
-    loopButton.setImages(loopIcon.get());
     parametersButton.setImages(parametersIcon.get());
 
     // Set edge indent for icon padding (makes icons smaller within button bounds)
@@ -40,10 +36,8 @@ ToolbarComponent::ToolbarComponent()
     stopButton.setEdgeIndent(6);
     goToEndButton.setEdgeIndent(4);
     selectModeButton.setEdgeIndent(6);
-    drawModeButton.setEdgeIndent(6);
     splitModeButton.setEdgeIndent(6);
     followButton.setEdgeIndent(6);
-    loopButton.setEdgeIndent(6);
     parametersButton.setEdgeIndent(6);
 
     // Store pause icon for later use
@@ -56,10 +50,8 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(stopButton);
     addAndMakeVisible(goToEndButton);
     addAndMakeVisible(selectModeButton);
-    addAndMakeVisible(drawModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
-    addAndMakeVisible(loopButton);
     addAndMakeVisible(parametersButton);
 
     // Plugin mode buttons (hidden by default)
@@ -77,19 +69,15 @@ ToolbarComponent::ToolbarComponent()
     stopButton.addListener(this);
     goToEndButton.addListener(this);
     selectModeButton.addListener(this);
-    drawModeButton.addListener(this);
     splitModeButton.addListener(this);
     followButton.addListener(this);
-    loopButton.addListener(this);
     parametersButton.addListener(this);
     reanalyzeButton.addListener(this);
 
     // Set localized text (tooltips for icon buttons)
     selectModeButton.setTooltip(TR("toolbar.select"));
-    drawModeButton.setTooltip(TR("toolbar.draw"));
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
-    loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
     reanalyzeButton.setButtonText(TR("toolbar.reanalyze"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
@@ -103,7 +91,6 @@ ToolbarComponent::ToolbarComponent()
     // Set default active states
     selectModeButton.setActive(true);
     followButton.setActive(true); // Follow is on by default
-    loopButton.setActive(false);
     parametersButton.setActive(false);
 
     // Time label with app font (larger and bold for readability)
@@ -334,8 +321,8 @@ void ToolbarComponent::resized()
     // Tool container measurements (need these to center time between left section and tools)
     const int toolButtonSize = 32;
     const int toolContainerPadding = 5;
-    const int numEditTools = 3; // select, draw, split
-    const int numPlaybackTools = pluginMode ? 0 : 2;         // follow + loop
+    const int numEditTools = 2; // select, split
+    const int numPlaybackTools = pluginMode ? 0 : 1;         // follow
     const int dividerWidth = numPlaybackTools > 0 ? 8 : 0;   // space for divider between groups
     const int numAllTools = numEditTools + numPlaybackTools;
     const int toolContainerWidth = toolButtonSize * numAllTools + toolContainerPadding * 2 + dividerWidth;
@@ -361,21 +348,17 @@ void ToolbarComponent::resized()
     int toolBtnY = toolArea.getY();
     int toolX = toolArea.getX();
 
-    // Edit tools group: select, draw, split
+    // Edit tools group: select, split
     selectModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
-    drawModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
     splitModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
 
-    // Playback tools group (standalone only): follow, loop — with divider gap
+    // Playback tools group (standalone only): follow — with divider gap
     if (!pluginMode)
     {
         toolX += dividerWidth; // gap for visual divider
         followButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-        toolX += toolButtonSize;
-        loopButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     }
 }
 
@@ -408,12 +391,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onEditModeChanged)
             onEditModeChanged(EditMode::Select);
     }
-    else if (button == &drawModeButton)
-    {
-        setEditMode(EditMode::Draw);
-        if (onEditModeChanged)
-            onEditModeChanged(EditMode::Draw);
-    }
     else if (button == &splitModeButton)
     {
         setEditMode(EditMode::Split);
@@ -424,13 +401,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     {
         followPlayback = !followPlayback;
         followButton.setActive(followPlayback);
-    }
-    else if (button == &loopButton)
-    {
-        loopEnabled = !loopEnabled;
-        loopButton.setActive(loopEnabled);
-        if (onLoopToggled)
-            onLoopToggled(loopEnabled);
     }
     else if (button == &parametersButton)
     {
@@ -469,7 +439,6 @@ void ToolbarComponent::setEditMode(EditMode mode)
 {
     currentEditModeInt = static_cast<int>(mode);
     selectModeButton.setActive(mode == EditMode::Select);
-    drawModeButton.setActive(mode == EditMode::Draw);
     splitModeButton.setActive(mode == EditMode::Split);
     resized();
 }
@@ -483,7 +452,6 @@ void ToolbarComponent::setZoom(float pixelsPerSecond)
 void ToolbarComponent::setLoopEnabled(bool enabled)
 {
     loopEnabled = enabled;
-    loopButton.setActive(loopEnabled);
 }
 
 void ToolbarComponent::setParametersVisible(bool visible)
@@ -590,7 +558,6 @@ void ToolbarComponent::setPluginMode(bool isPlugin)
 
     // In plugin mode, hide follow button (host controls playback)
     followButton.setVisible(!isPlugin);
-    loopButton.setVisible(!isPlugin);
 
     resized();
 }

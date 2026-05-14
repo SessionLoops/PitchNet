@@ -129,24 +129,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
-  toolbar.onLoopToggled = [this](bool enabled)
-  {
-    auto *project = getProject();
-    if (!project)
-      return;
-    project->setLoopEnabled(enabled);
-    const auto &loopRange = project->getLoopRange();
-    toolbar.setLoopEnabled(loopRange.enabled);
-    if (auto *audioEngine = editorController
-                                ? editorController->getAudioEngine()
-                                : nullptr)
-    {
-      if (loopRange.enabled)
-        audioEngine->setLoopRange(loopRange.startSeconds, loopRange.endSeconds);
-      audioEngine->setLoopEnabled(loopRange.enabled);
-    }
-    pianoRoll.repaint();
-  };
   toolbar.onToggleParameters = [this](bool visible)
   {
     workspace.showPanel("parameters", visible);
