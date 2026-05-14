@@ -6,6 +6,7 @@
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
+#include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
 #include "PianoRoll/States/DrawHandler.h"
@@ -21,61 +22,11 @@
 
 namespace
 {
-  juce::Colour getScaleAccentColour(ScaleMode mode)
-  {
-    switch (mode)
-    {
-    case ScaleMode::None:
-      return APP_COLOR_PRIMARY;
-    case ScaleMode::Major:
-      return juce::Colour(0xFF74A9FFu);
-    case ScaleMode::Minor:
-      return juce::Colour(0xFFB689FFu);
-    case ScaleMode::Dorian:
-      return juce::Colour(0xFF5BD0C0u);
-    case ScaleMode::Phrygian:
-      return juce::Colour(0xFFFF8C77u);
-    case ScaleMode::Lydian:
-      return juce::Colour(0xFFFFD166u);
-    case ScaleMode::Mixolydian:
-      return juce::Colour(0xFF75D0FFu);
-    case ScaleMode::Locrian:
-      return juce::Colour(0xFF9FA9BFu);
-    case ScaleMode::Chromatic:
-      return APP_COLOR_PRIMARY;
-    }
-    return APP_COLOR_PRIMARY;
-  }
-
-  bool isBlackKey(int noteInOctave)
-  {
-    return noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
-           noteInOctave == 8 || noteInOctave == 10;
-  }
-
-  enum class ScaleToneState
-  {
-    Root,
-    InScale,
-    OutOfScale
-  };
-
-  ScaleToneState getScaleToneState(ScaleMode mode, int noteInOctave, int rootNote)
-  {
-    if (mode == ScaleMode::None || rootNote < 0)
-      return ScaleToneState::InScale;
-
-    const int normalizedNote = (noteInOctave % 12 + 12) % 12;
-    const int normalizedRoot = (rootNote % 12 + 12) % 12;
-
-    if (mode == ScaleMode::Chromatic)
-      return ScaleToneState::InScale;
-    if (normalizedNote == normalizedRoot)
-      return ScaleToneState::Root;
-    if (ScaleUtils::isPitchClassInScale(mode, normalizedNote, normalizedRoot))
-      return ScaleToneState::InScale;
-    return ScaleToneState::OutOfScale;
-  }
+  using pianoRollView::getScaleAccentColour;
+  using pianoRollView::isBlackKey;
+  using pianoRollView::ScaleToneState;
+  using pianoRollView::getScaleToneState;
+  using pianoRollView::isMultipleOf;
 
   int normalizeTimelineBeatDenominator(int denominator)
   {
@@ -108,21 +59,18 @@ namespace
     }
     return 1.0;
   }
-
-  bool isMultipleOf(double value, double step)
-  {
-    if (step <= 0.0)
-      return false;
-    const double ratio = value / step;
-    return std::abs(ratio - std::round(ratio)) < 1.0e-4;
-  }
 }
 
 PianoRollComponent::PianoRollComponent()
 {
   // Initialize modular components
   coordMapper = std::make_unique<CoordinateMapper>();
-  renderer = std::make_unique<PianoRollRenderer>();
+  pianoKeysRenderer = std::make_unique<PianoKeysRenderer>();
+  gridRenderer = std::make_unique<GridRenderer>();
+  timelineRenderer = std::make_unique<TimelineRenderer>();
+  waveformBackgroundRenderer = std::make_unique<WaveformBackgroundRenderer>();
+  noteRenderer = std::make_unique<NoteRenderer>();
+  pitchCurveRenderer = std::make_unique<PitchCurveRenderer>();
   scrollZoomController = std::make_unique<ScrollZoomController>();
   pitchEditor = std::make_unique<PitchEditor>();
   boxSelector = std::make_unique<BoxSelector>();
@@ -141,7 +89,17 @@ PianoRollComponent::PianoRollComponent()
   currentHandler_ = selectHandler_.get();
 
   // Wire up components
-  renderer->setCoordinateMapper(coordMapper.get());
+  pianoKeysRenderer->setCoordinateMapper(coordMapper.get());
+  gridRenderer->setCoordinateMapper(coordMapper.get());
+  timelineRenderer->setCoordinateMapper(coordMapper.get());
+  waveformBackgroundRenderer->setCoordinateMapper(coordMapper.get());
+  noteRenderer->setCoordinateMapper(coordMapper.get());
+  noteRenderer->setSelectHandler(selectHandler_.get());
+  noteRenderer->setSplitHandler(splitHandler_.get());
+  noteRenderer->setPitchEditor(pitchEditor.get());
+  pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
+  pitchCurveRenderer->setSelectHandler(selectHandler_.get());
+  pitchCurveRenderer->setPitchEditor(pitchEditor.get());
   scrollZoomController->setCoordinateMapper(coordMapper.get());
   pitchEditor->setCoordinateMapper(coordMapper.get());
   noteSplitter->setCoordinateMapper(coordMapper.get());
@@ -355,258 +313,33 @@ void PianoRollComponent::resized()
 void PianoRollComponent::drawBackgroundWaveform(
     juce::Graphics &g, const juce::Rectangle<int> &visibleArea)
 {
-  if (!project)
-    return;
+  waveformBackgroundRenderer->draw(g, visibleArea);
+}
 
-  const auto &audioData = project->getAudioData();
-  if (audioData.waveform.getNumSamples() == 0)
-    return;
+void PianoRollComponent::invalidateWaveformCache()
+{
+  waveformBackgroundRenderer->invalidateCache();
+}
 
-  // Check if we can use cached waveform
-  bool cacheValid = waveformCache.isValid() &&
-                    std::abs(cachedScrollX - scrollX) < 1.0 &&
-                    std::abs(cachedPixelsPerSecond - pixelsPerSecond) < 0.01f &&
-                    cachedWidth == visibleArea.getWidth() &&
-                    cachedHeight == visibleArea.getHeight();
-
-  if (cacheValid)
-  {
-    g.drawImageAt(waveformCache, visibleArea.getX(), visibleArea.getY());
-    return;
-  }
-
-  // Render waveform to cache
-  waveformCache = juce::Image(juce::Image::ARGB, visibleArea.getWidth(),
-                              visibleArea.getHeight(), true);
-  juce::Graphics cacheGraphics(waveformCache);
-
-  const float *samples = audioData.waveform.getReadPointer(0);
-  int numSamples = audioData.waveform.getNumSamples();
-
-  // Draw waveform filling the visible area height
-  float visibleHeight = static_cast<float>(visibleArea.getHeight());
-  float centerY = visibleHeight * 0.5f;
-  float waveformHeight = visibleHeight * 0.8f;
-
-  juce::Path waveformPath;
-  int visibleWidth = visibleArea.getWidth();
-
-  waveformPath.startNewSubPath(0.0f, centerY);
-
-  // Draw only the visible portion
-  for (int px = 0; px < visibleWidth; ++px)
-  {
-    double time = (scrollX + px) / pixelsPerSecond;
-    int startSample = static_cast<int>(time * SAMPLE_RATE);
-    int endSample =
-        static_cast<int>((time + 1.0 / pixelsPerSecond) * SAMPLE_RATE);
-
-    startSample = std::max(0, std::min(startSample, numSamples - 1));
-    endSample = std::max(startSample + 1, std::min(endSample, numSamples));
-
-    float maxVal = 0.0f;
-    for (int i = startSample; i < endSample; ++i)
-      maxVal = std::max(maxVal, std::abs(samples[i]));
-
-    float y = centerY - maxVal * waveformHeight * 0.5f;
-    waveformPath.lineTo(static_cast<float>(px), y);
-  }
-
-  // Bottom half (reverse)
-  for (int px = visibleWidth - 1; px >= 0; --px)
-  {
-    double time = (scrollX + px) / pixelsPerSecond;
-    int startSample = static_cast<int>(time * SAMPLE_RATE);
-    int endSample =
-        static_cast<int>((time + 1.0 / pixelsPerSecond) * SAMPLE_RATE);
-
-    startSample = std::max(0, std::min(startSample, numSamples - 1));
-    endSample = std::max(startSample + 1, std::min(endSample, numSamples));
-
-    float maxVal = 0.0f;
-    for (int i = startSample; i < endSample; ++i)
-      maxVal = std::max(maxVal, std::abs(samples[i]));
-
-    float y = centerY + maxVal * waveformHeight * 0.5f;
-    waveformPath.lineTo(static_cast<float>(px), y);
-  }
-
-  waveformPath.closeSubPath();
-
-  cacheGraphics.setColour(APP_COLOR_WAVEFORM);
-  cacheGraphics.fillPath(waveformPath);
-
-  // Update cache metadata
-  cachedScrollX = scrollX;
-  cachedPixelsPerSecond = pixelsPerSecond;
-  cachedWidth = visibleArea.getWidth();
-  cachedHeight = visibleArea.getHeight();
-
-  // Draw cached image
-  g.drawImageAt(waveformCache, visibleArea.getX(), visibleArea.getY());
+void PianoRollComponent::invalidateBasePitchCache()
+{
+  pitchCurveRenderer->invalidateBasePitchCache();
 }
 
 void PianoRollComponent::drawGrid(juce::Graphics &g)
 {
-  const float duration = project ? project->getAudioData().getDuration() : 60.0f;
-  const float width =
-      std::max(duration * pixelsPerSecond, static_cast<float>(getWidth()));
-  const float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
-
-  // Only draw the visible area to avoid spending time on off-screen rows/columns.
-  const float visibleStartX = juce::jlimit(0.0f, width, static_cast<float>(scrollX));
-  const float visibleEndX = juce::jlimit(
-      0.0f, width, visibleStartX + static_cast<float>(getVisibleContentWidth()) + 2.0f);
-  const float visibleTopY = juce::jlimit(0.0f, height, static_cast<float>(scrollY));
-  const float visibleBottomY = juce::jlimit(
-      0.0f, height,
-      visibleTopY + static_cast<float>(getVisibleContentHeight()) + pixelsPerSemitone);
-
-  if (visibleEndX <= visibleStartX || visibleBottomY <= visibleTopY)
-    return;
-
-  const int visibleTopMidi = juce::jlimit(
-      MIN_MIDI_NOTE, MAX_MIDI_NOTE,
-      static_cast<int>(std::ceil(yToMidi(visibleTopY))));
-  const int visibleBottomMidi = juce::jlimit(
-      MIN_MIDI_NOTE, MAX_MIDI_NOTE,
-      static_cast<int>(std::floor(yToMidi(visibleBottomY))));
-  const int startMidi = juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
-                                     visibleBottomMidi - 1);
-  const int endMidi = juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
-                                   visibleTopMidi + 1);
-
-  const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
-  const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
-  const bool showScaleOverlay =
-      showScaleColors && activeScaleMode != ScaleMode::None &&
-      activeScaleMode != ScaleMode::Chromatic &&
-      activeScaleRootNote >= 0;
-  const juce::Colour scaleAccent = getScaleAccentColour(activeScaleMode);
-
-  if (showScaleOverlay)
-  {
-    const auto rootRowColour = scaleAccent.withAlpha(0.24f);
-    const auto inScaleRowColour = scaleAccent.withAlpha(0.08f);
-    const auto outOfScaleRowColour = juce::Colours::black.withAlpha(0.20f);
-
-    for (int midi = startMidi; midi <= endMidi; ++midi)
-    {
-      const int noteInOctave = (midi % 12 + 12) % 12;
-      const auto toneState =
-          getScaleToneState(activeScaleMode, noteInOctave, activeScaleRootNote);
-      g.setColour(toneState == ScaleToneState::Root
-                      ? rootRowColour
-                      : (toneState == ScaleToneState::InScale ? inScaleRowColour
-                                                              : outOfScaleRowColour));
-      const float y = midiToY(static_cast<float>(midi));
-      g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
-    }
-  }
-
-  if (!showScaleOverlay)
-  {
-    // Chromatic mode keeps the traditional piano black-key shading.
-    g.setColour(APP_COLOR_SELECTION_OVERLAY);
-    for (int midi = startMidi; midi <= endMidi; ++midi)
-    {
-      const int noteInOctave = (midi % 12 + 12) % 12;
-      if (isBlackKey(noteInOctave))
-      {
-        const float y = midiToY(static_cast<float>(midi));
-        g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
-      }
-    }
-  }
-
-  // Horizontal pitch lines.
-  for (int midi = startMidi; midi <= endMidi; ++midi)
-  {
-    const float y = midiToY(static_cast<float>(midi));
-    const int noteInOctave = (midi % 12 + 12) % 12;
-
-    if (!showScaleOverlay)
-    {
-      g.setColour(noteInOctave == 0 ? APP_COLOR_GRID_BAR : APP_COLOR_GRID);
-    }
-    else if (getScaleToneState(activeScaleMode, noteInOctave,
-                               activeScaleRootNote) == ScaleToneState::Root)
-    {
-      g.setColour(scaleAccent.withAlpha(0.70f));
-    }
-    else if (getScaleToneState(activeScaleMode, noteInOctave,
-                               activeScaleRootNote) == ScaleToneState::InScale)
-    {
-      g.setColour(APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.40f));
-    }
-    else
-    {
-      g.setColour(APP_COLOR_GRID.darker(0.25f));
-    }
-
-    g.drawHorizontalLine(static_cast<int>(y), visibleStartX, visibleEndX);
-  }
-
-  if (timelineDisplayMode == TimelineDisplayMode::Beats)
-  {
-    const double gridSeconds = getTimelineGridSeconds();
-    const double beatSeconds = getTimelineBeatSeconds();
-    const double barSeconds = getTimelineBarSeconds();
-    if (gridSeconds > 1.0e-6 && beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
-    {
-      const double visibleStartTime = visibleStartX / pixelsPerSecond;
-      const double visibleEndTime = visibleEndX / pixelsPerSecond;
-      const int firstGrid = std::max(
-          0, static_cast<int>(std::floor(visibleStartTime / gridSeconds)) - 1);
-
-      for (int i = firstGrid;; ++i)
-      {
-        const double time = static_cast<double>(i) * gridSeconds;
-        if (time > visibleEndTime + gridSeconds)
-          break;
-
-        const float x = static_cast<float>(time * pixelsPerSecond);
-        if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
-          continue;
-
-        if (isMultipleOf(time, barSeconds))
-        {
-          g.setColour(APP_COLOR_GRID_BAR);
-        }
-        else if (isMultipleOf(time, beatSeconds))
-        {
-          g.setColour(showScaleOverlay
-                          ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
-                          : APP_COLOR_GRID);
-        }
-        else
-        {
-          g.setColour(APP_COLOR_GRID.darker(0.2f));
-        }
-        g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
-      }
-    }
-  }
-  else
-  {
-    // Time mode keeps simple second-based spacing.
-    const float secondsPerLine = pixelsPerSecond >= 180.0f  ? 0.25f
-                                 : pixelsPerSecond >= 90.0f ? 0.5f
-                                 : pixelsPerSecond >= 45.0f ? 1.0f
-                                 : pixelsPerSecond >= 22.0f ? 2.0f
-                                                            : 5.0f;
-    const float pixelsPerLine = secondsPerLine * pixelsPerSecond;
-    if (pixelsPerLine > 1.0e-4f)
-    {
-      g.setColour(showScaleOverlay
-                      ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
-                      : APP_COLOR_GRID);
-      const int firstLine =
-          std::max(0, static_cast<int>(std::floor(visibleStartX / pixelsPerLine)));
-      for (float x = firstLine * pixelsPerLine; x <= visibleEndX; x += pixelsPerLine)
-        g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
-    }
-  }
+  GridRenderer::Params params;
+  params.scaleMode = previewScaleMode.value_or(selectedScaleMode);
+  params.scaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
+  params.showScaleColors = showScaleColors;
+  params.timelineDisplayMode = timelineDisplayMode;
+  params.gridSeconds = getTimelineGridSeconds();
+  params.beatSeconds = getTimelineBeatSeconds();
+  params.barSeconds = getTimelineBarSeconds();
+  params.componentWidth = getWidth();
+  params.visibleContentWidth = getVisibleContentWidth();
+  params.visibleContentHeight = getVisibleContentHeight();
+  gridRenderer->draw(g, params);
 }
 
 void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
@@ -900,649 +633,48 @@ void PianoRollComponent::drawGameValuesDebugOverlay(juce::Graphics &g)
 
 void PianoRollComponent::drawTimeline(juce::Graphics &g)
 {
-  constexpr int scrollBarSize = 8;
-  auto timelineArea = juce::Rectangle<int>(
-      pianoKeysWidth, 0, getWidth() - pianoKeysWidth - scrollBarSize,
-      timelineHeight);
-
-  // Background
-  g.setColour(APP_COLOR_TIMELINE);
-  g.fillRect(timelineArea);
-
-  // Bottom border
-  g.setColour(APP_COLOR_GRID_BAR);
-  g.drawHorizontalLine(timelineHeight - 1, static_cast<float>(pianoKeysWidth),
-                       static_cast<float>(getWidth() - scrollBarSize));
-
-  const float duration = project ? project->getAudioData().getDuration() : 60.0f;
-  g.setFont(TimecodeFont::getBoldFont(12.0f));
-
-  if (timelineDisplayMode == TimelineDisplayMode::Beats)
-  {
-    const double beatSeconds = getTimelineBeatSeconds();
-    const double barSeconds = getTimelineBarSeconds();
-    if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
-    {
-      const int beatsPerBar = juce::jmax(1, timelineBeatNumerator);
-      const float pixelsPerBeat = static_cast<float>(beatSeconds * pixelsPerSecond);
-      int beatStep = 1;
-      while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
-        beatStep *= 2;
-
-      const int firstBeat = std::max(
-          0, static_cast<int>(std::floor((scrollX / pixelsPerSecond) / beatSeconds)));
-      const int lastBeat = static_cast<int>(
-                               std::ceil((scrollX + timelineArea.getWidth()) / pixelsPerSecond / beatSeconds)) +
-                           beatStep;
-
-      for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
-      {
-        const double time = static_cast<double>(beatIndex) * beatSeconds;
-        if (time > duration + beatSeconds)
-          break;
-
-        const float x =
-            pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) - static_cast<float>(scrollX);
-        if (x < pianoKeysWidth - 50 || x > getWidth())
-          continue;
-
-        const bool isBarLine = (beatIndex % beatsPerBar) == 0;
-        const int tickHeight = isBarLine ? 9 : 4;
-        g.setColour(isBarLine ? APP_COLOR_GRID_BAR : APP_COLOR_GRID);
-        g.drawVerticalLine(static_cast<int>(x),
-                           static_cast<float>(timelineHeight - tickHeight),
-                           static_cast<float>(timelineHeight - 1));
-
-        if (isBarLine)
-        {
-          const int bar = beatIndex / beatsPerBar + 1;
-          g.setColour(APP_COLOR_TEXT_MUTED);
-          g.drawText("Bar " + juce::String(bar), static_cast<int>(x) + 3, 2, 64,
-                     timelineHeight - 4, juce::Justification::centredLeft, false);
-        }
-        else if (beatStep == 1 && pixelsPerBeat >= 58.0f)
-        {
-          const int beatInBar = (beatIndex % beatsPerBar) + 1;
-          const int bar = beatIndex / beatsPerBar + 1;
-          g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(0.8f));
-          g.drawText(juce::String::formatted("%d.%d", bar, beatInBar),
-                     static_cast<int>(x) + 3, 2, 48, timelineHeight - 4,
-                     juce::Justification::centredLeft, false);
-        }
-      }
-      return;
-    }
-  }
-
-  // Time mode labels/ticks.
-  float secondsPerTick;
-  if (pixelsPerSecond >= 200.0f)
-    secondsPerTick = 0.5f;
-  else if (pixelsPerSecond >= 100.0f)
-    secondsPerTick = 1.0f;
-  else if (pixelsPerSecond >= 50.0f)
-    secondsPerTick = 2.0f;
-  else if (pixelsPerSecond >= 25.0f)
-    secondsPerTick = 5.0f;
-  else
-    secondsPerTick = 10.0f;
-
-  for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick)
-  {
-    float x =
-        pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
-
-    if (x < pianoKeysWidth - 50 || x > getWidth())
-      continue;
-
-    bool isMajor = std::fmod(time, secondsPerTick * 2.0f) < 0.001f;
-    int tickHeight = isMajor ? 8 : 4;
-
-    g.setColour(APP_COLOR_GRID_BAR);
-    g.drawVerticalLine(static_cast<int>(x),
-                       static_cast<float>(timelineHeight - tickHeight),
-                       static_cast<float>(timelineHeight - 1));
-
-    if (isMajor)
-    {
-      int minutes = static_cast<int>(time) / 60;
-      int seconds = static_cast<int>(time) % 60;
-      int tenths = static_cast<int>((time - std::floor(time)) * 10);
-
-      juce::String label;
-      if (minutes > 0)
-        label = juce::String::formatted("%d:%02d", minutes, seconds);
-      else if (secondsPerTick < 1.0f)
-        label = juce::String::formatted("%d.%d", seconds, tenths);
-      else
-        label = juce::String::formatted("%ds", seconds);
-
-      g.setColour(APP_COLOR_TEXT_MUTED);
-      g.drawText(label, static_cast<int>(x) + 3, 2, 50, timelineHeight - 4,
-                 juce::Justification::centredLeft, false);
-    }
-  }
+  TimelineRenderer::TimelineParams params;
+  params.displayMode = timelineDisplayMode;
+  params.beatNumerator = timelineBeatNumerator;
+  params.beatSeconds = getTimelineBeatSeconds();
+  params.barSeconds = getTimelineBarSeconds();
+  params.componentWidth = getWidth();
+  timelineRenderer->drawTimeline(g, params);
 }
 
 void PianoRollComponent::drawLoopTimeline(juce::Graphics &g)
 {
-  constexpr int scrollBarSize = 8;
-  auto loopArea = juce::Rectangle<int>(
-      pianoKeysWidth, timelineHeight,
-      getWidth() - pianoKeysWidth - scrollBarSize, loopTimelineHeight);
-
-  g.setColour(APP_COLOR_SURFACE_ALT);
-  g.fillRect(loopArea);
-
-  g.setColour(APP_COLOR_GRID_BAR);
-  g.drawHorizontalLine(headerHeight - 1,
-                       static_cast<float>(pianoKeysWidth),
-                       static_cast<float>(getWidth() - scrollBarSize));
-
-  if (!project)
-    return;
-
-  double loopStartSeconds = 0.0;
-  double loopEndSeconds = 0.0;
-  bool loopEnabled = false;
-  if (loopDragHandler_ && loopDragHandler_->isDragging())
+  TimelineRenderer::LoopParams params;
+  params.componentWidth = getWidth();
+  params.loopStartSeconds = 0.0;
+  params.loopEndSeconds = 0.0;
+  params.loopEnabled = false;
+  // Match prior behaviour: if there's no project, draw only the empty gutter.
+  if (project)
   {
-    loopStartSeconds = loopDragHandler_->getDragStartSeconds();
-    loopEndSeconds = loopDragHandler_->getDragEndSeconds();
-    loopEnabled = true;
+    if (loopDragHandler_ && loopDragHandler_->isDragging())
+    {
+      params.loopStartSeconds = loopDragHandler_->getDragStartSeconds();
+      params.loopEndSeconds = loopDragHandler_->getDragEndSeconds();
+      params.loopEnabled = true;
+    }
+    else
+    {
+      const auto &loopRange = project->getLoopRange();
+      params.loopStartSeconds = loopRange.startSeconds;
+      params.loopEndSeconds = loopRange.endSeconds;
+      params.loopEnabled = loopRange.enabled;
+    }
   }
-  else
-  {
-    const auto &loopRange = project->getLoopRange();
-    loopStartSeconds = loopRange.startSeconds;
-    loopEndSeconds = loopRange.endSeconds;
-    loopEnabled = loopRange.enabled;
-  }
-
-  if (loopStartSeconds > loopEndSeconds)
-    std::swap(loopStartSeconds, loopEndSeconds);
-
-  if (loopEndSeconds <= loopStartSeconds)
-    return;
-
-  const float startX =
-      static_cast<float>(pianoKeysWidth) + timeToX(loopStartSeconds) -
-      static_cast<float>(scrollX);
-  const float endX =
-      static_cast<float>(pianoKeysWidth) + timeToX(loopEndSeconds) -
-      static_cast<float>(scrollX);
-
-  auto range = juce::Rectangle<float>(
-      startX, static_cast<float>(timelineHeight), endX - startX,
-      static_cast<float>(loopTimelineHeight));
-
-  const auto baseColor = APP_COLOR_PRIMARY;
-  const auto fillColor =
-      loopEnabled ? baseColor.withAlpha(0.25f) : baseColor.withAlpha(0.12f);
-  const auto edgeColor =
-      loopEnabled ? baseColor : APP_COLOR_BORDER;
-
-  g.setColour(fillColor);
-  g.fillRect(range);
-
-  g.setColour(edgeColor);
-  g.drawLine(startX, static_cast<float>(timelineHeight), startX,
-             static_cast<float>(headerHeight - 1), 1.5f);
-  g.drawLine(endX, static_cast<float>(timelineHeight), endX,
-             static_cast<float>(headerHeight - 1), 1.5f);
-
-  constexpr float flagWidth = 6.0f;
-  constexpr float flagHeight = 6.0f;
-  constexpr float flagTop = 0.0f;
-
-  const float flagY = static_cast<float>(timelineHeight) + flagTop;
-
-  juce::Path startFlag;
-  startFlag.addTriangle(startX, flagY, startX, flagY + flagHeight,
-                        startX - flagWidth, flagY + flagHeight);
-  g.fillPath(startFlag);
-
-  juce::Path endFlag;
-  endFlag.addTriangle(endX, flagY, endX, flagY + flagHeight,
-                      endX + flagWidth, flagY + flagHeight);
-  g.fillPath(endFlag);
+  timelineRenderer->drawLoopTimeline(g, params);
 }
 
 void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
 {
-  if (!project)
-    return;
-
-  const bool drawBodies = pass == NoteRenderPass::Body;
-  const bool drawOverlays = pass == NoteRenderPass::Overlay;
-
-  // Pre-allocated scratch buffers to avoid per-note heap allocations
-  std::vector<float> waveValues;
-  std::vector<float> smoothed;
-  waveValues.reserve(2048);
-  smoothed.reserve(2048);
-
-  const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
-  const std::vector<Note *> *draggedNotes =
-      isMultiDragging ? &pitchEditor->getDraggedNotes() : nullptr;
-
-  auto drawSelectedNoteOutline = [&g](float x, float y, float w, float h)
-  {
-    constexpr float localOutlinePadding = 2.0f;
-    constexpr float outlineThickness = 1.5f;
-    constexpr float outlineCornerRadius = 3.5f;
-
-    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.95f));
-    g.drawRoundedRectangle(
-        x - localOutlinePadding, y - localOutlinePadding,
-        w + localOutlinePadding * 2.0f, h + localOutlinePadding * 2.0f,
-        outlineCornerRadius, outlineThickness);
-  };
-  auto getDeltaScaleHandleBounds = [](float x, float y, float w,
-                                      float h) -> juce::Rectangle<float>
-  {
-    constexpr float localOutlinePadding = 2.0f;
-    constexpr float localHandleWidth = 18.0f;
-    constexpr float localHandleHeight = 10.0f;
-    constexpr float localHandleGap = 4.0f;
-    constexpr float localHandleSpacing = 6.0f;
-    const float centerX = x + w * 0.5f;
-    const float groupWidth = localHandleWidth * 2.0f + localHandleSpacing;
-    const float groupLeft = centerX - groupWidth * 0.5f;
-    const float handleX = groupLeft;
-    const float handleY =
-        y + h + localOutlinePadding + localHandleGap;
-    return {handleX, handleY, localHandleWidth, localHandleHeight};
-  };
-  auto getDeltaOffsetHandleBounds = [](float x, float y, float w,
-                                       float h) -> juce::Rectangle<float>
-  {
-    constexpr float localOutlinePadding = 2.0f;
-    constexpr float localHandleWidth = 18.0f;
-    constexpr float localHandleHeight = 10.0f;
-    constexpr float localHandleGap = 4.0f;
-    constexpr float localHandleSpacing = 6.0f;
-    const float centerX = x + w * 0.5f;
-    const float groupWidth = localHandleWidth * 2.0f + localHandleSpacing;
-    const float groupLeft = centerX - groupWidth * 0.5f;
-    const float handleX = groupLeft + localHandleWidth + localHandleSpacing;
-    const float handleY =
-        y + h + localOutlinePadding + localHandleGap;
-    return {handleX, handleY, localHandleWidth, localHandleHeight};
-  };
-
-  const auto &audioData = project->getAudioData();
-  const float *globalSamples =
-      drawBodies && audioData.waveform.getNumSamples() > 0
-          ? audioData.waveform.getReadPointer(0)
-          : nullptr;
-  int globalTotalSamples = drawBodies ? audioData.waveform.getNumSamples() : 0;
-
-  // Calculate visible time range for culling
-  double visibleStartTime = scrollX / pixelsPerSecond;
-  double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
-
-  for (auto &note : project->getNotes())
-  {
-    // Skip rest notes (they have no pitch)
-    if (note.isRest())
-      continue;
-
-    // Viewport culling: skip notes outside visible area
-    double noteStartTime = framesToSeconds(note.getStartFrame());
-    double noteEndTime = framesToSeconds(note.getEndFrame());
-    if (noteEndTime < visibleStartTime || noteStartTime > visibleEndTime)
-      continue;
-
-    float x = static_cast<float>(noteStartTime * pixelsPerSecond);
-    float w = framesToSeconds(note.getDurationFrames()) * pixelsPerSecond;
-    float h = pixelsPerSemitone;
-    const float renderedWidth = std::max(w, 4.0f);
-
-    // Position at grid cell center for MIDI note, then offset by pitch
-    // adjustment
-    float baseGridCenterY =
-        midiToY(note.getMidiNote()) + pixelsPerSemitone * 0.5f;
-    float pitchOffsetPixels = -note.getPitchOffset() * pixelsPerSemitone;
-    float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
-
-    if (drawBodies)
-    {
-      // Note color based on pitch
-      juce::Colour noteColor = note.isSelected()
-                                   ? APP_COLOR_NOTE_SELECTED
-                                   : APP_COLOR_NOTE_NORMAL;
-
-      const float *samples = globalSamples;
-      int totalSamples = globalTotalSamples;
-      int startSample = 0;
-      int endSample = 0;
-      const auto &clipWaveform = note.getClipWaveform();
-      if (!clipWaveform.empty())
-      {
-        samples = clipWaveform.data();
-        totalSamples = static_cast<int>(clipWaveform.size());
-        startSample = 0;
-        endSample = totalSamples;
-      }
-      else if (samples && totalSamples > 0)
-      {
-        startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
-                                       audioData.sampleRate);
-        endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
-                                     audioData.sampleRate);
-        startSample = std::max(0, std::min(startSample, totalSamples - 1));
-        endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
-      }
-
-      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
-      {
-        // Draw waveform slice inside note
-        int numNoteSamples = endSample - startSample;
-        int samplesPerPixel = std::max(1, static_cast<int>(numNoteSamples / w));
-
-        float centerY = y + h * 0.5f;
-        float waveHeight = h * 3.0f;
-
-        // Build waveform data with increased resolution for smoother curves
-        waveValues.clear();
-        // Increase point density for smoother curves (up to 800 points)
-        float step = std::max(0.5f, w / 1024.0f);
-
-        for (float px = 0; px <= w; px += step)
-        {
-          int sampleIdx =
-              startSample + static_cast<int>((px / w) * numNoteSamples);
-          int sampleEnd = std::min(sampleIdx + samplesPerPixel, endSample);
-
-          float maxVal = 0.0f;
-          for (int i = sampleIdx; i < sampleEnd; ++i)
-            maxVal = std::max(maxVal, std::abs(samples[i]));
-
-          waveValues.push_back(maxVal);
-        }
-
-        // Apply smoothing filter to reduce aliasing artifacts
-        if (waveValues.size() > 2)
-        {
-          smoothed.resize(waveValues.size());
-          smoothed[0] = waveValues[0];
-          for (size_t i = 1; i + 1 < waveValues.size(); ++i)
-          {
-            // Simple 3-point moving average for gentle smoothing
-            smoothed[i] = (waveValues[i - 1] * 0.25f + waveValues[i] * 0.5f +
-                           waveValues[i + 1] * 0.25f);
-          }
-          smoothed[waveValues.size() - 1] = waveValues[waveValues.size() - 1];
-          waveValues = std::move(smoothed);
-        }
-
-        size_t numPoints = waveValues.size();
-        if (numPoints < 2)
-        {
-          // Fallback for very short notes
-          g.setColour(noteColor.withAlpha(0.85f));
-          g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
-        }
-        else
-        {
-          // Helper function for Catmull-Rom spline interpolation
-          auto catmullRom = [](float t, float p0, float p1, float p2,
-                               float p3) -> float
-          {
-            // Catmull-Rom spline: smooth interpolation between p1 and p2
-            float t2 = t * t;
-            float t3 = t2 * t;
-            return 0.5f * ((2.0f * p1) + (-p0 + p2) * t +
-                           (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
-                           (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
-          };
-
-          // Draw filled waveform using smooth curves
-          g.setColour(noteColor.withAlpha(0.85f));
-          juce::Path waveformPath;
-
-          // Build top curve with Catmull-Rom spline
-          waveformPath.startNewSubPath(
-              x, centerY - waveValues[0] * waveHeight * 0.5f);
-
-          // Use cubic curves for smooth interpolation
-          const int curveSegments =
-              4; // Interpolate 4 points between each pair
-          for (size_t i = 0; i + 1 < numPoints; ++i)
-          {
-            float px1 = (static_cast<float>(i) /
-                         static_cast<float>(numPoints - 1)) *
-                        w;
-            float px2 = (static_cast<float>(i + 1) /
-                         static_cast<float>(numPoints - 1)) *
-                        w;
-
-            // Get control points for spline
-            size_t idx0 = (i > 0) ? i - 1 : i;
-            size_t idx1 = i;
-            size_t idx2 = i + 1;
-            size_t idx3 = (i + 2 < numPoints) ? i + 2 : i + 1;
-
-            float val0 = waveValues[idx0];
-            float val1 = waveValues[idx1];
-            float val2 = waveValues[idx2];
-            float val3 = waveValues[idx3];
-
-            // Draw smooth curve segment
-            for (int seg = 1; seg <= curveSegments; ++seg)
-            {
-              float t =
-                  static_cast<float>(seg) / static_cast<float>(curveSegments);
-              float px = px1 + (px2 - px1) * t;
-              float val = catmullRom(t, val0, val1, val2, val3);
-              float yPos = centerY - val * waveHeight * 0.5f;
-              waveformPath.lineTo(x + px, yPos);
-            }
-          }
-
-          // Build bottom curve (mirror of top)
-          waveformPath.lineTo(x + w, centerY + waveValues[numPoints - 1] *
-                                                   waveHeight * 0.5f);
-
-          for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i)
-          {
-            float px1 = (static_cast<float>(i + 1) /
-                         static_cast<float>(numPoints - 1)) *
-                        w;
-            float px2 =
-                (static_cast<float>(i) / static_cast<float>(numPoints - 1)) *
-                w;
-
-            size_t idx0 = (i + 2 < numPoints) ? i + 2 : i + 1;
-            size_t idx1 = i + 1;
-            size_t idx2 = i;
-            size_t idx3 = (i > 0) ? i - 1 : i;
-
-            float val0 = waveValues[idx0];
-            float val1 = waveValues[idx1];
-            float val2 = waveValues[idx2];
-            float val3 = waveValues[idx3];
-
-            for (int seg = 1; seg <= curveSegments; ++seg)
-            {
-              float t =
-                  static_cast<float>(seg) / static_cast<float>(curveSegments);
-              float px = px1 + (px2 - px1) * t;
-              float val = catmullRom(t, val0, val1, val2, val3);
-              float yPos = centerY + val * waveHeight * 0.5f;
-              waveformPath.lineTo(x + px, yPos);
-            }
-          }
-
-          waveformPath.closeSubPath();
-          g.fillPath(waveformPath);
-
-          // Reuse the same closed path for the outline stroke
-          g.setColour(noteColor.brighter(0.2f));
-          g.strokePath(waveformPath,
-                       juce::PathStrokeType(1.2f,
-                                            juce::PathStrokeType::curved,
-                                            juce::PathStrokeType::rounded));
-        }
-      }
-      else
-      {
-        // Fallback: simple rectangle for very short notes
-        g.setColour(noteColor.withAlpha(0.85f));
-        g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
-      }
-    }
-
-    if (drawOverlays && note.isSelected())
-    {
-      drawSelectedNoteOutline(x, y, renderedWidth, h);
-
-      const auto handleBounds =
-          getDeltaScaleHandleBounds(x, y, renderedWidth, h);
-      const bool handleActive =
-          selectHandler_->getIsDeltaScaleDragging() &&
-          std::find(selectHandler_->getDeltaScaleTargetNotes().begin(),
-                    selectHandler_->getDeltaScaleTargetNotes().end(),
-                    &note) != selectHandler_->getDeltaScaleTargetNotes().end();
-      g.setColour(handleActive ? APP_COLOR_PRIMARY.brighter(0.1f)
-                               : APP_COLOR_PRIMARY.withAlpha(0.9f));
-      g.fillRoundedRectangle(handleBounds, 2.5f);
-      g.setColour(juce::Colours::white.withAlpha(0.95f));
-      g.drawRoundedRectangle(handleBounds, 2.5f, 1.0f);
-
-      const float cx = handleBounds.getCentreX();
-      const float top = handleBounds.getY() + 2.0f;
-      const float bottom = handleBounds.getBottom() - 2.0f;
-      g.drawLine(cx, top + 2.0f, cx, bottom - 2.0f, 1.0f);
-      juce::Path upArrow;
-      upArrow.addTriangle(cx, top, cx - 2.5f, top + 3.5f, cx + 2.5f, top + 3.5f);
-      g.fillPath(upArrow);
-      juce::Path downArrow;
-      downArrow.addTriangle(cx, bottom, cx - 2.5f, bottom - 3.5f,
-                            cx + 2.5f, bottom - 3.5f);
-      g.fillPath(downArrow);
-
-      if (selectHandler_->getIsDeltaScaleDragging() && selectHandler_->getDeltaScaleFactor() > 0.0f)
-      {
-        const juce::String factorText = "x" + juce::String(selectHandler_->getDeltaScaleFactor(), 2);
-        const float infoW = 44.0f;
-        const float infoH = 14.0f;
-        const float infoX = handleBounds.getCentreX() - infoW * 0.5f;
-        const float infoY = handleBounds.getBottom() + 2.0f;
-        g.setColour(juce::Colours::black.withAlpha(0.72f));
-        g.fillRoundedRectangle(infoX, infoY, infoW, infoH, 3.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.95f));
-        g.setFont(juce::FontOptions(10.0f));
-        g.drawFittedText(factorText, static_cast<int>(infoX),
-                         static_cast<int>(infoY), static_cast<int>(infoW),
-                         static_cast<int>(infoH), juce::Justification::centred,
-                         1);
-      }
-
-      const auto offsetHandleBounds =
-          getDeltaOffsetHandleBounds(x, y, renderedWidth, h);
-      const bool offsetHandleActive =
-          selectHandler_->getIsDeltaOffsetDragging() &&
-          std::find(selectHandler_->getDeltaOffsetTargetNotes().begin(),
-                    selectHandler_->getDeltaOffsetTargetNotes().end(),
-                    &note) != selectHandler_->getDeltaOffsetTargetNotes().end();
-      g.setColour(offsetHandleActive ? APP_COLOR_PRIMARY.brighter(0.1f)
-                                     : APP_COLOR_PRIMARY.withAlpha(0.9f));
-      g.fillRoundedRectangle(offsetHandleBounds, 2.5f);
-      g.setColour(juce::Colours::white.withAlpha(0.95f));
-      g.drawRoundedRectangle(offsetHandleBounds, 2.5f, 1.0f);
-      g.setFont(juce::FontOptions(9.0f));
-      g.drawFittedText("+/-", static_cast<int>(offsetHandleBounds.getX()),
-                       static_cast<int>(offsetHandleBounds.getY()),
-                       static_cast<int>(offsetHandleBounds.getWidth()),
-                       static_cast<int>(offsetHandleBounds.getHeight()),
-                       juce::Justification::centred, 1);
-
-      if (selectHandler_->getIsDeltaOffsetDragging())
-      {
-        const juce::String prefix = selectHandler_->getDeltaOffsetSemitones() >= 0.0f ? "+" : "";
-        const juce::String offsetText =
-            prefix + juce::String(selectHandler_->getDeltaOffsetSemitones(), 2) + " st";
-        const float infoW = 56.0f;
-        const float infoH = 14.0f;
-        const float infoX = offsetHandleBounds.getCentreX() - infoW * 0.5f;
-        const float infoY = offsetHandleBounds.getBottom() + 2.0f;
-        g.setColour(juce::Colours::black.withAlpha(0.72f));
-        g.fillRoundedRectangle(infoX, infoY, infoW, infoH, 3.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.95f));
-        g.setFont(juce::FontOptions(10.0f));
-        g.drawFittedText(offsetText, static_cast<int>(infoX),
-                         static_cast<int>(infoY), static_cast<int>(infoW),
-                         static_cast<int>(infoH), juce::Justification::centred,
-                         1);
-      }
-    }
-
-    const bool isSingleDragged = selectHandler_->isSingleNoteDragging() && selectHandler_->getDraggedNote() == &note;
-    const bool isMultiDragged =
-        isMultiDragging && draggedNotes &&
-        std::find(draggedNotes->begin(), draggedNotes->end(), &note) !=
-            draggedNotes->end();
-    if (drawOverlays && (isSingleDragged || isMultiDragged))
-    {
-      const float deltaSemitones = note.getPitchOffset();
-      if (std::abs(deltaSemitones) >= 0.01f)
-      {
-        const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
-        const juce::String label =
-            prefix + juce::String(deltaSemitones, 1) + " st";
-
-        constexpr float labelHeight = 16.0f;
-        constexpr float margin = 4.0f;
-        const float labelWidth =
-            std::max(44.0f, static_cast<float>(label.length()) * 7.2f);
-        const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
-        const bool moveUp = deltaSemitones > 0.0f;
-        const float labelY = moveUp ? (y - labelHeight - margin) : (y + h + margin);
-
-        g.setColour(juce::Colours::black.withAlpha(0.72f));
-        g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
-        g.setColour(juce::Colours::white);
-        g.setFont(juce::FontOptions(11.0f));
-        g.drawFittedText(label, static_cast<int>(labelX),
-                         static_cast<int>(labelY),
-                         static_cast<int>(labelWidth),
-                         static_cast<int>(labelHeight),
-                         juce::Justification::centred, 1);
-      }
-    }
-  }
-
-  // Draw split guide line when in split mode and hovering over a note
-  if (drawOverlays && editMode == EditMode::Split && splitHandler_ &&
-      splitHandler_->getSplitGuideNote() &&
-      splitHandler_->getSplitGuideX() >= 0)
-  {
-    auto *guideNote = splitHandler_->getSplitGuideNote();
-    float guideX = splitHandler_->getSplitGuideX();
-    float noteStartTime = framesToSeconds(guideNote->getStartFrame());
-    float noteEndTime = framesToSeconds(guideNote->getEndFrame());
-    float noteStartX = static_cast<float>(noteStartTime * pixelsPerSecond);
-    float noteEndX = static_cast<float>(noteEndTime * pixelsPerSecond);
-
-    // Only draw if guide is within note bounds (with margin)
-    if (guideX > noteStartX + 5 && guideX < noteEndX - 5)
-    {
-      float noteY = midiToY(guideNote->getAdjustedMidiNote());
-      float noteH = pixelsPerSemitone;
-
-      // Draw dashed vertical line
-      g.setColour(APP_COLOR_SECONDARY);
-      float dashLength = 4.0f;
-      for (float dy = 0; dy < noteH; dy += dashLength * 2)
-      {
-        float segmentLength = std::min(dashLength, noteH - dy);
-        g.drawLine(guideX, noteY + dy, guideX,
-                   noteY + dy + segmentLength, 2.0f);
-      }
-    }
-  }
+  const auto rendererPass = pass == NoteRenderPass::Body ? NoteRenderer::Pass::Body
+                                                          : NoteRenderer::Pass::Overlay;
+  const bool splitModeActive = editMode == EditMode::Split;
+  noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
 }
 
 #if HACHITUNE_ENABLE_STRETCH
@@ -1583,383 +715,22 @@ void PianoRollComponent::drawStretchGuides(juce::Graphics &g)
 
 void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
 {
-  if (!project)
-    return;
-
-  // Hide pitch curves in Parameter mode to avoid visual clashing
-  // with the HNSep overlay that occupies the same viewport area.
-  if (editMode == EditMode::Parameter)
-    return;
-
-  const auto &audioData = project->getAudioData();
-  if (audioData.f0.empty())
-    return;
-
-  // Get global pitch offset (applied to display only)
-  float globalOffset = project->getGlobalPitchOffset();
-
-  // Draw pitch curves per note with their pitch offsets applied (delta pitch)
-  if (showDeltaPitch)
-  {
-    g.setColour(APP_COLOR_PITCH_CURVE);
-    if (showUvInterpolationDebug)
-    {
-      const double visibleStartTime = scrollX / pixelsPerSecond;
-      const double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
-      const int visStartFrame = std::max(
-          0,
-          static_cast<int>(visibleStartTime * audioData.sampleRate / HOP_SIZE));
-      const int visEndFrame = std::min(
-          static_cast<int>(audioData.f0.size()),
-          static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
-
-      const auto &chunkRanges = audioData.segmentChunkRanges;
-      size_t chunkIdx = 0;
-
-      juce::Path path;
-      bool pathStarted = false;
-      for (int i = visStartFrame; i < visEndFrame; ++i)
-      {
-        bool inChunk = true;
-        if (!chunkRanges.empty())
-        {
-          while (chunkIdx < chunkRanges.size() &&
-                 chunkRanges[chunkIdx].second <= i)
-            ++chunkIdx;
-          inChunk = chunkIdx < chunkRanges.size() &&
-                    chunkRanges[chunkIdx].first <= i &&
-                    chunkRanges[chunkIdx].second > i;
-        }
-        if (!inChunk)
-        {
-          pathStarted = false;
-          continue;
-        }
-
-        float baseMidi =
-            (i < static_cast<int>(audioData.basePitch.size()))
-                ? audioData.basePitch[static_cast<size_t>(i)]
-                : ((i < static_cast<int>(audioData.f0.size()) &&
-                    audioData.f0[static_cast<size_t>(i)] > 0.0f)
-                       ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
-                       : 0.0f);
-        float deltaMidi = (i < static_cast<int>(audioData.deltaPitch.size()))
-                              ? audioData.deltaPitch[static_cast<size_t>(i)]
-                              : 0.0f;
-        float finalMidi = baseMidi + deltaMidi + globalOffset;
-
-        if (finalMidi <= 0.0f)
-        {
-          pathStarted = false;
-          continue;
-        }
-
-        float x = framesToSeconds(i) * pixelsPerSecond;
-        float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
-        if (!pathStarted)
-        {
-          path.startNewSubPath(x, y);
-          pathStarted = true;
-        }
-        else
-        {
-          path.lineTo(x, y);
-        }
-      }
-      g.strokePath(path, juce::PathStrokeType(2.0f));
-    }
-    else
-    {
-      const bool useLiveBasePreview =
-          (selectHandler_->isSingleNoteDragging() || pitchEditor->isDraggingMultiNotes());
-      const auto &draggedNotes = pitchEditor->getDraggedNotes();
-
-      for (const auto &note : project->getNotes())
-      {
-        if (note.isRest())
-          continue;
-
-        const bool isDraggedNote =
-            (selectHandler_->isSingleNoteDragging() && selectHandler_->getDraggedNote() == &note) ||
-            (pitchEditor->isDraggingMultiNotes() &&
-             std::find(draggedNotes.begin(), draggedNotes.end(), &note) !=
-                 draggedNotes.end());
-        const bool applyNoteOffset = !(useLiveBasePreview && isDraggedNote);
-
-        juce::Path path;
-        bool pathStarted = false;
-
-        int startFrame = note.getStartFrame();
-        int endFrame =
-            std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
-
-        for (int i = startFrame; i < endFrame; ++i)
-        {
-          float baseMidi =
-              (i < static_cast<int>(audioData.basePitch.size()))
-                  ? audioData.basePitch[static_cast<size_t>(i)]
-                  : ((i < static_cast<int>(audioData.f0.size()) &&
-                      audioData.f0[static_cast<size_t>(i)] > 0.0f)
-                         ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
-                         : 0.0f);
-          if (applyNoteOffset)
-            baseMidi += note.getPitchOffset();
-
-          float deltaMidi = (i < static_cast<int>(audioData.deltaPitch.size()))
-                                ? audioData.deltaPitch[static_cast<size_t>(i)]
-                                : 0.0f;
-          float finalMidi = baseMidi + deltaMidi + globalOffset;
-
-          if (finalMidi > 0.0f)
-          {
-            float x = framesToSeconds(i) * pixelsPerSecond;
-            float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
-            if (!pathStarted)
-            {
-              path.startNewSubPath(x, y);
-              pathStarted = true;
-            }
-            else
-            {
-              path.lineTo(x, y);
-            }
-          }
-        }
-
-        if (pathStarted)
-          g.strokePath(path, juce::PathStrokeType(2.0f));
-      }
-    }
-  }
-
-  if (showActualF0Debug)
-  {
-    const double visibleStartTime = scrollX / pixelsPerSecond;
-    const double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
-    const int visStartFrame =
-        std::max(0, static_cast<int>(visibleStartTime * audioData.sampleRate /
-                                     HOP_SIZE));
-    const int visEndFrame = std::min(
-        static_cast<int>(audioData.f0.size()),
-        static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
-
-    g.setColour(juce::Colours::aqua.withAlpha(0.90f));
-    juce::Path actualPath;
-    bool pathStarted = false;
-
-    for (int i = visStartFrame; i < visEndFrame; ++i)
-    {
-      const float f0 = audioData.f0[static_cast<size_t>(i)];
-      if (f0 <= 0.0f)
-      {
-        if (pathStarted)
-        {
-          g.strokePath(actualPath, juce::PathStrokeType(1.7f));
-          actualPath.clear();
-          pathStarted = false;
-        }
-        continue;
-      }
-
-      const float midi = freqToMidi(f0) + globalOffset;
-      const float x = framesToSeconds(i) * pixelsPerSecond;
-      const float y = midiToY(midi) + pixelsPerSemitone * 0.5f;
-      if (!pathStarted)
-      {
-        actualPath.startNewSubPath(x, y);
-        pathStarted = true;
-      }
-      else
-      {
-        actualPath.lineTo(x, y);
-      }
-    }
-
-    if (pathStarted)
-      g.strokePath(actualPath, juce::PathStrokeType(1.7f));
-  }
-
-  // Draw base pitch curve as dashed line
-  // Use cached base pitch to avoid expensive recalculation on every repaint
-  if (showBasePitch)
-  {
-    const bool useLiveBasePreview =
-        (selectHandler_->isSingleNoteDragging() || pitchEditor->isDraggingMultiNotes());
-    if (!useLiveBasePreview)
-    {
-      updateBasePitchCacheIfNeeded();
-    }
-
-    const auto &basePitchCurve =
-        useLiveBasePreview ? audioData.basePitch : cachedBasePitch;
-    if (!basePitchCurve.empty())
-    {
-      // Calculate visible frame range
-      double visibleStartTime = scrollX / pixelsPerSecond;
-      double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
-      int visStartFrame =
-          std::max(0, static_cast<int>(visibleStartTime * audioData.sampleRate /
-                                       HOP_SIZE));
-      int visEndFrame = std::min(
-          static_cast<int>(basePitchCurve.size()),
-          static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) +
-              1);
-
-      // Draw base pitch curve with dashed line
-      g.setColour(
-          APP_COLOR_SECONDARY.withAlpha(0.6f));
-      juce::Path basePath;
-      bool basePathStarted = false;
-
-      for (int i = visStartFrame; i < visEndFrame; ++i)
-      {
-        if (i >= 0 && i < static_cast<int>(basePitchCurve.size()))
-        {
-          float baseMidi = basePitchCurve[static_cast<size_t>(i)];
-          if (baseMidi > 0.0f)
-          {
-            float x = framesToSeconds(i) * pixelsPerSecond;
-            float y = midiToY(baseMidi) +
-                      pixelsPerSemitone * 0.5f; // Center in grid cell
-
-            if (!basePathStarted)
-            {
-              basePath.startNewSubPath(x, y);
-              basePathStarted = true;
-            }
-            else
-            {
-              basePath.lineTo(x, y);
-            }
-          }
-          else if (basePathStarted)
-          {
-            // Break path at unvoiced regions - draw current segment before
-            // breaking
-            juce::Path dashedPath;
-            juce::PathStrokeType stroke(1.5f);
-            const float dashLengths[] = {4.0f, 4.0f}; // 4px dash, 4px gap
-            stroke.createDashedStroke(dashedPath, basePath, dashLengths, 2);
-            g.strokePath(dashedPath, juce::PathStrokeType(1.5f));
-            basePath.clear();
-            basePathStarted = false;
-          }
-        }
-      }
-
-      if (basePathStarted)
-      {
-        // Use dashed stroke for base pitch curve
-        juce::Path dashedPath;
-        juce::PathStrokeType stroke(1.5f);
-        const float dashLengths[] = {4.0f, 4.0f}; // 4px dash, 4px gap
-        stroke.createDashedStroke(dashedPath, basePath, dashLengths, 2);
-        g.strokePath(dashedPath, juce::PathStrokeType(1.5f));
-      }
-    }
-  }
-}
-
-void PianoRollComponent::drawCursor(juce::Graphics &g)
-{
-  float x = timeToX(cursorTime);
-  float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
-
-  g.setColour(APP_COLOR_PRIMARY);
-  g.fillRect(x - 0.5f, 0.0f, 1.0f, height);
+  PitchCurveRenderer::Params params;
+  params.showDeltaPitch = showDeltaPitch;
+  params.showBasePitch = showBasePitch;
+  params.showUvInterpolationDebug = showUvInterpolationDebug;
+  params.showActualF0Debug = showActualF0Debug;
+  params.isParameterMode = editMode == EditMode::Parameter;
+  params.componentWidth = getWidth();
+  pitchCurveRenderer->draw(g, params);
 }
 
 void PianoRollComponent::drawPianoKeys(juce::Graphics &g)
 {
-  constexpr int scrollBarSize = 8;
-  auto keyArea = getLocalBounds()
-                     .withWidth(pianoKeysWidth)
-                     .withTrimmedTop(headerHeight)
-                     .withTrimmedBottom(scrollBarSize);
-
-  // Background
-  g.setColour(APP_COLOR_SURFACE_ALT);
-  g.fillRect(keyArea);
-
-  static const char *noteNames[] = {"C", "C#", "D", "D#", "E", "F",
-                                    "F#", "G", "G#", "A", "A#", "B"};
   const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
   const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
-  const bool showScaleOverlay =
-      showScaleColors && activeScaleMode != ScaleMode::None &&
-      activeScaleMode != ScaleMode::Chromatic &&
-      activeScaleRootNote >= 0;
-  const juce::Colour scaleAccent = getScaleAccentColour(activeScaleMode);
-
-  // Draw each key
-  // Use truncated scrollY to match grid origin (which uses
-  // static_cast<int>(scrollY))
-  int scrollYInt = static_cast<int>(scrollY);
-  for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi)
-  {
-    float y = midiToY(static_cast<float>(midi)) -
-              static_cast<float>(scrollYInt) + headerHeight;
-    int noteInOctave = (midi % 12 + 12) % 12;
-
-    // Check if it's a black key
-    bool isBlack = isBlackKey(noteInOctave);
-    const auto toneState =
-        getScaleToneState(activeScaleMode, noteInOctave, activeScaleRootNote);
-
-    juce::Colour keyFill = isBlack ? APP_COLOR_PIANO_BLACK : APP_COLOR_PIANO_WHITE;
-    if (showScaleOverlay)
-    {
-      if (toneState == ScaleToneState::OutOfScale)
-      {
-        keyFill = APP_COLOR_PIANO_BLACK;
-      }
-      else
-      {
-        keyFill = APP_COLOR_PIANO_WHITE;
-        keyFill = keyFill.interpolatedWith(scaleAccent,
-                                           toneState == ScaleToneState::Root ? 0.32f : 0.16f);
-      }
-    }
-
-    g.setColour(keyFill);
-
-    g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth - 2),
-               pixelsPerSemitone - 1);
-
-    if (showScaleOverlay)
-    {
-      if (toneState == ScaleToneState::Root)
-      {
-        g.setColour(scaleAccent.withAlpha(0.95f));
-        g.fillRect(0.0f, y, 3.0f, pixelsPerSemitone - 1);
-      }
-      else if (toneState == ScaleToneState::InScale)
-      {
-        g.setColour(scaleAccent.withAlpha(0.55f));
-        g.fillRect(0.0f, y, 2.0f, pixelsPerSemitone - 1);
-      }
-    }
-
-    // Draw note name for all notes
-    int octave = midi / 12 - 1;
-    juce::String noteName =
-        juce::String(noteNames[noteInOctave]) + juce::String(octave);
-
-    juce::Colour textColour = isBlack ? APP_COLOR_PIANO_TEXT_DIM
-                                      : APP_COLOR_PIANO_TEXT;
-    if (showScaleOverlay)
-    {
-      if (toneState == ScaleToneState::Root)
-        textColour = APP_COLOR_TEXT_PRIMARY;
-      else if (toneState == ScaleToneState::OutOfScale)
-        textColour = textColour.withMultipliedAlpha(0.72f);
-    }
-    g.setColour(textColour);
-    g.setFont(13.0f);
-    g.drawText(noteName, pianoKeysWidth - 36, static_cast<int>(y), 32,
-               static_cast<int>(pixelsPerSemitone),
-               juce::Justification::centred);
-  }
+  pianoKeysRenderer->draw(g, getHeight(), activeScaleMode, activeScaleRootNote,
+                          showScaleColors);
 }
 
 float PianoRollComponent::midiToY(float midiNote) const
@@ -2375,7 +1146,11 @@ void PianoRollComponent::setProject(Project *proj)
   previewScaleMode.reset();
 
   // Update modular components
-  renderer->setProject(proj);
+  gridRenderer->setProject(proj);
+  timelineRenderer->setProject(proj);
+  waveformBackgroundRenderer->setProject(proj); // also clears its cache
+  noteRenderer->setProject(proj);
+  pitchCurveRenderer->setProject(proj); // also clears its cache
   scrollZoomController->setProject(proj);
   pitchEditor->setProject(proj);
   pitchEditor->setSnapToSemitoneDragEnabled(snapToSemitoneDrag);
@@ -2383,13 +1158,8 @@ void PianoRollComponent::setProject(Project *proj)
   noteSplitter->setProject(proj);
   pitchToolController->setProject(proj);
 
-  // Clear all caches when project changes to free memory
-  invalidateBasePitchCache();
-  waveformCache = juce::Image(); // Clear waveform cache
-  cachedScrollX = -1.0;
-  cachedPixelsPerSecond = -1.0f;
-  cachedWidth = 0;
-  cachedHeight = 0;
+  // Note: waveform and base-pitch caches are cleared by their renderers'
+  // setProject calls above.
 
   updatePitchToolHandlesFromSelection();
 
@@ -2989,80 +1759,6 @@ void PianoRollComponent::updateScrollBars()
 
     verticalScrollBar.setRangeLimits(0, totalHeight);
     verticalScrollBar.setCurrentRange(scrollY, visibleHeight);
-  }
-}
-
-void PianoRollComponent::updateBasePitchCacheIfNeeded()
-{
-  if (!project)
-  {
-    cachedBasePitch.clear();
-    cachedNoteCount = 0;
-    cachedTotalFrames = 0;
-    return;
-  }
-
-  const auto &notes = project->getNotes();
-  const auto &audioData = project->getAudioData();
-  int totalFrames = static_cast<int>(audioData.f0.size());
-
-  // Check if cache is valid
-  size_t currentNoteCount = 0;
-  for (const auto &note : notes)
-  {
-    if (!note.isRest())
-    {
-      currentNoteCount++;
-    }
-  }
-
-  // Invalidate cache if notes changed or total frames changed or explicitly
-  // invalidated For performance, we only check note count and total frames A
-  // more precise check would compare note positions/pitches, but that's
-  // expensive
-  if (cacheInvalidated || cachedNoteCount != currentNoteCount ||
-      cachedTotalFrames != totalFrames || cachedBasePitch.empty())
-  {
-    // Only regenerate if we have notes and frames
-    if (currentNoteCount > 0 && totalFrames > 0)
-    {
-      // Collect all notes
-      std::vector<BasePitchCurve::NoteSegment> noteSegments;
-      noteSegments.reserve(currentNoteCount);
-      for (const auto &note : notes)
-      {
-        if (!note.isRest())
-        {
-          noteSegments.push_back(
-              {note.getStartFrame(), note.getEndFrame(), note.getMidiNote()});
-        }
-      }
-
-      if (!noteSegments.empty())
-      {
-        // Generate smoothed base pitch curve (expensive operation, cached)
-        // This is only called when notes change, not on every repaint
-        cachedBasePitch =
-            BasePitchCurve::generateForNotes(noteSegments, totalFrames);
-        cachedNoteCount = currentNoteCount;
-        cachedTotalFrames = totalFrames;
-        cacheInvalidated = false; // Mark cache as valid
-      }
-      else
-      {
-        cachedBasePitch.clear();
-        cachedNoteCount = 0;
-        cachedTotalFrames = 0;
-        cacheInvalidated = false; // Mark as processed (even if empty)
-      }
-    }
-    else
-    {
-      cachedBasePitch.clear();
-      cachedNoteCount = 0;
-      cachedTotalFrames = 0;
-      cacheInvalidated = false; // Mark as processed (even if empty)
-    }
   }
 }
 
