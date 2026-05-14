@@ -5,8 +5,8 @@
 #include "ARADocumentController.h"
 #endif
 
-HachiTuneAudioProcessorEditor::HachiTuneAudioProcessorEditor(
-    HachiTuneAudioProcessor &p)
+PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
+    PitchNetAudioProcessor &p)
     : AudioProcessorEditor(&p), audioProcessor(p),
       mainView(createMainView(false))
 #if JucePlugin_Enable_ARA
@@ -39,12 +39,12 @@ HachiTuneAudioProcessorEditor::HachiTuneAudioProcessorEditor(
   mainView->getComponent()->grabKeyboardFocus();
 }
 
-HachiTuneAudioProcessorEditor::~HachiTuneAudioProcessorEditor() {
+PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
   audioProcessor.setMainComponent(nullptr);
   shutdownUiResources();
 }
 
-void HachiTuneAudioProcessorEditor::setupARAMode() {
+void PitchNetAudioProcessorEditor::setupARAMode() {
 #if JucePlugin_Enable_ARA
   mainView->setARAMode(true);
 
@@ -61,7 +61,7 @@ void HachiTuneAudioProcessorEditor::setupARAMode() {
   }
 
   auto *pitchDocController = juce::ARADocumentControllerSpecialisation::
-      getSpecialisedDocumentController<HachiTuneDocumentController>(
+      getSpecialisedDocumentController<PitchNetDocumentController>(
           docController);
 
   if (!pitchDocController) {
@@ -116,7 +116,7 @@ void HachiTuneAudioProcessorEditor::setupARAMode() {
 #endif
 }
 
-void HachiTuneAudioProcessorEditor::setupNonARAMode() {
+void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setARAMode(false);
 
   // Setup host transport control callbacks for non-ARA mode
@@ -133,7 +133,7 @@ void HachiTuneAudioProcessorEditor::setupNonARAMode() {
   });
 }
 
-void HachiTuneAudioProcessorEditor::setupCallbacks() {
+void PitchNetAudioProcessorEditor::setupCallbacks() {
   // When project data changes (analysis complete or synthesis complete)
   mainView->setOnProjectDataChanged([this]() {
     mainView->bindRealtimeProcessor(audioProcessor.getRealtimeProcessor());
@@ -144,20 +144,20 @@ void HachiTuneAudioProcessorEditor::setupCallbacks() {
   // synthesis completes) No need for separate callback here
 }
 
-void HachiTuneAudioProcessorEditor::paint(juce::Graphics &) {
+void PitchNetAudioProcessorEditor::paint(juce::Graphics &) {
   // MainComponent handles all painting
 }
 
-void HachiTuneAudioProcessorEditor::resized() {
+void PitchNetAudioProcessorEditor::resized() {
   mainView->getComponent()->setBounds(getLocalBounds());
 }
 
-void HachiTuneAudioProcessorEditor::visibilityChanged() {
+void PitchNetAudioProcessorEditor::visibilityChanged() {
   if (isVisible())
     mainView->getComponent()->grabKeyboardFocus();
 }
 
-void HachiTuneAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
+void PitchNetAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
   juce::ignoreUnused(e);
   mainView->getComponent()->grabKeyboardFocus();
 }

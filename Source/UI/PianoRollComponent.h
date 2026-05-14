@@ -9,7 +9,9 @@
 #include "PianoRoll/BoxSelector.h"
 #include "PianoRoll/CoordinateMapper.h"
 #include "PianoRoll/NoteSplitter.h"
+#include "PianoRoll/PianoRollInteractionContext.h"
 #include "PianoRoll/PianoRollRenderer.h"
+#include "PianoRoll/PianoRollViewState.h"
 #include "PianoRoll/PitchEditor.h"
 #include "PianoRoll/PitchToolController.h"
 #include "PianoRoll/PitchToolHandles.h"
@@ -25,35 +27,10 @@ class InteractionHandler;
 class LoopDragHandler;
 class SelectHandler;
 class DrawHandler;
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
 class StretchHandler;
 #endif
 class SplitHandler;
-
-/**
- * Edit mode for the piano roll.
- */
-enum class EditMode
-{
-  Select, // Normal selection and dragging
-#if HACHITUNE_ENABLE_STRETCH
-  Stretch, // Stretch note timing
-#endif
-  Draw,     // Pitch drawing mode
-  Split,    // Note splitting mode
-  Parameter // HNSep parameter curve editing mode
-};
-
-#if HACHITUNE_ENABLE_STRETCH
-/**
- * Stretch sub-mode: determines behavior when stretching notes.
- */
-enum class StretchMode
-{
-  Absorb, // Adjacent note absorbs the length change (zero-sum, total timeline unchanged)
-  Ripple  // Subsequent notes shift to accommodate the length change (timeline grows/shrinks)
-};
-#endif
 
 /**
  * Piano roll component for displaying and editing notes.
@@ -63,17 +40,17 @@ class PianoRollComponent : public juce::Component,
                            public juce::ScrollBar::Listener,
                            public juce::KeyListener
 {
-  // Interaction handlers need access to private members
-  friend class LoopDragHandler;
-  friend class SelectHandler;
-  friend class DrawHandler;
-#if HACHITUNE_ENABLE_STRETCH
-  friend class StretchHandler;
-#endif
-  friend class SplitHandler;
+  friend class PianoRollInteractionContext;
 
 public:
   using juce::Component::keyPressed;
+
+  static constexpr int pianoKeysWidth = 60;
+  static constexpr int timelineHeight = 24;
+  static constexpr int loopTimelineHeight = 16;
+  static constexpr int headerHeight = timelineHeight + loopTimelineHeight;
+  static constexpr juce::int64 minDragRepaintInterval = 16; // ~60fps max
+
   PianoRollComponent();
   ~PianoRollComponent() override;
 
@@ -105,6 +82,10 @@ public:
   void setProject(Project *proj);
   Project *getProject() const { return project; }
   std::vector<Note *> getSelectedNotes() const;
+  PianoRollInteractionContext &getInteractionContext()
+  {
+    return *interactionContext;
+  }
 
   // Undo Manager
   void setUndoManager(PitchUndoManager *manager);
@@ -146,7 +127,7 @@ public:
   void setEditMode(EditMode mode);
   EditMode getEditMode() const { return editMode; }
 
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   // Stretch sub-mode (Absorb vs Ripple)
   void setStretchMode(StretchMode mode)
   {
@@ -211,7 +192,7 @@ public:
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
   std::function<void(const LoopRange &)> onLoopRangeChanged;
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   std::function<void(StretchMode)> onStretchModeChanged;
 #endif
   std::function<void(int, int)>
@@ -237,7 +218,7 @@ private:
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   void drawStretchGuides(juce::Graphics &g);
 #endif
   void updatePitchToolHandlesFromSelection();
@@ -272,54 +253,52 @@ private:
   std::unique_ptr<NoteSplitter> noteSplitter;
   std::unique_ptr<PitchToolHandles> pitchToolHandles;
   std::unique_ptr<PitchToolController> pitchToolController;
-  int hoveredPitchToolHandle = -1;
 
-  float pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
-  float pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
+  std::unique_ptr<PianoRollInteractionContext> interactionContext;
 
-  double cursorTime = 0.0;
-  double scrollX = 0.0;
-  double scrollY = 0.0;
+  PianoRollViewState viewState;
+  int &hoveredPitchToolHandle = viewState.hoveredPitchToolHandle;
 
-  // Layout constants
-  static constexpr int pianoKeysWidth = 60;
-  static constexpr int timelineHeight = 24;
-  static constexpr int loopTimelineHeight = 16;
-  static constexpr int headerHeight = timelineHeight + loopTimelineHeight;
+  float &pixelsPerSecond = viewState.pixelsPerSecond;
+  float &pixelsPerSemitone = viewState.pixelsPerSemitone;
+
+  double &cursorTime = viewState.cursorTime;
+  double &scrollX = viewState.scrollX;
+  double &scrollY = viewState.scrollY;
 
   // Edit mode
-  EditMode editMode = EditMode::Select;
-#if HACHITUNE_ENABLE_STRETCH
-  StretchMode stretchMode = StretchMode::Absorb;
+  EditMode &editMode = viewState.editMode;
+#if PITCHNET_ENABLE_STRETCH
+  StretchMode &stretchMode = viewState.stretchMode;
 #endif
 
   // View settings
-  bool showDeltaPitch = true;
-  bool showBasePitch = false;
-  bool showSegmentsDebug = false;
-  bool showGameValuesDebug = false;
-  bool showUvInterpolationDebug = false;
-  bool showActualF0Debug = false;
-  bool showScaleColors = true;
-  bool snapToSemitoneDrag = false;
-  int pitchReferenceHz = 440;
-  DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
-  TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
-  int timelineBeatNumerator = 4;
-  int timelineBeatDenominator = 4;
-  double timelineTempoBpm = 120.0;
-  TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
-  bool timelineSnapCycle = false;
-  ScaleMode selectedScaleMode = ScaleMode::None;
-  int selectedScaleRootNote = -1;
-  std::optional<int> previewScaleRootNote;
-  std::optional<ScaleMode> previewScaleMode;
+  bool &showDeltaPitch = viewState.showDeltaPitch;
+  bool &showBasePitch = viewState.showBasePitch;
+  bool &showSegmentsDebug = viewState.showSegmentsDebug;
+  bool &showGameValuesDebug = viewState.showGameValuesDebug;
+  bool &showUvInterpolationDebug = viewState.showUvInterpolationDebug;
+  bool &showActualF0Debug = viewState.showActualF0Debug;
+  bool &showScaleColors = viewState.showScaleColors;
+  bool &snapToSemitoneDrag = viewState.snapToSemitoneDrag;
+  int &pitchReferenceHz = viewState.pitchReferenceHz;
+  DoubleClickSnapMode &doubleClickSnapMode = viewState.doubleClickSnapMode;
+  TimelineDisplayMode &timelineDisplayMode = viewState.timelineDisplayMode;
+  int &timelineBeatNumerator = viewState.timelineBeatNumerator;
+  int &timelineBeatDenominator = viewState.timelineBeatDenominator;
+  double &timelineTempoBpm = viewState.timelineTempoBpm;
+  TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
+  bool &timelineSnapCycle = viewState.timelineSnapCycle;
+  ScaleMode &selectedScaleMode = viewState.selectedScaleMode;
+  int &selectedScaleRootNote = viewState.selectedScaleRootNote;
+  std::optional<int> &previewScaleRootNote = viewState.previewScaleRootNote;
+  std::optional<ScaleMode> &previewScaleMode = viewState.previewScaleMode;
 
   // Interaction handlers (state machine pattern)
   std::unique_ptr<LoopDragHandler> loopDragHandler_;
   std::unique_ptr<SelectHandler> selectHandler_;
   std::unique_ptr<DrawHandler> drawHandler_;
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   std::unique_ptr<StretchHandler> stretchHandler_;
 #endif
   std::unique_ptr<SplitHandler> splitHandler_;
@@ -341,7 +320,7 @@ private:
   std::vector<float> cachedBasePitch;
   size_t cachedNoteCount = 0;
   int cachedTotalFrames = 0;
-  bool cacheInvalidated = true; // Start invalidated, force first calculation
+  bool &cacheInvalidated = viewState.cacheInvalidated;
 
 public:
   void invalidateWaveformCache()
@@ -364,7 +343,6 @@ private:
 
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
-  static constexpr juce::int64 minDragRepaintInterval = 16; // ~60fps max
   juce::int64 lastStretchPreviewTime = 0;
   static constexpr juce::int64 minStretchPreviewInterval = 120;
 

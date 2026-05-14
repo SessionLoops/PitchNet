@@ -1,17 +1,18 @@
 #pragma once
 
 #include "../../../JuceHeader.h"
-
-class PianoRollComponent;
+#include "../PianoRollInteractionContext.h"
+#include "../../PianoRollComponent.h"
 
 /**
  * Base class for PianoRoll interaction handlers.
  * Each handler encapsulates a specific interaction mode (select, draw, stretch, etc.).
- * Handlers access PianoRollComponent's private members via friend class.
+ * Handlers access editor state through PianoRollInteractionContext.
  */
 class InteractionHandler {
 public:
-  explicit InteractionHandler(PianoRollComponent &owner) : owner_(owner) {}
+  explicit InteractionHandler(PianoRollComponent &owner)
+      : owner_(owner.getInteractionContext()) {}
   virtual ~InteractionHandler() = default;
 
   /// Called on mouse down. Returns true if the event was consumed.
@@ -57,7 +58,7 @@ public:
   virtual void cancel() {}
 
 protected:
-  PianoRollComponent &owner_;
+  PianoRollInteractionContext &owner_;
 
   InteractionHandler(const InteractionHandler &) = delete;
   InteractionHandler &operator=(const InteractionHandler &) = delete;

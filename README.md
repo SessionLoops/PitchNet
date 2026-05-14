@@ -1,12 +1,12 @@
 <div align="center">
-  <h1>HachiTune</h1>
+  <h1>PitchNet</h1>
   <img src="logo.png" alt="Logo" width="300" />
   <p>A lightweight pitch editor built with JUCE, featuring neural pitch detection and vocoder resynthesis for real-time preview.</p>
 </div>
 
 ## Overview
 
-HachiTune is a standalone app and audio plugin for editing vocal pitch in a piano roll. It analyzes audio using neural pitch detectors (RMVPE / FCPE), segments notes with the GAME model, and resynthesizes edits in real time through a neural vocoder (PC-NSF-HiFiGAN). Edits are previewed instantly with minimal latency and exported as audio or MIDI. The plugin supports both ARA hosts and a non-ARA capture workflow.
+PitchNet is a standalone app and audio plugin for editing vocal pitch in a piano roll. It analyzes audio using neural pitch detectors (RMVPE / FCPE), segments notes with the GAME model, and resynthesizes edits in real time through a neural vocoder (PC-NSF-HiFiGAN). Edits are previewed instantly with minimal latency and exported as audio or MIDI. The plugin supports both ARA hosts and a non-ARA capture workflow.
 
 ## Features
 
@@ -23,7 +23,7 @@ HachiTune is a standalone app and audio plugin for editing vocal pitch in a pian
 - Multi-language UI (English, Japanese, Chinese Simplified, Chinese Traditional)
 
 ## Download
-To [Release](https://github.com/KCKT0112/HachiTune/releases)
+To [Release](https://github.com/KCKT0112/PitchNet/releases)
 
 ## Requirements
 
@@ -108,7 +108,7 @@ Notes:
 ## Project Structure
 
 ```
-HachiTune/
+PitchNet/
   Source/
     Audio/        # Audio engine, pitch detection, synthesis, vocoder
     Models/       # Project, note, and audio data models

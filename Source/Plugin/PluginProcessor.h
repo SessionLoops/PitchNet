@@ -11,7 +11,7 @@
 class IMainView;
 
 /**
- * HachiTune Audio Processor
+ * PitchNet Audio Processor
  *
  * Supports two modes like Melodyne:
  * 1. ARA Mode: Direct audio access via ARA protocol (Studio One, Cubase, Logic,
@@ -25,15 +25,15 @@ class IMainView;
  * - Pitch Offset: global pitch shift in semitones (-24 to +24 st)
  * - Formant Shift: formant preservation shift (-12 to +12 st)
  */
-class HachiTuneAudioProcessor : public juce::AudioProcessor
+class PitchNetAudioProcessor : public juce::AudioProcessor
 #if JucePlugin_Enable_ARA
     ,
                                 public juce::AudioProcessorARAExtension
 #endif
 {
 public:
-  HachiTuneAudioProcessor();
-  ~HachiTuneAudioProcessor() override;
+  PitchNetAudioProcessor();
+  ~PitchNetAudioProcessor() override;
 
   // AudioProcessor interface
   void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -182,5 +182,5 @@ private:
   // Plugin state version for forward/backward compatibility
   static constexpr int PLUGIN_STATE_VERSION = 1;
 
-  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HachiTuneAudioProcessor)
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchNetAudioProcessor)
 };

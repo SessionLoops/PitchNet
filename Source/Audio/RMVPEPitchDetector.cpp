@@ -5,7 +5,11 @@
 #include <cmath>
 #include <thread>
 
-RMVPEPitchDetector::RMVPEPitchDetector() = default;
+RMVPEPitchDetector::RMVPEPitchDetector()
+{
+  initMelFilterbank();
+  initHannWindow();
+}
 
 RMVPEPitchDetector::~RMVPEPitchDetector() = default;
 
@@ -133,6 +137,21 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
     for (const auto &name : outputNameStrings)
       outputNames.push_back(name.c_str());
 
+    usesMelInput = false;
+    melInputChannelsFirst = true;
+    if (numInputs > 0)
+    {
+      auto inputTypeInfo = onnxSession->GetInputTypeInfo(0);
+      auto inputTensorInfo = inputTypeInfo.GetTensorTypeAndShapeInfo();
+      auto inputShape = inputTensorInfo.GetShape();
+      if (inputShape.size() == 3)
+      {
+        usesMelInput = true;
+        melInputChannelsFirst =
+            inputShape[1] == N_MELS || inputShape[2] != N_MELS;
+      }
+    }
+
     inputTensorScratch.reserve(2);
 
     loaded = true;
@@ -151,6 +170,60 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 #else
   return false;
 #endif
+}
+
+void RMVPEPitchDetector::initMelFilterbank()
+{
+  const int numBins = WINDOW_LENGTH / 2 + 1;
+  melFilterbank.assign(N_MELS, std::vector<float>(numBins, 0.0f));
+
+  auto hzToMel = [](float hz) -> float
+  {
+    return 2595.0f * std::log10(1.0f + hz / 700.0f);
+  };
+
+  auto melToHz = [](float mel) -> float
+  {
+    return 700.0f * (std::pow(10.0f, mel / 2595.0f) - 1.0f);
+  };
+
+  const float melMin = hzToMel(static_cast<float>(MEL_FMIN));
+  const float melMax = hzToMel(static_cast<float>(MEL_FMAX));
+
+  std::vector<float> melPoints(N_MELS + 2);
+  std::vector<float> hzPoints(N_MELS + 2);
+  for (int i = 0; i <= N_MELS + 1; ++i)
+  {
+    melPoints[i] = melMin + (melMax - melMin) * i / (N_MELS + 1);
+    hzPoints[i] = melToHz(melPoints[i]);
+  }
+
+  for (int m = 0; m < N_MELS; ++m)
+  {
+    const float fLow = hzPoints[m];
+    const float fCenter = hzPoints[m + 1];
+    const float fHigh = hzPoints[m + 2];
+
+    for (int k = 0; k < numBins; ++k)
+    {
+      const float freq = static_cast<float>(k) * SAMPLE_RATE / WINDOW_LENGTH;
+      if (freq >= fLow && freq < fCenter)
+        melFilterbank[m][k] = (freq - fLow) / (fCenter - fLow);
+      else if (freq >= fCenter && freq <= fHigh)
+        melFilterbank[m][k] = (fHigh - freq) / (fHigh - fCenter);
+    }
+  }
+}
+
+void RMVPEPitchDetector::initHannWindow()
+{
+  hannWindow.resize(WINDOW_LENGTH);
+  for (int i = 0; i < WINDOW_LENGTH; ++i)
+  {
+    hannWindow[i] =
+        0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * i /
+                                (WINDOW_LENGTH - 1)));
+  }
 }
 
 std::vector<float> RMVPEPitchDetector::resampleTo16k(const float *audio,
@@ -186,6 +259,57 @@ std::vector<float> RMVPEPitchDetector::resampleTo16k(const float *audio,
   }
 
   return resampled;
+}
+
+std::vector<std::vector<float>>
+RMVPEPitchDetector::extractMel(const std::vector<float> &audio)
+{
+  constexpr int frameMultiple = 32;
+  const int numBins = WINDOW_LENGTH / 2 + 1;
+  const int numFrames =
+      std::max(1, static_cast<int>(audio.size()) / HOP_SIZE + 1);
+  const int alignedFrames =
+      ((numFrames + frameMultiple - 1) / frameMultiple) * frameMultiple;
+
+  std::vector<std::vector<float>> mel(alignedFrames,
+                                      std::vector<float>(N_MELS, 0.0f));
+  std::vector<float> fftBuffer(WINDOW_LENGTH * 2, 0.0f);
+  std::vector<float> mag(numBins, 0.0f);
+  juce::dsp::FFT fft(static_cast<int>(std::log2(WINDOW_LENGTH)));
+
+  const int padLeft = WINDOW_LENGTH / 2;
+  for (int frame = 0; frame < numFrames; ++frame)
+  {
+    const int start = frame * HOP_SIZE - padLeft;
+
+    std::fill(fftBuffer.begin(), fftBuffer.end(), 0.0f);
+    for (int i = 0; i < WINDOW_LENGTH; ++i)
+    {
+      const int srcIdx = start + i;
+      if (srcIdx >= 0 && srcIdx < static_cast<int>(audio.size()))
+        fftBuffer[i] = audio[static_cast<size_t>(srcIdx)] * hannWindow[i];
+    }
+
+    fft.performRealOnlyForwardTransform(fftBuffer.data());
+
+    for (int k = 0; k < numBins; ++k)
+    {
+      const float real = fftBuffer[k * 2];
+      const float imag = fftBuffer[k * 2 + 1];
+      mag[k] = std::sqrt(real * real + imag * imag + 1e-9f);
+    }
+
+    for (int m = 0; m < N_MELS; ++m)
+    {
+      float sum = 0.0f;
+      for (int k = 0; k < numBins; ++k)
+        sum += mag[k] * melFilterbank[m][k];
+
+      mel[frame][m] = std::log(std::max(sum, 1e-5f));
+    }
+  }
+
+  return mel;
 }
 
 std::vector<float> RMVPEPitchDetector::decodeF0(const float *hidden,
@@ -333,8 +457,6 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
   if (!onnxSession || numSamples <= 0)
     return {};
 
-  // Prepare input tensor [1, n_samples]
-  waveformShapeScratch[1] = static_cast<int64_t>(numSamples);
   thresholdScratch[0] = threshold;
 
   static const auto memoryInfo = Ort::MemoryInfo::CreateCpu(
@@ -342,12 +464,53 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
   static const Ort::RunOptions runOptions{nullptr};
 
   inputTensorScratch.clear();
-  inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
-      memoryInfo, const_cast<float *>(audio16k), static_cast<size_t>(numSamples),
-      waveformShapeScratch.data(), waveformShapeScratch.size()));
-  inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
-      memoryInfo, thresholdScratch.data(), thresholdScratch.size(),
-      thresholdShapeScratch.data(), thresholdShapeScratch.size()));
+
+  std::vector<std::vector<float>> mel;
+  if (usesMelInput)
+  {
+    mel = extractMel(std::vector<float>(audio16k, audio16k + numSamples));
+    if (mel.empty())
+      return {};
+
+    const int numFrames = static_cast<int>(mel.size());
+    melInputScratch.resize(static_cast<size_t>(numFrames) * N_MELS);
+    if (melInputChannelsFirst)
+    {
+      melShapeScratch = {1, N_MELS, numFrames};
+      for (int m = 0; m < N_MELS; ++m)
+      {
+        for (int t = 0; t < numFrames; ++t)
+          melInputScratch[static_cast<size_t>(m) * numFrames + t] = mel[t][m];
+      }
+    }
+    else
+    {
+      melShapeScratch = {1, numFrames, N_MELS};
+      for (int t = 0; t < numFrames; ++t)
+      {
+        for (int m = 0; m < N_MELS; ++m)
+          melInputScratch[static_cast<size_t>(t) * N_MELS + m] = mel[t][m];
+      }
+    }
+
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        memoryInfo, melInputScratch.data(), melInputScratch.size(),
+        melShapeScratch.data(), melShapeScratch.size()));
+  }
+  else
+  {
+    waveformShapeScratch[1] = static_cast<int64_t>(numSamples);
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        memoryInfo, const_cast<float *>(audio16k), static_cast<size_t>(numSamples),
+        waveformShapeScratch.data(), waveformShapeScratch.size()));
+  }
+
+  if (inputNames.size() > inputTensorScratch.size())
+  {
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        memoryInfo, thresholdScratch.data(), thresholdScratch.size(),
+        thresholdShapeScratch.data(), thresholdShapeScratch.size()));
+  }
 
   auto t0 = std::chrono::high_resolution_clock::now();
   auto outputTensors = onnxSession->Run(
@@ -356,12 +519,46 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
   auto t1 = std::chrono::high_resolution_clock::now();
   LOG("RMVPE chunk inference: " + juce::String(std::chrono::duration<double, std::milli>(t1 - t0).count(), 1) + " ms" + " (" + juce::String(numSamples) + " samples)");
 
-  // Get output - f0 [1, n_frames]
   float *f0Data = outputTensors[0].GetTensorMutableData<float>();
-  auto f0Shape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-  int numFrames = static_cast<int>(f0Shape[1]);
+  auto outputInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+  auto f0Shape = outputInfo.GetShape();
+  const auto outputCount = outputInfo.GetElementCount();
 
-  return std::vector<float>(f0Data, f0Data + numFrames);
+  if (f0Shape.size() == 2 && f0Shape[1] > 0)
+  {
+    int numFrames = static_cast<int>(f0Shape[1]);
+    return std::vector<float>(f0Data, f0Data + numFrames);
+  }
+
+  if (f0Shape.size() == 3)
+  {
+    if (f0Shape[2] == N_CLASS)
+    {
+      int numFrames = static_cast<int>(f0Shape[1]);
+      return decodeF0(f0Data, numFrames, threshold);
+    }
+
+    if (f0Shape[1] == N_CLASS)
+    {
+      int numFrames = static_cast<int>(f0Shape[2]);
+      latentScratch.resize(static_cast<size_t>(numFrames) * N_CLASS);
+      for (int t = 0; t < numFrames; ++t)
+      {
+        for (int c = 0; c < N_CLASS; ++c)
+          latentScratch[static_cast<size_t>(t) * N_CLASS + c] =
+              f0Data[static_cast<size_t>(c) * numFrames + t];
+      }
+      return decodeF0(latentScratch.data(), numFrames, threshold);
+    }
+  }
+
+  if (outputCount > 0 && outputCount % N_CLASS == 0)
+  {
+    int numFrames = static_cast<int>(outputCount / N_CLASS);
+    return decodeF0(f0Data, numFrames, threshold);
+  }
+
+  return {};
 #else
   return {};
 #endif

@@ -28,7 +28,7 @@ namespace
     static const bool enabled = []()
     {
       const auto value =
-          juce::SystemStats::getEnvironmentVariable("HACHITUNE_VOCODER_TRACE",
+          juce::SystemStats::getEnvironmentVariable("PITCHNET_VOCODER_TRACE",
                                                     {})
               .trim()
               .toLowerCase();
@@ -60,7 +60,7 @@ Vocoder::Vocoder()
   try
   {
     onnxEnv =
-        std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "HachiTune");
+        std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "PitchNet");
     allocator = std::make_unique<Ort::AllocatorWithDefaultOptions>();
     log("ONNX Runtime initialized successfully");
   }

@@ -5,7 +5,7 @@
 
 /**
  * Simple file logger for debugging.
- * Logs to %APPDATA%/HachiTune/debug.log
+ * Logs to %APPDATA%/PitchNet/debug.log
  */
 class AppLogger {
 public:

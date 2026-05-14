@@ -9,7 +9,7 @@
 // ============================================================================
 
 juce::AudioProcessorValueTreeState::ParameterLayout
-HachiTuneAudioProcessor::createParameterLayout() {
+PitchNetAudioProcessor::createParameterLayout() {
   std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
   // Bypass — standard host bypass
@@ -43,7 +43,7 @@ HachiTuneAudioProcessor::createParameterLayout() {
 // Constructor / Destructor
 // ============================================================================
 
-HachiTuneAudioProcessor::HachiTuneAudioProcessor()
+PitchNetAudioProcessor::PitchNetAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
     : AudioProcessor(
           BusesProperties()
@@ -52,7 +52,7 @@ HachiTuneAudioProcessor::HachiTuneAudioProcessor()
 #else
     :
 #endif
-      apvts(*this, nullptr, "HachiTuneParameters", createParameterLayout()) {
+      apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
   // Cache raw parameter pointers for lock-free audio-thread access
   bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);
   outputGainParamValue = apvts.getRawParameterValue(PARAM_OUTPUT_GAIN);
@@ -61,17 +61,17 @@ HachiTuneAudioProcessor::HachiTuneAudioProcessor()
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
 }
 
-HachiTuneAudioProcessor::~HachiTuneAudioProcessor() = default;
+PitchNetAudioProcessor::~PitchNetAudioProcessor() = default;
 
 // ============================================================================
 // AudioProcessor Info
 // ============================================================================
 
-const juce::String HachiTuneAudioProcessor::getName() const {
+const juce::String PitchNetAudioProcessor::getName() const {
   return JucePlugin_Name;
 }
 
-bool HachiTuneAudioProcessor::acceptsMidi() const {
+bool PitchNetAudioProcessor::acceptsMidi() const {
 #if JucePlugin_WantsMidiInput
   return true;
 #else
@@ -79,7 +79,7 @@ bool HachiTuneAudioProcessor::acceptsMidi() const {
 #endif
 }
 
-bool HachiTuneAudioProcessor::producesMidi() const {
+bool PitchNetAudioProcessor::producesMidi() const {
 #if JucePlugin_ProducesMidiOutput
   return true;
 #else
@@ -87,7 +87,7 @@ bool HachiTuneAudioProcessor::producesMidi() const {
 #endif
 }
 
-bool HachiTuneAudioProcessor::isMidiEffect() const {
+bool PitchNetAudioProcessor::isMidiEffect() const {
 #if JucePlugin_IsMidiEffect
   return true;
 #else
@@ -99,12 +99,12 @@ bool HachiTuneAudioProcessor::isMidiEffect() const {
 // Prepare / Release
 // ============================================================================
 
-void HachiTuneAudioProcessor::prepareToPlay(double sampleRate,
+void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock) {
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
 
-  // Report zero latency — HachiTune uses pre-computed audio buffers,
+  // Report zero latency — PitchNet uses pre-computed audio buffers,
   // so output at time T corresponds to input at time T (no analysis delay).
   setLatencySamples(0);
 
@@ -119,7 +119,7 @@ void HachiTuneAudioProcessor::prepareToPlay(double sampleRate,
   lastCaptureUiState = captureController->getState();
 }
 
-void HachiTuneAudioProcessor::releaseResources() {
+void PitchNetAudioProcessor::releaseResources() {
 #if JucePlugin_Enable_ARA
   releaseResourcesForARA();
 #endif
@@ -130,7 +130,7 @@ void HachiTuneAudioProcessor::releaseResources() {
 // ============================================================================
 
 #if !JucePlugin_PreferredChannelConfigurations
-bool HachiTuneAudioProcessor::isBusesLayoutSupported(
+bool PitchNetAudioProcessor::isBusesLayoutSupported(
     const BusesLayout &layouts) const {
   if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
     return false;
@@ -144,7 +144,7 @@ bool HachiTuneAudioProcessor::isBusesLayoutSupported(
 // Mode Detection
 // ============================================================================
 
-bool HachiTuneAudioProcessor::isARAModeActive() const {
+bool PitchNetAudioProcessor::isARAModeActive() const {
 #if JucePlugin_Enable_ARA
   if (auto *editor = getActiveEditor()) {
     if (auto *araEditor =
@@ -158,12 +158,12 @@ bool HachiTuneAudioProcessor::isARAModeActive() const {
   return false;
 }
 
-HostCompatibility::HostInfo HachiTuneAudioProcessor::getHostInfo() const {
+HostCompatibility::HostInfo PitchNetAudioProcessor::getHostInfo() const {
   return HostCompatibility::detectHost(
-      const_cast<HachiTuneAudioProcessor *>(this));
+      const_cast<PitchNetAudioProcessor *>(this));
 }
 
-juce::String HachiTuneAudioProcessor::getHostStatusMessage() const {
+juce::String PitchNetAudioProcessor::getHostStatusMessage() const {
   auto hostInfo = getHostInfo();
   bool araActive = isARAModeActive();
 
@@ -181,7 +181,7 @@ juce::String HachiTuneAudioProcessor::getHostStatusMessage() const {
 // Output Processing (Bypass, Dry/Wet, Gain)
 // ============================================================================
 
-void HachiTuneAudioProcessor::applyOutputProcessing(
+void PitchNetAudioProcessor::applyOutputProcessing(
     juce::AudioBuffer<float> &processedBuffer,
     const juce::AudioBuffer<float> &dryBuffer) {
   const int numSamples = processedBuffer.getNumSamples();
@@ -220,7 +220,7 @@ void HachiTuneAudioProcessor::applyOutputProcessing(
 // Parameter Change Detection (Audio Thread -> Message Thread)
 // ============================================================================
 
-void HachiTuneAudioProcessor::checkParameterChanges() {
+void PitchNetAudioProcessor::checkParameterChanges() {
   if (!mainComponent)
     return;
 
@@ -284,7 +284,7 @@ void HachiTuneAudioProcessor::checkParameterChanges() {
 // Process Block
 // ============================================================================
 
-void HachiTuneAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
+void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                            juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
   juce::ScopedNoDenormals noDenormals;
@@ -330,7 +330,7 @@ void HachiTuneAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                     isRealtime() == juce::AudioProcessor::Realtime::yes);
 }
 
-void HachiTuneAudioProcessor::processBlockBypassed(
+void PitchNetAudioProcessor::processBlockBypassed(
     juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
 
@@ -340,7 +340,7 @@ void HachiTuneAudioProcessor::processBlockBypassed(
   // Input passes through unchanged (buffer already contains input)
 }
 
-void HachiTuneAudioProcessor::processNonARAMode(
+void PitchNetAudioProcessor::processNonARAMode(
     juce::AudioBuffer<float> &buffer,
     const juce::AudioPlayHead::PositionInfo &posInfo, bool isRealtime) {
   const int numSamples = buffer.getNumSamples();
@@ -489,17 +489,17 @@ void HachiTuneAudioProcessor::processNonARAMode(
 // Non-ARA Capture Control
 // ============================================================================
 
-void HachiTuneAudioProcessor::startCapture() {
+void PitchNetAudioProcessor::startCapture() {
   captureController->resetToWaiting();
 }
 
-void HachiTuneAudioProcessor::stopCapture() { captureController->stop(); }
+void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
 
 // ============================================================================
 // Editor Connection
 // ============================================================================
 
-void HachiTuneAudioProcessor::setMainComponent(IMainView *mc) {
+void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
   mainComponent = mc;
   if (mc) {
     mc->bindRealtimeProcessor(realtimeProcessor);
@@ -535,15 +535,15 @@ void HachiTuneAudioProcessor::setMainComponent(IMainView *mc) {
   }
 }
 
-juce::AudioProcessorEditor *HachiTuneAudioProcessor::createEditor() {
-  return new HachiTuneAudioProcessorEditor(*this);
+juce::AudioProcessorEditor *PitchNetAudioProcessor::createEditor() {
+  return new PitchNetAudioProcessorEditor(*this);
 }
 
 // ============================================================================
 // State Save / Load (versioned envelope)
 // ============================================================================
 
-void HachiTuneAudioProcessor::getStateInformation(
+void PitchNetAudioProcessor::getStateInformation(
     juce::MemoryBlock &destData) {
   // Create versioned envelope containing both APVTS state and project state
   auto *envelope = new juce::DynamicObject();
@@ -573,7 +573,7 @@ void HachiTuneAudioProcessor::getStateInformation(
   destData.append(jsonString.toRawUTF8(), jsonString.getNumBytesAsUTF8());
 }
 
-void HachiTuneAudioProcessor::setStateInformation(const void *data,
+void PitchNetAudioProcessor::setStateInformation(const void *data,
                                                    int sizeInBytes) {
   juce::String rawString(
       juce::CharPointer_UTF8(static_cast<const char *>(data)),
@@ -638,7 +638,7 @@ void HachiTuneAudioProcessor::setStateInformation(const void *data,
 // ============================================================================
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
-  return new HachiTuneAudioProcessor();
+  return new PitchNetAudioProcessor();
 }
 
 #if JucePlugin_Enable_ARA
@@ -646,6 +646,6 @@ juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
 
 const ARA::ARAFactory *JUCE_CALLTYPE createARAFactory() {
   return juce::ARADocumentControllerSpecialisation::createARAFactory<
-      HachiTuneDocumentController>();
+      PitchNetDocumentController>();
 }
 #endif

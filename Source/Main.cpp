@@ -36,7 +36,7 @@ public:
 
     g.setColour(juce::Colours::white);
     g.setFont(titleFont);
-    g.drawText("HachiTune", getLocalBounds().reduced(24, 20),
+    g.drawText("PitchNet", getLocalBounds().reduced(24, 20),
                juce::Justification::centredTop);
 
     g.setColour(juce::Colour(APP_COLOR_PRIMARY));
@@ -90,11 +90,11 @@ public:
   void closeButtonPressed() override {}
 };
 
-class HachiTuneApplication : public juce::JUCEApplication {
+class PitchNetApplication : public juce::JUCEApplication {
 public:
-  HachiTuneApplication() {}
+  PitchNetApplication() {}
 
-  const juce::String getApplicationName() override { return "HachiTune"; }
+  const juce::String getApplicationName() override { return "PitchNet"; }
 
   const juce::String getApplicationVersion() override { return "1.0.0"; }
 
@@ -226,4 +226,4 @@ private:
 #endif
 };
 
-START_JUCE_APPLICATION(HachiTuneApplication)
+START_JUCE_APPLICATION(PitchNetApplication)

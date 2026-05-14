@@ -7,9 +7,9 @@
 
 #if __has_include("BinaryData.h")
 #include "BinaryData.h"
-#define HACHITUNE_HAS_BINARYDATA 1
+#define PITCHNET_HAS_BINARYDATA 1
 #else
-#define HACHITUNE_HAS_BINARYDATA 0
+#define PITCHNET_HAS_BINARYDATA 0
 #endif
 
 class Localization {
@@ -83,7 +83,7 @@ public:
 
     auto settingsFile =
         juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("HachiTune")
+            .getChildFile("PitchNet")
             .getChildFile("settings.xml");
 
     if (settingsFile.existsAsFile()) {
@@ -165,7 +165,7 @@ private:
   void loadEnglishBase() {
     englishStrings.clear();
 
-#if HACHITUNE_HAS_BINARYDATA
+#if PITCHNET_HAS_BINARYDATA
     loadLanguageMapFromJsonText(
         juce::String::fromUTF8(BinaryData::en_json, BinaryData::en_jsonSize),
         englishStrings);

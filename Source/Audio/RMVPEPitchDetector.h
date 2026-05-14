@@ -91,9 +91,18 @@ public:
 
 private:
     bool loaded = false;
+    bool usesMelInput = false;
+    bool melInputChannelsFirst = true;
+
+    std::vector<std::vector<float>> melFilterbank;
+    std::vector<float> hannWindow;
 
     // Resample audio to 16kHz
     std::vector<float> resampleTo16k(const float *audio, int numSamples, int srcRate);
+
+    void initMelFilterbank();
+    void initHannWindow();
+    std::vector<std::vector<float>> extractMel(const std::vector<float> &audio);
 
     // Process a single chunk of 16kHz audio
     std::vector<float> extractF0Chunk(const float *audio16k, int numSamples, float threshold);
@@ -113,8 +122,11 @@ private:
 
     // Reused per-inference buffers to reduce hot-path allocations.
     std::array<int64_t, 2> waveformShapeScratch{1, 0};
+    std::array<int64_t, 3> melShapeScratch{1, N_MELS, 0};
     std::array<int64_t, 1> thresholdShapeScratch{1};
     std::array<float, 1> thresholdScratch{DEFAULT_THRESHOLD};
+    std::vector<float> melInputScratch;
+    std::vector<float> latentScratch;
     std::vector<Ort::Value> inputTensorScratch;
 #endif
 };

@@ -40,3 +40,5 @@ tempcalude-*
 .cache
 
 third_party/ASIOSDK/
+/build-xcode
+/third_party

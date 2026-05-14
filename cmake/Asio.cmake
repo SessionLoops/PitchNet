@@ -1,4 +1,4 @@
-function(hachitune_setup_asio out_var)
+function(pitchnet_setup_asio out_var)
     set(ASIO_SDK_ROOT "" CACHE PATH "Path to ASIO SDK root (contains common/asio.h)")
 
     set(asio_candidates "")

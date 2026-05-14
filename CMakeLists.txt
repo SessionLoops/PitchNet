@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(HachiTune VERSION 1.0.0)
+project(PitchNet VERSION 1.0.0)
 
 include(FetchContent)
 include(cmake/Asio.cmake)
@@ -18,6 +18,8 @@ option(ENABLE_NOTE_STRETCH "Enable note timing stretch feature (experimental, ha
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
 set(ONNXRUNTIME_VERSION "1.24.3" CACHE STRING "ONNX Runtime version")
+set(GAME_MODELS_VERSION "v1.0.3" CACHE STRING "GAME release tag used to download model assets")
+set(GAME_MODELS_URL "" CACHE STRING "Optional URL to download GAME model zip")
 
 # Check that CUDA and DirectML are not both enabled
 if(USE_CUDA AND USE_DIRECTML)
@@ -38,20 +40,20 @@ if(USE_DIRECTML)
     message(STATUS "USE_DIRECTML=ON -> enabling USE_GPU automatically")
 endif()
 
-set(HACHITUNE_ASIO_ENABLED OFF)
+set(PITCHNET_ASIO_ENABLED OFF)
 if(USE_ASIO AND WIN32)
-    hachitune_setup_asio(ASIO_INCLUDE_DIR)
-    set(HACHITUNE_ASIO_ENABLED ON)
+    pitchnet_setup_asio(ASIO_INCLUDE_DIR)
+    set(PITCHNET_ASIO_ENABLED ON)
     message(STATUS "ASIO support: ENABLED")
 elseif(USE_ASIO)
     message(WARNING "USE_ASIO is enabled but ASIO is only supported on Windows")
 endif()
 
-set(HACHITUNE_JUCE_ASIO 0)
-set(HACHITUNE_JUCE_ASIO_EXTERNAL 0)
-if(HACHITUNE_ASIO_ENABLED)
-    set(HACHITUNE_JUCE_ASIO 1)
-    set(HACHITUNE_JUCE_ASIO_EXTERNAL 1)
+set(PITCHNET_JUCE_ASIO 0)
+set(PITCHNET_JUCE_ASIO_EXTERNAL 0)
+if(PITCHNET_ASIO_ENABLED)
+    set(PITCHNET_JUCE_ASIO 1)
+    set(PITCHNET_JUCE_ASIO_EXTERNAL 1)
 endif()
 
 # Check if ONNX Runtime already exists in build directory
@@ -133,10 +135,10 @@ endif()
 add_subdirectory(third_party/JUCE)
 
 # Create GUI application
-juce_add_gui_app(HachiTune
-    PRODUCT_NAME "HachiTune"
-    COMPANY_NAME "OpenVPI"
-    BUNDLE_ID "com.openvpi.hachitune"
+juce_add_gui_app(PitchNet
+    PRODUCT_NAME "PitchNet"
+    COMPANY_NAME "Session Loops"
+    BUNDLE_ID "com.sessionloops.pitchnet"
     COMPANY_COPYRIGHT "Copyright 2026"
     MICROPHONE_PERMISSION_ENABLED TRUE
     FILE_SHARING_ENABLED TRUE
@@ -164,11 +166,11 @@ else()
 endif()
 
 # Create VST3 plugin
-juce_add_plugin(HachiTunePlugin
-    PRODUCT_NAME "HachiTune"
-    COMPANY_NAME "OpenVPI"
-    BUNDLE_ID "com.openvpi.hachitune"
-    PLUGIN_MANUFACTURER_CODE OPVP
+juce_add_plugin(PitchNetPlugin
+    PRODUCT_NAME "PitchNet"
+    COMPANY_NAME "Session Loops"
+    BUNDLE_ID "com.sessionloops.pitchnet"
+    PLUGIN_MANUFACTURER_CODE SLPS
     PLUGIN_CODE PTE1
     FORMATS VST3 AU $<$<BOOL:${AAX_AVAILABLE}>:AAX>
     IS_SYNTH FALSE
@@ -181,26 +183,30 @@ juce_add_plugin(HachiTunePlugin
 
 # ARA compile definitions
 if(ARA_AVAILABLE)
-    target_compile_definitions(HachiTunePlugin PRIVATE
+    target_compile_definitions(PitchNetPlugin PRIVATE
         JucePlugin_Enable_ARA=1)
 endif()
 
 # Add source files using GLOB_RECURSE
-file(GLOB_RECURSE HACHITUNE_CORE_SOURCES
+file(GLOB_RECURSE PITCHNET_CORE_SOURCES
     "Source/Audio/*.cpp" "Source/Audio/*.h"
     "Source/Models/*.cpp" "Source/Models/*.h"
     "Source/Undo/*.cpp" "Source/Undo/*.h"
     "Source/Utils/*.cpp" "Source/Utils/*.h" "Source/Utils/*.mm"
     "Source/JuceHeader.h")
 
-list(FILTER HACHITUNE_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
-list(APPEND HACHITUNE_CORE_SOURCES
+list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
+list(APPEND PITCHNET_CORE_SOURCES
     "Source/Utils/SHA256Utils.cpp"
     "Source/Utils/SHA256Utils.h")
 
-file(GLOB_RECURSE HACHITUNE_UI_SOURCES
+file(GLOB_RECURSE PITCHNET_UI_SOURCES
     "Source/UI/*.cpp" "Source/UI/*.h"
     "Source/Utils/UI/*.cpp" "Source/Utils/UI/*.h")
+list(APPEND PITCHNET_UI_SOURCES
+    "Source/UI/PianoRoll/PianoRollInteractionContext.cpp"
+    "Source/UI/PianoRoll/PianoRollInteractionContext.h"
+    "Source/UI/PianoRoll/PianoRollViewState.h")
 
 file(GLOB PLUGIN_SOURCES
     "Source/Plugin/PluginProcessor.cpp" "Source/Plugin/PluginProcessor.h"
@@ -209,17 +215,17 @@ file(GLOB PLUGIN_SOURCES
     "Source/Plugin/NonAraCaptureController.cpp" "Source/Plugin/NonAraCaptureController.h"
     "Source/Plugin/HostCompatibility.cpp" "Source/Plugin/HostCompatibility.h")
 
-target_sources(HachiTune PRIVATE
+target_sources(PitchNet PRIVATE
     Source/Main.cpp
     )
 
-target_sources(HachiTunePlugin PRIVATE
+target_sources(PitchNetPlugin PRIVATE
     ${PLUGIN_SOURCES}
     )
 
 # Core/UI libraries (stage 1 modularization)
-add_library(hachitune_core STATIC ${HACHITUNE_CORE_SOURCES})
-add_library(hachitune_ui STATIC ${HACHITUNE_UI_SOURCES})
+add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
+add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
 
 # Binary data for SVG icons
 file(GLOB SVG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Resources/svg/*.svg")
@@ -230,7 +236,7 @@ if(EXISTS "${EMBED_EN_LANG_FILE}")
 endif()
 juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 
-target_link_libraries(hachitune_core PUBLIC
+target_link_libraries(pitchnet_core PUBLIC
     BinaryData
     juce::juce_gui_basics
     juce::juce_gui_extra
@@ -242,8 +248,8 @@ target_link_libraries(hachitune_core PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags)
 
-target_link_libraries(hachitune_ui PUBLIC
-    hachitune_core
+target_link_libraries(pitchnet_ui PUBLIC
+    pitchnet_core
     BinaryData
     juce::juce_gui_basics
     juce::juce_gui_extra
@@ -256,14 +262,14 @@ target_link_libraries(hachitune_ui PUBLIC
 
 # Enable fast-math for release builds on non-MSVC compilers
 if(NOT MSVC)
-    target_compile_options(hachitune_core PRIVATE $<$<CONFIG:Release>:-ffast-math>)
-    target_compile_options(hachitune_ui PRIVATE $<$<CONFIG:Release>:-ffast-math>)
+    target_compile_options(pitchnet_core PRIVATE $<$<CONFIG:Release>:-ffast-math>)
+    target_compile_options(pitchnet_ui PRIVATE $<$<CONFIG:Release>:-ffast-math>)
 endif()
 
 # Link JUCE modules
-target_link_libraries(HachiTune PRIVATE
-    hachitune_ui
-    hachitune_core
+target_link_libraries(PitchNet PRIVATE
+    pitchnet_ui
+    pitchnet_core
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_basics
@@ -275,9 +281,9 @@ target_link_libraries(HachiTune PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
 
-target_link_libraries(HachiTunePlugin PRIVATE
-    hachitune_ui
-    hachitune_core
+target_link_libraries(PitchNetPlugin PRIVATE
+    pitchnet_ui
+    pitchnet_core
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_basics
@@ -291,30 +297,30 @@ target_link_libraries(HachiTunePlugin PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
 
-if(HACHITUNE_ASIO_ENABLED)
-    target_include_directories(hachitune_core PUBLIC ${ASIO_INCLUDE_DIR})
+if(PITCHNET_ASIO_ENABLED)
+    target_include_directories(pitchnet_core PUBLIC ${ASIO_INCLUDE_DIR})
 endif()
 
 # Link ONNX Runtime if found
 if(ONNXRUNTIME_FOUND)
-    target_include_directories(hachitune_core PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
-    target_link_libraries(hachitune_core PUBLIC ${ONNXRUNTIME_LIBRARY})
-    target_compile_definitions(hachitune_core PUBLIC HAVE_ONNXRUNTIME=1)
+    target_include_directories(pitchnet_core PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
+    target_link_libraries(pitchnet_core PUBLIC ${ONNXRUNTIME_LIBRARY})
+    target_compile_definitions(pitchnet_core PUBLIC HAVE_ONNXRUNTIME=1)
 
     # Pass GPU option to code (macOS always uses CPU)
     if(USE_GPU AND NOT APPLE)
-        target_compile_definitions(hachitune_core PUBLIC ONNXRUNTIME_USE_GPU=1)
+        target_compile_definitions(pitchnet_core PUBLIC ONNXRUNTIME_USE_GPU=1)
     endif()
 
     # Enable CUDA if requested
     if(USE_CUDA)
-        target_compile_definitions(hachitune_core PUBLIC USE_CUDA=1)
+        target_compile_definitions(pitchnet_core PUBLIC USE_CUDA=1)
         message(STATUS "CUDA execution provider: ENABLED")
     endif()
 
     # Enable DirectML if requested (Windows only)
     if(USE_DIRECTML AND WIN32)
-        target_compile_definitions(hachitune_core PUBLIC USE_DIRECTML=1)
+        target_compile_definitions(pitchnet_core PUBLIC USE_DIRECTML=1)
         message(STATUS "DirectML execution provider: ENABLED")
     endif()
 
@@ -329,15 +335,15 @@ if(ONNXRUNTIME_FOUND)
         if(ONNXRUNTIME_DLLS)
             foreach(DLL ${ONNXRUNTIME_DLLS})
                 message(STATUS "Will copy ONNX Runtime DLL: ${DLL}")
-                add_custom_command(TARGET HachiTune POST_BUILD
+                add_custom_command(TARGET PitchNet POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DLL}"
-                    "$<TARGET_FILE_DIR:HachiTune>")
+                    "$<TARGET_FILE_DIR:PitchNet>")
 
-                add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+                add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DLL}"
-                    "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>")
+                    "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>")
             endforeach()
         else()
             message(WARNING "No ONNX Runtime DLLs found to copy")
@@ -423,15 +429,15 @@ if(ONNXRUNTIME_FOUND)
                     set(CUDA_DLL_PATH "${CUDA_BIN_DIR}/${CUDA_DLL}")
                     if(EXISTS "${CUDA_DLL_PATH}")
                         message(STATUS "Will copy CUDA DLL: ${CUDA_DLL}")
-                        add_custom_command(TARGET HachiTune POST_BUILD
+                        add_custom_command(TARGET PitchNet POST_BUILD
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${CUDA_DLL_PATH}"
-                            "$<TARGET_FILE_DIR:HachiTune>")
+                            "$<TARGET_FILE_DIR:PitchNet>")
                         
-                        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+                        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${CUDA_DLL_PATH}"
-                            "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>")
+                            "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>")
                     endif()
                 endforeach()
             else()
@@ -496,15 +502,15 @@ if(ONNXRUNTIME_FOUND)
                     set(DML_DLL_PATH "${DML_BIN_DIR}/${DML_DLL}")
                     if(EXISTS "${DML_DLL_PATH}")
                         message(STATUS "Will copy DirectML DLL: ${DML_DLL_PATH}")
-                        add_custom_command(TARGET HachiTune POST_BUILD
+                        add_custom_command(TARGET PitchNet POST_BUILD
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${DML_DLL_PATH}"
-                            "$<TARGET_FILE_DIR:HachiTune>")
+                            "$<TARGET_FILE_DIR:PitchNet>")
 
-                        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+                        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${DML_DLL_PATH}"
-                            "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>")
+                            "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>")
                     endif()
                 endforeach()
             else()
@@ -522,84 +528,86 @@ if(ONNXRUNTIME_FOUND)
             foreach(DYLIB ${ONNXRUNTIME_DYLIBS})
                 message(STATUS "Will embed ONNX Runtime dylib: ${DYLIB}")
                 # Standalone app
-                add_custom_command(TARGET HachiTune POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Frameworks"
+                add_custom_command(TARGET PitchNet POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DYLIB}"
-                    "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Frameworks/")
+                    "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks/")
                 # VST3 plugin
-                add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Frameworks"
+                add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DYLIB}"
-                    "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Frameworks/")
+                    "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks/")
                 # AU plugin
-                add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Frameworks"
+                add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DYLIB}"
-                    "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Frameworks/")
+                    "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks/")
             endforeach()
             # Fix rpath for all targets using install_name_tool
-            add_custom_command(TARGET HachiTune POST_BUILD
-                COMMAND install_name_tool -add_rpath "@executable_path/../Frameworks" "$<TARGET_FILE:HachiTune>" 2>/dev/null || true)
-            add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/MacOS/HachiTune" 2>/dev/null || true)
-            add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/MacOS/HachiTune" 2>/dev/null || true)
+            add_custom_command(TARGET PitchNet POST_BUILD
+                COMMAND install_name_tool -add_rpath "@executable_path/../Frameworks" "$<TARGET_FILE:PitchNet>" 2>/dev/null || true)
+            add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/MacOS/PitchNet" 2>/dev/null || true)
+            add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/MacOS/PitchNet" 2>/dev/null || true)
         endif()
     endif()
 endif()
 
 # Set C++ standard
-target_compile_features(HachiTune PRIVATE cxx_std_17)
-target_compile_features(HachiTunePlugin PRIVATE cxx_std_17)
+target_compile_features(PitchNet PRIVATE cxx_std_17)
+target_compile_features(PitchNetPlugin PRIVATE cxx_std_17)
 
 # Platform-specific settings
 if(WIN32)
     # NOMINMAX prevents Windows.h from defining min/max macros that conflict with std::min/std::max
-    target_compile_definitions(hachitune_core PUBLIC
+    target_compile_definitions(pitchnet_core PUBLIC
         NOMINMAX
         JUCE_WASAPI=1
         JUCE_DIRECTSOUND=1
-        JUCE_ASIO=${HACHITUNE_JUCE_ASIO}
-        JUCE_ASIO_USE_EXTERNAL_SDK=${HACHITUNE_JUCE_ASIO_EXTERNAL})
+        JUCE_ASIO=${PITCHNET_JUCE_ASIO}
+        JUCE_ASIO_USE_EXTERNAL_SDK=${PITCHNET_JUCE_ASIO_EXTERNAL})
 elseif(APPLE)
-    target_compile_definitions(hachitune_core PUBLIC
+    target_compile_definitions(pitchnet_core PUBLIC
         JUCE_COREAUDIO=1)
 else()
-    target_compile_definitions(hachitune_core PUBLIC
+    target_compile_definitions(pitchnet_core PUBLIC
         JUCE_ALSA=1
         JUCE_JACK=1)
 endif()
 
 # Feature flags
 if(ENABLE_NOTE_STRETCH)
-    target_compile_definitions(hachitune_core PUBLIC HACHITUNE_ENABLE_STRETCH=1)
+    target_compile_definitions(pitchnet_core PUBLIC
+        PITCHNET_ENABLE_STRETCH=1
+        HACHITUNE_ENABLE_STRETCH=1)
     message(STATUS "Note stretch feature: ENABLED")
 else()
     message(STATUS "Note stretch feature: DISABLED")
 endif()
 
 # Common definitions
-target_compile_definitions(hachitune_core PUBLIC
+target_compile_definitions(pitchnet_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
-target_compile_definitions(hachitune_ui PUBLIC
+target_compile_definitions(pitchnet_ui PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
-target_compile_definitions(HachiTune PRIVATE
-    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:HachiTune,JUCE_PRODUCT_NAME>"
-    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:HachiTune,JUCE_VERSION>")
+target_compile_definitions(PitchNet PRIVATE
+    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:PitchNet,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:PitchNet,JUCE_VERSION>")
 
-target_compile_definitions(HachiTunePlugin PRIVATE
+target_compile_definitions(PitchNetPlugin PRIVATE
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:HachiTunePlugin,JUCE_PRODUCT_NAME>"
-    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:HachiTunePlugin,JUCE_VERSION>")
+    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:PitchNetPlugin,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:PitchNetPlugin,JUCE_VERSION>")
 
 # Check required models
 set(MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/models")
@@ -633,7 +641,11 @@ endforeach()
 
 if(GAME_MODELS_MISSING)
     message(STATUS "GAME models not found, downloading...")
-    set(GAME_ZIP_URL "https://github.com/openvpi/GAME/releases/download/v1.0.2/GAME-1.0-small-onnx.zip")
+    if(NOT GAME_MODELS_URL)
+        string(REGEX REPLACE "^v" "" GAME_MODELS_VERSION_NAME "${GAME_MODELS_VERSION}")
+        set(GAME_MODELS_URL "https://github.com/openvpi/GAME/releases/download/${GAME_MODELS_VERSION}/GAME-${GAME_MODELS_VERSION_NAME}-small-onnx.zip")
+    endif()
+    set(GAME_ZIP_URL "${GAME_MODELS_URL}")
     set(GAME_ZIP_PATH "${CMAKE_BINARY_DIR}/GAME-1.0-small-onnx.zip")
     set(GAME_EXTRACT_DIR "${CMAKE_BINARY_DIR}/_game_extract")
 
@@ -686,22 +698,22 @@ file(GLOB ALL_MODEL_FILES "${MODELS_DIR}/*.onnx" "${MODELS_DIR}/*.bin")
 foreach(MODEL_PATH ${ALL_MODEL_FILES})
     get_filename_component(MODEL_NAME "${MODEL_PATH}" NAME)
     if(APPLE)
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/${MODEL_NAME}")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/${MODEL_NAME}")
-        add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/${MODEL_NAME}")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/${MODEL_NAME}")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/${MODEL_NAME}")
+        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/${MODEL_NAME}")
     else()
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:HachiTune>/models/${MODEL_NAME}")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/${MODEL_NAME}")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:PitchNet>/models/${MODEL_NAME}")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/${MODEL_NAME}")
     endif()
 endforeach()
 
@@ -710,22 +722,22 @@ file(GLOB GAME_MODEL_FILES "${GAME_DIR}/*")
 foreach(GFILE_PATH ${GAME_MODEL_FILES})
     get_filename_component(GFILE_NAME "${GFILE_PATH}" NAME)
     if(APPLE)
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/GAME/${GFILE_NAME}")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/GAME/${GFILE_NAME}")
-        add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/GAME/${GFILE_NAME}")
     else()
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:HachiTune>/models/GAME/${GFILE_NAME}")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:PitchNet>/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/GAME/${GFILE_NAME}")
     endif()
 endforeach()
 
@@ -736,22 +748,22 @@ if(EXISTS "${HNSEP_DIR}")
     foreach(HFILE_PATH ${HNSEP_MODEL_FILES})
         get_filename_component(HFILE_NAME "${HFILE_PATH}" NAME)
         if(APPLE)
-            add_custom_command(TARGET HachiTune POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/hnsep"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/hnsep/${HFILE_NAME}")
-            add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/hnsep"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/hnsep/${HFILE_NAME}")
-            add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/hnsep"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET PitchNet POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/hnsep/${HFILE_NAME}")
         else()
-            add_custom_command(TARGET HachiTune POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/models/hnsep"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_FILE_DIR:HachiTune>/models/hnsep/${HFILE_NAME}")
-            add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/hnsep"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET PitchNet POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_FILE_DIR:PitchNet>/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/hnsep/${HFILE_NAME}")
         endif()
     endforeach()
 endif()
@@ -762,19 +774,19 @@ file(GLOB LANG_FILES "${LANG_DIR}/*.json")
 if(LANG_FILES)
     message(STATUS "Found language files: ${LANG_FILES}")
     if(APPLE)
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/lang/")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/lang/")
-        add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/lang/")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/lang"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/lang/")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/lang"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/lang/")
+        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/lang"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/lang/")
     else()
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_FILE_DIR:HachiTune>/lang/")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/lang"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_FILE_DIR:PitchNet>/lang/")
     endif()
 endif()
 
@@ -784,34 +796,34 @@ file(GLOB FONT_FILES "${FONTS_DIR}/*.otf" "${FONTS_DIR}/*.ttf")
 if(FONT_FILES)
     message(STATUS "Found font files: ${FONT_FILES}")
     if(APPLE)
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/fonts/")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/fonts/")
-        add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/fonts/")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/fonts/")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/fonts/")
+        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/fonts/")
     else()
-        add_custom_command(TARGET HachiTune POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_FILE_DIR:HachiTune>/fonts/")
-        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/fonts/")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_FILE_DIR:PitchNet>/fonts/")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/fonts/")
     endif()
 endif()
 
 # Re-sign bundles on macOS after all resources are copied
 if(APPLE)
-    add_custom_command(TARGET HachiTune POST_BUILD
-        COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:HachiTune>" 2>/dev/null || true
-        COMMENT "Re-signing HachiTune bundle")
-    add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
-        COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>" 2>/dev/null || true
+    add_custom_command(TARGET PitchNet POST_BUILD
+        COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:PitchNet>" 2>/dev/null || true
+        COMMENT "Re-signing PitchNet bundle")
+    add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+        COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>" 2>/dev/null || true
         COMMENT "Re-signing VST3 bundle")
-    add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
-        COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>" 2>/dev/null || true
+    add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+        COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>" 2>/dev/null || true
         COMMENT "Re-signing AU bundle")
 endif()

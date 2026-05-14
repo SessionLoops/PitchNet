@@ -6,14 +6,14 @@
 #include <memory>
 #include "PluginProcessor.h"
 
-class HachiTuneAudioProcessorEditor : public juce::AudioProcessorEditor
+class PitchNetAudioProcessorEditor : public juce::AudioProcessorEditor
 #if JucePlugin_Enable_ARA
     , public juce::AudioProcessorEditorARAExtension
 #endif
 {
 public:
-    explicit HachiTuneAudioProcessorEditor(HachiTuneAudioProcessor&);
-    ~HachiTuneAudioProcessorEditor() override;
+    explicit PitchNetAudioProcessorEditor(PitchNetAudioProcessor&);
+    ~PitchNetAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -29,8 +29,8 @@ private:
     void setupNonARAMode();
     void setupCallbacks();
 
-    HachiTuneAudioProcessor& audioProcessor;
+    PitchNetAudioProcessor& audioProcessor;
     std::unique_ptr<IMainView> mainView;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HachiTuneAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchNetAudioProcessorEditor)
 };

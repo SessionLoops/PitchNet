@@ -3,7 +3,7 @@
 #include "../JuceHeader.h"
 
 /**
- * Centralized command IDs for HachiTune.
+ * Centralized command IDs for PitchNet.
  * 
  * IDs start at 0x2000 to avoid conflicts with JUCE's StandardApplicationCommandIDs.
  * JUCE reserves 0x0001-0x0FFF for internal use.

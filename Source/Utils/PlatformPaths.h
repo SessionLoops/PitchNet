@@ -7,23 +7,68 @@
  *
  * macOS:
  *   - Models: App.app/Contents/Resources/models/
- *   - Logs: ~/Library/Logs/HachiTune/
- *   - Config: ~/Library/Application Support/HachiTune/
+ *   - Logs: ~/Library/Logs/PitchNet/
+ *   - Config: ~/Library/Application Support/PitchNet/
  *
  * Windows:
  *   - Models: <exe_dir>/models/
- *   - Logs: %APPDATA%/HachiTune/Logs/
- *   - Config: %APPDATA%/HachiTune/
+ *   - Logs: %APPDATA%/PitchNet/Logs/
+ *   - Config: %APPDATA%/PitchNet/
  *
  * Linux:
  *   - Models: <exe_dir>/models/
- *   - Logs: ~/.config/HachiTune/logs/
- *   - Config: ~/.config/HachiTune/
+ *   - Logs: ~/.config/PitchNet/logs/
+ *   - Config: ~/.config/PitchNet/
  */
 namespace PlatformPaths
 {
+    inline juce::File findLocalResourcesModelsDirectory()
+    {
+        auto isValid = [](const juce::File &candidate)
+        {
+            return candidate.isDirectory();
+        };
+
+        auto sourceRelativeProbe = juce::File(__FILE__)
+                                       .getParentDirectory()
+                                       .getParentDirectory()
+                                       .getParentDirectory()
+                                       .getChildFile("Resources/models");
+        if (isValid(sourceRelativeProbe))
+            return sourceRelativeProbe;
+
+        auto cwdProbe = juce::File::getCurrentWorkingDirectory()
+                            .getChildFile("Resources/models");
+        if (isValid(cwdProbe))
+            return cwdProbe;
+
+        auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                       .getParentDirectory();
+        for (int i = 0; i < 8 && dir.exists(); ++i)
+        {
+            auto resourcesCandidate = dir.getChildFile("Resources/models");
+            if (isValid(resourcesCandidate))
+                return resourcesCandidate;
+
+            auto parent = dir.getParentDirectory();
+            if (parent == dir)
+                break;
+            dir = parent;
+        }
+
+        return {};
+    }
+
     inline juce::File getModelsDirectory()
     {
+#if JUCE_DEBUG
+        // Debug builds prefer the local repo Resources folder so model edits do
+        // not require re-copying assets into the app/plugin bundle.
+        auto localResourcesModels = findLocalResourcesModelsDirectory();
+        if (localResourcesModels.isDirectory())
+            return localResourcesModels;
+#endif
+
 #if JUCE_MAC
         // macOS: Use Resources folder inside app bundle
         auto appBundle = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
@@ -121,17 +166,17 @@ namespace PlatformPaths
     inline juce::File getLogsDirectory()
     {
 #if JUCE_MAC
-        // macOS: ~/Library/Logs/HachiTune/
+        // macOS: ~/Library/Logs/PitchNet/
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-            .getChildFile("Library/Logs/HachiTune");
+            .getChildFile("Library/Logs/PitchNet");
 #elif JUCE_WINDOWS
-        // Windows: %APPDATA%/HachiTune/Logs/
+        // Windows: %APPDATA%/PitchNet/Logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("HachiTune/Logs");
+            .getChildFile("PitchNet/Logs");
 #else
-        // Linux: ~/.config/HachiTune/logs/
+        // Linux: ~/.config/PitchNet/logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("HachiTune/logs");
+            .getChildFile("PitchNet/logs");
 #endif
     }
 
@@ -139,7 +184,7 @@ namespace PlatformPaths
     {
         // All platforms use userApplicationDataDirectory
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("HachiTune");
+            .getChildFile("PitchNet");
     }
 
     inline juce::File getLogFile(const juce::String &name)

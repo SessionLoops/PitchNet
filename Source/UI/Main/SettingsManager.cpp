@@ -11,7 +11,7 @@ juce::File SettingsManager::getSettingsFile()
 {
   return juce::File::getSpecialLocation(
              juce::File::userApplicationDataDirectory)
-      .getChildFile("HachiTune")
+      .getChildFile("PitchNet")
       .getChildFile("settings.xml");
 }
 

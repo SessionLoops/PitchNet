@@ -9,7 +9,7 @@
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
 #include "PianoRoll/States/DrawHandler.h"
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
 #include "PianoRoll/States/StretchHandler.h"
 #endif
 #include "PianoRoll/States/SplitHandler.h"
@@ -129,12 +129,13 @@ PianoRollComponent::PianoRollComponent()
   noteSplitter = std::make_unique<NoteSplitter>();
   pitchToolHandles = std::make_unique<PitchToolHandles>();
   pitchToolController = std::make_unique<PitchToolController>();
+  interactionContext = std::make_unique<PianoRollInteractionContext>(*this);
 
   // Initialize interaction handlers
   loopDragHandler_ = std::make_unique<LoopDragHandler>(*this);
   selectHandler_ = std::make_unique<SelectHandler>(*this);
   drawHandler_ = std::make_unique<DrawHandler>(*this);
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   stretchHandler_ = std::make_unique<StretchHandler>(*this);
 #endif
   splitHandler_ = std::make_unique<SplitHandler>(*this);
@@ -289,7 +290,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     drawNotes(g, NoteRenderPass::Body);
     drawPitchCurves(g);
     drawNotes(g, NoteRenderPass::Overlay);
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
     drawStretchGuides(g);
 #endif
     drawGameValuesDebugOverlay(g);
@@ -1545,7 +1546,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
   }
 }
 
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
 void PianoRollComponent::drawStretchGuides(juce::Graphics &g)
 {
   if (!project || editMode != EditMode::Stretch || !stretchHandler_)
@@ -2839,7 +2840,7 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
 void PianoRollComponent::setEditMode(EditMode mode)
 {
   // Cancel active handler interaction if leaving its mode
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   if (editMode == EditMode::Stretch && mode != EditMode::Stretch &&
       stretchHandler_ && stretchHandler_->isActive())
   {
@@ -2889,7 +2890,7 @@ void PianoRollComponent::setEditMode(EditMode mode)
   case EditMode::Draw:
     currentHandler_ = drawHandler_.get();
     break;
-#if HACHITUNE_ENABLE_STRETCH
+#if PITCHNET_ENABLE_STRETCH
   case EditMode::Stretch:
     currentHandler_ = stretchHandler_.get();
     break;
