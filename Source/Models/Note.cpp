@@ -1,9 +1,11 @@
 #include "Note.h"
 #include "../Utils/Constants.h"
+#include <cmath>
 
 Note::Note(int startFrame, int endFrame, float midiNote)
     : srcStartFrame(startFrame), srcEndFrame(endFrame),
-      startFrame(startFrame), endFrame(endFrame), midiNote(midiNote)
+      startFrame(startFrame), endFrame(endFrame), midiNote(midiNote),
+      originalMidiNote(midiNote)
 {
 }
 
@@ -52,4 +54,22 @@ std::vector<float> Note::computeF0FromDelta() const
 bool Note::containsFrame(int frame) const
 {
     return frame >= startFrame && frame < endFrame;
+}
+
+bool Note::isNeutralForOriginalWaveform() const
+{
+    constexpr float kPitchEpsilon = 0.001f;
+    constexpr float kGainEpsilon = 0.001f;
+
+    return std::abs(midiNote - originalMidiNote) <= kPitchEpsilon &&
+           std::abs(pitchOffset) <= kPitchEpsilon &&
+           std::abs(volumeDb) <= kGainEpsilon &&
+           std::abs(tiltLeft) <= kPitchEpsilon &&
+           std::abs(tiltRight) <= kPitchEpsilon &&
+           std::abs(varianceScale - 1.0f) <= kPitchEpsilon &&
+           smoothLeftFrames == 0 &&
+           smoothRightFrames == 0 &&
+           std::abs(deltaScale - 1.0f) <= kPitchEpsilon &&
+           std::abs(deltaOffset) <= kPitchEpsilon &&
+           (!vibratoEnabled || vibratoDepthSemitones <= kPitchEpsilon);
 }

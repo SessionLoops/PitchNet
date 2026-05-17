@@ -223,6 +223,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
     obj->setProperty("srcStartFrame", note.getSrcStartFrame());
     obj->setProperty("srcEndFrame", note.getSrcEndFrame());
     obj->setProperty("midiNote", note.getMidiNote());
+    obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
     obj->setProperty("rest", note.isRest());
@@ -272,7 +273,11 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     // Backward compat: if srcStartFrame/srcEndFrame not in file, default to startFrame/endFrame
     note.setSrcStartFrame(static_cast<int>(json.getProperty("srcStartFrame", startFrame)));
     note.setSrcEndFrame(static_cast<int>(json.getProperty("srcEndFrame", endFrame)));
-    note.setMidiNote(static_cast<float>(json.getProperty("midiNote", 60.0)));
+    const float midiNote =
+        static_cast<float>(json.getProperty("midiNote", 60.0));
+    note.setMidiNote(midiNote);
+    note.setOriginalMidiNote(static_cast<float>(
+        json.getProperty("originalMidiNote", midiNote)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
     note.setRest(json.getProperty("rest", false));

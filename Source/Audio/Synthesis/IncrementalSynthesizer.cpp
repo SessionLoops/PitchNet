@@ -440,9 +440,16 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             // uncached notes that are directly adjacent to edited anchors.
             const bool shouldCommit =
                 isCommitAnchor(note) ||
-                (!note.hasSynthWaveform() && isDirectlyAdjacentToAnchor(note));
+              (!note.hasSynthWaveform() &&
+                               !note.isNeutralForOriginalWaveform() &&
+                               isDirectlyAdjacentToAnchor(note));
             if (!shouldCommit)
               continue;
+
+              if (note.isNeutralForOriginalWaveform()) {
+                            note.discardSynthWaveform();
+                            continue;
+                          }
 
             // Full note range in samples (the "body")
             const int noteStartSample = noteStart * hopSize;

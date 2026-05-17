@@ -44,6 +44,8 @@ public:
     // Pitch
     float getMidiNote() const { return midiNote; }
     void setMidiNote(float note) { midiNote = note; }
+    float getOriginalMidiNote() const { return originalMidiNote; }
+    void setOriginalMidiNote(float note) { originalMidiNote = note; }
     float getPitchOffset() const { return pitchOffset; }
     void setPitchOffset(float offset) { pitchOffset = offset; }
     float getAdjustedMidiNote() const { return midiNote + pitchOffset; }
@@ -114,6 +116,7 @@ public:
     void setSynthWaveform(std::vector<float> samples, int preroll) { synthWaveform = std::move(samples); synthPreroll = preroll; synthDirty = false; }
     bool hasSynthWaveform() const { return !synthWaveform.empty(); }
     void clearSynthWaveform() { synthWaveform.clear(); synthPreroll = 0; synthDirty = true; }
+    void discardSynthWaveform() { synthWaveform.clear(); synthPreroll = 0; synthDirty = false; }
 
     // Synth preroll: number of margin samples prepended before noteStart in synthWaveform.
     // synthWaveform[0..synthPreroll) covers audio BEFORE noteStart*HOP_SIZE.
@@ -158,6 +161,7 @@ public:
 
     // Check if frame is within note
     bool containsFrame(int frame) const;
+    bool isNeutralForOriginalWaveform() const;
 
 private:
     // Source position (in original waveform, fixed after detection)
@@ -169,6 +173,7 @@ private:
     int endFrame = 0;
 
     float midiNote = 60.0f;
+    float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
 
