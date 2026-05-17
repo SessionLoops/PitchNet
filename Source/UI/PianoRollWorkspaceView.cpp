@@ -181,6 +181,7 @@ void PianoRollWorkspaceView::updateOverviewVisibility()
 {
   overviewCard.setVisible(overviewVisible);
   overviewPanel.setVisible(overviewVisible);
+  pianoRoll.setHorizontalScrollBarVisible(!overviewVisible);
 }
 
 void PianoRollWorkspaceView::timerCallback()

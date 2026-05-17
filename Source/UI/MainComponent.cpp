@@ -99,9 +99,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   workspace.getMainCard().setBackgroundColour(juce::Colours::transparentBlack);
   workspace.getMainCard().setBorderColour(juce::Colours::transparentBlack);
 
-  // Add parameter panel to workspace (visible by default)
+  // Add parameter panel to workspace.
   workspace.addPanel("parameters", TR("panel.parameters"), &parameterPanel,
-                     true);
+                     false);
 
   // Configure toolbar for plugin mode
   if (isPluginMode())

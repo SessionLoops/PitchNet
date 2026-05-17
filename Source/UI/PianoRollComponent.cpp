@@ -196,7 +196,19 @@ int PianoRollComponent::getVisibleContentWidth() const
 
 int PianoRollComponent::getVisibleContentHeight() const
 {
-  return std::max(0, getHeight() - headerHeight - 14);
+  return std::max(0, getHeight() - headerHeight -
+                         (showHorizontalScrollBar ? 14 : 0));
+}
+
+void PianoRollComponent::setHorizontalScrollBarVisible(bool shouldShow)
+{
+  if (showHorizontalScrollBar == shouldShow)
+    return;
+
+  showHorizontalScrollBar = shouldShow;
+  horizontalScrollBar.setVisible(showHorizontalScrollBar);
+  resized();
+  repaint();
 }
 
 void PianoRollComponent::paint(juce::Graphics &g)
@@ -212,15 +224,16 @@ void PianoRollComponent::paint(juce::Graphics &g)
   // Background (solid to keep grid clean)
   g.fillAll(APP_COLOR_BACKGROUND);
 
-  constexpr int scrollBarSize = 8;
+  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
+  constexpr int verticalScrollBarSize = 8;
   auto contentBounds = getLocalBounds();
 
   // Create clipping region for main area (below timelines)
   auto mainArea = contentBounds
                       .withTrimmedLeft(pianoKeysWidth)
                       .withTrimmedTop(headerHeight)
-                      .withTrimmedBottom(scrollBarSize)
-                      .withTrimmedRight(scrollBarSize);
+                      .withTrimmedBottom(horizontalScrollBarSize)
+                      .withTrimmedRight(verticalScrollBarSize);
 
   // Draw background waveform (only horizontal scroll, fills visible height)
   {
@@ -262,10 +275,11 @@ void PianoRollComponent::paint(juce::Graphics &g)
               static_cast<float>(scrollX);
     float cursorTop = 0.0f;
     float cursorBottom =
-        static_cast<float>(getHeight() - scrollBarSize); // Exclude scrollbar
+        static_cast<float>(getHeight() -
+                           horizontalScrollBarSize); // Exclude scrollbar
 
     // Only draw if cursor is in visible area
-    if (x >= pianoKeysWidth && x < getWidth() - scrollBarSize)
+    if (x >= pianoKeysWidth && x < getWidth() - verticalScrollBarSize)
     {
       g.setColour(APP_COLOR_PRIMARY);
       g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom);
@@ -289,15 +303,25 @@ void PianoRollComponent::paint(juce::Graphics &g)
 void PianoRollComponent::resized()
 {
   auto bounds = getLocalBounds();
-  constexpr int scrollBarSize = 8;
+  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
+  constexpr int verticalScrollBarSize = 8;
 
-  horizontalScrollBar.setBounds(
-      pianoKeysWidth, bounds.getHeight() - scrollBarSize,
-      bounds.getWidth() - pianoKeysWidth - scrollBarSize, scrollBarSize);
+  if (showHorizontalScrollBar)
+  {
+    horizontalScrollBar.setBounds(
+        pianoKeysWidth, bounds.getHeight() - horizontalScrollBarSize,
+        bounds.getWidth() - pianoKeysWidth - verticalScrollBarSize,
+        horizontalScrollBarSize);
+  }
+  else
+  {
+    horizontalScrollBar.setBounds({});
+  }
 
   verticalScrollBar.setBounds(
-      bounds.getWidth() - scrollBarSize, headerHeight, scrollBarSize,
-      bounds.getHeight() - scrollBarSize - headerHeight);
+      bounds.getWidth() - verticalScrollBarSize, headerHeight,
+      verticalScrollBarSize,
+      bounds.getHeight() - horizontalScrollBarSize - headerHeight);
 
   updateScrollBars();
 }

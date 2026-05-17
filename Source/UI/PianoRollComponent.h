@@ -124,6 +124,7 @@ public:
   void centerOnPitchRange(float minMidi, float maxMidi);
   int getVisibleContentWidth() const;
   int getVisibleContentHeight() const;
+  void setHorizontalScrollBarVisible(bool shouldShow);
 
   // Edit mode
   void setEditMode(EditMode mode);
@@ -282,6 +283,7 @@ private:
   // Scrollbars
   juce::ScrollBar horizontalScrollBar{false};
   juce::ScrollBar verticalScrollBar{true};
+  bool showHorizontalScrollBar = true;
 
 public:
   void invalidateWaveformCache();

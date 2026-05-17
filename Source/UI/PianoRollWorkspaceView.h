@@ -29,7 +29,7 @@ private:
   RoundedCard overviewCard;
 
   juce::TextButton overviewToggleButton{"[]"};
-  bool overviewVisible = true;
+  bool overviewVisible = false;
 
   juce::Slider zoomXSlider;
   juce::Slider zoomYSlider;
