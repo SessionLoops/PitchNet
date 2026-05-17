@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 IncrementalSynthesizer::IncrementalSynthesizer() = default;
 
@@ -407,25 +408,42 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             // notes overlapping the F0 dirty range are the edited anchors.
             return !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
           };
-          auto isDirectlyAdjacentToAnchor = [&](const Note &candidate) {
-            for (const auto &anchor : capturedProject->getNotes()) {
-              if (&anchor == &candidate || !isCommitAnchor(anchor))
-                continue;
-
-              const int gapAfterCandidate =
-                  anchor.getStartFrame() - candidate.getEndFrame();
-              const int gapBeforeCandidate =
-                  candidate.getStartFrame() - anchor.getEndFrame();
-              if ((gapAfterCandidate >= 0 &&
-                   gapAfterCandidate <= kAdjacentFrameTolerance) ||
-                  (gapBeforeCandidate >= 0 &&
-                   gapBeforeCandidate <= kAdjacentFrameTolerance))
-                return true;
-            }
-            return false;
+          auto areAdjacent = [&](const Note &a, const Note &b) {
+            const int gapAB = b.getStartFrame() - a.getEndFrame();
+            const int gapBA = a.getStartFrame() - b.getEndFrame();
+            return (gapAB >= 0 && gapAB <= kAdjacentFrameTolerance) ||
+                   (gapBA >= 0 && gapBA <= kAdjacentFrameTolerance);
           };
 
-          for (auto &note : capturedProject->getNotes()) {
+          auto &notes = capturedProject->getNotes();
+          std::vector<bool> shouldCommitNote(notes.size(), false);
+          bool grewCommitSet = false;
+          for (size_t i = 0; i < notes.size(); ++i) {
+            shouldCommitNote[i] = isCommitAnchor(notes[i]);
+            grewCommitSet = grewCommitSet || shouldCommitNote[i];
+          }
+
+          do {
+            grewCommitSet = false;
+            for (size_t i = 0; i < notes.size(); ++i) {
+              if (shouldCommitNote[i] || notes[i].isRest())
+                continue;
+
+              for (size_t j = 0; j < notes.size(); ++j) {
+                if (!shouldCommitNote[j] || notes[j].isRest())
+                  continue;
+                if (!areAdjacent(notes[i], notes[j]))
+                  continue;
+
+                shouldCommitNote[i] = true;
+                grewCommitSet = true;
+                break;
+              }
+            }
+          } while (grewCommitSet);
+
+          for (size_t noteIndex = 0; noteIndex < notes.size(); ++noteIndex) {
+            auto &note = notes[noteIndex];
             if (note.isRest())
               continue;
 
@@ -436,12 +454,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (overlapEnd <= overlapStart)
               continue;
 
-            // Only commit rendered context back to edited notes, or to
-            // uncached notes that are directly adjacent to edited anchors.
-            const bool shouldCommit =
-                isCommitAnchor(note) ||
-                (!note.hasSynthWaveform() && isDirectlyAdjacentToAnchor(note));
-            if (!shouldCommit)
+            // Commit the full adjacent note chain. Every note in a continuous
+            // chain participates in boundary margins once one note changes.
+            if (!shouldCommitNote[noteIndex])
               continue;
 
             // Full note range in samples (the "body")

@@ -19,7 +19,7 @@ namespace
   // Maximum frames per single ONNX inference call.
   // Large tensors can cause "Error in building plan" on CoreML and OOM on other
   // providers.  512 frames ≈ 5.9 s at 44100/512 and is safe across all backends.
-  constexpr size_t kMaxChunkFrames = 512;
+  constexpr size_t kMaxChunkFrames = 2560;
   // Overlap between adjacent chunks for crossfade (in frames).
   constexpr size_t kOverlapFrames = 16;
 
