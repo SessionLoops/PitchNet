@@ -247,23 +247,41 @@ void OverviewPanel::paint(juce::Graphics &g) {
   }
 
   auto viewport = computeViewport();
-  if (!viewport.valid)
-    return;
+  if (viewport.valid) {
+    g.setColour(APP_COLOR_SELECTION_OVERLAY.withAlpha(0.35f));
+    g.fillRoundedRectangle(viewport.rect, 4.0f);
 
-  g.setColour(APP_COLOR_SELECTION_OVERLAY.withAlpha(0.35f));
-  g.fillRoundedRectangle(viewport.rect, 4.0f);
+    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.9f));
+    g.drawRoundedRectangle(viewport.rect, 4.0f, 1.0f);
 
-  g.setColour(APP_COLOR_PRIMARY.withAlpha(0.9f));
-  g.drawRoundedRectangle(viewport.rect, 4.0f, 1.0f);
+    const float handleWidth = 2.0f;
+    const float handleInset = 3.0f;
+    const float handleHeight = viewport.rect.getHeight() - handleInset * 2.0f;
 
-  const float handleWidth = 2.0f;
-  const float handleInset = 3.0f;
-  const float handleHeight = viewport.rect.getHeight() - handleInset * 2.0f;
+    g.fillRect(viewport.rect.getX() + handleInset,
+               viewport.rect.getY() + handleInset, handleWidth, handleHeight);
+    g.fillRect(viewport.rect.getRight() - handleInset - handleWidth,
+               viewport.rect.getY() + handleInset, handleWidth, handleHeight);
+  }
 
-  g.fillRect(viewport.rect.getX() + handleInset,
-             viewport.rect.getY() + handleInset, handleWidth, handleHeight);
-  g.fillRect(viewport.rect.getRight() - handleInset - handleWidth,
-             viewport.rect.getY() + handleInset, handleWidth, handleHeight);
+  auto state = getViewState ? getViewState() : ViewState{};
+  if (totalTime > 0.0 && state.cursorTime >= 0.0 &&
+      state.cursorTime <= totalTime) {
+    const float playheadX =
+        content.getX() +
+        static_cast<float>((state.cursorTime / totalTime) * content.getWidth());
+
+    g.setColour(APP_COLOR_PRIMARY);
+    g.fillRect(playheadX - 0.5f, content.getY(), 1.0f, content.getHeight());
+
+    constexpr float markerWidth = 7.0f;
+    constexpr float markerHeight = 5.0f;
+    juce::Path marker;
+    marker.addTriangle(playheadX - markerWidth * 0.5f, content.getY(),
+                       playheadX + markerWidth * 0.5f, content.getY(),
+                       playheadX, content.getY() + markerHeight);
+    g.fillPath(marker);
+  }
 }
 
 void OverviewPanel::mouseDown(const juce::MouseEvent &e) {

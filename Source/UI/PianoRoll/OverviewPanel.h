@@ -10,6 +10,7 @@ public:
   OverviewPanel() = default;
   struct ViewState {
     double totalTime = 0.0;
+    double cursorTime = 0.0;
     double scrollX = 0.0;
     float pixelsPerSecond = 0.0f;
     int visibleWidth = 0;

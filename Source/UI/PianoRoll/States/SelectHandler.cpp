@@ -44,7 +44,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     if (clickedOnSelected)
     {
       // Start multi-note drag
-      owner_.pitchEditor->startMultiNoteDrag(selectedNotes, worldY);
+      owner_.pitchEditor->startMultiNoteDrag(selectedNotes, worldY, note);
     }
     else
     {
@@ -282,7 +282,7 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   // Multi-note drag
   if (owner_.pitchEditor->isDraggingMultiNotes())
   {
-    owner_.pitchEditor->updateMultiNoteDrag(worldY);
+    owner_.pitchEditor->updateMultiNoteDrag(worldX, worldY);
     owner_.updatePitchToolHandlesFromSelection();
     if (shouldRepaint)
     {

@@ -3,10 +3,28 @@
 #include "States/SelectHandler.h"
 #include "States/SplitHandler.h"
 #include "../../Utils/Constants.h"
+#include "../../Utils/ScaleUtils.h"
 #include "../../Utils/UI/Theme.h"
 
 #include <algorithm>
 #include <cmath>
+
+namespace
+{
+juce::Colour getPitchCenterColour(float midi, int pitchReferenceHz)
+{
+  static const juce::Colour centredColour(0xFF3822FFu);
+  static const juce::Colour farthestColour(0xFFFE0043u);
+
+  const float pitchCenter =
+      ScaleUtils::snapMidiToSemitone(midi, pitchReferenceHz);
+  const float distanceFromCenter = std::abs(midi - pitchCenter);
+  const float amount =
+      juce::jlimit(0.0f, 1.0f, distanceFromCenter / 0.5f);
+
+  return centredColour.interpolatedWith(farthestColour, amount);
+}
+} // namespace
 
 void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                         int componentWidth)
@@ -20,6 +38,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
   const float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
   const double scrollX = coordMapper->getScrollX();
+  const int pitchReferenceHz = project->getPitchReferenceHz();
 
   // Pre-allocated scratch buffers to avoid per-note heap allocations
   std::vector<float> waveValues;
@@ -30,6 +49,15 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
   const std::vector<Note *> *draggedNotes =
       isMultiDragging ? &pitchEditor->getDraggedNotes() : nullptr;
+  Note *hoveredMultiDragNote =
+      isMultiDragging ? pitchEditor->getHoveredMultiDragNote() : nullptr;
+  int selectedNoteCount = 0;
+  for (const auto &note : project->getNotes())
+  {
+    if (!note.isRest() && note.isSelected())
+      ++selectedNoteCount;
+  }
+  const bool showSelectionStatus = selectedNoteCount > 1;
 
   const auto &audioData = project->getAudioData();
   const float *globalSamples =
@@ -66,9 +94,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
     if (drawBodies)
     {
-      juce::Colour noteColor = note.isSelected()
-                                   ? APP_COLOR_NOTE_SELECTED
-                                   : APP_COLOR_NOTE_NORMAL;
+      juce::Colour noteColor =
+          getPitchCenterColour(note.getAdjustedMidiNote(), pitchReferenceHz);
 
       const float *samples = globalSamples;
       int totalSamples = globalTotalSamples;
@@ -132,7 +159,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const size_t numPoints = waveValues.size();
         if (numPoints < 2)
         {
-          g.setColour(noteColor.withAlpha(0.85f));
+          g.setColour(noteColor);
           g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
         }
         else
@@ -147,7 +174,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                            (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
           };
 
-          g.setColour(noteColor.withAlpha(0.85f));
+          g.setColour(noteColor);
           juce::Path waveformPath;
 
           waveformPath.startNewSubPath(
@@ -229,8 +256,15 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       }
       else
       {
-        g.setColour(noteColor.withAlpha(0.85f));
+        g.setColour(noteColor);
         g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+      }
+
+      if (showSelectionStatus && note.isSelected())
+      {
+        g.setColour(juce::Colours::white.withAlpha(0.72f));
+        g.drawRoundedRectangle(x + 0.5f, y + 0.5f, renderedWidth - 1.0f,
+                               h - 1.0f, 2.0f, 1.5f);
       }
     }
 
@@ -241,33 +275,31 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         isMultiDragging && draggedNotes &&
         std::find(draggedNotes->begin(), draggedNotes->end(), &note) !=
             draggedNotes->end();
-    if (drawOverlays && (isSingleDragged || isMultiDragged))
+    const bool shouldShowPitchTip =
+        isSingleDragged || (isMultiDragged && hoveredMultiDragNote == &note);
+    if (drawOverlays && shouldShowPitchTip)
     {
       const float deltaSemitones = note.getPitchOffset();
-      if (std::abs(deltaSemitones) >= 0.01f)
-      {
-        const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
-        const juce::String label =
-            prefix + juce::String(deltaSemitones, 1) + " st";
+      const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
+      const juce::String label =
+          prefix + juce::String(deltaSemitones, 1) + " st";
 
-        constexpr float labelHeight = 16.0f;
-        constexpr float margin = 4.0f;
-        const float labelWidth =
-            std::max(44.0f, static_cast<float>(label.length()) * 7.2f);
-        const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
-        const bool moveUp = deltaSemitones > 0.0f;
-        const float labelY = moveUp ? (y - labelHeight - margin) : (y + h + margin);
+      constexpr float labelHeight = 16.0f;
+      constexpr float margin = 4.0f;
+      const float labelWidth =
+          std::max(44.0f, static_cast<float>(label.length()) * 7.2f);
+      const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
+      const float labelY = y - labelHeight - margin;
 
-        g.setColour(juce::Colours::black.withAlpha(0.72f));
-        g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
-        g.setColour(juce::Colours::white);
-        g.setFont(juce::FontOptions(11.0f));
-        g.drawFittedText(label, static_cast<int>(labelX),
-                         static_cast<int>(labelY),
-                         static_cast<int>(labelWidth),
-                         static_cast<int>(labelHeight),
-                         juce::Justification::centred, 1);
-      }
+      g.setColour(juce::Colours::black.withAlpha(0.72f));
+      g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
+      g.setColour(juce::Colours::white);
+      g.setFont(juce::FontOptions(11.0f));
+      g.drawFittedText(label, static_cast<int>(labelX),
+                       static_cast<int>(labelY),
+                       static_cast<int>(labelWidth),
+                       static_cast<int>(labelHeight),
+                       juce::Justification::centred, 1);
     }
   }
 

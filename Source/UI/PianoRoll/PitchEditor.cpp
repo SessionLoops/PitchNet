@@ -502,12 +502,13 @@ void PitchEditor::snapNoteToSemitone(Note *note)
 }
 
 void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
-                                     float y)
+                                     float y, Note *hoveredNote)
 {
   if (notes.empty() || !project)
     return;
 
   draggedNotes = notes;
+  hoveredMultiDragNote = hoveredNote;
   originalMidiNotes.clear();
   originalF0ValuesMulti.clear();
   dragStartY = y;
@@ -546,7 +547,7 @@ void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
   isMultiDragging = true;
 }
 
-void PitchEditor::updateMultiNoteDrag(float y)
+void PitchEditor::updateMultiNoteDrag(float x, float y)
 {
   if (!isMultiDragging || draggedNotes.empty() || !coordMapper)
     return;
@@ -562,6 +563,7 @@ void PitchEditor::updateMultiNoteDrag(float y)
     note->markDirty();
   }
 
+  hoveredMultiDragNote = findDraggedNoteAt(x, y);
   applyDragBasePreview(deltaSemitones);
 }
 
@@ -571,6 +573,7 @@ void PitchEditor::endMultiNoteDrag()
   {
     isMultiDragging = false;
     draggedNotes.clear();
+    hoveredMultiDragNote = nullptr;
     originalMidiNotes.clear();
     originalF0ValuesMulti.clear();
     return;
@@ -688,6 +691,7 @@ void PitchEditor::endMultiNoteDrag()
 
   isMultiDragging = false;
   draggedNotes.clear();
+  hoveredMultiDragNote = nullptr;
   originalMidiNotes.clear();
   originalF0ValuesMulti.clear();
   dragPreviewStartFrame = -1;
@@ -695,6 +699,30 @@ void PitchEditor::endMultiNoteDrag()
   dragPreviewWeights.clear();
   dragBasePitchSnapshot.clear();
   dragF0Snapshot.clear();
+}
+
+Note *PitchEditor::findDraggedNoteAt(float x, float y) const
+{
+  if (!coordMapper)
+    return nullptr;
+
+  for (auto *note : draggedNotes)
+  {
+    if (!note || note->isRest())
+      continue;
+
+    const float noteX = framesToSeconds(note->getStartFrame()) *
+                        coordMapper->getPixelsPerSecond();
+    const float noteW = framesToSeconds(note->getDurationFrames()) *
+                        coordMapper->getPixelsPerSecond();
+    const float noteY = coordMapper->midiToY(note->getAdjustedMidiNote());
+    const float noteH = coordMapper->getPixelsPerSemitone();
+
+    if (x >= noteX && x < noteX + noteW && y >= noteY && y < noteY + noteH)
+      return note;
+  }
+
+  return nullptr;
 }
 
 void PitchEditor::prepareDragBasePreview()

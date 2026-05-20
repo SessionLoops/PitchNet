@@ -22,6 +22,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
     OverviewPanel::ViewState state;
     auto *project = pianoRoll.getProject();
     state.totalTime = project ? project->getAudioData().getDuration() : 0.0;
+    state.cursorTime = pianoRoll.getCursorTime();
     state.scrollX = pianoRoll.getScrollX();
     state.pixelsPerSecond = pianoRoll.getPixelsPerSecond();
     state.visibleWidth = pianoRoll.getVisibleContentWidth();
@@ -95,7 +96,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   addAndMakeVisible(zoomYSlider);
 
   updateOverviewVisibility();
-  startTimerHz(10);
+  startTimerHz(30);
 }
 
 void PianoRollWorkspaceView::paint(juce::Graphics &g)
@@ -193,4 +194,11 @@ void PianoRollWorkspaceView::timerCallback()
   const float ppsY = pianoRoll.getPixelsPerSemitone();
   if (std::abs(zoomYSlider.getValue() - ppsY) > 0.05)
     zoomYSlider.setValue(ppsY, juce::dontSendNotification);
+
+  const double cursorTime = pianoRoll.getCursorTime();
+  if (overviewVisible && std::abs(lastOverviewCursorTime - cursorTime) > 0.0001)
+  {
+    lastOverviewCursorTime = cursorTime;
+    overviewPanel.repaint();
+  }
 }

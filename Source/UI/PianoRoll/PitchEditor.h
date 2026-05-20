@@ -35,11 +35,13 @@ public:
     Note* getDraggedNote() const { return draggedNote; }
 
     // Multi-note dragging
-    void startMultiNoteDrag(const std::vector<Note*>& notes, float y);
-    void updateMultiNoteDrag(float y);
+    void startMultiNoteDrag(const std::vector<Note*>& notes, float y,
+                            Note* hoveredNote);
+    void updateMultiNoteDrag(float x, float y);
     void endMultiNoteDrag();
     bool isDraggingMultiNotes() const { return isMultiDragging; }
     const std::vector<Note*>& getDraggedNotes() const { return draggedNotes; }
+    Note* getHoveredMultiDragNote() const { return hoveredMultiDragNote; }
 
     // Pitch drawing
     void startDrawing(float x, float y);
@@ -62,6 +64,7 @@ private:
     void prepareDragBasePreview();
     void applyDragBasePreview(float pitchOffsetSemitones);
     void restoreDragBasePreview();
+    Note* findDraggedNoteAt(float x, float y) const;
 
     Project* project = nullptr;
     PitchUndoManager* undoManager = nullptr;
@@ -86,6 +89,7 @@ private:
     // Multi-note drag state
     bool isMultiDragging = false;
     std::vector<Note*> draggedNotes;
+    Note* hoveredMultiDragNote = nullptr;
     std::vector<float> originalMidiNotes;
     std::vector<std::vector<float>> originalF0ValuesMulti;
     bool snapToSemitoneDragEnabled = false;
