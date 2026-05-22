@@ -49,6 +49,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     else
     {
       // Single note selection and drag
+      owner_.boxSelector->setLastSelectionFromBox(false);
       project->deselectAllNotes();
       note->setSelected(true);
       owner_.updatePitchToolHandlesFromSelection();
@@ -271,6 +272,12 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   if (owner_.boxSelector->isSelecting())
   {
     owner_.boxSelector->updateSelection(worldX, worldY);
+    project->deselectAllNotes();
+    auto notesInRect = owner_.boxSelector->getNotesInRect(
+        project, owner_.coordMapper.get());
+    for (auto *note : notesInRect)
+      note->setSelected(true);
+
     if (shouldRepaint)
     {
       owner_.repaint();
@@ -537,6 +544,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
     {
       note->setSelected(true);
     }
+    owner_.boxSelector->setLastSelectionFromBox(!notesInRect.empty());
     owner_.boxSelector->endSelection();
     owner_.updatePitchToolHandlesFromSelection();
     owner_.repaint();

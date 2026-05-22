@@ -9,6 +9,7 @@
 class SelectHandler;
 class SplitHandler;
 class PitchEditor;
+class BoxSelector;
 
 /**
  * Draws note bodies (with inline waveform), selection outlines, delta-scale
@@ -33,6 +34,7 @@ public:
   void setSelectHandler(SelectHandler *h) { selectHandler = h; }
   void setSplitHandler(SplitHandler *h) { splitHandler = h; }
   void setPitchEditor(PitchEditor *e) { pitchEditor = e; }
+  void setBoxSelector(BoxSelector *b) { boxSelector = b; }
 
   void draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             int componentWidth);
@@ -43,6 +45,7 @@ private:
   SelectHandler *selectHandler = nullptr;
   SplitHandler *splitHandler = nullptr;
   PitchEditor *pitchEditor = nullptr;
+  BoxSelector *boxSelector = nullptr;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NoteRenderer)
 };

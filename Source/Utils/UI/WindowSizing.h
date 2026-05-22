@@ -11,8 +11,8 @@ struct Constraints {
   int initialMargin = 24;
 };
 
-constexpr int kDefaultWidth = 1400;
-constexpr int kDefaultHeight = 900;
+constexpr int kDefaultWidth = 1000;
+constexpr int kDefaultHeight = 628;
 
 const juce::Displays::Display *getPrimaryDisplay();
 const juce::Displays::Display *getDisplayForComponent(

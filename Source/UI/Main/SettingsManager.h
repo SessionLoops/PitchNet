@@ -91,8 +91,8 @@ private:
   // Config
   juce::File lastFilePath;
   juce::StringArray recentFiles;
-  int windowWidth = 1200;
-  int windowHeight = 800;
+  int windowWidth = 1000;
+  int windowHeight = 628;
   bool showDeltaPitch = true;
   bool showBasePitch = false;
   bool showSegmentsDebug = false;

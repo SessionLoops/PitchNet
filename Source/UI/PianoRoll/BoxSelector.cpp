@@ -2,6 +2,7 @@
 
 void BoxSelector::startSelection(float x, float y) {
     selecting = true;
+    lastSelectionFromBox = false;
     startPoint = {x, y};
     endPoint = {x, y};
 }

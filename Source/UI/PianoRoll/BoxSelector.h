@@ -16,6 +16,8 @@ public:
     void startSelection(float x, float y);
     void updateSelection(float x, float y);
     void endSelection();
+    void setLastSelectionFromBox(bool wasFromBox) { lastSelectionFromBox = wasFromBox; }
+    bool wasLastSelectionFromBox() const { return lastSelectionFromBox; }
 
     bool isSelecting() const { return selecting; }
     juce::Rectangle<float> getSelectionRect() const;
@@ -24,6 +26,7 @@ public:
 
 private:
     bool selecting = false;
+    bool lastSelectionFromBox = false;
     juce::Point<float> startPoint;
     juce::Point<float> endPoint;
 

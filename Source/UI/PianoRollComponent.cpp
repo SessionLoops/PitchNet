@@ -92,6 +92,7 @@ PianoRollComponent::PianoRollComponent()
   noteRenderer->setSelectHandler(selectHandler_.get());
   noteRenderer->setSplitHandler(splitHandler_.get());
   noteRenderer->setPitchEditor(pitchEditor.get());
+  noteRenderer->setBoxSelector(boxSelector.get());
   pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
   pitchCurveRenderer->setSelectHandler(selectHandler_.get());
   pitchCurveRenderer->setPitchEditor(pitchEditor.get());

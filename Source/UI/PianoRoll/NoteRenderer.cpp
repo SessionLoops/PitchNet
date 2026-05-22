@@ -1,4 +1,5 @@
 #include "NoteRenderer.h"
+#include "BoxSelector.h"
 #include "PitchEditor.h"
 #include "States/SelectHandler.h"
 #include "States/SplitHandler.h"
@@ -57,7 +58,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     if (!note.isRest() && note.isSelected())
       ++selectedNoteCount;
   }
-  const bool showSelectionStatus = selectedNoteCount > 1;
+  const bool showSelectionStatus =
+      selectedNoteCount > 1 ||
+      (selectedNoteCount > 0 && boxSelector &&
+       (boxSelector->isSelecting() || boxSelector->wasLastSelectionFromBox()));
 
   const auto &audioData = project->getAudioData();
   const float *globalSamples =
@@ -96,6 +100,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     {
       juce::Colour noteColor =
           getPitchCenterColour(note.getAdjustedMidiNote(), pitchReferenceHz);
+      juce::Rectangle<float> noteVisualBounds(x, y, renderedWidth, h);
 
       const float *samples = globalSamples;
       int totalSamples = globalTotalSamples;
@@ -161,6 +166,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         {
           g.setColour(noteColor);
           g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+          noteVisualBounds = {x, y, renderedWidth, h};
         }
         else
         {
@@ -245,6 +251,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           }
 
           waveformPath.closeSubPath();
+          noteVisualBounds = waveformPath.getBounds();
           g.fillPath(waveformPath);
 
           g.setColour(noteColor.brighter(0.2f));
@@ -258,13 +265,14 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       {
         g.setColour(noteColor);
         g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+        noteVisualBounds = {x, y, renderedWidth, h};
       }
 
       if (showSelectionStatus && note.isSelected())
       {
+        const auto outlineBounds = noteVisualBounds.expanded(1.0f);
         g.setColour(juce::Colours::white.withAlpha(0.72f));
-        g.drawRoundedRectangle(x + 0.5f, y + 0.5f, renderedWidth - 1.0f,
-                               h - 1.0f, 2.0f, 1.5f);
+        g.drawRoundedRectangle(outlineBounds, 2.0f, 1.5f);
       }
     }
 
