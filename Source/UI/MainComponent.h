@@ -142,6 +142,7 @@ private:
   void reinterpolateUV(int startFrame,
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
+  void fitAnalyzedPitchRangeToView(Project &project);
 
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;

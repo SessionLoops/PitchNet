@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <thread>
 
@@ -694,6 +695,7 @@ void MainComponent::analyzeAudio()
           return;
         safeThis->pianoRoll.setProject(&projectRef);
         safeThis->pianoRollView.setProject(&projectRef);
+        safeThis->fitAnalyzedPitchRangeToView(projectRef);
         safeThis->pianoRoll.repaint();
       },
       [safeThis]()
@@ -712,6 +714,48 @@ void MainComponent::analyzeAudio(
   if (editorController)
   {
     editorController->analyzeAudio(targetProject, onProgress, onComplete);
+  }
+}
+
+void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
+{
+  float minMidi = std::numeric_limits<float>::max();
+  float maxMidi = std::numeric_limits<float>::lowest();
+
+  for (const auto &note : project.getNotes())
+  {
+    if (note.isRest())
+      continue;
+
+    const float midi = note.getAdjustedMidiNote();
+    if (!std::isfinite(midi))
+      continue;
+
+    minMidi = std::min(minMidi, midi);
+    maxMidi = std::max(maxMidi, midi);
+  }
+
+  if (minMidi == std::numeric_limits<float>::max())
+  {
+    const auto &f0 = project.getAudioData().f0;
+    for (float freq : f0)
+    {
+      if (freq <= 50.0f || !std::isfinite(freq))
+        continue;
+
+      const float midi = freqToMidi(freq);
+      if (!std::isfinite(midi))
+        continue;
+
+      minMidi = std::min(minMidi, midi);
+      maxMidi = std::max(maxMidi, midi);
+    }
+  }
+
+  if (minMidi != std::numeric_limits<float>::max() && maxMidi >= minMidi)
+  {
+    maxMidi = std::min(maxMidi + 1.0f, static_cast<float>(MAX_MIDI_NOTE));
+    pianoRoll.fitPitchRangeToView(minMidi, maxMidi);
   }
 }
 
@@ -1480,25 +1524,7 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
         safeThis->parameterPanel.setProject(project);
         safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
 
-        const auto &f0 = project->getAudioData().f0;
-        if (!f0.empty())
-        {
-          float minF0 = 10000.0f, maxF0 = 0.0f;
-          for (float freq : f0)
-          {
-            if (freq > 50.0f)
-            {
-              minF0 = std::min(minF0, freq);
-              maxF0 = std::max(maxF0, freq);
-            }
-          }
-          if (maxF0 > minF0)
-          {
-            float minMidi = freqToMidi(minF0) - 2.0f;
-            float maxMidi = freqToMidi(maxF0) + 2.0f;
-            safeThis->pianoRoll.centerOnPitchRange(minMidi, maxMidi);
-          }
-        }
+        safeThis->fitAnalyzedPitchRangeToView(*project);
 
         auto *vocoder = safeThis->editorController
                             ? safeThis->editorController->getVocoder()

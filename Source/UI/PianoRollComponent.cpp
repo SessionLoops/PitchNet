@@ -1587,6 +1587,50 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
   repaint();
 }
 
+void PianoRollComponent::fitPitchRangeToView(float minMidi, float maxMidi)
+{
+  if (!std::isfinite(minMidi) || !std::isfinite(maxMidi))
+    return;
+
+  if (minMidi > maxMidi)
+    std::swap(minMidi, maxMidi);
+
+  minMidi = juce::jlimit(static_cast<float>(MIN_MIDI_NOTE),
+                         static_cast<float>(MAX_MIDI_NOTE), minMidi);
+  maxMidi = juce::jlimit(static_cast<float>(MIN_MIDI_NOTE),
+                         static_cast<float>(MAX_MIDI_NOTE), maxMidi);
+
+  const int visibleHeight = getVisibleContentHeight();
+  if (visibleHeight <= 0)
+    return;
+
+  const float rangeSemitones = std::max(1.0f, maxMidi - minMidi + 1.0f);
+  const float minPpsForFill =
+      static_cast<float>(visibleHeight) / (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1);
+  const float minPps = std::max(MIN_PIXELS_PER_SEMITONE, minPpsForFill);
+  pixelsPerSemitone = juce::jlimit(
+      minPps, MAX_PIXELS_PER_SEMITONE,
+      static_cast<float>(visibleHeight) / rangeSemitones);
+  coordMapper->setPixelsPerSemitone(pixelsPerSemitone);
+
+  const double totalHeight =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  const double maxScrollY =
+      std::max(0.0, totalHeight - static_cast<double>(visibleHeight));
+  const double lowestNoteBottomY =
+      (static_cast<double>(MAX_MIDI_NOTE) - static_cast<double>(minMidi) +
+       1.0) *
+      static_cast<double>(pixelsPerSemitone);
+
+  scrollY = juce::jlimit(
+      0.0, maxScrollY,
+      lowestNoteBottomY - static_cast<double>(visibleHeight));
+  coordMapper->setScrollY(scrollY);
+
+  updateScrollBars();
+  repaint();
+}
+
 void PianoRollComponent::setEditMode(EditMode mode)
 {
   editMode = mode;

@@ -348,21 +348,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
           }
         }
 
-        const auto &f0 = audioData.f0;
-        if (!f0.empty()) {
-          float minF0 = 10000.0f, maxF0 = 0.0f;
-          for (float freq : f0) {
-            if (freq > 50.0f) {
-              minF0 = std::min(minF0, freq);
-              maxF0 = std::max(maxF0, freq);
-            }
-          }
-          if (maxF0 > minF0) {
-            float minMidi = freqToMidi(minF0) - 2.0f;
-            float maxMidi = freqToMidi(maxF0) + 2.0f;
-            safeThis->pianoRoll.centerOnPitchRange(minMidi, maxMidi);
-          }
-        }
+        safeThis->fitAnalyzedPitchRangeToView(*project);
 
         if (auto *vocoder = safeThis->editorController
                                 ? safeThis->editorController->getVocoder()
