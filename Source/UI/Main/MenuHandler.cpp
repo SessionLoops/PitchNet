@@ -4,8 +4,8 @@ MenuHandler::MenuHandler() = default;
 
 juce::StringArray MenuHandler::getMenuBarNames() {
     if (pluginMode)
-        return {TR("menu.edit"), TR("menu.view"), TR("menu.settings")};
-    return {TR("menu.file"), TR("menu.edit"), TR("menu.view"), TR("menu.settings")};
+        return {TR("menu.edit"), TR("menu.settings")};
+    return {TR("menu.file"), TR("menu.edit"), TR("menu.settings")};
 }
 
 juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& /*menuName*/) {
@@ -23,12 +23,6 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
             }
         } else if (menuIndex == 1) {
-            // View menu
-            if (commandManager) {
-                menu.addCommandItem(commandManager, CommandIDs::showDeltaPitch);
-                menu.addCommandItem(commandManager, CommandIDs::showBasePitch);
-            }
-        } else if (menuIndex == 2) {
             // Settings menu
             if (commandManager) {
                 menu.addCommandItem(commandManager, CommandIDs::showSettings);
@@ -52,7 +46,6 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                     }
                 }
                 menu.addSubMenu("Recent Files", recentMenu);
-                menu.addCommandItem(commandManager, CommandIDs::saveProject);
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::exportAudio);
                 menu.addCommandItem(commandManager, CommandIDs::exportMidi);
@@ -70,12 +63,6 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
             }
         } else if (menuIndex == 2) {
-            // View menu
-            if (commandManager) {
-                menu.addCommandItem(commandManager, CommandIDs::showDeltaPitch);
-                menu.addCommandItem(commandManager, CommandIDs::showBasePitch);
-            }
-        } else if (menuIndex == 3) {
             // Settings menu
             if (commandManager) {
                 menu.addCommandItem(commandManager, CommandIDs::showSettings);
