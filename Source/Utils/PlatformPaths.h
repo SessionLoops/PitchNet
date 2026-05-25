@@ -84,14 +84,14 @@ namespace PlatformPaths
     inline juce::File getModelFile(const juce::String &fileName)
     {
         auto probe = getModelsDirectory().getChildFile(fileName);
-        if (probe.existsAsFile())
+        if (probe.exists())
             return probe;
 
         // Development fallback: <repo>/Resources/models/
         auto cwdProbe = juce::File::getCurrentWorkingDirectory()
                             .getChildFile("Resources/models")
                             .getChildFile(fileName);
-        if (cwdProbe.existsAsFile())
+        if (cwdProbe.exists())
             return cwdProbe;
 
         // Walk up from executable directory and probe both:
@@ -102,11 +102,11 @@ namespace PlatformPaths
         for (int i = 0; i < 8 && dir.exists(); ++i)
         {
             auto modelsCandidate = dir.getChildFile("models").getChildFile(fileName);
-            if (modelsCandidate.existsAsFile())
+            if (modelsCandidate.exists())
                 return modelsCandidate;
 
             auto resourcesCandidate = dir.getChildFile("Resources/models").getChildFile(fileName);
-            if (resourcesCandidate.existsAsFile())
+            if (resourcesCandidate.exists())
                 return resourcesCandidate;
 
             auto parent = dir.getParentDirectory();
@@ -117,6 +117,16 @@ namespace PlatformPaths
 
         // Default path used in production packaging.
         return probe;
+    }
+
+    inline juce::File getVocoderModelFile()
+    {
+#if JUCE_MAC
+        auto coreMLModel = getModelFile("pc_nsf_hifigan.mlmodelc");
+        if (coreMLModel.isDirectory())
+            return coreMLModel;
+#endif
+        return getModelFile("pc_nsf_hifigan.onnx");
     }
 
     inline juce::File getModelSubDir(const juce::String &dirName,

@@ -813,15 +813,15 @@ void EditorController::analyzeAudio(
   }
 
   onProgress(0.75, TR("progress.loading_vocoder"));
-  auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
+  auto modelPath = PlatformPaths::getVocoderModelFile();
 
-  if (!modelPath.existsAsFile() && !vocoder->isLoaded())
+  if (!modelPath.exists() && !vocoder->isLoaded())
   {
-    showMissingModelAndAbort("pc_nsf_hifigan.onnx", modelPath);
+    showMissingModelAndAbort("vocoder model", modelPath);
     return;
   }
 
-  if (modelPath.existsAsFile() && !vocoder->isLoaded())
+  if (modelPath.exists() && !vocoder->isLoaded())
   {
     if (vocoder->loadModel(modelPath))
     {

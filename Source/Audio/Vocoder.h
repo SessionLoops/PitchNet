@@ -1,6 +1,9 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#if __APPLE__
+#include "CoreMLVocoderBackend.h"
+#endif
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -19,7 +22,7 @@
 #endif
 
 /**
- * PC-NSF-HiFiGAN Vocoder wrapper using ONNX Runtime.
+ * PC-NSF-HiFiGAN Vocoder wrapper using Core ML on macOS and ONNX Runtime elsewhere.
  * Converts mel spectrogram + F0 to waveform with pitch control.
  */
 class Vocoder
@@ -116,6 +119,11 @@ private:
 #endif
 
   juce::File modelFile;
+#if __APPLE__
+  juce::File coreMLModelFile;
+  std::unique_ptr<CoreMLVocoderBackend> coreMLBackend;
+  bool usingCoreMLModel = false;
+#endif
   std::unique_ptr<std::ofstream> logFile;
   int executionDeviceId = 0;
 
@@ -162,8 +170,17 @@ private:
   Ort::SessionOptions createSessionOptions();
 #endif
 
+#if __APPLE__
+  std::vector<float>
+  inferCoreMLChunkLocked(const std::vector<std::vector<float>> &mel,
+                         const std::vector<float> &f0,
+                         size_t numFrames);
+#endif
+
   /**
    * Generate simple sine wave fallback when ONNX is not available.
    */
   std::vector<float> generateSineFallback(const std::vector<float> &f0);
+
+  juce::File resolvePreferredModelFile(const juce::File &requestedModelPath) const;
 };

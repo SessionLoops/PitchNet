@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "Main/ExportHelper.h"
+#include "Main/MacMenuIconHelper.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
@@ -85,8 +86,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Add child components - macOS uses native menu, others use in-app menu bar
 #if JUCE_MAC
-  if (!isPluginMode())
-    juce::MenuBarModel::setMacMainMenu(menuHandler.get());
 #else
   menuBar.setModel(menuHandler.get());
   menuBar.setLookAndFeel(&menuBarLookAndFeel);
@@ -291,6 +290,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Connect MenuHandler to ApplicationCommandManager for automatic menu updates
   // This is required for macOS native menu bar to reflect command states
   menuHandler->setApplicationCommandManagerToWatch(commandManager.get());
+
+#if JUCE_MAC
+  if (!isPluginMode())
+  {
+    macExtraAppleMenuItems = menuHandler->getMacExtraAppleMenu();
+    juce::MenuBarModel::setMacMainMenu(menuHandler.get(), &macExtraAppleMenuItems);
+    MacMenuIconHelper::applySettingsMenuIcon(TR("command.settings"));
+  }
+#endif
 
   // Add command manager key mappings as a KeyListener
   // This enables automatic keyboard shortcut dispatch
@@ -1531,8 +1539,8 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
                             : nullptr;
         if (vocoder && !vocoder->isLoaded())
         {
-          auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
-          if (modelPath.existsAsFile())
+          auto modelPath = PlatformPaths::getVocoderModelFile();
+          if (modelPath.exists())
           {
             if (!vocoder->loadModel(modelPath))
             {
@@ -1549,7 +1557,7 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
           {
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::WarningIcon, "Missing model file",
-                "pc_nsf_hifigan.onnx was not found at:\n" +
+                "The vocoder model was not found at:\n" +
                     modelPath.getFullPathName() +
                     "\n\nPlease install the required model files and try again.");
             safeThis->toolbar.hideProgress();

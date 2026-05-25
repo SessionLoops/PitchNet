@@ -155,8 +155,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
                                         ? safeThis->editorController->getVocoder()
                                         : nullptr;
                     vocoder && !vocoder->isLoaded()) {
-                  auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
-                  if (modelPath.existsAsFile()) {
+                  auto modelPath = PlatformPaths::getVocoderModelFile();
+                  if (modelPath.exists()) {
                     if (!vocoder->loadModel(modelPath)) {
                       juce::AlertWindow::showMessageBoxAsync(
                           juce::AlertWindow::WarningIcon, "Inference failed",
@@ -169,7 +169,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
                   } else {
                     juce::AlertWindow::showMessageBoxAsync(
                         juce::AlertWindow::WarningIcon, "Missing model file",
-                        "pc_nsf_hifigan.onnx was not found at:\n" +
+                        "The vocoder model was not found at:\n" +
                             modelPath.getFullPathName() +
                             "\n\nPlease install the required model files and try again.");
                     safeThis->isLoadingAudio = false;
@@ -354,8 +354,8 @@ void MainComponent::loadAudioFile(const juce::File &file) {
                                 ? safeThis->editorController->getVocoder()
                                 : nullptr;
             vocoder && !vocoder->isLoaded()) {
-          auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
-          if (modelPath.existsAsFile()) {
+          auto modelPath = PlatformPaths::getVocoderModelFile();
+          if (modelPath.exists()) {
             if (!vocoder->loadModel(modelPath)) {
               juce::AlertWindow::showMessageBoxAsync(
                   juce::AlertWindow::WarningIcon, "Inference failed",
@@ -367,7 +367,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
           } else {
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::WarningIcon, "Missing model file",
-                "pc_nsf_hifigan.onnx was not found at:\n" +
+                "The vocoder model was not found at:\n" +
                     modelPath.getFullPathName() +
                     "\n\nPlease install the required model files and try again.");
             return;

@@ -153,6 +153,9 @@ Vocoder::~Vocoder()
   onnxSession.reset();
   onnxEnv.reset();
 #endif
+#if __APPLE__
+  coreMLBackend.reset();
+#endif
   if (logFile && logFile->is_open())
   {
     log("Vocoder session ended");
@@ -192,8 +195,54 @@ bool Vocoder::isOnnxRuntimeAvailable()
 #endif
 }
 
+juce::File
+Vocoder::resolvePreferredModelFile(const juce::File &requestedModelPath) const
+{
+#if __APPLE__
+  const auto siblingCoreML =
+      requestedModelPath.getSiblingFile("pc_nsf_hifigan.mlmodelc");
+  if (siblingCoreML.isDirectory())
+    return siblingCoreML;
+#endif
+  return requestedModelPath;
+}
+
 bool Vocoder::loadModel(const juce::File &modelPath)
 {
+  const auto preferredModelPath = resolvePreferredModelFile(modelPath);
+#if __APPLE__
+  if (preferredModelPath.hasFileExtension("mlmodelc") ||
+      preferredModelPath.isDirectory())
+  {
+    coreMLBackend = std::make_unique<CoreMLVocoderBackend>();
+    std::string error;
+    if (!coreMLBackend->load(preferredModelPath, error))
+    {
+      log(error);
+      coreMLBackend.reset();
+      usingCoreMLModel = false;
+      loaded = false;
+      return false;
+    }
+
+#ifdef HAVE_ONNXRUNTIME
+    onnxSession.reset();
+    ioBinding.reset();
+    inputNames.clear();
+    outputNames.clear();
+    inputNameStrings.clear();
+    outputNameStrings.clear();
+#endif
+    modelFile = modelPath;
+    coreMLModelFile = preferredModelPath;
+    usingCoreMLModel = true;
+    loaded = true;
+    log("Vocoder: Core ML model loaded successfully from: " +
+        preferredModelPath.getFullPathName().toStdString());
+    return true;
+  }
+#endif
+
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxEnv)
   {
@@ -201,10 +250,10 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     return false;
   }
 
-  if (!modelPath.existsAsFile())
+  if (!preferredModelPath.existsAsFile())
   {
     log("Vocoder: Model file not found: " +
-        modelPath.getFullPathName().toStdString());
+        preferredModelPath.getFullPathName().toStdString());
     return false;
   }
 
@@ -224,7 +273,7 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     // Create session
 #ifdef _WIN32
     // Safely convert path to wide string
-    juce::String pathStr = modelPath.getFullPathName();
+    juce::String pathStr = preferredModelPath.getFullPathName();
     if (pathStr.isEmpty())
     {
       log("Model path is empty");
@@ -255,7 +304,7 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
                                                  sessionOptions);
 #else
-    std::string modelPathStr = modelPath.getFullPathName().toStdString();
+    std::string modelPathStr = preferredModelPath.getFullPathName().toStdString();
     if (modelPathStr.empty())
     {
       log("Model path is empty");
@@ -327,7 +376,11 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     log("  Output names: " +
         std::string(outputNames.size() > 0 ? outputNames[0] : "none"));
 
-    modelFile = modelPath;
+    modelFile = preferredModelPath;
+#if __APPLE__
+    usingCoreMLModel = false;
+    coreMLBackend.reset();
+#endif
     loaded = true;
     return true;
   }
@@ -378,6 +431,117 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
     return {};
   const bool verboseInferLog = isVerboseInferLogEnabled();
   const auto startTotal = std::chrono::high_resolution_clock::now();
+
+#if __APPLE__
+  if (usingCoreMLModel && coreMLBackend)
+  {
+    if (numFrames <= kMaxChunkFrames)
+    {
+      auto result = inferCoreMLChunkLocked(mel, f0, numFrames);
+      if (result.empty())
+      {
+        log("Core ML single-chunk inference failed, using fallback");
+        return generateSineFallback(f0);
+      }
+      return result;
+    }
+
+    const size_t step = kMaxChunkFrames - kOverlapFrames;
+    const size_t overlapSamples =
+        kOverlapFrames * static_cast<size_t>(hopSize);
+    const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
+
+    size_t numChunks = 0;
+    for (size_t off = 0; off < numFrames; off += step)
+      ++numChunks;
+
+    log("Core ML chunked inference: " + std::to_string(numFrames) +
+        " frames -> " + std::to_string(numChunks) + " chunks");
+
+    std::vector<float> waveform(totalSamples, 0.0f);
+    size_t waveformWriteEnd = 0;
+
+    for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
+         ++chunkIdx, frameOff += step)
+    {
+      const size_t chunkEnd =
+          std::min(frameOff + kMaxChunkFrames, numFrames);
+      const size_t chunkFrames = chunkEnd - frameOff;
+
+      std::vector<std::vector<float>> chunkMel(
+          mel.begin() + static_cast<ptrdiff_t>(frameOff),
+          mel.begin() + static_cast<ptrdiff_t>(chunkEnd));
+      std::vector<float> chunkF0(
+          f0.begin() + static_cast<ptrdiff_t>(frameOff),
+          f0.begin() + static_cast<ptrdiff_t>(chunkEnd));
+
+      auto chunkWav = inferCoreMLChunkLocked(chunkMel, chunkF0, chunkFrames);
+      if (chunkWav.empty())
+      {
+        log("Core ML chunk " + std::to_string(chunkIdx) +
+            " inference failed");
+        return generateSineFallback(f0);
+      }
+
+      const size_t dstOffset = frameOff * static_cast<size_t>(hopSize);
+      const size_t chunkSamples = chunkWav.size();
+
+      if (chunkIdx == 0)
+      {
+        const size_t copyLen = std::min(chunkSamples, totalSamples);
+        std::copy_n(chunkWav.begin(), copyLen, waveform.begin());
+        waveformWriteEnd = copyLen;
+      }
+      else
+      {
+        const size_t prevTail =
+            (waveformWriteEnd > dstOffset) ? (waveformWriteEnd - dstOffset) : 0;
+        const size_t fadeSamples =
+            std::min({overlapSamples, prevTail, chunkSamples});
+
+        for (size_t i = 0; i < fadeSamples; ++i)
+        {
+          const float t =
+              static_cast<float>(i) / static_cast<float>(fadeSamples);
+          waveform[dstOffset + i] =
+              waveform[dstOffset + i] * (1.0f - t) + chunkWav[i] * t;
+        }
+
+        const size_t dstTailStart = dstOffset + fadeSamples;
+        const size_t srcTailLen =
+            (chunkSamples > fadeSamples) ? (chunkSamples - fadeSamples) : 0;
+        const size_t safeTailLen =
+            std::min(srcTailLen, totalSamples - dstTailStart);
+        if (safeTailLen > 0)
+        {
+          std::copy_n(chunkWav.begin() + static_cast<ptrdiff_t>(fadeSamples),
+                      safeTailLen,
+                      waveform.begin() + static_cast<ptrdiff_t>(dstTailStart));
+        }
+        waveformWriteEnd =
+            std::min(dstTailStart + safeTailLen, totalSamples);
+      }
+    }
+
+    waveform.resize(waveformWriteEnd);
+    for (auto &s : waveform)
+      s = std::clamp(s, -1.0f, 1.0f);
+
+    if (verboseInferLog)
+    {
+      const auto endTotal = std::chrono::high_resolution_clock::now();
+      const auto totalMs =
+          std::chrono::duration_cast<std::chrono::milliseconds>(endTotal -
+                                                                startTotal)
+              .count();
+      log("Core ML vocoder infer [" + std::to_string(numFrames) +
+          " frames, " + std::to_string(numChunks) + " chunks] total=" +
+          std::to_string(totalMs) + "ms");
+    }
+
+    return waveform;
+  }
+#endif
 
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxSession || inputNames.empty() || outputNames.empty())
@@ -711,6 +875,46 @@ Vocoder::inferChunkLocked(const std::vector<std::vector<float>> &mel,
 }
 #endif
 
+#if __APPLE__
+std::vector<float>
+Vocoder::inferCoreMLChunkLocked(const std::vector<std::vector<float>> &mel,
+                                const std::vector<float> &f0,
+                                size_t numFrames)
+{
+  std::vector<float> melInput(static_cast<size_t>(numMels) * numFrames);
+  for (size_t frame = 0; frame < numFrames; ++frame)
+  {
+    const auto &sourceFrame = mel[frame];
+    const int melCount =
+        juce::jmin(numMels, static_cast<int>(sourceFrame.size()));
+    size_t dstIndex = frame;
+    int m = 0;
+    for (; m < melCount; ++m, dstIndex += numFrames)
+    {
+      melInput[dstIndex] = std::clamp(
+          sourceFrame[static_cast<size_t>(m)], kMelMinClamp, kMelMaxClamp);
+    }
+    for (; m < numMels; ++m, dstIndex += numFrames)
+      melInput[dstIndex] = 0.0f;
+  }
+
+  std::vector<float> f0Input(numFrames);
+  for (size_t i = 0; i < numFrames; ++i)
+  {
+    const float freq = f0[i];
+    f0Input[i] =
+        (freq > 0.0f) ? std::clamp(freq, kF0MinValid, kF0MaxValid) : 0.0f;
+  }
+
+  std::string error;
+  auto waveform = coreMLBackend->infer(melInput, f0Input, numFrames, numMels,
+                                       hopSize, error);
+  if (waveform.empty() && !error.empty())
+    log(error);
+  return waveform;
+}
+#endif
+
 std::vector<float>
 Vocoder::inferWithPitchShift(const std::vector<std::vector<float>> &mel,
                              const std::vector<float> &f0,
@@ -812,7 +1016,7 @@ void Vocoder::setExecutionDeviceId(int deviceId)
 
 bool Vocoder::reloadModel()
 {
-  if (!modelFile.existsAsFile())
+  if (!modelFile.exists())
   {
     log("Cannot reload: no model file set");
     return false;
@@ -834,6 +1038,10 @@ bool Vocoder::reloadModel()
   inputTensorScratch.clear();
   outputTensorScratch.clear();
   loaded = false;
+#endif
+#if __APPLE__
+  coreMLBackend.reset();
+  usingCoreMLModel = false;
 #endif
 
   return loadModel(modelFile);
