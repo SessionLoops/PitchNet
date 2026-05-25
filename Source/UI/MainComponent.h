@@ -176,6 +176,9 @@ private:
 
   CustomMenuBarLookAndFeel menuBarLookAndFeel;
   juce::MenuBarComponent menuBar;
+#if JUCE_MAC
+  juce::PopupMenu macExtraAppleMenuItems;
+#endif
   ToolbarComponent toolbar;
   WorkspaceComponent workspace;
   PianoRollComponent pianoRoll;

@@ -198,9 +198,13 @@ list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
 list(APPEND PITCHNET_CORE_SOURCES
     "Source/Utils/SHA256Utils.cpp"
     "Source/Utils/SHA256Utils.h")
+if(APPLE)
+    list(APPEND PITCHNET_CORE_SOURCES
+        "Source/Audio/CoreMLVocoderBackend.mm")
+endif()
 
 file(GLOB_RECURSE PITCHNET_UI_SOURCES
-    "Source/UI/*.cpp" "Source/UI/*.h"
+    "Source/UI/*.cpp" "Source/UI/*.h" "Source/UI/*.mm"
     "Source/Utils/UI/*.cpp" "Source/Utils/UI/*.h")
 list(APPEND PITCHNET_UI_SOURCES
     "Source/UI/PianoRoll/PianoRollInteractionContext.cpp"
@@ -556,6 +560,13 @@ if(ONNXRUNTIME_FOUND)
     endif()
 endif()
 
+if(APPLE)
+    target_compile_definitions(pitchnet_core PUBLIC HAVE_COREML=1)
+    target_link_libraries(pitchnet_core PUBLIC
+        "-framework Foundation"
+        "-framework CoreML")
+endif()
+
 # Set C++ standard
 target_compile_features(PitchNet PRIVATE cxx_std_17)
 target_compile_features(PitchNetPlugin PRIVATE cxx_std_17)
@@ -601,12 +612,16 @@ target_compile_definitions(PitchNetPlugin PRIVATE
 # Check required models
 set(MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/models")
 set(REQUIRED_MODELS
-    pc_nsf_hifigan.onnx
     fcpe.onnx
     rmvpe.onnx
     cent_table.bin
     mel_filterbank.bin
 )
+if(APPLE)
+    list(APPEND REQUIRED_MODELS pc_nsf_hifigan.mlmodelc)
+else()
+    list(APPEND REQUIRED_MODELS pc_nsf_hifigan.onnx)
+endif()
 
 # Check required GAME models
 set(GAME_DIR "${MODELS_DIR}/GAME")
@@ -686,6 +701,9 @@ message(STATUS "All required models found")
 file(GLOB ALL_MODEL_FILES "${MODELS_DIR}/*.onnx" "${MODELS_DIR}/*.bin")
 foreach(MODEL_PATH ${ALL_MODEL_FILES})
     get_filename_component(MODEL_NAME "${MODEL_PATH}" NAME)
+    if(APPLE AND MODEL_NAME STREQUAL "pc_nsf_hifigan.onnx")
+        continue()
+    endif()
     if(APPLE)
         add_custom_command(TARGET PitchNet POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models"
@@ -705,6 +723,21 @@ foreach(MODEL_PATH ${ALL_MODEL_FILES})
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/${MODEL_NAME}")
     endif()
 endforeach()
+
+if(APPLE)
+    set(COREML_VOCODER_MODEL "${MODELS_DIR}/pc_nsf_hifigan.mlmodelc")
+    if(EXISTS "${COREML_VOCODER_MODEL}")
+        add_custom_command(TARGET PitchNet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${COREML_VOCODER_MODEL}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/pc_nsf_hifigan.mlmodelc")
+        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${COREML_VOCODER_MODEL}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/pc_nsf_hifigan.mlmodelc")
+        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${COREML_VOCODER_MODEL}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/pc_nsf_hifigan.mlmodelc")
+    endif()
+endif()
 
 # Copy GAME model subdirectory
 file(GLOB GAME_MODEL_FILES "${GAME_DIR}/*")

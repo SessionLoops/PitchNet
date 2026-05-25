@@ -3,9 +3,15 @@
 MenuHandler::MenuHandler() = default;
 
 juce::StringArray MenuHandler::getMenuBarNames() {
+#if JUCE_MAC
+    if (pluginMode)
+        return {TR("menu.edit")};
+    return {TR("menu.file"), TR("menu.edit")};
+#else
     if (pluginMode)
         return {TR("menu.edit"), TR("menu.settings")};
-    return {TR("menu.file"), TR("menu.edit"), TR("menu.settings")};
+    return {TR("menu.file"), TR("menu.edit")};
+#endif
 }
 
 juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& /*menuName*/) {
@@ -22,12 +28,15 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
             }
-        } else if (menuIndex == 1) {
+        }
+#if !JUCE_MAC
+        else if (menuIndex == 1) {
             // Settings menu
             if (commandManager) {
                 menu.addCommandItem(commandManager, CommandIDs::showSettings);
             }
         }
+#endif
     } else {
         if (menuIndex == 0) {
             // File menu
@@ -49,6 +58,10 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::exportAudio);
                 menu.addCommandItem(commandManager, CommandIDs::exportMidi);
+#if !JUCE_MAC
+                menu.addSeparator();
+                menu.addCommandItem(commandManager, CommandIDs::showSettings);
+#endif
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::quit);
             }
@@ -62,16 +75,22 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
             }
-        } else if (menuIndex == 2) {
-            // Settings menu
-            if (commandManager) {
-                menu.addCommandItem(commandManager, CommandIDs::showSettings);
-            }
         }
     }
 
     return menu;
 }
+
+#if JUCE_MAC
+juce::PopupMenu MenuHandler::getMacExtraAppleMenu() const {
+    juce::PopupMenu menu;
+
+    if (commandManager)
+        menu.addCommandItem(commandManager, CommandIDs::showSettings);
+
+    return menu;
+}
+#endif
 
 void MenuHandler::menuItemSelected(int menuItemID, int /*topLevelMenuIndex*/) {
     // Command items are handled automatically by ApplicationCommandManager

@@ -28,6 +28,10 @@ public:
     juce::PopupMenu getMenuForIndex(int menuIndex, const juce::String& menuName) override;
     void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
 
+#if JUCE_MAC
+    juce::PopupMenu getMacExtraAppleMenu() const;
+#endif
+
 private:
     bool pluginMode = false;
     PitchUndoManager* undoManager = nullptr;
