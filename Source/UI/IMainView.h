@@ -32,6 +32,8 @@ public:
   virtual void setHostAudio(const juce::AudioBuffer<float> &buffer,
                             double sampleRate) = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
+  virtual void updateHostLoopRange(double startSeconds, double endSeconds,
+                                   bool enabled, bool hasRange) = 0;
   virtual void notifyHostStopped() = 0;
 
   /**

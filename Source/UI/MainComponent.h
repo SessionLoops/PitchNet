@@ -119,6 +119,8 @@ public:
 
   // Plugin mode - update playback position from host
   void updatePlaybackPosition(double timeSeconds) override;
+  void updateHostLoopRange(double startSeconds, double endSeconds,
+                           bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback
   void triggerResynthesis() override; // Triggered by DAW parameter automation
 

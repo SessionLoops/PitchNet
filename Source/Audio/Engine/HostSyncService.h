@@ -86,6 +86,19 @@ public:
 
         bool hasLoopPoints = false;
         bool isLoopEnabled = false;
+
+        bool operator==(const LoopInfo& other) const
+        {
+            constexpr double epsilon = 0.0001;
+            return std::abs(loopStartPpq - other.loopStartPpq) < epsilon &&
+                   std::abs(loopEndPpq - other.loopEndPpq) < epsilon &&
+                   std::abs(loopStartSeconds - other.loopStartSeconds) < epsilon &&
+                   std::abs(loopEndSeconds - other.loopEndSeconds) < epsilon &&
+                   hasLoopPoints == other.hasLoopPoints &&
+                   isLoopEnabled == other.isLoopEnabled;
+        }
+
+        bool operator!=(const LoopInfo& other) const { return !(*this == other); }
     };
 
     // ========== Combined Sync State ==========
@@ -294,6 +307,7 @@ private:
     // Previous state for change detection
     TransportState previousTransport;
     TempoInfo previousTempo;
+    LoopInfo previousLoop;
 
     // Throttling
     juce::int64 lastPositionCallbackTime = 0;

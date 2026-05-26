@@ -97,6 +97,7 @@ public:
     std::function<void()> onGoToEnd;
     std::function<void(float)> onZoomChanged;
     std::function<void(EditMode)> onEditModeChanged;
+    std::function<void(bool)> onToggleLoop;
 
     // Plugin mode callbacks
     std::function<void()> onReanalyze;
@@ -111,6 +112,7 @@ private:
     juce::DrawableButton stopButton{"Stop", juce::DrawableButton::ImageFitted};
     juce::DrawableButton goToStartButton{"Start", juce::DrawableButton::ImageFitted};
     juce::DrawableButton goToEndButton{"End", juce::DrawableButton::ImageFitted};
+    ToolButton loopButton{"Loop"};
     std::unique_ptr<juce::Drawable> playDrawable;
     std::unique_ptr<juce::Drawable> pauseDrawable;
 

@@ -137,6 +137,12 @@ void HostSyncService::updateFromPositionInfo(const juce::AudioPlayHead::Position
         notifyTempoChange(newTempo);
     }
 
+    if (newLoop != previousLoop)
+    {
+        previousLoop = newLoop;
+        notifyLoopChange(newLoop);
+    }
+
     // Position update notification (throttled)
     if (newTransport.isPlaying && positionCallbackEnabled)
     {

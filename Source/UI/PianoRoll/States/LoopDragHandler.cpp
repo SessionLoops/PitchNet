@@ -175,9 +175,6 @@ void LoopDragHandler::mouseMove(const juce::MouseEvent &e, float worldX,
     if (std::abs(static_cast<float>(e.x) - startX) <= loopHandleHitPadding ||
         std::abs(static_cast<float>(e.x) - endX) <= loopHandleHitPadding) {
       owner_.setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
-    } else if (static_cast<float>(e.x) > startX &&
-               static_cast<float>(e.x) < endX) {
-      owner_.setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     } else {
       owner_.setMouseCursor(juce::MouseCursor::NormalCursor);
     }

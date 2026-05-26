@@ -274,7 +274,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
   {
     float x = static_cast<float>(pianoKeysWidth) + timeToX(cursorTime) -
               static_cast<float>(scrollX);
-    float cursorTop = 0.0f;
+    float cursorTop = static_cast<float>(headerHeight);
     float cursorBottom =
         static_cast<float>(getHeight() -
                            horizontalScrollBarSize); // Exclude scrollbar
@@ -284,16 +284,6 @@ void PianoRollComponent::paint(juce::Graphics &g)
     {
       g.setColour(APP_COLOR_PRIMARY);
       g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom);
-
-      // Draw triangle playhead indicator at top of timeline
-      constexpr float triangleWidth = 10.0f;
-      constexpr float triangleHeight = 8.0f;
-      juce::Path triangle;
-      triangle.addTriangle(x - triangleWidth * 0.5f, 0.0f, // Top-left
-                           x + triangleWidth * 0.5f, 0.0f, // Top-right
-                           x, triangleHeight               // Bottom-center (pointing down)
-      );
-      g.fillPath(triangle);
     }
   }
 
@@ -387,16 +377,16 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
   if (loopEndSeconds <= loopStartSeconds)
     return;
 
+  if (!loopEnabled)
+    return;
+
   const float startX = timeToX(loopStartSeconds);
   const float endX = timeToX(loopEndSeconds);
 
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
-  const auto baseColor = APP_COLOR_PRIMARY;
-  const auto fillColor =
-      loopEnabled ? baseColor.withAlpha(0.08f) : baseColor.withAlpha(0.04f);
 
-  g.setColour(fillColor);
+  g.setColour(APP_COLOR_PRIMARY.withAlpha(0.08f));
   g.fillRect(startX, 0.0f, endX - startX, height);
 }
 
@@ -895,6 +885,19 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 {
   if (!project)
     return;
+
+  if (e.y >= timelineHeight && e.y < headerHeight && e.x >= pianoKeysWidth)
+  {
+    auto loopRange = project->getLoopRange();
+    if (loopRange.endSeconds > loopRange.startSeconds)
+    {
+      project->setLoopEnabled(false);
+      if (onLoopRangeChanged)
+        onLoopRangeChanged(project->getLoopRange());
+      repaint();
+    }
+    return;
+  }
 
   // Ignore double-clicks outside main area
   if (e.y < headerHeight || e.x < pianoKeysWidth)
@@ -1443,16 +1446,14 @@ void PianoRollComponent::setCursorTime(double time)
     return; // Skip if no change
 
   // Calculate dirty rectangle for cursor position
-  // Include timeline area (from 0) and extra width for triangle indicator
+  // Include full height so the old and new cursor lines are fully repainted.
   auto getCursorRect = [this](double t) -> juce::Rectangle<int>
   {
     float x =
         static_cast<float>(t * pixelsPerSecond - scrollX) + pianoKeysWidth;
-    constexpr int triangleHalfWidth = 6; // Half of triangle width + margin
-    int rectX = static_cast<int>(x) - triangleHalfWidth;
-    int rectWidth =
-        triangleHalfWidth * 2 + 2; // Full triangle width + cursor line
-    // Start from 0 (top of timeline) to include triangle indicator
+    constexpr int cursorHalfWidth = 2;
+    int rectX = static_cast<int>(x) - cursorHalfWidth;
+    int rectWidth = cursorHalfWidth * 2 + 1;
     return juce::Rectangle<int>(rectX, 0, rectWidth, getHeight());
   };
 

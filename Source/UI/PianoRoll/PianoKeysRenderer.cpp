@@ -20,6 +20,9 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
       0, headerHeight, pianoKeysWidth,
       juce::jmax(0, componentHeight - headerHeight - scrollBarSize));
 
+  juce::Graphics::ScopedSaveState savedState(g);
+  g.reduceClipRegion(keyArea);
+
   // Background
   g.setColour(APP_COLOR_SURFACE_ALT);
   g.fillRect(keyArea);

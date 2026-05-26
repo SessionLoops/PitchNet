@@ -18,6 +18,9 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
       pianoKeysWidth, 0, params.componentWidth - pianoKeysWidth - scrollBarSize,
       timelineHeight);
 
+  juce::Graphics::ScopedSaveState savedState(g);
+  g.reduceClipRegion(timelineArea);
+
   // Background
   g.setColour(APP_COLOR_TIMELINE);
   g.fillRect(timelineArea);
@@ -57,7 +60,7 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
         const float x =
             pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) -
             static_cast<float>(scrollX);
-        if (x < pianoKeysWidth - 50 || x > params.componentWidth)
+        if (x < pianoKeysWidth || x > timelineArea.getRight())
           continue;
 
         const bool isBarLine = (beatIndex % beatsPerBar) == 0;
@@ -106,7 +109,7 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
     float x =
         pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
 
-    if (x < pianoKeysWidth - 50 || x > params.componentWidth)
+    if (x < pianoKeysWidth || x > timelineArea.getRight())
       continue;
 
     bool isMajor = std::fmod(time, secondsPerTick * 2.0f) < 0.001f;
@@ -154,6 +157,9 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
       pianoKeysWidth, timelineHeight,
       params.componentWidth - pianoKeysWidth - scrollBarSize, loopTimelineHeight);
 
+  juce::Graphics::ScopedSaveState savedState(g);
+  g.reduceClipRegion(loopArea);
+
   g.setColour(APP_COLOR_SURFACE_ALT);
   g.fillRect(loopArea);
 
@@ -182,33 +188,28 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
       static_cast<float>(loopTimelineHeight));
 
   const auto baseColor = APP_COLOR_PRIMARY;
-  const auto fillColor =
-      params.loopEnabled ? baseColor.withAlpha(0.25f) : baseColor.withAlpha(0.12f);
   const auto edgeColor =
       params.loopEnabled ? baseColor : APP_COLOR_BORDER;
 
-  g.setColour(fillColor);
-  g.fillRect(range);
+  if (params.loopEnabled)
+  {
+    g.setColour(baseColor.withAlpha(0.25f));
+    g.fillRect(range);
+  }
 
   g.setColour(edgeColor);
-  g.drawLine(startX, static_cast<float>(timelineHeight), startX,
-             static_cast<float>(headerHeight - 1), 1.5f);
-  g.drawLine(endX, static_cast<float>(timelineHeight), endX,
-             static_cast<float>(headerHeight - 1), 1.5f);
 
   constexpr float flagWidth = 6.0f;
   constexpr float flagHeight = 6.0f;
-  constexpr float flagTop = 0.0f;
-
-  const float flagY = static_cast<float>(timelineHeight) + flagTop;
+  const float flagY = static_cast<float>(timelineHeight);
 
   juce::Path startFlag;
   startFlag.addTriangle(startX, flagY, startX, flagY + flagHeight,
-                        startX - flagWidth, flagY + flagHeight);
+                        startX + flagWidth, flagY);
   g.fillPath(startFlag);
 
   juce::Path endFlag;
   endFlag.addTriangle(endX, flagY, endX, flagY + flagHeight,
-                      endX + flagWidth, flagY + flagHeight);
+                      endX - flagWidth, flagY);
   g.fillPath(endFlag);
 }

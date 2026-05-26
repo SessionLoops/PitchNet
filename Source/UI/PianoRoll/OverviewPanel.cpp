@@ -273,14 +273,6 @@ void OverviewPanel::paint(juce::Graphics &g) {
 
     g.setColour(APP_COLOR_PRIMARY);
     g.fillRect(playheadX - 0.5f, content.getY(), 1.0f, content.getHeight());
-
-    constexpr float markerWidth = 7.0f;
-    constexpr float markerHeight = 5.0f;
-    juce::Path marker;
-    marker.addTriangle(playheadX - markerWidth * 0.5f, content.getY(),
-                       playheadX + markerWidth * 0.5f, content.getY(),
-                       playheadX, content.getY() + markerHeight);
-    g.fillPath(marker);
   }
 }
 

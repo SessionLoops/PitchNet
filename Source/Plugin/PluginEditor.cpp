@@ -91,6 +91,14 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     audioProcessor.requestHostSeek(timeInSeconds);
   });
 
+  audioProcessor.getTransportController().setLoopCallback(
+      [safeMain = juce::Component::SafePointer<juce::Component>(
+           mainView->getComponent())](const HostSyncService::LoopInfo &loop) {
+        if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+          view->updateHostLoopRange(loop.loopStartSeconds, loop.loopEndSeconds,
+                                    loop.isLoopEnabled, loop.hasLoopPoints);
+      });
+
   // Check for existing audio sources
   auto *juceDocument = docController->getDocument();
   if (juceDocument) {
@@ -131,6 +139,14 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setOnRequestHostSeek([this](double timeInSeconds) {
     audioProcessor.requestHostSeek(timeInSeconds);
   });
+
+  audioProcessor.getTransportController().setLoopCallback(
+      [safeMain = juce::Component::SafePointer<juce::Component>(
+           mainView->getComponent())](const HostSyncService::LoopInfo &loop) {
+        if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+          view->updateHostLoopRange(loop.loopStartSeconds, loop.loopEndSeconds,
+                                    loop.isLoopEnabled, loop.hasLoopPoints);
+      });
 }
 
 void PitchNetAudioProcessorEditor::setupCallbacks() {

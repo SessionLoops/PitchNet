@@ -14,6 +14,7 @@ ToolbarComponent::ToolbarComponent()
     auto stopIcon = SvgUtils::loadSvg(BinaryData::stopline_svg, BinaryData::stopline_svgSize, juce::Colours::white);
     auto startIcon = SvgUtils::loadSvg(BinaryData::movestartline_svg, BinaryData::movestartline_svgSize, juce::Colours::white);
     auto endIcon = SvgUtils::loadSvg(BinaryData::moveendline_svg, BinaryData::moveendline_svgSize, juce::Colours::white);
+    auto cycleIcon = SvgUtils::loadSvg(BinaryData::cycle_svg, BinaryData::cycle_svgSize, juce::Colours::white);
     auto cursorIcon = SvgUtils::loadSvg(BinaryData::cursor_24_filled_svg, BinaryData::cursor_24_filled_svgSize, juce::Colours::white);
     auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
@@ -25,6 +26,7 @@ ToolbarComponent::ToolbarComponent()
     stopButton.setImages(stopIcon.get());
     goToStartButton.setImages(startIcon.get());
     goToEndButton.setImages(endIcon.get());
+    loopButton.setImages(cycleIcon.get());
     selectModeButton.setImages(cursorIcon.get());
     splitModeButton.setImages(scissorsIcon.get());
     followButton.setImages(followIcon.get());
@@ -35,6 +37,7 @@ ToolbarComponent::ToolbarComponent()
     playButton.setEdgeIndent(6);
     stopButton.setEdgeIndent(6);
     goToEndButton.setEdgeIndent(4);
+    loopButton.setEdgeIndent(6);
     selectModeButton.setEdgeIndent(6);
     splitModeButton.setEdgeIndent(6);
     followButton.setEdgeIndent(6);
@@ -49,6 +52,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(playButton);
     addAndMakeVisible(stopButton);
     addAndMakeVisible(goToEndButton);
+    addAndMakeVisible(loopButton);
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
@@ -68,6 +72,7 @@ ToolbarComponent::ToolbarComponent()
     playButton.addListener(this);
     stopButton.addListener(this);
     goToEndButton.addListener(this);
+    loopButton.addListener(this);
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
     followButton.addListener(this);
@@ -78,6 +83,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setTooltip(TR("toolbar.select"));
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
+    loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
     reanalyzeButton.setButtonText(TR("toolbar.reanalyze"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
@@ -161,39 +167,6 @@ void ToolbarComponent::paint(juce::Graphics &g)
         g.drawRoundedRectangle(capsule.reduced(0.5f), 8.0f, 0.75f);
     }
 
-    // Tool buttons container — subtle inset pill
-    if (!toolContainerBounds.isEmpty())
-    {
-        auto toolBounds = toolContainerBounds.toFloat();
-        g.setColour(APP_COLOR_BACKGROUND.withAlpha(0.7f));
-        g.fillRoundedRectangle(toolBounds, 8.0f);
-        g.setColour(APP_COLOR_BORDER_SUBTLE);
-        g.drawRoundedRectangle(toolBounds.reduced(0.5f), 8.0f, 0.75f);
-
-        // Draw a subtle divider between edit tools and playback tools (standalone only)
-        if (!pluginMode)
-        {
-            int dividerAfterEditTools = splitModeButton.getRight() + 1;
-            if (followButton.isVisible() && dividerAfterEditTools > toolBounds.getX() && dividerAfterEditTools < toolBounds.getRight())
-            {
-                g.setColour(APP_COLOR_BORDER.withAlpha(0.35f));
-                float divY = toolBounds.getY() + 6.0f;
-                float divH = toolBounds.getHeight() - 12.0f;
-                g.fillRect(juce::Rectangle<float>((float)dividerAfterEditTools, divY, 1.0f, divH));
-            }
-        }
-    }
-
-    // Time display — centered inset card
-    if (!timeCapsuleBounds.isEmpty() && timeLabel.isVisible())
-    {
-        auto timeBounds = timeCapsuleBounds.toFloat();
-        g.setColour(APP_COLOR_BACKGROUND.withAlpha(0.7f));
-        g.fillRoundedRectangle(timeBounds, 8.0f);
-        g.setColour(APP_COLOR_BORDER_SUBTLE);
-        g.drawRoundedRectangle(timeBounds.reduced(0.5f), 8.0f, 0.75f);
-    }
-
     // ARA mode badge (plugin mode)
     if (pluginMode && araModeLabel.isVisible())
     {
@@ -227,6 +200,7 @@ void ToolbarComponent::paint(juce::Graphics &g)
 void ToolbarComponent::resized()
 {
     auto bounds = getLocalBounds().reduced(10, 0);
+    const auto fullToolbarBounds = bounds;
     const int contentH = bounds.getHeight() - 2; // leave 1px top/bottom margin + 1px for separator
     const int yOffset = 1;
     const int capsuleH = contentH - 10; // capsule inner height with vertical padding
@@ -258,17 +232,24 @@ void ToolbarComponent::resized()
         progressBar.setBounds(progressArea.getX(), capsuleY + capsuleH - pH, progressArea.getWidth(), pH);
     }
 
-    // Hide zoom controls (moved to workspace overlays)
+    // Hide center controls (time/tools removed from toolbar) and zoom controls
+    timeLabel.setVisible(false);
+    selectModeButton.setVisible(false);
+    splitModeButton.setVisible(false);
+    followButton.setVisible(false);
     zoomLabel.setVisible(false);
     zoomSlider.setVisible(false);
-
-    // =========================================================================
-    // LEFT SIDE — Transport capsule (standalone) or ARA+Reanalyze (plugin)
-    // =========================================================================
-    int leftSectionWidth = 0;
+    toolContainerBounds = {};
+    timeCapsuleBounds = {};
 
     if (pluginMode)
     {
+        goToStartButton.setVisible(false);
+        playButton.setVisible(false);
+        stopButton.setVisible(false);
+        goToEndButton.setVisible(false);
+        loopButton.setVisible(false);
+
         // ARA badge
         const int araW = 80;
         const int araH = 28;
@@ -282,83 +263,36 @@ void ToolbarComponent::resized()
         reanalyzeButton.setBounds(bounds.getX() + araW + 8, reanalyzeY, reanalyzeW, reanalyzeH);
 
         transportCapsuleBounds = {}; // no transport capsule in plugin mode
-        leftSectionWidth = araW + 8 + reanalyzeW + 16;
     }
     else
     {
+        goToStartButton.setVisible(true);
+        playButton.setVisible(true);
+        stopButton.setVisible(true);
+        goToEndButton.setVisible(true);
+        loopButton.setVisible(true);
+
         // Transport controls grouped in capsule
         const int transportBtnSize = 30;
         const int transportPad = 5;
-        const int numTransport = 4;
-        const int capsuleW = transportBtnSize * numTransport + transportPad * 2 + 6; // 6 = inner gaps
-        int cx = bounds.getX();
+        const int numCenteredTransport = 4;
+        const int numTransport = 5;
+        const int centeredTransportW = transportBtnSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
+        const int capsuleW = transportBtnSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
+        int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
         transportCapsuleBounds = juce::Rectangle<int>(cx, capsuleY, capsuleW, capsuleH);
 
         int btnY = capsuleY + (capsuleH - transportBtnSize) / 2;
         int btnX = cx + transportPad;
-        goToStartButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
+        stopButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
         btnX += transportBtnSize + 2;
         playButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
         btnX += transportBtnSize + 2;
-        stopButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
+        goToStartButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
         btnX += transportBtnSize + 2;
         goToEndButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
-
-        leftSectionWidth = capsuleW + 12;
-    }
-
-    // =========================================================================
-    // CENTER — Time display (centered in remaining space)
-    // =========================================================================
-    int centerStart = bounds.getX() + leftSectionWidth;
-    int centerEnd = rightSection.getX();
-    int centerAvail = centerEnd - centerStart;
-
-    // Time display capsule
-    const int timeWidth = 190;
-    const int timeH = capsuleH - 2;
-
-    // Tool container measurements (need these to center time between left section and tools)
-    const int toolButtonSize = 32;
-    const int toolContainerPadding = 5;
-    const int numEditTools = 2; // select, split
-    const int numPlaybackTools = pluginMode ? 0 : 1;         // follow
-    const int dividerWidth = numPlaybackTools > 0 ? 8 : 0;   // space for divider between groups
-    const int numAllTools = numEditTools + numPlaybackTools;
-    const int toolContainerWidth = toolButtonSize * numAllTools + toolContainerPadding * 2 + dividerWidth;
-
-    // Layout: [leftSection] [time] [gap] [tools] [rightSection]
-    // Center the time+tools group together in the available center space
-    const int timeToolGap = 16;
-    const int totalCenterContent = timeWidth + timeToolGap + toolContainerWidth;
-    int contentStart = centerStart + std::max(0, (centerAvail - totalCenterContent) / 2);
-
-    // Time display
-    int timeY = capsuleY + (capsuleH - timeH) / 2;
-    timeCapsuleBounds = juce::Rectangle<int>(contentStart, capsuleY, timeWidth, capsuleH);
-    timeLabel.setBounds(contentStart + 4, timeY, timeWidth - 8, timeH);
-
-    // =========================================================================
-    // TOOL BUTTONS — Right of time display
-    // =========================================================================
-    int toolStartX = contentStart + timeWidth + timeToolGap;
-    toolContainerBounds = juce::Rectangle<int>(toolStartX, capsuleY, toolContainerWidth, capsuleH);
-    auto toolArea = toolContainerBounds.reduced(toolContainerPadding, toolContainerPadding);
-    int toolBtnH = toolArea.getHeight();
-    int toolBtnY = toolArea.getY();
-    int toolX = toolArea.getX();
-
-    // Edit tools group: select, split
-    selectModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
-    splitModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
-
-    // Playback tools group (standalone only): follow — with divider gap
-    if (!pluginMode)
-    {
-        toolX += dividerWidth; // gap for visual divider
-        followButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
+        btnX += transportBtnSize + 2;
+        loopButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
     }
 }
 
@@ -383,6 +317,13 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     }
     else if (button == &stopButton && onStop)
         onStop();
+    else if (button == &loopButton)
+    {
+        loopEnabled = !loopEnabled;
+        loopButton.setActive(loopEnabled);
+        if (onToggleLoop)
+            onToggleLoop(loopEnabled);
+    }
     else if (button == &reanalyzeButton && onReanalyze)
         onReanalyze();
     else if (button == &selectModeButton)
@@ -452,6 +393,7 @@ void ToolbarComponent::setZoom(float pixelsPerSecond)
 void ToolbarComponent::setLoopEnabled(bool enabled)
 {
     loopEnabled = enabled;
+    loopButton.setActive(loopEnabled);
 }
 
 void ToolbarComponent::setParametersVisible(bool visible)

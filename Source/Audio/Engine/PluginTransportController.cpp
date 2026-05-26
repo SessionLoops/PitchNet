@@ -209,6 +209,11 @@ void PluginTransportController::setTempoCallback(TempoCallback callback)
     hostSync.setTempoCallback(std::move(callback));
 }
 
+void PluginTransportController::setLoopCallback(LoopCallback callback)
+{
+    hostSync.setLoopCallback(std::move(callback));
+}
+
 void PluginTransportController::clearCallbacks()
 {
     std::atomic_store(&playStateCallback, std::shared_ptr<PlayStateCallback>());

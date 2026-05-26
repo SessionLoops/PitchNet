@@ -37,6 +37,7 @@ public:
     using PositionCallback = std::function<void(double timeInSeconds)>;
     using TransportCallback = std::function<void(const HostSyncService::TransportState&)>;
     using TempoCallback = std::function<void(const HostSyncService::TempoInfo&)>;
+    using LoopCallback = std::function<void(const HostSyncService::LoopInfo&)>;
 
     PluginTransportController();
     ~PluginTransportController();
@@ -126,6 +127,11 @@ public:
      * Set callback for tempo changes.
      */
     void setTempoCallback(TempoCallback callback);
+
+    /**
+     * Set callback for host loop/cycle changes.
+     */
+    void setLoopCallback(LoopCallback callback);
 
     /**
      * Clear all callbacks.

@@ -129,6 +129,29 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
+  toolbar.onToggleLoop = [this](bool enabled)
+  {
+    if (auto *project = getProject())
+    {
+      project->setLoopEnabled(enabled);
+      const auto &range = project->getLoopRange();
+      const bool hasValidRange = range.endSeconds > range.startSeconds;
+      toolbar.setLoopEnabled(enabled);
+      pianoRoll.repaint();
+
+      if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
+      {
+        if (hasValidRange)
+          audioEngine->setLoopRange(range.startSeconds, range.endSeconds);
+        audioEngine->setLoopEnabled(range.enabled);
+      }
+    }
+    else
+    {
+      toolbar.setLoopEnabled(false);
+      pianoRoll.repaint();
+    }
+  };
   toolbar.onToggleParameters = [this](bool visible)
   {
     workspace.showPanel("parameters", visible);
@@ -171,6 +194,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRoll.onLoopRangeChanged = [this](const LoopRange &range)
   {
     toolbar.setLoopEnabled(range.enabled);
+    pianoRoll.repaint();
     if (auto *audioEngine = editorController
                                 ? editorController->getAudioEngine()
                                 : nullptr)
@@ -1079,6 +1103,13 @@ void MainComponent::play()
   if (!project)
     return;
 
+  if (project->getAudioData().waveform.getNumSamples() == 0)
+  {
+    isPlaying = false;
+    toolbar.setPlaying(false);
+    return;
+  }
+
   // In plugin mode, playback is controlled by the host
   // We only update UI state, but don't actually start playback
   if (isPluginMode())
@@ -1595,6 +1626,30 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   // Set isPlaying to true when we receive position updates
   // This enables "follow playback" feature
   isPlaying = true;
+}
+
+void MainComponent::updateHostLoopRange(double startSeconds, double endSeconds,
+                                        bool enabled, bool hasRange)
+{
+  auto *project = getProject();
+  if (!project)
+    return;
+
+  if (hasRange && endSeconds > startSeconds)
+  {
+    project->setLoopRange(startSeconds, endSeconds);
+    project->setLoopEnabled(enabled);
+  }
+  else
+  {
+    if (hasRange)
+      project->clearLoopRange();
+    else
+      project->setLoopEnabled(false);
+  }
+
+  toolbar.setLoopEnabled(enabled);
+  pianoRoll.repaint();
 }
 
 bool MainComponent::hasAnalyzedProject() const
