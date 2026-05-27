@@ -28,6 +28,8 @@ public:
     int componentWidth;
     int visibleContentWidth;
     int visibleContentHeight;
+    bool drawRowBackgrounds = true;
+    bool drawGridLines = true;
   };
 
   GridRenderer() = default;

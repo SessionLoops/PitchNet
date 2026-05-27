@@ -5,7 +5,7 @@
 // Each layer is subtly brighter, creating natural elevation perception.
 
 // ── Core backgrounds ──────────────────────────────────────────────
-const juce::Colour APP_COLOR_BACKGROUND          = juce::Colour(0xFF0F1117u);  // Deep charcoal base
+const juce::Colour APP_COLOR_BACKGROUND          = juce::Colour(0xFF0D0B0Bu);  // Deep charcoal base
 const juce::Colour APP_COLOR_SURFACE             = juce::Colour(0xFF161922u);  // Primary surface
 const juce::Colour APP_COLOR_SURFACE_ALT         = juce::Colour(0xFF181C27u);  // Recessed/inset surface (controls, inputs)
 const juce::Colour APP_COLOR_SURFACE_RAISED      = juce::Colour(0xFF222737u);  // Elevated cards/popups
@@ -16,8 +16,8 @@ const juce::Colour APP_COLOR_BORDER_SUBTLE       = juce::Colour(0xFF1E2333u);  /
 const juce::Colour APP_COLOR_BORDER_HIGHLIGHT    = juce::Colour(0xFF3D4562u);  // Focus / active border
 
 // ── Piano roll grid & timeline ────────────────────────────────────
-const juce::Colour APP_COLOR_GRID                = juce::Colour(0xFF1E2333u);  // Subdivision lines
-const juce::Colour APP_COLOR_GRID_BAR            = juce::Colour(0xFF2C3348u);  // Bar / beat lines
+const juce::Colour APP_COLOR_GRID                = juce::Colour(0xFF0D0B0Bu);  // Subdivision lines
+const juce::Colour APP_COLOR_GRID_BAR            = juce::Colour(0xFF0D0B0Bu);  // Bar / beat lines
 const juce::Colour APP_COLOR_TIMELINE            = juce::Colour(0xFF131620u);  // Timeline ruler background
 
 // ── Piano keys ────────────────────────────────────────────────────

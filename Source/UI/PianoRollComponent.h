@@ -62,6 +62,7 @@ public:
   void mouseDrag(const juce::MouseEvent &e) override;
   void mouseUp(const juce::MouseEvent &e) override;
   void mouseMove(const juce::MouseEvent &e) override;
+  void mouseExit(const juce::MouseEvent &e) override;
   void mouseDoubleClick(const juce::MouseEvent &e) override;
   void mouseWheelMove(const juce::MouseEvent &e,
                       const juce::MouseWheelDetails &wheel) override;
@@ -185,12 +186,15 @@ private:
   enum class NoteRenderPass
   {
     Body,
-    Overlay
+    Overlay,
+    HoverShadow,
+    HoveredBody
   };
 
   void drawBackgroundWaveform(juce::Graphics &g,
                               const juce::Rectangle<int> &visibleArea);
-  void drawGrid(juce::Graphics &g);
+  void drawGrid(juce::Graphics &g, bool drawRowBackgrounds = true,
+                bool drawGridLines = true);
   void drawTimeline(juce::Graphics &g);
   void drawLoopTimeline(juce::Graphics &g);
   void drawNotes(juce::Graphics &g, NoteRenderPass pass);
@@ -214,6 +218,7 @@ private:
   double snapTimeToTimelineGrid(double timeSeconds) const;
 
   Note *findNoteAt(float x, float y);
+  void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   void reapplyBasePitchForNote(
@@ -241,6 +246,7 @@ private:
 
   PianoRollViewState viewState;
   int &hoveredPitchToolHandle = viewState.hoveredPitchToolHandle;
+  Note *hoveredNote = nullptr;
 
   float &pixelsPerSecond = viewState.pixelsPerSecond;
   float &pixelsPerSemitone = viewState.pixelsPerSemitone;

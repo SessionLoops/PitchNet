@@ -48,7 +48,23 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   const juce::Colour scaleAccent =
       pianoRollView::getScaleAccentColour(params.scaleMode);
 
-  if (showScaleOverlay)
+  const auto whiteKeyRowColour = juce::Colour(0xFF1C1C1Au);
+  const auto blackKeyRowColour = juce::Colour(0xFF181817u);
+
+  if (params.drawRowBackgrounds)
+  {
+    for (int midi = startMidi; midi <= endMidi; ++midi)
+    {
+      const int noteInOctave = (midi % 12 + 12) % 12;
+      g.setColour(pianoRollView::isBlackKey(noteInOctave) ? blackKeyRowColour
+                                                          : whiteKeyRowColour);
+      const float y = coordMapper->midiToY(static_cast<float>(midi));
+      g.fillRect(visibleStartX, y, visibleEndX - visibleStartX,
+                 pixelsPerSemitone);
+    }
+  }
+
+  if (params.drawRowBackgrounds && showScaleOverlay)
   {
     const auto rootRowColour = scaleAccent.withAlpha(0.24f);
     const auto inScaleRowColour = scaleAccent.withAlpha(0.08f);
@@ -69,20 +85,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
     }
   }
 
-  if (!showScaleOverlay)
-  {
-    // Chromatic mode keeps the traditional piano black-key shading.
-    g.setColour(APP_COLOR_SELECTION_OVERLAY);
-    for (int midi = startMidi; midi <= endMidi; ++midi)
-    {
-      const int noteInOctave = (midi % 12 + 12) % 12;
-      if (pianoRollView::isBlackKey(noteInOctave))
-      {
-        const float y = coordMapper->midiToY(static_cast<float>(midi));
-        g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
-      }
-    }
-  }
+  if (!params.drawGridLines)
+    return;
 
   // Horizontal pitch lines.
   for (int midi = startMidi; midi <= endMidi; ++midi)
@@ -135,7 +139,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
         if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
           continue;
 
-        if (pianoRollView::isMultipleOf(time, params.barSeconds))
+        const bool isBarLine = pianoRollView::isMultipleOf(time, params.barSeconds);
+        if (isBarLine)
         {
           g.setColour(APP_COLOR_GRID_BAR);
         }
@@ -149,7 +154,11 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
         {
           g.setColour(APP_COLOR_GRID.darker(0.2f));
         }
-        g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+        if (isBarLine)
+          g.fillRect(x - 0.5f, visibleTopY, 2.0f,
+                     visibleBottomY - visibleTopY);
+        else
+          g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
       }
     }
   }

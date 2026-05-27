@@ -24,7 +24,9 @@ public:
   enum class Pass
   {
     Body,
-    Overlay
+    Overlay,
+    HoverShadow,
+    HoveredBody
   };
 
   NoteRenderer() = default;
@@ -35,6 +37,7 @@ public:
   void setSplitHandler(SplitHandler *h) { splitHandler = h; }
   void setPitchEditor(PitchEditor *e) { pitchEditor = e; }
   void setBoxSelector(BoxSelector *b) { boxSelector = b; }
+  void setHoveredNote(Note *note) { hoveredNote = note; }
 
   void draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             int componentWidth);
@@ -46,6 +49,7 @@ private:
   SplitHandler *splitHandler = nullptr;
   PitchEditor *pitchEditor = nullptr;
   BoxSelector *boxSelector = nullptr;
+  Note *hoveredNote = nullptr;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NoteRenderer)
 };

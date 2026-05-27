@@ -33,8 +33,13 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   if (!project || !coordMapper)
     return;
 
-  const bool drawBodies = pass == Pass::Body;
+  const bool drawBodies = pass == Pass::Body || pass == Pass::HoveredBody;
   const bool drawOverlays = pass == Pass::Overlay;
+  const bool drawHoverShadow = pass == Pass::HoverShadow;
+  const bool drawHoveredBody = pass == Pass::HoveredBody;
+
+  if ((drawHoverShadow || drawHoveredBody) && hoveredNote == nullptr)
+    return;
 
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
   const float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
@@ -48,6 +53,12 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   smoothed.reserve(2048);
 
   const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
+  const bool isSingleDragging =
+      selectHandler && selectHandler->isSingleNoteDragging();
+  const bool isDraggingNote = isSingleDragging || isMultiDragging;
+  if (drawHoverShadow && isDraggingNote)
+    return;
+
   const std::vector<Note *> *draggedNotes =
       isMultiDragging ? &pitchEditor->getDraggedNotes() : nullptr;
   Note *hoveredMultiDragNote =
@@ -65,10 +76,11 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
   const auto &audioData = project->getAudioData();
   const float *globalSamples =
-      drawBodies && audioData.waveform.getNumSamples() > 0
+      (drawBodies || drawHoverShadow) && audioData.waveform.getNumSamples() > 0
           ? audioData.waveform.getReadPointer(0)
           : nullptr;
-  int globalTotalSamples = drawBodies ? audioData.waveform.getNumSamples() : 0;
+  int globalTotalSamples =
+      (drawBodies || drawHoverShadow) ? audioData.waveform.getNumSamples() : 0;
 
   // Calculate visible time range for culling
   const double visibleStartTime = scrollX / pixelsPerSecond;
@@ -77,6 +89,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   for (auto &note : project->getNotes())
   {
     if (note.isRest())
+      continue;
+    if (drawHoveredBody && &note != hoveredNote)
       continue;
 
     // Viewport culling: skip notes outside visible area
@@ -95,6 +109,54 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         coordMapper->midiToY(note.getMidiNote()) + pixelsPerSemitone * 0.5f;
     const float pitchOffsetPixels = -note.getPitchOffset() * pixelsPerSemitone;
     const float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
+
+    if (drawHoverShadow)
+    {
+      if (&note != hoveredNote)
+        continue;
+
+      auto shadowVisualBounds = juce::Rectangle<float>(x, y, renderedWidth, h);
+      const float *samples = globalSamples;
+      int totalSamples = globalTotalSamples;
+      int startSample = 0;
+      int endSample = 0;
+      const auto &clipWaveform = note.getClipWaveform();
+
+      if (!clipWaveform.empty())
+      {
+        samples = clipWaveform.data();
+        totalSamples = static_cast<int>(clipWaveform.size());
+        endSample = totalSamples;
+      }
+      else if (samples && totalSamples > 0)
+      {
+        startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
+                                       audioData.sampleRate);
+        endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
+                                     audioData.sampleRate);
+        startSample = std::max(0, std::min(startSample, totalSamples - 1));
+        endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
+      }
+
+      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
+      {
+        float maxSample = 0.0f;
+        for (int i = startSample; i < endSample; ++i)
+          maxSample = std::max(maxSample, std::abs(samples[i]));
+
+        const float centerY = y + h * 0.5f;
+        const float waveHeight = h * 3.0f;
+        shadowVisualBounds =
+            juce::Rectangle<float>(x, centerY - maxSample * waveHeight * 0.5f,
+                                   renderedWidth, maxSample * waveHeight);
+      }
+
+      const auto shadowBounds =
+          shadowVisualBounds.expanded(4.0f, 4.0f).getSmallestIntegerContainer();
+      g.setColour(juce::Colours::white.withAlpha(0.08f));
+      g.fillRoundedRectangle(shadowBounds.toFloat(), 3.0f);
+      return;
+    }
 
     if (drawBodies)
     {
@@ -277,8 +339,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     }
 
     const bool isSingleDragged =
-        selectHandler && selectHandler->isSingleNoteDragging() &&
-        selectHandler->getDraggedNote() == &note;
+        isSingleDragging && selectHandler->getDraggedNote() == &note;
     const bool isMultiDragged =
         isMultiDragging && draggedNotes &&
         std::find(draggedNotes->begin(), draggedNotes->end(), &note) !=

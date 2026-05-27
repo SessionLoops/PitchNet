@@ -223,7 +223,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
   g.reduceClipRegion(clipPath);
 
   // Background (solid to keep grid clean)
-  g.fillAll(APP_COLOR_BACKGROUND);
+  g.fillAll(juce::Colour(0xFF181817u));
 
   const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
   constexpr int verticalScrollBarSize = 8;
@@ -236,24 +236,34 @@ void PianoRollComponent::paint(juce::Graphics &g)
                       .withTrimmedBottom(horizontalScrollBarSize)
                       .withTrimmedRight(verticalScrollBarSize);
 
-  // Draw background waveform (only horizontal scroll, fills visible height)
+  // Draw row backgrounds first, then waveform, then grid lines/content.
+  {
+    juce::Graphics::ScopedSaveState saveState(g);
+    g.reduceClipRegion(mainArea);
+    g.setOrigin(pianoKeysWidth - static_cast<int>(scrollX),
+                headerHeight - static_cast<int>(scrollY));
+    drawGrid(g, true, false);
+  }
+
   {
     juce::Graphics::ScopedSaveState saveState(g);
     g.reduceClipRegion(mainArea);
     drawBackgroundWaveform(g, mainArea);
   }
 
-  // Draw scrolled content (grid, notes, pitch curves, handles)
+  // Draw scrolled content (grid lines, notes, pitch curves, handles)
   {
     juce::Graphics::ScopedSaveState saveState(g);
     g.reduceClipRegion(mainArea);
     g.setOrigin(pianoKeysWidth - static_cast<int>(scrollX),
                 headerHeight - static_cast<int>(scrollY));
 
-    drawGrid(g);
+    drawGrid(g, false, true);
     drawGameChunksDebugOverlay(g);
     drawLoopOverlay(g);
     drawNotes(g, NoteRenderPass::Body);
+    drawNotes(g, NoteRenderPass::HoverShadow);
+    drawNotes(g, NoteRenderPass::HoveredBody);
     drawPitchCurves(g);
     drawNotes(g, NoteRenderPass::Overlay);
     drawGameValuesDebugOverlay(g);
@@ -333,7 +343,8 @@ void PianoRollComponent::invalidateBasePitchCache()
   pitchCurveRenderer->invalidateBasePitchCache();
 }
 
-void PianoRollComponent::drawGrid(juce::Graphics &g)
+void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
+                                  bool drawGridLines)
 {
   GridRenderer::Params params;
   params.scaleMode = previewScaleMode.value_or(selectedScaleMode);
@@ -346,6 +357,8 @@ void PianoRollComponent::drawGrid(juce::Graphics &g)
   params.componentWidth = getWidth();
   params.visibleContentWidth = getVisibleContentWidth();
   params.visibleContentHeight = getVisibleContentHeight();
+  params.drawRowBackgrounds = drawRowBackgrounds;
+  params.drawGridLines = drawGridLines;
   gridRenderer->draw(g, params);
 }
 
@@ -678,9 +691,16 @@ void PianoRollComponent::drawLoopTimeline(juce::Graphics &g)
 
 void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
 {
-  const auto rendererPass = pass == NoteRenderPass::Body ? NoteRenderer::Pass::Body
-                                                          : NoteRenderer::Pass::Overlay;
+  auto rendererPass = NoteRenderer::Pass::Overlay;
+  if (pass == NoteRenderPass::Body)
+    rendererPass = NoteRenderer::Pass::Body;
+  else if (pass == NoteRenderPass::HoverShadow)
+    rendererPass = NoteRenderer::Pass::HoverShadow;
+  else if (pass == NoteRenderPass::HoveredBody)
+    rendererPass = NoteRenderer::Pass::HoveredBody;
+
   const bool splitModeActive = editMode == EditMode::Split;
+  noteRenderer->setHoveredNote(hoveredNote);
   noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
 }
 
@@ -853,6 +873,11 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  Note *noteUnderMouse = nullptr;
+  if (e.y >= headerHeight && e.x >= pianoKeysWidth)
+    noteUnderMouse = findNoteAt(adjustedX, adjustedY);
+  setHoveredNote(noteUnderMouse);
+
   // Loop timeline cursor handling (always active)
   loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
 
@@ -879,6 +904,11 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       pitchToolHandles->setHoveredHandleIndex(-1);
     repaint();
   }
+}
+
+void PianoRollComponent::mouseExit(const juce::MouseEvent &)
+{
+  setHoveredNote(nullptr);
 }
 
 void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
@@ -1751,6 +1781,15 @@ Note *PianoRollComponent::findNoteAt(float x, float y)
   }
 
   return nullptr;
+}
+
+void PianoRollComponent::setHoveredNote(Note *note)
+{
+  if (hoveredNote == note)
+    return;
+
+  hoveredNote = note;
+  repaint();
 }
 
 void PianoRollComponent::updateScrollBars()
