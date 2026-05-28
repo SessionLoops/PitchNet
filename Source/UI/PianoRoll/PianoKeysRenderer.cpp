@@ -5,6 +5,7 @@
 
 void PianoKeysRenderer::draw(juce::Graphics &g,
                              int componentHeight,
+                             int scrollBarSize,
                              ScaleMode activeScaleMode,
                              int activeScaleRootNote,
                              bool showScaleColors)
@@ -12,7 +13,6 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
   if (!coordMapper)
     return;
 
-  constexpr int scrollBarSize = 8;
   const int pianoKeysWidth = CoordinateMapper::pianoKeysWidth;
   const int headerHeight = CoordinateMapper::headerHeight;
 
@@ -50,16 +50,15 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     const auto toneState = pianoRollView::getScaleToneState(
         activeScaleMode, noteInOctave, activeScaleRootNote);
 
-    juce::Colour keyFill = isBlack ? APP_COLOR_PIANO_BLACK : APP_COLOR_PIANO_WHITE;
+    juce::Colour keyFill = juce::Colour(0xFF232323u);
     if (showScaleOverlay)
     {
       if (toneState == pianoRollView::ScaleToneState::OutOfScale)
       {
-        keyFill = APP_COLOR_PIANO_BLACK;
+        keyFill = juce::Colour(0xFF232323u);
       }
       else
       {
-        keyFill = APP_COLOR_PIANO_WHITE;
         keyFill = keyFill.interpolatedWith(
             scaleAccent,
             toneState == pianoRollView::ScaleToneState::Root ? 0.32f : 0.16f);

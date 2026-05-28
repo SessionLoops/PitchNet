@@ -396,6 +396,20 @@ void MainComponent::paint(juce::Graphics &g)
   g.fillAll(APP_COLOR_BACKGROUND);
 }
 
+void MainComponent::paintOverChildren(juce::Graphics &g)
+{
+  if (settingsOverlay != nullptr && settingsOverlay->isVisible())
+    return;
+
+  constexpr int scrollBarWidth = 8;
+  const int y = toolbar.getBottom();
+  if (y >= getHeight())
+    return;
+
+  g.setColour(juce::Colour(0xFF3C3C3Cu));
+  g.fillRect(0, y, juce::jmax(0, getWidth() - scrollBarWidth), 1);
+}
+
 void MainComponent::resized()
 {
   auto bounds = getLocalBounds();

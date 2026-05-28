@@ -5,7 +5,7 @@ WorkspaceComponent::WorkspaceComponent()
     setOpaque(true);
 
     mainCard.setPadding(0);
-    mainCard.setCornerRadius(8.0f);
+    mainCard.setCornerRadius(0.0f);
     mainCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
     addAndMakeVisible(mainCard);
     addAndMakeVisible(panelContainer);
@@ -23,8 +23,8 @@ void WorkspaceComponent::paint(juce::Graphics& g)
 void WorkspaceComponent::resized()
 {
     auto bounds = getLocalBounds();
-    const int margin = 8;
-    const int topMargin = 4; // Tight spacing from toolbar
+    const int margin = 0;
+    const int topMargin = 0;
     const int panelGap = 8; // Gap between piano roll and panel
 
     // Apply top margin first so sidebar aligns with content

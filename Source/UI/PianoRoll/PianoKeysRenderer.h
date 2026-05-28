@@ -18,6 +18,7 @@ public:
 
   void draw(juce::Graphics &g,
             int componentHeight,
+            int scrollBarSize,
             ScaleMode activeScaleMode,
             int activeScaleRootNote,
             bool showScaleColors);

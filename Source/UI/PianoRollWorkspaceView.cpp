@@ -7,12 +7,12 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
     : pianoRoll(piano)
 {
   pianoCard.setPadding(0);
-  pianoCard.setCornerRadius(10.0f);
+  pianoCard.setCornerRadius(0.0f);
   pianoCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
   pianoCard.setContentComponent(&pianoRoll);
 
   overviewCard.setPadding(0);
-  overviewCard.setCornerRadius(10.0f);
+  overviewCard.setCornerRadius(0.0f);
   overviewCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
   overviewCard.setContentComponent(&overviewPanel);
   overviewPanel.setDrawBackground(false);

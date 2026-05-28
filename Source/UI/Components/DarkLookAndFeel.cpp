@@ -392,34 +392,35 @@ void DarkLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, boo
 }
 
 // =====================================================================
-// ScrollBar — thin rounded thumb, invisible track
+// ScrollBar — thin rounded thumb over a filled track
 // =====================================================================
 
-void DarkLookAndFeel::drawScrollbar(juce::Graphics& g, juce::ScrollBar& /*scrollbar*/,
+void DarkLookAndFeel::drawScrollbar(juce::Graphics& g, juce::ScrollBar& scrollbar,
                                      int x, int y, int width, int height,
                                      bool isScrollbarVertical, int thumbStartPosition,
                                      int thumbSize, bool isMouseOver, bool isMouseDown)
 {
-    auto alpha = (isMouseDown || isMouseOver) ? 0.45f : 0.2f;
-    g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(alpha));
+    auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat();
+    g.setColour(scrollbar.findColour(juce::ScrollBar::backgroundColourId));
+    g.fillRect(bounds);
+
+    auto alpha = (isMouseDown || isMouseOver) ? 1.0f : 0.86f;
+    g.setColour(scrollbar.findColour(juce::ScrollBar::thumbColourId).withAlpha(alpha));
 
     juce::Rectangle<float> thumbBounds;
 
     if (isScrollbarVertical)
     {
-        auto thumbW = juce::jmax(4.0f, (float)width * 0.55f);
-        auto xOff = ((float)width - thumbW) * 0.5f;
-        thumbBounds = { (float)x + xOff, (float)thumbStartPosition,
+        auto thumbW = static_cast<float>(width);
+        thumbBounds = { static_cast<float>(x), static_cast<float>(thumbStartPosition),
                         thumbW, (float)juce::jmax(thumbSize, 16) };
     }
     else
     {
-        auto thumbH = juce::jmax(4.0f, (float)height * 0.55f);
-        auto yOff = ((float)height - thumbH) * 0.5f;
-        thumbBounds = { (float)thumbStartPosition, (float)y + yOff,
+        auto thumbH = static_cast<float>(height);
+        thumbBounds = { (float)thumbStartPosition, static_cast<float>(y),
                         (float)juce::jmax(thumbSize, 16), thumbH };
     }
 
-    auto corner = juce::jmin(thumbBounds.getWidth(), thumbBounds.getHeight()) * 0.5f;
-    g.fillRoundedRectangle(thumbBounds, corner);
+    g.fillRect(thumbBounds);
 }

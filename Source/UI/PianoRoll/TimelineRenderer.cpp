@@ -22,7 +22,7 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
   g.reduceClipRegion(timelineArea);
 
   // Background
-  g.setColour(APP_COLOR_TIMELINE);
+  g.setColour(juce::Colour(0xFF232323u));
   g.fillRect(timelineArea);
 
   // Bottom border
@@ -160,7 +160,7 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
   juce::Graphics::ScopedSaveState savedState(g);
   g.reduceClipRegion(loopArea);
 
-  g.setColour(APP_COLOR_SURFACE_ALT);
+  g.setColour(juce::Colour(0xFF232323u));
   g.fillRect(loopArea);
 
   g.setColour(APP_COLOR_GRID_BAR);

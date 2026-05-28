@@ -150,12 +150,8 @@ void ToolbarComponent::paint(juce::Graphics &g)
     auto bounds = getLocalBounds().toFloat();
 
     // Flat surface background
-    g.setColour(APP_COLOR_SURFACE);
+    g.setColour(juce::Colour(0xFF0D0B0Bu));
     g.fillRect(bounds);
-
-    // Bottom separator line (1 px)
-    g.setColour(APP_COLOR_BORDER_SUBTLE);
-    g.fillRect(bounds.removeFromBottom(1.0f));
 
     // Transport capsule background (standalone) or ARA/reanalyze area (plugin)
     if (!transportCapsuleBounds.isEmpty())

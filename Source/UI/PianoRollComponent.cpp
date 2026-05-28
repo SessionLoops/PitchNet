@@ -162,13 +162,15 @@ PianoRollComponent::PianoRollComponent()
   verticalScrollBar.addListener(this);
 
   // Style scrollbars to match theme
-  auto thumbColor = APP_COLOR_PRIMARY.withAlpha(0.8f);
-  auto trackColor = juce::Colours::transparentBlack;
+  auto thumbColor = juce::Colour(0xFF565656u);
+  auto trackColor = juce::Colour(0xFF0D0B0Bu);
 
   horizontalScrollBar.setColour(juce::ScrollBar::thumbColourId, thumbColor);
   horizontalScrollBar.setColour(juce::ScrollBar::trackColourId, trackColor);
+  horizontalScrollBar.setColour(juce::ScrollBar::backgroundColourId, trackColor);
   verticalScrollBar.setColour(juce::ScrollBar::thumbColourId, thumbColor);
   verticalScrollBar.setColour(juce::ScrollBar::trackColourId, trackColor);
+  verticalScrollBar.setColour(juce::ScrollBar::backgroundColourId, trackColor);
 
   // Set initial scroll range
   verticalScrollBar.setRangeLimits(0, (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) *
@@ -192,13 +194,15 @@ PianoRollComponent::~PianoRollComponent()
 
 int PianoRollComponent::getVisibleContentWidth() const
 {
-  return std::max(0, getWidth() - pianoKeysWidth - 14);
+  constexpr int verticalScrollBarSize = 8;
+  return std::max(0, getWidth() - pianoKeysWidth - verticalScrollBarSize);
 }
 
 int PianoRollComponent::getVisibleContentHeight() const
 {
+  constexpr int horizontalScrollBarSize = 8;
   return std::max(0, getHeight() - headerHeight -
-                         (showHorizontalScrollBar ? 14 : 0));
+                         (showHorizontalScrollBar ? horizontalScrollBarSize : 0));
 }
 
 void PianoRollComponent::setHorizontalScrollBarVisible(bool shouldShow)
@@ -216,18 +220,30 @@ void PianoRollComponent::paint(juce::Graphics &g)
 {
   updatePitchToolHandlesFromSelection();
 
-  // Apply rounded corner clipping
-  const float cornerRadius = 8.0f;
-  juce::Path clipPath;
-  clipPath.addRoundedRectangle(getLocalBounds().toFloat(), cornerRadius);
-  g.reduceClipRegion(clipPath);
-
   // Background (solid to keep grid clean)
-  g.fillAll(juce::Colour(0xFF181817u));
+  g.fillAll(APP_COLOR_BACKGROUND);
+  g.setColour(juce::Colour(0xFF232323u));
+  g.fillRect(0, 0, getWidth(), headerHeight);
 
   const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
   constexpr int verticalScrollBarSize = 8;
   auto contentBounds = getLocalBounds();
+
+  g.setColour(juce::Colour(0xFF0D0B0Bu));
+  g.fillRect(getWidth() - verticalScrollBarSize, 0, verticalScrollBarSize,
+             headerHeight);
+  g.fillRect(getWidth() - verticalScrollBarSize, headerHeight,
+             verticalScrollBarSize,
+             getHeight() - headerHeight - horizontalScrollBarSize);
+  if (showHorizontalScrollBar)
+  {
+    g.fillRect(pianoKeysWidth, getHeight() - horizontalScrollBarSize,
+               getWidth() - pianoKeysWidth - verticalScrollBarSize,
+               horizontalScrollBarSize);
+    g.fillRect(getWidth() - verticalScrollBarSize,
+               getHeight() - horizontalScrollBarSize,
+               verticalScrollBarSize, horizontalScrollBarSize);
+  }
 
   // Create clipping region for main area (below timelines)
   auto mainArea = contentBounds
@@ -292,13 +308,19 @@ void PianoRollComponent::paint(juce::Graphics &g)
     // Only draw if cursor is in visible area
     if (x >= pianoKeysWidth && x < getWidth() - verticalScrollBarSize)
     {
-      g.setColour(APP_COLOR_PRIMARY);
-      g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom);
+      g.setColour(juce::Colour(0xFFC8C7C7u));
+      g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom - cursorTop);
     }
   }
 
   // Draw piano keys
   drawPianoKeys(g);
+
+  const auto canvasBorderBounds = getLocalBounds()
+                                      .withTrimmedRight(verticalScrollBarSize)
+                                      .withTrimmedBottom(horizontalScrollBarSize);
+  g.setColour(juce::Colour(0xFF3C3C3Cu));
+  g.drawRect(canvasBorderBounds, 1);
 }
 
 void PianoRollComponent::resized()
@@ -720,8 +742,9 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g)
 {
   const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
   const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
-  pianoKeysRenderer->draw(g, getHeight(), activeScaleMode, activeScaleRootNote,
-                          showScaleColors);
+  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
+  pianoKeysRenderer->draw(g, getHeight(), horizontalScrollBarSize,
+                          activeScaleMode, activeScaleRootNote, showScaleColors);
 }
 
 float PianoRollComponent::midiToY(float midiNote) const
