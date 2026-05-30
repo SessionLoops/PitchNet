@@ -3,6 +3,7 @@
 #include "PitchEditor.h"
 #include "States/SelectHandler.h"
 #include "States/SplitHandler.h"
+#include "VisualWaveformEnvelope.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/ScaleUtils.h"
 #include "../../Utils/UI/Theme.h"
@@ -108,9 +109,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
   // Pre-allocated scratch buffers to avoid per-note heap allocations
   std::vector<float> waveValues;
-  std::vector<float> smoothed;
   waveValues.reserve(2048);
-  smoothed.reserve(2048);
 
   const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
   const bool isSingleDragging =
@@ -200,9 +199,16 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
       if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
       {
-        float maxSample = 0.0f;
-        for (int i = startSample; i < endSample; ++i)
-          maxSample = std::max(maxSample, std::abs(samples[i]));
+        const int shadowPointCount =
+            std::max(2, std::min(512, static_cast<int>(std::ceil(w)) + 1));
+        const auto shadowEnvelope = VisualWaveformEnvelope::build(
+            samples, totalSamples, startSample, endSample, shadowPointCount,
+            renderedWidth, audioData.sampleRate, pixelsPerSecond);
+        const float maxSample =
+            shadowEnvelope.empty()
+                ? 0.0f
+                : *std::max_element(shadowEnvelope.begin(),
+                                    shadowEnvelope.end());
 
         const float centerY = y + h * 0.5f;
         const float waveHeight = h * 3.0f;
@@ -248,40 +254,13 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
       if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
       {
-        const int numNoteSamples = endSample - startSample;
-        const int samplesPerPixel = std::max(1, static_cast<int>(numNoteSamples / w));
-
         const float centerY = y + h * 0.5f;
         const float waveHeight = h * 3.0f;
-
-        waveValues.clear();
-        const float step = std::max(0.5f, w / 1024.0f);
-
-        for (float px = 0; px <= w; px += step)
-        {
-          const int sampleIdx =
-              startSample + static_cast<int>((px / w) * numNoteSamples);
-          const int sampleEnd = std::min(sampleIdx + samplesPerPixel, endSample);
-
-          float maxVal = 0.0f;
-          for (int i = sampleIdx; i < sampleEnd; ++i)
-            maxVal = std::max(maxVal, std::abs(samples[i]));
-
-          waveValues.push_back(maxVal);
-        }
-
-        if (waveValues.size() > 2)
-        {
-          smoothed.resize(waveValues.size());
-          smoothed[0] = waveValues[0];
-          for (size_t i = 1; i + 1 < waveValues.size(); ++i)
-          {
-            smoothed[i] = (waveValues[i - 1] * 0.25f + waveValues[i] * 0.5f +
-                           waveValues[i + 1] * 0.25f);
-          }
-          smoothed[waveValues.size() - 1] = waveValues[waveValues.size() - 1];
-          waveValues = std::move(smoothed);
-        }
+        const int pointCount =
+            std::max(2, std::min(2048, static_cast<int>(std::ceil(w * 2.0f)) + 1));
+        waveValues = VisualWaveformEnvelope::build(
+            samples, totalSamples, startSample, endSample, pointCount, w,
+            audioData.sampleRate, pixelsPerSecond);
 
         const size_t numPoints = waveValues.size();
         if (numPoints < 2)
