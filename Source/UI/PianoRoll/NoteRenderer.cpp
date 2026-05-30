@@ -12,18 +12,78 @@
 
 namespace
 {
-juce::Colour getPitchCenterColour(float midi, int pitchReferenceHz)
+struct NoteGradientColours
 {
-  static const juce::Colour centredColour(0xFF3822FFu);
-  static const juce::Colour farthestColour(0xFFFE0043u);
+  juce::Colour centre;
+  juce::Colour side;
+};
 
+float getPitchCenterAmount(float midi, int pitchReferenceHz)
+{
   const float pitchCenter =
       ScaleUtils::snapMidiToSemitone(midi, pitchReferenceHz);
   const float distanceFromCenter = std::abs(midi - pitchCenter);
-  const float amount =
-      juce::jlimit(0.0f, 1.0f, distanceFromCenter / 0.5f);
 
-  return centredColour.interpolatedWith(farthestColour, amount);
+  return juce::jlimit(0.0f, 1.0f, distanceFromCenter / 0.5f);
+}
+
+juce::Colour interpolateLayeredColour(juce::Colour first,
+                                      juce::Colour second,
+                                      juce::Colour third,
+                                      juce::Colour fourth,
+                                      float amount)
+{
+  if (amount < 1.0f / 3.0f)
+    return first.interpolatedWith(second, amount * 3.0f);
+
+  if (amount < 2.0f / 3.0f)
+    return second.interpolatedWith(third, amount * 3.0f - 1.0f);
+
+  return third.interpolatedWith(fourth, amount * 3.0f - 2.0f);
+}
+
+NoteGradientColours getNoteGradientColours(float midi, int pitchReferenceHz)
+{
+  static const juce::Colour inTuneCentre(0xFF1983E0u);
+  static const juce::Colour inTuneSide(0xFF0021E2u);
+  static const juce::Colour firstLayerCentre(0xFFD66CFFu);
+  static const juce::Colour firstLayerSide(0xFF971CFFu);
+  static const juce::Colour secondLayerCentre(0xFFFF90EDu);
+  static const juce::Colour secondLayerSide(0xFFF624B7u);
+  static const juce::Colour outOfTuneCentre(0xFFF95D5Du);
+  static const juce::Colour outOfTuneSide(0xFFFF0000u);
+
+  const float amount = getPitchCenterAmount(midi, pitchReferenceHz);
+
+  return {
+      interpolateLayeredColour(inTuneCentre, firstLayerCentre,
+                               secondLayerCentre, outOfTuneCentre, amount),
+      interpolateLayeredColour(inTuneSide, firstLayerSide, secondLayerSide,
+                               outOfTuneSide, amount)};
+}
+
+void setNoteGradientFill(juce::Graphics &g,
+                         const juce::Rectangle<float> &bounds,
+                         float centreY,
+                         const NoteGradientColours &colours)
+{
+  const float height = bounds.getHeight();
+  if (height <= 0.0f || !std::isfinite(height))
+  {
+    g.setColour(colours.centre);
+    return;
+  }
+
+  const float top = bounds.getY();
+  const float bottom = bounds.getBottom();
+  const float gradientCentre =
+      juce::jlimit(0.0f, 1.0f, (centreY - top) / height);
+
+  juce::ColourGradient gradient(colours.side, bounds.getCentreX(), top,
+                                colours.side, bounds.getCentreX(), bottom,
+                                false);
+  gradient.addColour(gradientCentre, colours.centre);
+  g.setGradientFill(gradient);
 }
 } // namespace
 
@@ -160,8 +220,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
     if (drawBodies)
     {
-      juce::Colour noteColor =
-          getPitchCenterColour(note.getAdjustedMidiNote(), pitchReferenceHz);
+      const NoteGradientColours noteColours =
+          getNoteGradientColours(note.getAdjustedMidiNote(), pitchReferenceHz);
       juce::Rectangle<float> noteVisualBounds(x, y, renderedWidth, h);
 
       const float *samples = globalSamples;
@@ -226,7 +286,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const size_t numPoints = waveValues.size();
         if (numPoints < 2)
         {
-          g.setColour(noteColor);
+          setNoteGradientFill(g, noteVisualBounds, noteVisualBounds.getCentreY(),
+                              noteColours);
           g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
           noteVisualBounds = {x, y, renderedWidth, h};
         }
@@ -242,7 +303,6 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                            (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
           };
 
-          g.setColour(noteColor);
           juce::Path waveformPath;
 
           waveformPath.startNewSubPath(
@@ -314,18 +374,14 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
           waveformPath.closeSubPath();
           noteVisualBounds = waveformPath.getBounds();
+          setNoteGradientFill(g, noteVisualBounds, centerY, noteColours);
           g.fillPath(waveformPath);
-
-          g.setColour(noteColor.brighter(0.2f));
-          g.strokePath(waveformPath,
-                       juce::PathStrokeType(1.2f,
-                                            juce::PathStrokeType::curved,
-                                            juce::PathStrokeType::rounded));
         }
       }
       else
       {
-        g.setColour(noteColor);
+        setNoteGradientFill(g, noteVisualBounds, noteVisualBounds.getCentreY(),
+                            noteColours);
         g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
         noteVisualBounds = {x, y, renderedWidth, h};
       }

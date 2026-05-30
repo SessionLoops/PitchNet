@@ -31,7 +31,7 @@ const juce::Colour APP_COLOR_TEXT_PRIMARY         = juce::Colour(0xFFECEFF5u);  
 const juce::Colour APP_COLOR_TEXT_MUTED           = juce::Colour(0xFF8891A6u);  // Secondary / caption text
 
 // ── Pitch & notes ─────────────────────────────────────────────────
-const juce::Colour APP_COLOR_PITCH_CURVE          = juce::Colour(0xFFF0F0F8u);  // Pitch contour line
+const juce::Colour APP_COLOR_PITCH_CURVE          = juce::Colour(0xFFE6E6E6u);  // Pitch contour line
 const juce::Colour APP_COLOR_NOTE_NORMAL          = juce::Colour(0xFF7C6AFFu);  // Default note block
 const juce::Colour APP_COLOR_NOTE_SELECTED        = juce::Colour(0xFFA594FFu);  // Selected note (brighter)
 const juce::Colour APP_COLOR_NOTE_HOVER           = juce::Colour(0xFF8E7EFFu);  // Hovered note

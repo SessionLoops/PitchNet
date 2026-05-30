@@ -48,8 +48,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   const juce::Colour scaleAccent =
       pianoRollView::getScaleAccentColour(params.scaleMode);
 
-  const auto whiteKeyRowColour = juce::Colour(0xFF1C1C1Au);
-  const auto blackKeyRowColour = juce::Colour(0xFF181817u);
+  const auto whiteKeyRowColour = juce::Colour(0xFF1C1C1Bu);
+  const auto blackKeyRowColour = juce::Colour(0xFF151515u);
 
   if (params.drawRowBackgrounds)
   {
