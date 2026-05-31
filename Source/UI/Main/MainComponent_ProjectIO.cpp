@@ -321,6 +321,8 @@ void MainComponent::loadAudioFile(const juce::File &file) {
         auto *project = safeThis->getProject();
         if (!project)
           return;
+        if (!safeThis->isPluginMode())
+          project->setTimelineDisplayMode(TimelineDisplayMode::Time);
 
         // Update UI
         safeThis->pianoRoll.setProject(project);

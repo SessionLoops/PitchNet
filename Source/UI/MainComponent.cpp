@@ -28,6 +28,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   LOG("MainComponent: creating core components...");
   // Initialize components
   editorController = std::make_unique<EditorController>(enableAudioDeviceFlag);
+  if (enableAudioDeviceFlag)
+  {
+    if (auto *project = editorController->getProject())
+      project->setTimelineDisplayMode(TimelineDisplayMode::Time);
+  }
   undoManager = std::make_unique<PitchUndoManager>(100);
   commandManager = std::make_unique<juce::ApplicationCommandManager>();
   undoManager->onHistoryChanged = [this]()
@@ -300,7 +305,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       if (safeThis == nullptr)
         return;
       safeThis->isPlaying = false;
-      safeThis->toolbar.setPlaying(false); });
+      safeThis->toolbar.setPlaying(false);
+      safeThis->seek(0.0); });
   }
 
   // Set initial project
@@ -463,8 +469,7 @@ void MainComponent::timerCallback()
     {
       float cursorX =
           static_cast<float>(position * pianoRoll.getPixelsPerSecond());
-      float viewWidth = static_cast<float>(
-          pianoRoll.getWidth() - 74); // minus piano keys and scrollbar
+      float viewWidth = static_cast<float>(pianoRoll.getVisibleContentWidth());
       float scrollX = static_cast<float>(pianoRoll.getScrollX());
 
       // If cursor is outside visible area, scroll to center it
@@ -1226,8 +1231,7 @@ void MainComponent::seek(double time)
 
   // Scroll view to make cursor visible
   float cursorX = static_cast<float>(time * pianoRoll.getPixelsPerSecond());
-  float viewWidth = static_cast<float>(pianoRoll.getWidth() -
-                                       74); // minus piano keys and scrollbar
+  float viewWidth = static_cast<float>(pianoRoll.getVisibleContentWidth());
   float scrollX = static_cast<float>(pianoRoll.getScrollX());
 
   // If cursor is outside visible area, scroll to show it

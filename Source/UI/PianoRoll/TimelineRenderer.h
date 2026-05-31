@@ -25,6 +25,10 @@ public:
 
   struct LoopParams
   {
+    TimelineDisplayMode displayMode;
+    int beatNumerator;
+    double beatSeconds;
+    double barSeconds;
     int componentWidth;
     bool loopEnabled;
     double loopStartSeconds;

@@ -24,6 +24,7 @@ constexpr float MIN_PIXELS_PER_SECOND = 20.0f;
 constexpr float MAX_PIXELS_PER_SECOND = 500.0f;
 constexpr float MIN_PIXELS_PER_SEMITONE = 8.0f;
 constexpr float MAX_PIXELS_PER_SEMITONE = 120.0f;
+constexpr float DEFAULT_EMPTY_PROJECT_DURATION_SECONDS = 30.0f;
 
 // UI colors moved to Source/Utils/UI/Theme.h
 

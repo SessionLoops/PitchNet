@@ -73,6 +73,8 @@ void AudioEngine::getNextAudioBlock(
   if (!loopActive && pos >= waveformLength) {
     bufferToFill.clearActiveBufferRegion();
     playing = false;
+    currentPosition.store(0);
+    interpolator.reset();
 
     // Schedule callback on message thread
     if (auto cb = std::atomic_load(&finishCallback))
@@ -152,6 +154,8 @@ void AudioEngine::getNextAudioBlock(
 
   if (!loopActive && samplesRemaining > 0) {
     playing = false;
+    currentPosition.store(0);
+    interpolator.reset();
     if (auto cb = std::atomic_load(&finishCallback))
       juce::MessageManager::callAsync([cb]() { (*cb)(); });
   }

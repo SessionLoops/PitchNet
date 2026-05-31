@@ -26,11 +26,11 @@ public:
 
     // ========== Piano Roll Layout ==========
 
-    /** Width of the piano keys sidebar (logical: 60px) */
-    int pianoKeysWidth() const { return scaled(60); }
+    /** Width of the piano keys sidebar (logical: 30px) */
+    int pianoKeysWidth() const { return scaled(30); }
 
-    /** Height of the timeline header (logical: 24px) */
-    int timelineHeight() const { return scaled(24); }
+    /** Height of the timeline header (logical: 18px) */
+    int timelineHeight() const { return scaled(18); }
 
     /** Height of the loop timeline (logical: 16px) */
     int loopTimelineHeight() const { return scaled(16); }
@@ -38,8 +38,8 @@ public:
     /** Combined header height (timeline + loop timeline) */
     int headerHeight() const { return timelineHeight() + loopTimelineHeight(); }
 
-    /** Width of a single piano key (logical: 60px) */
-    int pianoKeyWidth() const { return scaled(60); }
+    /** Width of a single piano key (logical: 30px) */
+    int pianoKeyWidth() const { return scaled(30); }
 
     /** Height of a white piano key (logical: 20px) */
     int whiteKeyHeight() const { return scaled(20); }
@@ -191,8 +191,8 @@ private:
 namespace UIConstants
 {
     // Piano Roll
-    constexpr int kPianoKeysWidth = 60;
-    constexpr int kTimelineHeight = 24;
+    constexpr int kPianoKeysWidth = 30;
+    constexpr int kTimelineHeight = 18;
     constexpr int kLoopTimelineHeight = 16;
     constexpr int kHeaderHeight = kTimelineHeight + kLoopTimelineHeight;
 

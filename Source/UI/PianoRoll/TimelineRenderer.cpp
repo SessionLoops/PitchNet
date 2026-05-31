@@ -8,11 +8,13 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
   if (!coordMapper)
     return;
 
+  const auto markerColour = juce::Colour(0xFF0D0B0Bu);
+  const auto markerTextColour = juce::Colour(0xFF9B9B9Bu);
   constexpr int scrollBarSize = 8;
   const int pianoKeysWidth = CoordinateMapper::pianoKeysWidth;
   const int timelineHeight = CoordinateMapper::timelineHeight;
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
-  const double scrollX = coordMapper->getScrollX();
+  const int scrollX = static_cast<int>(coordMapper->getScrollX());
 
   auto timelineArea = juce::Rectangle<int>(
       pianoKeysWidth, 0, params.componentWidth - pianoKeysWidth - scrollBarSize,
@@ -26,11 +28,14 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
   g.fillRect(timelineArea);
 
   // Bottom border
-  g.setColour(APP_COLOR_GRID_BAR);
+  g.setColour(juce::Colour(0xFF0D0B0Bu));
   g.drawHorizontalLine(timelineHeight - 1, static_cast<float>(pianoKeysWidth),
                        static_cast<float>(params.componentWidth - scrollBarSize));
 
-  const float duration = project ? project->getAudioData().getDuration() : 60.0f;
+  float duration = project ? project->getAudioData().getDuration()
+                           : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  if (duration <= 0.0f)
+    duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   g.setFont(TimecodeFont::getBoldFont(12.0f));
 
   if (params.displayMode == TimelineDisplayMode::Beats)
@@ -64,27 +69,19 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
           continue;
 
         const bool isBarLine = (beatIndex % beatsPerBar) == 0;
-        const int tickHeight = isBarLine ? 9 : 4;
-        g.setColour(isBarLine ? APP_COLOR_GRID_BAR : APP_COLOR_GRID);
-        g.drawVerticalLine(static_cast<int>(x),
-                           static_cast<float>(timelineHeight - tickHeight),
-                           static_cast<float>(timelineHeight - 1));
+        if (isBarLine)
+        {
+          g.setColour(markerColour);
+          g.drawVerticalLine(static_cast<int>(x), 0.0f,
+                             static_cast<float>(timelineHeight - 1));
+        }
 
         if (isBarLine)
         {
           const int bar = beatIndex / beatsPerBar + 1;
-          g.setColour(APP_COLOR_TEXT_MUTED);
-          g.drawText("Bar " + juce::String(bar), static_cast<int>(x) + 3, 2, 64,
+          g.setColour(markerTextColour);
+          g.drawText(juce::String(bar), static_cast<int>(x) + 3, 2, 64,
                      timelineHeight - 4, juce::Justification::centredLeft, false);
-        }
-        else if (beatStep == 1 && pixelsPerBeat >= 58.0f)
-        {
-          const int beatInBar = (beatIndex % beatsPerBar) + 1;
-          const int bar = beatIndex / beatsPerBar + 1;
-          g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(0.8f));
-          g.drawText(juce::String::formatted("%d.%d", bar, beatInBar),
-                     static_cast<int>(x) + 3, 2, 48, timelineHeight - 4,
-                     juce::Justification::centredLeft, false);
         }
       }
       return;
@@ -113,28 +110,22 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
       continue;
 
     bool isMajor = std::fmod(time, secondsPerTick * 2.0f) < 0.001f;
-    int tickHeight = isMajor ? 8 : 4;
-
-    g.setColour(APP_COLOR_GRID_BAR);
-    g.drawVerticalLine(static_cast<int>(x),
-                       static_cast<float>(timelineHeight - tickHeight),
-                       static_cast<float>(timelineHeight - 1));
+    if (isMajor)
+    {
+      g.setColour(markerColour);
+      g.drawVerticalLine(static_cast<int>(x), 0.0f,
+                         static_cast<float>(timelineHeight - 1));
+    }
 
     if (isMajor)
     {
-      int minutes = static_cast<int>(time) / 60;
-      int seconds = static_cast<int>(time) % 60;
-      int tenths = static_cast<int>((time - std::floor(time)) * 10);
+      const int totalSeconds = static_cast<int>(std::floor(time));
+      const int minutes = totalSeconds / 60;
+      const int seconds = totalSeconds % 60;
+      const juce::String label =
+          juce::String::formatted("%d:%02d", minutes, seconds);
 
-      juce::String label;
-      if (minutes > 0)
-        label = juce::String::formatted("%d:%02d", minutes, seconds);
-      else if (secondsPerTick < 1.0f)
-        label = juce::String::formatted("%d.%d", seconds, tenths);
-      else
-        label = juce::String::formatted("%ds", seconds);
-
-      g.setColour(APP_COLOR_TEXT_MUTED);
+      g.setColour(markerTextColour);
       g.drawText(label, static_cast<int>(x) + 3, 2, 50, timelineHeight - 4,
                  juce::Justification::centredLeft, false);
     }
@@ -147,61 +138,151 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
     return;
 
   constexpr int scrollBarSize = 8;
+  const auto markerColour = juce::Colour(0xFF0D0B0Bu);
   const int pianoKeysWidth = CoordinateMapper::pianoKeysWidth;
   const int timelineHeight = CoordinateMapper::timelineHeight;
   const int loopTimelineHeight = CoordinateMapper::loopTimelineHeight;
   const int headerHeight = CoordinateMapper::headerHeight;
-  const double scrollX = coordMapper->getScrollX();
+  const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
+  const int scrollX = static_cast<int>(coordMapper->getScrollX());
 
+  auto loopClipArea = juce::Rectangle<int>(
+      0, timelineHeight, params.componentWidth - scrollBarSize,
+      loopTimelineHeight);
   auto loopArea = juce::Rectangle<int>(
       pianoKeysWidth, timelineHeight,
       params.componentWidth - pianoKeysWidth - scrollBarSize, loopTimelineHeight);
 
   juce::Graphics::ScopedSaveState savedState(g);
-  g.reduceClipRegion(loopArea);
+  g.reduceClipRegion(loopClipArea);
 
   g.setColour(juce::Colour(0xFF232323u));
   g.fillRect(loopArea);
 
-  g.setColour(APP_COLOR_GRID_BAR);
+  g.setColour(markerColour);
   g.drawHorizontalLine(headerHeight - 1,
-                       static_cast<float>(pianoKeysWidth),
+                       0.0f,
                        static_cast<float>(params.componentWidth - scrollBarSize));
 
+  const auto baseColor = juce::Colour(0xFF888888u);
+  const auto edgeColor =
+      params.loopEnabled ? baseColor : juce::Colour(0xFF3E3E3Eu);
   double loopStartSeconds = params.loopStartSeconds;
   double loopEndSeconds = params.loopEndSeconds;
   if (loopStartSeconds > loopEndSeconds)
     std::swap(loopStartSeconds, loopEndSeconds);
+  const bool hasLoopRange = loopEndSeconds > loopStartSeconds;
+  float startX = 0.0f;
+  float endX = 0.0f;
 
-  if (loopEndSeconds <= loopStartSeconds)
-    return;
-
-  const float startX =
-      static_cast<float>(pianoKeysWidth) + coordMapper->timeToX(loopStartSeconds) -
-      static_cast<float>(scrollX);
-  const float endX =
-      static_cast<float>(pianoKeysWidth) + coordMapper->timeToX(loopEndSeconds) -
-      static_cast<float>(scrollX);
-
-  auto range = juce::Rectangle<float>(
-      startX, static_cast<float>(timelineHeight), endX - startX,
-      static_cast<float>(loopTimelineHeight));
-
-  const auto baseColor = APP_COLOR_PRIMARY;
-  const auto edgeColor =
-      params.loopEnabled ? baseColor : APP_COLOR_BORDER;
-
-  if (params.loopEnabled)
+  if (hasLoopRange)
   {
-    g.setColour(baseColor.withAlpha(0.25f));
-    g.fillRect(range);
+    startX =
+        static_cast<float>(pianoKeysWidth) + coordMapper->timeToX(loopStartSeconds) -
+        static_cast<float>(scrollX);
+    endX =
+        static_cast<float>(pianoKeysWidth) + coordMapper->timeToX(loopEndSeconds) -
+        static_cast<float>(scrollX);
+
+    auto range = juce::Rectangle<float>(
+        startX, static_cast<float>(timelineHeight), endX - startX,
+        static_cast<float>(loopTimelineHeight - 1));
+
+    if (params.loopEnabled)
+    {
+      juce::Graphics::ScopedSaveState rangeClip(g);
+      g.reduceClipRegion(loopArea);
+      g.setColour(baseColor.withAlpha(0.5f));
+      g.fillRect(range);
+    }
   }
 
-  g.setColour(edgeColor);
+  float duration = project ? project->getAudioData().getDuration()
+                           : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  if (duration <= 0.0f)
+    duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  if (params.displayMode == TimelineDisplayMode::Beats)
+  {
+    const double beatSeconds = params.beatSeconds;
+    const double barSeconds = params.barSeconds;
+    if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
+    {
+      const int beatsPerBar = juce::jmax(1, params.beatNumerator);
+      const float pixelsPerBeat = static_cast<float>(beatSeconds * pixelsPerSecond);
+      int beatStep = 1;
+      while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
+        beatStep *= 2;
 
-  constexpr float flagWidth = 6.0f;
-  constexpr float flagHeight = 6.0f;
+      const int firstBeat = std::max(
+          0, static_cast<int>(std::floor((scrollX / pixelsPerSecond) / beatSeconds)));
+      const int lastBeat = static_cast<int>(
+                               std::ceil((scrollX + loopArea.getWidth()) / pixelsPerSecond / beatSeconds)) +
+                           beatStep;
+
+      for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
+      {
+        const double time = static_cast<double>(beatIndex) * beatSeconds;
+        if (time > duration + beatSeconds)
+          break;
+
+        const float x =
+            pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) -
+            static_cast<float>(scrollX);
+        if (x < pianoKeysWidth || x > loopArea.getRight())
+          continue;
+
+        const bool isBarLine = (beatIndex % beatsPerBar) == 0;
+        const float tickTop = isBarLine
+                                  ? static_cast<float>(timelineHeight)
+                                  : static_cast<float>(timelineHeight) +
+                                        static_cast<float>(loopTimelineHeight) * 0.5f;
+        g.setColour(markerColour);
+        g.drawVerticalLine(static_cast<int>(x), tickTop,
+                           static_cast<float>(headerHeight - 1));
+      }
+    }
+  }
+  else
+  {
+    float secondsPerTick;
+    if (pixelsPerSecond >= 200.0f)
+      secondsPerTick = 0.5f;
+    else if (pixelsPerSecond >= 100.0f)
+      secondsPerTick = 1.0f;
+    else if (pixelsPerSecond >= 50.0f)
+      secondsPerTick = 2.0f;
+    else if (pixelsPerSecond >= 25.0f)
+      secondsPerTick = 5.0f;
+    else
+      secondsPerTick = 10.0f;
+
+    for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick)
+    {
+      const float x =
+          pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
+      if (x < pianoKeysWidth || x > loopArea.getRight())
+        continue;
+
+      const bool isMajor = std::fmod(time, secondsPerTick * 2.0f) < 0.001f;
+      if (!isMajor)
+        continue;
+
+      g.setColour(markerColour);
+      g.drawVerticalLine(static_cast<int>(x), static_cast<float>(timelineHeight),
+                         static_cast<float>(headerHeight - 1));
+    }
+  }
+
+  if (!hasLoopRange)
+    return;
+
+  constexpr float flagWidth = 8.0f;
+  constexpr float flagHeight = 8.0f;
   const float flagY = static_cast<float>(timelineHeight);
+
+  juce::Graphics::ScopedSaveState flagClip(g);
+  g.reduceClipRegion(loopArea);
+  g.setColour(edgeColor);
 
   juce::Path startFlag;
   startFlag.addTriangle(startX, flagY, startX, flagY + flagHeight,

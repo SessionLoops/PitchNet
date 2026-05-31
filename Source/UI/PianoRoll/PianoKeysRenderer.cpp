@@ -66,8 +66,11 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     }
 
     g.setColour(keyFill);
-    g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth - 2),
+    g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth),
                pixelsPerSemitone - 1);
+    g.setColour(juce::Colour(0xFF0D0B0Bu));
+    g.fillRect(0.0f, y + pixelsPerSemitone - 1.0f,
+               static_cast<float>(pianoKeysWidth), 1.0f);
 
     if (showScaleOverlay)
     {
@@ -87,8 +90,7 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     juce::String noteName =
         juce::String(noteNames[noteInOctave]) + juce::String(octave);
 
-    juce::Colour textColour = isBlack ? APP_COLOR_PIANO_TEXT_DIM
-                                      : APP_COLOR_PIANO_TEXT;
+    juce::Colour textColour = juce::Colour(0xFF9A9A9Au);
     if (showScaleOverlay)
     {
       if (toneState == pianoRollView::ScaleToneState::Root)
@@ -98,7 +100,7 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     }
     g.setColour(textColour);
     g.setFont(13.0f);
-    g.drawText(noteName, pianoKeysWidth - 36, static_cast<int>(y), 32,
+    g.drawText(noteName, 0, static_cast<int>(y), pianoKeysWidth,
                static_cast<int>(pixelsPerSemitone),
                juce::Justification::centred);
   }

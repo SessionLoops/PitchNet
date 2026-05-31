@@ -316,6 +316,10 @@ void PianoRollComponent::paint(juce::Graphics &g)
   // Draw piano keys
   drawPianoKeys(g);
 
+  g.setColour(juce::Colour(0xFF0D0B0Bu));
+  g.drawVerticalLine(pianoKeysWidth, 0.0f,
+                     static_cast<float>(getHeight() - horizontalScrollBarSize));
+
   const auto canvasBorderBounds = getLocalBounds()
                                       .withTrimmedRight(verticalScrollBarSize)
                                       .withTrimmedBottom(horizontalScrollBarSize);
@@ -421,7 +425,7 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
-  g.setColour(APP_COLOR_PRIMARY.withAlpha(0.08f));
+  g.setColour(juce::Colours::white.withAlpha(0.05f));
   g.fillRect(startX, 0.0f, endX - startX, height);
 }
 
@@ -687,6 +691,10 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g)
 void PianoRollComponent::drawLoopTimeline(juce::Graphics &g)
 {
   TimelineRenderer::LoopParams params;
+  params.displayMode = timelineDisplayMode;
+  params.beatNumerator = timelineBeatNumerator;
+  params.beatSeconds = getTimelineBeatSeconds();
+  params.barSeconds = getTimelineBarSeconds();
   params.componentWidth = getWidth();
   params.loopStartSeconds = 0.0;
   params.loopEndSeconds = 0.0;
@@ -1141,8 +1149,12 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 {
   if (scrollBar == &horizontalScrollBar)
   {
-    scrollX = newRangeStart;
-    coordMapper->setScrollX(newRangeStart);
+    const double totalWidth =
+        project ? project->getAudioData().getDuration() * pixelsPerSecond : 0.0;
+    const double maxScrollX =
+        std::max(0.0, totalWidth - static_cast<double>(getVisibleContentWidth()));
+    scrollX = juce::jlimit(0.0, maxScrollX, newRangeStart);
+    coordMapper->setScrollX(scrollX);
 
     // Notify scroll changed for synchronization
     if (onScrollChanged)
@@ -1603,12 +1615,18 @@ void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 
 void PianoRollComponent::setScrollX(double x)
 {
-  if (std::abs(scrollX - x) < 0.01)
+  const double totalWidth =
+      project ? project->getAudioData().getDuration() * pixelsPerSecond : 0.0;
+  const double maxScrollX =
+      std::max(0.0, totalWidth - static_cast<double>(getVisibleContentWidth()));
+  const double clampedX = juce::jlimit(0.0, maxScrollX, x);
+
+  if (std::abs(scrollX - clampedX) < 0.01)
     return; // No significant change
 
-  scrollX = x;
-  coordMapper->setScrollX(x);
-  horizontalScrollBar.setCurrentRangeStart(x);
+  scrollX = clampedX;
+  coordMapper->setScrollX(clampedX);
+  horizontalScrollBar.setCurrentRangeStart(clampedX);
 
   // Don't call onScrollChanged here to avoid infinite recursion
   // The caller is responsible for synchronizing other components
@@ -1824,6 +1842,11 @@ void PianoRollComponent::updateScrollBars()
 
     int visibleWidth = getVisibleContentWidth();
     int visibleHeight = getVisibleContentHeight();
+    const double maxScrollX =
+        std::max(0.0, static_cast<double>(totalWidth) -
+                          static_cast<double>(visibleWidth));
+    scrollX = juce::jlimit(0.0, maxScrollX, scrollX);
+    coordMapper->setScrollX(scrollX);
 
     horizontalScrollBar.setRangeLimits(0, totalWidth);
     horizontalScrollBar.setCurrentRange(scrollX, visibleWidth);

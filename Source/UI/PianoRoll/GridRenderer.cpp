@@ -13,7 +13,10 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   const double scrollX = coordMapper->getScrollX();
   const double scrollY = coordMapper->getScrollY();
 
-  const float duration = project ? project->getAudioData().getDuration() : 60.0f;
+  float duration = project ? project->getAudioData().getDuration()
+                           : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  if (duration <= 0.0f)
+    duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   const float width =
       std::max(duration * pixelsPerSecond, static_cast<float>(params.componentWidth));
   const float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
@@ -164,12 +167,19 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   }
   else
   {
-    // Time mode keeps simple second-based spacing.
-    const float secondsPerLine = pixelsPerSecond >= 180.0f  ? 0.25f
-                                 : pixelsPerSecond >= 90.0f ? 0.5f
-                                 : pixelsPerSecond >= 45.0f ? 1.0f
-                                 : pixelsPerSecond >= 22.0f ? 2.0f
-                                                            : 5.0f;
+    float secondsPerTick;
+    if (pixelsPerSecond >= 200.0f)
+      secondsPerTick = 0.5f;
+    else if (pixelsPerSecond >= 100.0f)
+      secondsPerTick = 1.0f;
+    else if (pixelsPerSecond >= 50.0f)
+      secondsPerTick = 2.0f;
+    else if (pixelsPerSecond >= 25.0f)
+      secondsPerTick = 5.0f;
+    else
+      secondsPerTick = 10.0f;
+
+    const float secondsPerLine = secondsPerTick * 2.0f;
     const float pixelsPerLine = secondsPerLine * pixelsPerSecond;
     if (pixelsPerLine > 1.0e-4f)
     {

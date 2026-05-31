@@ -47,8 +47,8 @@ class PianoRollComponent : public juce::Component,
 public:
   using juce::Component::keyPressed;
 
-  static constexpr int pianoKeysWidth = 60;
-  static constexpr int timelineHeight = 24;
+  static constexpr int pianoKeysWidth = 30;
+  static constexpr int timelineHeight = 18;
   static constexpr int loopTimelineHeight = 16;
   static constexpr int headerHeight = timelineHeight + loopTimelineHeight;
   static constexpr juce::int64 minDragRepaintInterval = 16; // ~60fps max

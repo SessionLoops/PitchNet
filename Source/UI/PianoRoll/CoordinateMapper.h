@@ -9,8 +9,8 @@
 class CoordinateMapper {
 public:
     // Layout constants
-    static constexpr int pianoKeysWidth = 60;
-    static constexpr int timelineHeight = 24;
+    static constexpr int pianoKeysWidth = 30;
+    static constexpr int timelineHeight = 18;
     static constexpr int loopTimelineHeight = 16;
     static constexpr int headerHeight = timelineHeight + loopTimelineHeight;
 

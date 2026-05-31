@@ -286,7 +286,10 @@ void ScrollZoomController::updateScrollBars(int visibleWidth, int visibleHeight)
     if (!coordMapper)
         return;
 
-    float duration = project ? project->getAudioData().getDuration() : 60.0f;
+    float duration = project ? project->getAudioData().getDuration()
+                             : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+    if (duration <= 0.0f)
+        duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
     float totalWidth = duration * coordMapper->getPixelsPerSecond();
     float totalHeight = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * coordMapper->getPixelsPerSemitone();
 
