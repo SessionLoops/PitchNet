@@ -38,7 +38,7 @@ AudioFileManager::AudioFileManager() {
       }
 
       if (task.onProgress)
-        task.onProgress(0.05, TR("progress.loading_audio"));
+        task.onProgress(0.04, TR("progress.loading_audio"));
 
       juce::AudioFormatManager formatManager;
       formatManager.registerBasicFormats();
@@ -55,7 +55,7 @@ AudioFileManager::AudioFileManager() {
       const int srcSampleRate = static_cast<int>(reader->sampleRate);
 
       if (task.onProgress)
-        task.onProgress(0.10, TR("progress.reading_audio"));
+        task.onProgress(0.08, TR("progress.reading_audio"));
 
       juce::AudioBuffer<float> buffer;
       if (reader->numChannels == 1) {
@@ -75,7 +75,7 @@ AudioFileManager::AudioFileManager() {
 
       if (srcSampleRate != SAMPLE_RATE) {
         if (task.onProgress)
-          task.onProgress(0.18, TR("progress.resampling"));
+          task.onProgress(0.14, TR("progress.resampling"));
         buffer = resampleIfNeeded(buffer, srcSampleRate, SAMPLE_RATE);
       }
 
@@ -86,7 +86,7 @@ AudioFileManager::AudioFileManager() {
       }
 
       if (task.onProgress)
-        task.onProgress(0.22, TR("progress.audio_loaded"));
+        task.onProgress(0.15, TR("progress.audio_loaded"));
 
       auto onComplete = std::move(task.onComplete);
       auto cancelFlag = task.cancelFlag;

@@ -227,7 +227,7 @@ void EditorController::loadAudioFileAsync(
         onProgress(p, msg);
     };
 
-    updateProgress(0.05, TR("progress.loading_audio"));
+    updateProgress(0.04, TR("progress.loading_audio"));
 
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
@@ -246,7 +246,7 @@ void EditorController::loadAudioFileAsync(
 
     juce::AudioBuffer<float> buffer(1, numSamples);
 
-    updateProgress(0.10, "Reading audio...");
+    updateProgress(0.08, "Reading audio...");
     if (reader->numChannels == 1) {
       reader->read(&buffer, 0, numSamples, 0, true, false);
     } else {
@@ -269,7 +269,7 @@ void EditorController::loadAudioFileAsync(
     }
 
     if (srcSampleRate != SAMPLE_RATE) {
-      updateProgress(0.18, "Resampling...");
+      updateProgress(0.14, "Resampling...");
       const double ratio = static_cast<double>(srcSampleRate) / SAMPLE_RATE;
       const int newNumSamples = static_cast<int>(numSamples / ratio);
 
@@ -292,7 +292,7 @@ void EditorController::loadAudioFileAsync(
       buffer = std::move(resampledBuffer);
     }
 
-    updateProgress(0.22, "Preparing project...");
+    updateProgress(0.15, "Preparing project...");
     auto newProject = std::make_unique<Project>();
     newProject->setFilePath(file);
     newProject->setAudioSha256(SHA256Utils::fileSHA256(file));
@@ -307,7 +307,7 @@ void EditorController::loadAudioFileAsync(
       return;
     }
 
-    updateProgress(0.25, TR("progress.analyzing_audio"));
+    updateProgress(0.17, TR("progress.analyzing_audio"));
     analyzeAudio(*newProject, updateProgress);
 
     if (cancelLoadingFlag.load()) {
@@ -648,14 +648,14 @@ void EditorController::analyzeAudio(
   const float *samples = audioData.waveform.getReadPointer(0);
   int numSamples = audioData.waveform.getNumSamples();
 
-  onProgress(0.35, "Computing mel spectrogram...");
+  onProgress(0.175, "Computing mel spectrogram...");
   MelSpectrogram melComputer(audioData.sampleRate, N_FFT, HOP_SIZE, NUM_MELS,
                              FMIN, FMAX);
   audioData.melSpectrogram = melComputer.compute(samples, numSamples);
 
   int targetFrames = static_cast<int>(audioData.melSpectrogram.size());
 
-  onProgress(0.55, "Extracting pitch (F0)...");
+  onProgress(0.275, "Extracting pitch (F0)...");
 
   if (pitchDetectorType == PitchDetectorType::RMVPE)
   {
@@ -806,13 +806,13 @@ void EditorController::analyzeAudio(
       }
     }
 
-    onProgress(0.65, "Smoothing pitch curve...");
+    onProgress(0.325, "Smoothing pitch curve...");
     audioData.f0 = F0Smoother::smoothF0(audioData.f0, audioData.voicedMask);
     audioData.f0 = PitchCurveProcessor::interpolateWithUvMask(
         audioData.f0, audioData.voicedMask);
   }
 
-  onProgress(0.75, TR("progress.loading_vocoder"));
+  onProgress(0.375, TR("progress.loading_vocoder"));
   auto modelPath = PlatformPaths::getVocoderModelFile();
 
   if (!modelPath.exists() && !vocoder->isLoaded())
@@ -837,8 +837,10 @@ void EditorController::analyzeAudio(
     }
   }
 
-  onProgress(0.90, "Segmenting notes...");
-  segmentIntoNotes(targetProject);
+  onProgress(0.50, "Detecting Notes...");
+  segmentIntoNotes(targetProject, nullptr, [&](double progress)
+                   { onProgress(0.50 + juce::jlimit(0.0, 1.0, progress) * 0.50,
+                                "Detecting Notes..."); });
 
   PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
 
@@ -917,7 +919,8 @@ void EditorController::segmentIntoNotesAsync(
 }
 
 void EditorController::segmentIntoNotes(Project &targetProject,
-                                        std::function<void()> onStreamingUpdate)
+                                        std::function<void()> onStreamingUpdate,
+                                        std::function<void(double)> onProgress)
 {
   auto &audioData = targetProject.getAudioData();
   auto &notes = targetProject.getNotes();
@@ -968,7 +971,7 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     const int f0Size = static_cast<int>(audioData.f0.size());
 
     auto gameNotes = gameDetector->detectNotesWithProgress(
-        samples, numSamples, GAMEDetector::SAMPLE_RATE, nullptr);
+        samples, numSamples, GAMEDetector::SAMPLE_RATE, std::move(onProgress));
 
     // Build debug chunks from actual GAME slicer chunk ranges
     {

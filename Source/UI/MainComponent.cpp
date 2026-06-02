@@ -98,6 +98,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
 #endif
   addAndMakeVisible(toolbar);
   addAndMakeVisible(workspace);
+  addChildComponent(analysisProgressPopup);
 
   // Setup workspace with stacked piano roll + overview cards
   workspace.setMainContent(&pianoRollView);
@@ -124,12 +125,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   toolbar.onStop = [this]()
   { stop(); };
   toolbar.onGoToStart = [this]()
-  { seek(0.0); };
+  { jumpTransport(false); };
   toolbar.onGoToEnd = [this]()
-  {
-    if (auto *project = getProject())
-      seek(project->getAudioData().getDuration());
-  };
+  { jumpTransport(true); };
   toolbar.onZoomChanged = [this](float pps)
   { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode)
@@ -434,6 +432,8 @@ void MainComponent::resized()
   if (settingsOverlay)
     settingsOverlay->setBounds(getLocalBounds());
 
+  analysisProgressPopup.setBounds(getLocalBounds().withSizeKeepingCentre(399, 98));
+
   if (enableAudioDeviceFlag && settingsManager)
     settingsManager->setWindowSize(getWidth(), getHeight());
 }
@@ -485,7 +485,6 @@ void MainComponent::timerCallback()
   if (isLoadingAudio.load())
   {
     const auto progress = static_cast<float>(loadingProgress.load());
-    toolbar.setProgress(progress);
 
     juce::String msg;
     {
@@ -493,11 +492,9 @@ void MainComponent::timerCallback()
       msg = loadingMessage;
     }
 
-    if (msg.isNotEmpty() && msg != lastLoadingMessage)
-    {
-      toolbar.showProgress(msg);
-      lastLoadingMessage = msg;
-    }
+    toolbar.hideProgress();
+    showAnalysisProgress(progress);
+    lastLoadingMessage = msg;
 
     return;
   }
@@ -505,6 +502,7 @@ void MainComponent::timerCallback()
   if (lastLoadingMessage.isNotEmpty())
   {
     toolbar.hideProgress();
+    hideAnalysisProgress();
     lastLoadingMessage.clear();
   }
 }
@@ -1194,6 +1192,7 @@ void MainComponent::stop()
       onRequestHostStop();
     isPlaying = false;
     toolbar.setPlaying(false);
+    seek(0.0);
     return;
   }
 
@@ -1204,7 +1203,7 @@ void MainComponent::stop()
   isPlaying = false;
   toolbar.setPlaying(false);
   audioEngine->stop();
-  // Keep cursor at current position - user can press Home to go to start
+  seek(0.0);
 }
 
 void MainComponent::seek(double time)
@@ -1214,6 +1213,7 @@ void MainComponent::seek(double time)
   if (isPluginMode())
   {
     // Update UI cursor position only - don't try to control host
+    pendingCursorTime.store(time);
     pianoRoll.setCursorTime(time);
     toolbar.setCurrentTime(time);
     // Note: We don't call onRequestHostSeek because hosts don't support seek
@@ -1226,6 +1226,7 @@ void MainComponent::seek(double time)
   if (!audioEngine)
     return;
   audioEngine->seek(time);
+  pendingCursorTime.store(time);
   pianoRoll.setCursorTime(time);
   toolbar.setCurrentTime(time);
 
@@ -1250,6 +1251,50 @@ void MainComponent::seek(double time)
     }
     pianoRoll.setScrollX(newScrollX);
   }
+}
+
+void MainComponent::jumpTransport(bool forward)
+{
+  auto *project = getProject();
+  if (!project)
+    return;
+
+  double currentTime = pendingCursorTime.load();
+  if (!isPluginMode())
+  {
+    if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
+      currentTime = audioEngine->getPosition();
+  }
+
+  const double duration = project->getAudioData().getDuration();
+  double targetTime = currentTime;
+
+  if (project->getTimelineDisplayMode() == TimelineDisplayMode::Beats)
+  {
+    const double bpm = juce::jlimit(20.0, 300.0, project->getTimelineTempoBpm());
+    const int numerator = juce::jmax(1, project->getTimelineBeatNumerator());
+    const int denominator = juce::jmax(1, project->getTimelineBeatDenominator());
+    const double beatSeconds = (60.0 / bpm) * (4.0 / static_cast<double>(denominator));
+    const double barSeconds = beatSeconds * static_cast<double>(numerator);
+
+    if (barSeconds > 1.0e-6)
+    {
+      constexpr double epsilon = 1.0e-6;
+      const double barPosition = currentTime / barSeconds;
+      targetTime = forward
+                       ? (std::floor(barPosition + epsilon) + 1.0) * barSeconds
+                       : (std::ceil(barPosition - epsilon) - 1.0) * barSeconds;
+    }
+  }
+  else
+  {
+    constexpr double epsilon = 1.0e-6;
+    targetTime = forward
+                     ? (std::floor(currentTime / 2.0 + epsilon) + 1.0) * 2.0
+                     : (std::ceil(currentTime / 2.0 - epsilon) - 1.0) * 2.0;
+  }
+
+  seek(juce::jlimit(0.0, duration, targetTime));
 }
 
 void MainComponent::resynthesizeIncremental()
@@ -1418,8 +1463,25 @@ void MainComponent::segmentIntoNotes(Project &targetProject)
     editorController->segmentIntoNotes(targetProject, [this]()
                                        {
       pianoRoll.invalidateBasePitchCache();
-      pianoRoll.repaint(); });
+      pianoRoll.repaint(); },
+                                       [this](double progress)
+                                       { showAnalysisProgress(progress); });
+    hideAnalysisProgress();
   }
+}
+
+void MainComponent::showAnalysisProgress(double progress)
+{
+  analysisProgressPopup.setProgress(progress);
+  if (!analysisProgressPopup.isVisible())
+    analysisProgressPopup.setVisible(true);
+  analysisProgressPopup.toFront(false);
+}
+
+void MainComponent::hideAnalysisProgress()
+{
+  if (analysisProgressPopup.isVisible())
+    analysisProgressPopup.setVisible(false);
 }
 
 void MainComponent::showSettings()
@@ -1549,20 +1611,22 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
   if (!editorController)
     return;
 
-  // Show analyzing progress
-  toolbar.showProgress(TR("progress.analyzing"));
+  showAnalysisProgress(0.0);
 
   juce::Component::SafePointer<MainComponent> safeThis(this);
   editorController->setHostAudioAsync(
       buffer, sampleRate,
-      [safeThis](double /*p*/, const juce::String &msg)
+      [safeThis](double p, const juce::String &msg)
       {
         if (safeThis == nullptr)
           return;
-        juce::MessageManager::callAsync([safeThis, msg]()
+        juce::MessageManager::callAsync([safeThis, p, msg]()
                                         {
-          if (safeThis != nullptr)
-            safeThis->toolbar.showProgress(msg); });
+          if (safeThis == nullptr)
+            return;
+
+          safeThis->toolbar.hideProgress();
+          safeThis->showAnalysisProgress(p); });
       },
       [safeThis](const juce::AudioBuffer<float> &original)
       {
@@ -1618,6 +1682,7 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
 
         safeThis->notifyProjectDataChanged();
 
+        safeThis->hideAnalysisProgress();
         safeThis->toolbar.hideProgress();
       });
 }

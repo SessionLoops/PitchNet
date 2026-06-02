@@ -230,9 +230,9 @@ target_sources(PitchNetPlugin PRIVATE
 add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
 add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
 
-# Binary data for SVG icons
-file(GLOB SVG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Resources/svg/*.svg")
-set(BINARY_DATA_FILES ${SVG_FILES})
+# Binary data for toolbar images/icons
+file(GLOB IMAGE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/*")
+set(BINARY_DATA_FILES ${IMAGE_FILES})
 set(EMBED_EN_LANG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/en.json")
 if(EXISTS "${EMBED_EN_LANG_FILE}")
     list(APPEND BINARY_DATA_FILES "${EMBED_EN_LANG_FILE}")

@@ -245,16 +245,14 @@ void DarkLookAndFeel::drawProgressBar(juce::Graphics& g, juce::ProgressBar& bar,
                                        int width, int height, double progress,
                                        const juce::String& textToShow)
 {
-    juce::ignoreUnused(bar);
+    juce::ignoreUnused(textToShow);
 
     auto bounds = juce::Rectangle<float>(0.0f, 0.0f, (float)width, (float)height);
     auto corner = (float)height * 0.5f; // fully rounded pill
 
     // Track background
-    g.setColour(APP_COLOR_SURFACE);
+    g.setColour(bar.findColour(juce::ProgressBar::backgroundColourId));
     g.fillRoundedRectangle(bounds, corner);
-    g.setColour(APP_COLOR_BORDER_SUBTLE);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), corner, 0.5f);
 
     // Fill
     if (progress >= 0.0 && progress <= 1.0)
@@ -262,16 +260,8 @@ void DarkLookAndFeel::drawProgressBar(juce::Graphics& g, juce::ProgressBar& bar,
         auto fillW = juce::jmax(bounds.getHeight(), bounds.getWidth() * (float)progress);
         auto fillBounds = bounds.withWidth(fillW);
 
-        // Gradient from primary → slightly lighter
-        juce::ColourGradient grad(APP_COLOR_PRIMARY, fillBounds.getX(), 0.0f,
-                                  APP_COLOR_PRIMARY.brighter(0.2f), fillBounds.getRight(), 0.0f,
-                                  false);
-        g.setGradientFill(grad);
+        g.setColour(bar.findColour(juce::ProgressBar::foregroundColourId));
         g.fillRoundedRectangle(fillBounds, corner);
-
-        // Subtle top highlight on the fill
-        g.setColour(juce::Colour(0x18FFFFFFu));
-        g.fillRoundedRectangle(fillBounds.removeFromTop(fillBounds.getHeight() * 0.45f), corner);
     }
     else
     {
@@ -281,19 +271,11 @@ void DarkLookAndFeel::drawProgressBar(juce::Graphics& g, juce::ProgressBar& bar,
         auto barW = bounds.getWidth() * 0.3f;
         auto x0 = bounds.getX() + (bounds.getWidth() + barW) * pos - barW;
 
-        g.setColour(APP_COLOR_PRIMARY);
+        g.setColour(bar.findColour(juce::ProgressBar::foregroundColourId));
         g.saveState();
         g.reduceClipRegion(bounds.toNearestInt());
         g.fillRoundedRectangle(x0, bounds.getY(), barW, bounds.getHeight(), corner);
         g.restoreState();
-    }
-
-    // Text overlay
-    if (textToShow.isNotEmpty())
-    {
-        g.setColour(juce::Colours::white);
-        g.setFont(AppFont::getFont((float)height * 0.52f));
-        g.drawText(textToShow, bounds, juce::Justification::centred, false);
     }
 }
 

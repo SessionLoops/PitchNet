@@ -3,6 +3,7 @@
 #include "../JuceHeader.h"
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
+#include "Buttons.h"
 
 // Forward declaration - EditMode is defined in PianoRollComponent.h
 enum class EditMode;
@@ -108,13 +109,12 @@ private:
     void updateTimeDisplay();
     juce::String formatTime(double seconds);
 
-    juce::DrawableButton playButton{"Play", juce::DrawableButton::ImageFitted};
-    juce::DrawableButton stopButton{"Stop", juce::DrawableButton::ImageFitted};
-    juce::DrawableButton goToStartButton{"Start", juce::DrawableButton::ImageFitted};
-    juce::DrawableButton goToEndButton{"End", juce::DrawableButton::ImageFitted};
-    ToolButton loopButton{"Loop"};
-    std::unique_ptr<juce::Drawable> playDrawable;
-    std::unique_ptr<juce::Drawable> pauseDrawable;
+    ToggleButton playButton;
+    Button stopButton;
+    Button goToStartButton;
+    Button goToEndButton;
+    ToggleButton loopButton;
+    juce::Image logoImage;
 
     // Plugin mode buttons
     juce::TextButton reanalyzeButton{"Re-analyze"};

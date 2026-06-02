@@ -8,13 +8,19 @@
 
 ToolbarComponent::ToolbarComponent()
 {
-    // Load SVG icons with white tint
-    auto playIcon = SvgUtils::loadSvg(BinaryData::playline_svg, BinaryData::playline_svgSize, juce::Colours::white);
-    auto pauseIcon = SvgUtils::loadSvg(BinaryData::pauseline_svg, BinaryData::pauseline_svgSize, juce::Colours::white);
-    auto stopIcon = SvgUtils::loadSvg(BinaryData::stopline_svg, BinaryData::stopline_svgSize, juce::Colours::white);
-    auto startIcon = SvgUtils::loadSvg(BinaryData::movestartline_svg, BinaryData::movestartline_svgSize, juce::Colours::white);
-    auto endIcon = SvgUtils::loadSvg(BinaryData::moveendline_svg, BinaryData::moveendline_svgSize, juce::Colours::white);
-    auto cycleIcon = SvgUtils::loadSvg(BinaryData::cycle_svg, BinaryData::cycle_svgSize, juce::Colours::white);
+    auto loadImage = [](const void *data, int size)
+    {
+        return juce::ImageFileFormat::loadFrom(data, static_cast<size_t>(size));
+    };
+
+    playButton.setImage(loadImage(BinaryData::play_png, BinaryData::play_pngSize));
+    stopButton.setImage(loadImage(BinaryData::stop_png, BinaryData::stop_pngSize));
+    goToStartButton.setImage(loadImage(BinaryData::backward_png, BinaryData::backward_pngSize));
+    goToEndButton.setImage(loadImage(BinaryData::forward_png, BinaryData::forward_pngSize));
+    loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
+    logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
+
+    // Load remaining SVG icons with white tint
     auto cursorIcon = SvgUtils::loadSvg(BinaryData::cursor_24_filled_svg, BinaryData::cursor_24_filled_svgSize, juce::Colours::white);
     auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
@@ -22,30 +28,16 @@ ToolbarComponent::ToolbarComponent()
         R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="2" width="2" height="20" rx="1"/><circle cx="4" cy="9" r="3"/><rect x="11" y="2" width="2" height="20" rx="1"/><circle cx="12" cy="15" r="3"/><rect x="19" y="2" width="2" height="20" rx="1"/><circle cx="20" cy="6" r="3"/></svg>)";
     auto parametersIcon = SvgUtils::createDrawableFromSvg(parametersIconSvg, juce::Colours::white);
 
-    playButton.setImages(playIcon.get());
-    stopButton.setImages(stopIcon.get());
-    goToStartButton.setImages(startIcon.get());
-    goToEndButton.setImages(endIcon.get());
-    loopButton.setImages(cycleIcon.get());
     selectModeButton.setImages(cursorIcon.get());
     splitModeButton.setImages(scissorsIcon.get());
     followButton.setImages(followIcon.get());
     parametersButton.setImages(parametersIcon.get());
 
     // Set edge indent for icon padding (makes icons smaller within button bounds)
-    goToStartButton.setEdgeIndent(4);
-    playButton.setEdgeIndent(6);
-    stopButton.setEdgeIndent(6);
-    goToEndButton.setEdgeIndent(4);
-    loopButton.setEdgeIndent(6);
     selectModeButton.setEdgeIndent(6);
     splitModeButton.setEdgeIndent(6);
     followButton.setEdgeIndent(6);
     parametersButton.setEdgeIndent(6);
-
-    // Store pause icon for later use
-    pauseDrawable = std::move(pauseIcon);
-    playDrawable = SvgUtils::loadSvg(BinaryData::playline_svg, BinaryData::playline_svgSize, juce::Colours::white);
 
     // Configure buttons
     addAndMakeVisible(goToStartButton);
@@ -127,10 +119,9 @@ ToolbarComponent::ToolbarComponent()
     addChildComponent(progressBar);
     addChildComponent(progressLabel);
 
-    progressLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
-    progressLabel.setJustificationType(juce::Justification::centredLeft);
-    progressBar.setColour(juce::ProgressBar::foregroundColourId, APP_COLOR_PRIMARY);
-    progressBar.setColour(juce::ProgressBar::backgroundColourId, APP_COLOR_SURFACE_ALT);
+    progressLabel.setVisible(false);
+    progressBar.setColour(juce::ProgressBar::foregroundColourId, juce::Colour(0xFFFF5600u));
+    progressBar.setColour(juce::ProgressBar::backgroundColourId, juce::Colours::transparentBlack);
     progressBar.setLookAndFeel(&DarkLookAndFeel::getInstance());
 
     // Status label (hidden by default)
@@ -153,14 +144,22 @@ void ToolbarComponent::paint(juce::Graphics &g)
     g.setColour(juce::Colour(0xFF0D0B0Bu));
     g.fillRect(bounds);
 
+    if (logoImage.isValid())
+    {
+        const int logoW = (logoImage.getWidth() + 1) / 2;
+        const int logoH = (logoImage.getHeight() + 1) / 2;
+        const int logoX = 16;
+        const int logoY = (getHeight() - logoH) / 2;
+        g.drawImage(logoImage, logoX, logoY, logoW, logoH,
+                    0, 0, logoImage.getWidth(), logoImage.getHeight());
+    }
+
     // Transport capsule background (standalone) or ARA/reanalyze area (plugin)
     if (!transportCapsuleBounds.isEmpty())
     {
         auto capsule = transportCapsuleBounds.toFloat();
-        g.setColour(APP_COLOR_BACKGROUND.withAlpha(0.7f));
+        g.setColour(juce::Colour(0xFF191818u));
         g.fillRoundedRectangle(capsule, 8.0f);
-        g.setColour(APP_COLOR_BORDER_SUBTLE);
-        g.drawRoundedRectangle(capsule.reduced(0.5f), 8.0f, 0.75f);
     }
 
     // ARA mode badge (plugin mode)
@@ -215,17 +214,10 @@ void ToolbarComponent::resized()
         capsuleY + (capsuleH - rightButtonSize) / 2,
         rightButtonSize, rightButtonSize);
 
-    // Status / Progress in remaining right area
+    // Status in remaining right area
     if (showingStatus && !showingProgress)
     {
         statusLabel.setBounds(rightSection.getX(), capsuleY, 140, capsuleH);
-    }
-    if (showingProgress)
-    {
-        auto progressArea = rightSection.withWidth(std::min(200, rightSection.getWidth()));
-        int pH = capsuleH / 2;
-        progressLabel.setBounds(progressArea.getX(), capsuleY, progressArea.getWidth(), capsuleH - pH);
-        progressBar.setBounds(progressArea.getX(), capsuleY + capsuleH - pH, progressArea.getWidth(), pH);
     }
 
     // Hide center controls (time/tools removed from toolbar) and zoom controls
@@ -269,26 +261,40 @@ void ToolbarComponent::resized()
         loopButton.setVisible(true);
 
         // Transport controls grouped in capsule
-        const int transportBtnSize = 30;
+        const int transportSlotSize = 30;
         const int transportPad = 5;
         const int numCenteredTransport = 4;
         const int numTransport = 5;
-        const int centeredTransportW = transportBtnSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
-        const int capsuleW = transportBtnSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
+        const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
+        const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
         int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
-        transportCapsuleBounds = juce::Rectangle<int>(cx, capsuleY, capsuleW, capsuleH);
+        const int transportCapsuleH = 38;
+        const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
+        transportCapsuleBounds = juce::Rectangle<int>(cx, transportCapsuleY, capsuleW, transportCapsuleH);
+        if (showingProgress)
+            progressBar.setBounds(transportCapsuleBounds.getX(),
+                                  transportCapsuleBounds.getBottom() - 2,
+                                  transportCapsuleBounds.getWidth(), 2);
 
-        int btnY = capsuleY + (capsuleH - transportBtnSize) / 2;
-        int btnX = cx + transportPad;
-        stopButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
-        btnX += transportBtnSize + 2;
-        playButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
-        btnX += transportBtnSize + 2;
-        goToStartButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
-        btnX += transportBtnSize + 2;
-        goToEndButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
-        btnX += transportBtnSize + 2;
-        loopButton.setBounds(btnX, btnY, transportBtnSize, transportBtnSize);
+        auto setButtonInSlot = [&](juce::Button &button, int slotX)
+        {
+            const int buttonW = button.getWidth() > 0 ? button.getWidth() : transportSlotSize;
+            const int buttonH = button.getHeight() > 0 ? button.getHeight() : transportSlotSize;
+            button.setBounds(slotX + (transportSlotSize - buttonW) / 2,
+                             transportCapsuleY + (transportCapsuleH - buttonH) / 2,
+                             buttonW, buttonH);
+        };
+
+        int slotX = cx + transportPad;
+        setButtonInSlot(stopButton, slotX);
+        slotX += transportSlotSize + 2;
+        setButtonInSlot(playButton, slotX);
+        slotX += transportSlotSize + 2;
+        setButtonInSlot(goToStartButton, slotX);
+        slotX += transportSlotSize + 2;
+        setButtonInSlot(goToEndButton, slotX);
+        slotX += transportSlotSize + 2;
+        setButtonInSlot(loopButton, slotX);
     }
 }
 
@@ -316,7 +322,7 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     else if (button == &loopButton)
     {
         loopEnabled = !loopEnabled;
-        loopButton.setActive(loopEnabled);
+        loopButton.setToggleState(loopEnabled, juce::dontSendNotification);
         if (onToggleLoop)
             onToggleLoop(loopEnabled);
     }
@@ -357,7 +363,7 @@ void ToolbarComponent::sliderValueChanged(juce::Slider *slider)
 void ToolbarComponent::setPlaying(bool playing)
 {
     isPlaying = playing;
-    playButton.setImages(playing ? pauseDrawable.get() : playDrawable.get());
+    playButton.setToggleState(playing, juce::dontSendNotification);
 }
 
 void ToolbarComponent::setCurrentTime(double time)
@@ -389,7 +395,7 @@ void ToolbarComponent::setZoom(float pixelsPerSecond)
 void ToolbarComponent::setLoopEnabled(bool enabled)
 {
     loopEnabled = enabled;
-    loopButton.setActive(loopEnabled);
+    loopButton.setToggleState(loopEnabled, juce::dontSendNotification);
 }
 
 void ToolbarComponent::setParametersVisible(bool visible)
@@ -400,9 +406,9 @@ void ToolbarComponent::setParametersVisible(bool visible)
 
 void ToolbarComponent::showProgress(const juce::String &message)
 {
+    juce::ignoreUnused(message);
     showingProgress = true;
-    progressLabel.setText(message, juce::dontSendNotification);
-    progressLabel.setVisible(true);
+    progressLabel.setVisible(false);
     progressBar.setVisible(true);
     progressValue = -1.0; // Indeterminate
     resized();

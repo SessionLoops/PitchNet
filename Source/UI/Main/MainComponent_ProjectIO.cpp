@@ -56,8 +56,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
             const juce::ScopedLock sl(loadingMessageLock);
             loadingMessage = TR("progress.loading_audio");
           }
-          toolbar.showProgress(TR("progress.loading_audio"));
-          toolbar.setProgress(0.0f);
+          toolbar.hideProgress();
+          showAnalysisProgress(0.0);
 
           juce::Component::SafePointer<MainComponent> safeThis(this);
           fileManager->loadAudioFileAsync(
@@ -292,8 +292,8 @@ void MainComponent::loadAudioFile(const juce::File &file) {
     const juce::ScopedLock sl(loadingMessageLock);
     loadingMessage = TR("progress.loading_audio");
   }
-  toolbar.showProgress(TR("progress.loading_audio"));
-  toolbar.setProgress(0.0f);
+  toolbar.hideProgress();
+  showAnalysisProgress(0.0);
 
   juce::Component::SafePointer<MainComponent> safeThis(this);
   if (!editorController) {

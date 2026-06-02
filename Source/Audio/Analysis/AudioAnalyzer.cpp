@@ -90,7 +90,7 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
 
   // Compute mel spectrogram
   if (onProgress)
-    onProgress(0.35, "Computing mel spectrogram...");
+    onProgress(0.175, "Computing mel spectrogram...");
   MelSpectrogram melComputer(audioData.sampleRate, N_FFT, HOP_SIZE, NUM_MELS,
                              FMIN, FMAX);
   audioData.melSpectrogram = melComputer.compute(samples, numSamples);
@@ -102,7 +102,7 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
 
   // Extract F0 based on selected detector type
   if (onProgress)
-    onProgress(0.55, "Extracting pitch (F0)...");
+    onProgress(0.275, "Extracting pitch (F0)...");
 
   bool extracted = false;
 
@@ -136,7 +136,7 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
 
   // Smooth F0
   if (onProgress)
-    onProgress(0.65, "Smoothing pitch curve...");
+    onProgress(0.325, "Smoothing pitch curve...");
   audioData.f0 = F0Smoother::smoothF0(audioData.f0, audioData.voicedMask);
   audioData.f0 = PitchCurveProcessor::interpolateWithUvMask(
       audioData.f0, audioData.voicedMask);
@@ -149,7 +149,7 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
 
   // Segment into notes
   if (onProgress)
-    onProgress(0.90, "Segmenting notes...");
+    onProgress(0.50, "Segmenting notes...");
   segmentIntoNotes(project);
 
   // Build dense base/delta curves

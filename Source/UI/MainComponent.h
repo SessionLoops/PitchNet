@@ -20,6 +20,43 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cmath>
+
+class AnalysisProgressPopup : public juce::Component {
+public:
+  void setProgress(double newProgress) {
+    progress = juce::jlimit(0.0, 1.0, newProgress);
+    repaint();
+  }
+
+  void paint(juce::Graphics &g) override {
+    auto bounds = getLocalBounds().toFloat();
+    g.setColour(juce::Colour(0xFF333333u));
+    g.fillRoundedRectangle(bounds, 2.0f);
+
+    g.setColour(juce::Colours::white.withAlpha(0.92f));
+    g.setFont(juce::Font(juce::FontOptions(16.0f)).boldened());
+    g.drawText(title, getLocalBounds().withHeight(44),
+               juce::Justification::centred, false);
+
+    auto bar = juce::Rectangle<float>(29.0f, 53.0f, bounds.getWidth() - 58.0f, 20.0f);
+    g.setColour(juce::Colour(0xFF242424u));
+    g.fillRoundedRectangle(bar, 5.0f);
+
+    auto fill = bar.withWidth(bar.getWidth() * static_cast<float>(progress));
+    g.setColour(juce::Colour(0xFF777777u));
+    g.fillRoundedRectangle(fill, 5.0f);
+
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)).boldened());
+    g.drawText(juce::String(static_cast<int>(std::round(progress * 100.0))) + "%",
+               bar.toNearestInt(), juce::Justification::centred, false);
+  }
+
+private:
+  double progress = 0.0;
+  static constexpr const char *title = "Analyzing Audio...";
+};
 
 class MainComponent : public juce::Component,
                       public juce::Timer,
@@ -133,6 +170,7 @@ private:
   void pause();
   void stop();
   void seek(double time);
+  void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
   void showSettings();
   void openRecentFile(const juce::File &file);
@@ -159,6 +197,8 @@ private:
       std::function<void()> onComplete = nullptr);
   void segmentIntoNotes();
   void segmentIntoNotes(Project &targetProject);
+  void showAnalysisProgress(double progress);
+  void hideAnalysisProgress();
 
   void saveProject();
 
@@ -187,6 +227,7 @@ private:
   PianoRollComponent pianoRoll;
   PianoRollWorkspaceView pianoRollView;
   ParameterPanel parameterPanel;
+  AnalysisProgressPopup analysisProgressPopup;
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;
 

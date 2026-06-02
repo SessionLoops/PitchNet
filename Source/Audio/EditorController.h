@@ -92,7 +92,8 @@ public:
                     std::function<void()> onComplete = nullptr);
 
   void segmentIntoNotes(Project &targetProject,
-                        std::function<void()> onStreamingUpdate = nullptr);
+                        std::function<void()> onStreamingUpdate = nullptr,
+                        std::function<void(double)> onProgress = nullptr);
 
   void analyzeAudioAsync(
       const std::function<void(Project &)> &onProjectReady,
