@@ -293,6 +293,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
     loadingMessage = TR("progress.loading_audio");
   }
   toolbar.hideProgress();
+  clearProjectForNewLoad();
   showAnalysisProgress(0.0);
 
   juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -387,4 +388,37 @@ void MainComponent::loadAudioFile(const juce::File &file) {
           return;
         safeThis->isLoadingAudio = false;
       });
+}
+
+void MainComponent::clearProjectForNewLoad() {
+  isPlaying = false;
+  pendingCursorTime.store(0.0);
+  hasPendingCursorUpdate.store(false);
+
+  if (undoManager)
+    undoManager->clear();
+
+  if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr) {
+    audioEngine->stop();
+    audioEngine->seek(0.0);
+    audioEngine->clearLoopRange();
+  }
+
+  if (editorController) {
+    auto emptyProject = std::make_unique<Project>();
+    if (!isPluginMode())
+      emptyProject->setTimelineDisplayMode(TimelineDisplayMode::Time);
+    editorController->setProject(std::move(emptyProject));
+  }
+
+  auto *project = getProject();
+  pianoRoll.setProject(project);
+  pianoRollView.setProject(project);
+  parameterPanel.setProject(project);
+  parameterPanel.setSelectedNote(nullptr);
+  toolbar.setPlaying(false);
+  toolbar.setCurrentTime(0.0);
+  toolbar.setTotalTime(0.0);
+  toolbar.setLoopEnabled(false);
+  pianoRoll.setCursorTime(0.0);
 }

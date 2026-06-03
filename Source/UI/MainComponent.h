@@ -22,6 +22,17 @@
 #include <cstdint>
 #include <cmath>
 
+class AnalysisBackdrop : public juce::Component {
+public:
+  AnalysisBackdrop() {
+    setInterceptsMouseClicks(true, true);
+  }
+
+  void paint(juce::Graphics &g) override {
+    g.fillAll(juce::Colours::black.withAlpha(0.40f));
+  }
+};
+
 class AnalysisProgressPopup : public juce::Component {
 public:
   void setProgress(double newProgress) {
@@ -189,6 +200,7 @@ private:
   bool isInferenceBusy() const;
 
   void loadAudioFile(const juce::File &file);
+  void clearProjectForNewLoad();
   void openProjectFile(const juce::File &file);
   void analyzeAudio();
   void analyzeAudio(
@@ -227,6 +239,7 @@ private:
   PianoRollComponent pianoRoll;
   PianoRollWorkspaceView pianoRollView;
   ParameterPanel parameterPanel;
+  AnalysisBackdrop analysisBackdrop;
   AnalysisProgressPopup analysisProgressPopup;
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;

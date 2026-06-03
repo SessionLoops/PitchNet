@@ -98,6 +98,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
 #endif
   addAndMakeVisible(toolbar);
   addAndMakeVisible(workspace);
+  addChildComponent(analysisBackdrop);
   addChildComponent(analysisProgressPopup);
 
   // Setup workspace with stacked piano roll + overview cards
@@ -432,6 +433,7 @@ void MainComponent::resized()
   if (settingsOverlay)
     settingsOverlay->setBounds(getLocalBounds());
 
+  analysisBackdrop.setBounds(getLocalBounds());
   analysisProgressPopup.setBounds(getLocalBounds().withSizeKeepingCentre(399, 98));
 
   if (enableAudioDeviceFlag && settingsManager)
@@ -1473,6 +1475,10 @@ void MainComponent::segmentIntoNotes(Project &targetProject)
 void MainComponent::showAnalysisProgress(double progress)
 {
   analysisProgressPopup.setProgress(progress);
+  if (!analysisBackdrop.isVisible())
+    analysisBackdrop.setVisible(true);
+  analysisBackdrop.toFront(false);
+
   if (!analysisProgressPopup.isVisible())
     analysisProgressPopup.setVisible(true);
   analysisProgressPopup.toFront(false);
@@ -1482,6 +1488,8 @@ void MainComponent::hideAnalysisProgress()
 {
   if (analysisProgressPopup.isVisible())
     analysisProgressPopup.setVisible(false);
+  if (analysisBackdrop.isVisible())
+    analysisBackdrop.setVisible(false);
 }
 
 void MainComponent::showSettings()
