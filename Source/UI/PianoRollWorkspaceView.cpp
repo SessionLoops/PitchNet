@@ -1,7 +1,75 @@
 #include "PianoRollWorkspaceView.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Constants.h"
+#include "BinaryData.h"
 #include <cmath>
+
+void PianoRollWorkspaceView::FloatingZoomSliderLookAndFeel::drawLinearSlider(
+    juce::Graphics &g,
+    int x,
+    int y,
+    int width,
+    int height,
+    float sliderPos,
+    float minSliderPos,
+    float maxSliderPos,
+    const juce::Slider::SliderStyle style,
+    juce::Slider &slider)
+{
+  juce::ignoreUnused(minSliderPos, maxSliderPos, slider);
+
+  const auto bounds = juce::Rectangle<float>(static_cast<float>(x),
+                                             static_cast<float>(y),
+                                             static_cast<float>(width),
+                                             static_cast<float>(height));
+  const auto thumbRadius = 4.5f;
+  const auto trackHeight = 2.0f;
+
+  if (style == juce::Slider::LinearVertical)
+  {
+    const auto track = juce::Rectangle<float>(
+        bounds.getCentreX() - trackHeight * 0.5f,
+        bounds.getY(),
+        trackHeight,
+        juce::jmax(0.0f, bounds.getHeight()));
+
+    g.setColour(juce::Colour(0xFF494949));
+    g.fillRoundedRectangle(track, trackHeight * 0.5f);
+
+    const auto clampedSliderPos = juce::jlimit(track.getY() + thumbRadius,
+                                               track.getBottom() - thumbRadius,
+                                               sliderPos);
+    g.setColour(juce::Colour(0xFF9B9B9B));
+    g.fillEllipse(bounds.getCentreX() - thumbRadius,
+                  clampedSliderPos - thumbRadius,
+                  thumbRadius * 2.0f,
+                  thumbRadius * 2.0f);
+    return;
+  }
+
+  const auto track = juce::Rectangle<float>(bounds.getX(),
+                                           bounds.getCentreY() - trackHeight * 0.5f,
+                                           juce::jmax(0.0f, bounds.getWidth()),
+                                           trackHeight);
+
+  g.setColour(juce::Colour(0xFF494949));
+  g.fillRoundedRectangle(track, trackHeight * 0.5f);
+
+  const auto clampedSliderPos = juce::jlimit(track.getX() + thumbRadius,
+                                             track.getRight() - thumbRadius,
+                                             sliderPos);
+  g.setColour(juce::Colour(0xFF9B9B9B));
+  g.fillEllipse(clampedSliderPos - thumbRadius,
+                bounds.getCentreY() - thumbRadius,
+                thumbRadius * 2.0f,
+                thumbRadius * 2.0f);
+}
+
+void PianoRollWorkspaceView::FloatingControlBackground::paint(juce::Graphics &g)
+{
+  g.setColour(juce::Colour(0xFF0D0B0B));
+  g.fillRoundedRectangle(getLocalBounds().toFloat(), 5.0f);
+}
 
 PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
     : pianoRoll(piano)
@@ -43,12 +111,10 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   };
   zoomXSlider.setSliderStyle(juce::Slider::LinearHorizontal);
   zoomXSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+  zoomXSlider.setLookAndFeel(&floatingZoomSliderLookAndFeel);
   zoomXSlider.setRange(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND, 0.1);
   zoomXSlider.setValue(pianoRoll.getPixelsPerSecond(),
                        juce::dontSendNotification);
-  zoomXSlider.setColour(juce::Slider::trackColourId,
-                        APP_COLOR_SURFACE_RAISED);
-  zoomXSlider.setColour(juce::Slider::thumbColourId, APP_COLOR_PRIMARY);
   zoomXSlider.onValueChange = [this]()
   {
     pianoRoll.setPixelsPerSecond(static_cast<float>(zoomXSlider.getValue()),
@@ -59,12 +125,10 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
 
   zoomYSlider.setSliderStyle(juce::Slider::LinearVertical);
   zoomYSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+  zoomYSlider.setLookAndFeel(&floatingZoomSliderLookAndFeel);
   zoomYSlider.setRange(MIN_PIXELS_PER_SEMITONE, MAX_PIXELS_PER_SEMITONE, 0.1);
   zoomYSlider.setValue(pianoRoll.getPixelsPerSemitone(),
                        juce::dontSendNotification);
-  zoomYSlider.setColour(juce::Slider::trackColourId,
-                        APP_COLOR_SURFACE_RAISED);
-  zoomYSlider.setColour(juce::Slider::thumbColourId, APP_COLOR_PRIMARY);
   zoomYSlider.onValueChange = [this]()
   {
     pianoRoll.setPixelsPerSemitone(static_cast<float>(zoomYSlider.getValue()),
@@ -72,58 +136,61 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
                                        0.5f);
   };
 
+  overviewToggleButton.setImage(juce::ImageFileFormat::loadFrom(
+      BinaryData::thumbnail_png, static_cast<size_t>(BinaryData::thumbnail_pngSize)));
   overviewToggleButton.setClickingTogglesState(true);
   overviewToggleButton.setToggleState(overviewVisible,
                                       juce::dontSendNotification);
-  overviewToggleButton.setColour(juce::TextButton::buttonColourId,
-                                 APP_COLOR_SURFACE.withAlpha(0.9f));
-  overviewToggleButton.setColour(juce::TextButton::buttonOnColourId,
-                                 APP_COLOR_PRIMARY.withAlpha(0.9f));
-  overviewToggleButton.setColour(juce::TextButton::textColourOffId,
-                                 APP_COLOR_TEXT_PRIMARY);
-  overviewToggleButton.setColour(juce::TextButton::textColourOnId,
-                                 juce::Colours::white);
   overviewToggleButton.onClick = [this]()
   {
     overviewVisible = overviewToggleButton.getToggleState();
     updateOverviewVisibility();
-    resized();
   };
 
   addAndMakeVisible(pianoCard);
   addAndMakeVisible(overviewCard);
+  addAndMakeVisible(zoomXBackground);
+  addAndMakeVisible(zoomYBackground);
   addAndMakeVisible(overviewToggleButton);
   addAndMakeVisible(zoomXSlider);
   addAndMakeVisible(zoomYSlider);
 
-  updateOverviewVisibility();
+  overviewCard.setVisible(false);
+  overviewPanel.setVisible(false);
+  pianoRoll.setHorizontalScrollBarVisible(true);
   startTimerHz(30);
+}
+
+PianoRollWorkspaceView::~PianoRollWorkspaceView()
+{
+  zoomXSlider.setLookAndFeel(nullptr);
+  zoomYSlider.setLookAndFeel(nullptr);
 }
 
 void PianoRollWorkspaceView::paint(juce::Graphics &g)
 {
-  const auto bg = APP_COLOR_SURFACE.withAlpha(0.85f);
-  const auto border = APP_COLOR_BORDER_SUBTLE.withAlpha(0.7f);
-
-  g.setColour(bg);
-  g.fillRoundedRectangle(zoomXBg, 6.0f);
-  g.fillRoundedRectangle(zoomYBg, 6.0f);
-  g.fillRoundedRectangle(toggleBg, 6.0f);
-
-  g.setColour(border);
-  g.drawRoundedRectangle(zoomXBg, 6.0f, 1.0f);
-  g.drawRoundedRectangle(zoomYBg, 6.0f, 1.0f);
-  g.drawRoundedRectangle(toggleBg, 6.0f, 1.0f);
+  juce::ignoreUnused(g);
 }
 
 void PianoRollWorkspaceView::resized()
 {
   auto bounds = getLocalBounds();
 
-  if (overviewVisible)
+  const float progress = juce::jlimit(0.0f, 1.0f, overviewAnimationProgress);
+  if (progress > 0.001f)
   {
-    auto overviewBounds = bounds.removeFromBottom(overviewHeight);
-    bounds.removeFromBottom(cardGap);
+    const int animatedOverviewHeight =
+        static_cast<int>(std::round(static_cast<float>(overviewHeight) * progress));
+    const int animatedGap =
+        static_cast<int>(std::round(static_cast<float>(cardGap) * progress));
+    const auto fullBounds = bounds;
+
+    bounds.removeFromBottom(animatedOverviewHeight + animatedGap);
+
+    auto overviewBounds = juce::Rectangle<int>(
+        fullBounds.getX(),
+        fullBounds.getBottom() - animatedOverviewHeight,
+        fullBounds.getWidth(), overviewHeight);
     overviewBounds.removeFromLeft(thumbnailOuterHorizontalPadding);
     overviewBounds.removeFromRight(thumbnailOuterHorizontalPadding);
     overviewBounds.removeFromBottom(thumbnailOuterBottomPadding);
@@ -137,33 +204,35 @@ void PianoRollWorkspaceView::resized()
   pianoCard.setBounds(bounds);
 
   auto overlay = pianoCard.getBounds();
-  const int sliderBottom = overlay.getBottom() - toggleMargin;
-  const int sliderRight = overlay.getRight() - toggleMargin;
-  const int zoomXHeight = 20;
+  const int sliderBottom = overlay.getBottom() - floatingControlInset - 3;
+  const int sliderRight = overlay.getRight() - floatingControlInset;
+  const int zoomXHeight = floatingSliderThickness;
   const int zoomXTop = sliderBottom - zoomXHeight;
   const int zoomYBottom = zoomXTop - zoomGap;
   const int zoomCornerGap = 6;
 
   auto zoomXRect = juce::Rectangle<int>(
       sliderRight - zoomSliderLength - toggleSize - zoomCornerGap, zoomXTop,
-      zoomSliderLength, zoomXHeight);
+      zoomSliderLength, zoomXHeight)
+      .translated(-8, 0);
   auto zoomYRect = juce::Rectangle<int>(
       sliderRight - zoomSliderWidth, zoomYBottom - zoomSliderHeight,
-      zoomSliderWidth, zoomSliderHeight);
+      zoomSliderWidth, zoomSliderHeight)
+      .translated(-5, -8);
 
   zoomXSlider.setBounds(zoomXRect);
   zoomYSlider.setBounds(zoomYRect);
 
   overviewToggleButton.setBounds(
-      zoomXRect.getRight() + zoomCornerGap,
+      zoomXRect.getRight() + zoomCornerGap + 6,
       zoomXRect.getY() + (zoomXHeight - toggleSize) / 2, toggleSize, toggleSize);
 
-  zoomXBg = zoomXRect.toFloat().expanded(static_cast<float>(zoomBgPadding),
-                                         static_cast<float>(zoomBgPadding));
-  zoomYBg = zoomYRect.toFloat().expanded(static_cast<float>(zoomBgPadding),
-                                         static_cast<float>(zoomBgPadding));
-  toggleBg = overviewToggleButton.getBounds().toFloat().expanded(
-      static_cast<float>(zoomBgPadding), static_cast<float>(zoomBgPadding));
+  zoomXBg = zoomXRect.toFloat();
+  zoomYBg = zoomYRect.toFloat();
+  toggleBg = overviewToggleButton.getBounds().toFloat();
+
+  zoomXBackground.setBounds(zoomXBg.toNearestInt());
+  zoomYBackground.setBounds(zoomYBg.toNearestInt());
 }
 
 void PianoRollWorkspaceView::setProject(Project *project)
@@ -184,13 +253,59 @@ void PianoRollWorkspaceView::setShowSegmentsDebug(bool show)
 
 void PianoRollWorkspaceView::updateOverviewVisibility()
 {
-  overviewCard.setVisible(overviewVisible);
-  overviewPanel.setVisible(overviewVisible);
-  pianoRoll.setHorizontalScrollBarVisible(!overviewVisible);
+  overviewAnimationStartProgress = overviewAnimationProgress;
+  overviewAnimationStartMs = juce::Time::getMillisecondCounter();
+  overviewAnimationActive = true;
+
+  if (overviewVisible)
+  {
+    overviewCard.setVisible(true);
+    overviewPanel.setVisible(true);
+    pianoRoll.setHorizontalScrollBarVisible(false);
+  }
+
+  resized();
+  repaint();
+}
+
+void PianoRollWorkspaceView::updateOverviewAnimation()
+{
+  if (!overviewAnimationActive)
+    return;
+
+  const float target = overviewVisible ? 1.0f : 0.0f;
+  const auto now = juce::Time::getMillisecondCounter();
+  const float elapsed =
+      static_cast<float>(now - overviewAnimationStartMs) /
+      static_cast<float>(overviewAnimationMs);
+  const float t = juce::jlimit(0.0f, 1.0f, elapsed);
+  const float eased = 1.0f - std::pow(1.0f - t, 3.0f);
+
+  overviewAnimationProgress =
+      overviewAnimationStartProgress +
+      (target - overviewAnimationStartProgress) * eased;
+
+  if (t >= 1.0f)
+  {
+    overviewAnimationProgress = target;
+    overviewAnimationActive = false;
+
+    if (!overviewVisible)
+    {
+      overviewCard.setVisible(false);
+      overviewPanel.setVisible(false);
+      pianoRoll.setHorizontalScrollBarVisible(true);
+    }
+  }
+
+  resized();
+  repaint();
 }
 
 void PianoRollWorkspaceView::timerCallback()
 {
+  updateOverviewAnimation();
+
   const float pps = pianoRoll.getPixelsPerSecond();
   if (std::abs(zoomXSlider.getValue() - pps) > 0.05)
     zoomXSlider.setValue(pps, juce::dontSendNotification);

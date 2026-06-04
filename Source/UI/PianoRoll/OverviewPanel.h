@@ -80,7 +80,7 @@ private:
   double dragStartEndTime = 0.0;
   double dragStartVisibleTime = 0.0;
 
-  static constexpr int padding = 0;
+  static constexpr int padding = 6;
   static constexpr float handleHitWidth = 6.0f;
   static constexpr float minViewportPixels = 12.0f;
 
