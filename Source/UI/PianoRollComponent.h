@@ -216,6 +216,9 @@ private:
   double getTimelineGridSeconds() const;
   bool shouldSnapCycleToGrid() const;
   double snapTimeToTimelineGrid(double timeSeconds) const;
+  bool isCanvasPoint(const juce::MouseEvent &e) const;
+  bool isModifierZoomDrag(const juce::MouseEvent &e) const;
+  void applyModifierZoomDrag(const juce::MouseEvent &e);
 
   Note *findNoteAt(float x, float y);
   void setHoveredNote(Note *note);
@@ -299,6 +302,8 @@ public:
 private:
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
+  bool modifierZoomDragActive = false;
+  juce::Point<float> modifierZoomLastPosition;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollComponent)
 };

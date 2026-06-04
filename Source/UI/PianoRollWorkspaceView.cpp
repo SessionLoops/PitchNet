@@ -8,12 +8,13 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
 {
   pianoCard.setPadding(0);
   pianoCard.setCornerRadius(0.0f);
-  pianoCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
+  pianoCard.setBorderColour(juce::Colours::transparentBlack);
   pianoCard.setContentComponent(&pianoRoll);
 
   overviewCard.setPadding(0);
   overviewCard.setCornerRadius(0.0f);
-  overviewCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
+  overviewCard.setBackgroundColour(juce::Colour(0xFF191717u));
+  overviewCard.setBorderColour(juce::Colour(0xFF0D0B0Bu));
   overviewCard.setContentComponent(&overviewPanel);
   overviewPanel.setDrawBackground(false);
 
@@ -123,6 +124,9 @@ void PianoRollWorkspaceView::resized()
   {
     auto overviewBounds = bounds.removeFromBottom(overviewHeight);
     bounds.removeFromBottom(cardGap);
+    overviewBounds.removeFromLeft(thumbnailOuterHorizontalPadding);
+    overviewBounds.removeFromRight(thumbnailOuterHorizontalPadding);
+    overviewBounds.removeFromBottom(thumbnailOuterBottomPadding);
     overviewCard.setBounds(overviewBounds);
   }
   else
@@ -170,7 +174,7 @@ void PianoRollWorkspaceView::setProject(Project *project)
 void PianoRollWorkspaceView::refreshOverview()
 {
   if (overviewVisible)
-    overviewPanel.repaint();
+    overviewPanel.invalidateThumbnailCache();
 }
 
 void PianoRollWorkspaceView::setShowSegmentsDebug(bool show)
@@ -198,7 +202,8 @@ void PianoRollWorkspaceView::timerCallback()
   const double cursorTime = pianoRoll.getCursorTime();
   if (overviewVisible && std::abs(lastOverviewCursorTime - cursorTime) > 0.0001)
   {
+    const double previousCursorTime = lastOverviewCursorTime;
     lastOverviewCursorTime = cursorTime;
-    overviewPanel.repaint();
+    overviewPanel.repaintPlayhead(previousCursorTime, cursorTime);
   }
 }

@@ -9,6 +9,7 @@
 #include "CustomMenuBarLookAndFeel.h"
 #include "CustomTitleBar.h"
 #include "Commands.h"
+#include "Components/AppFont.h"
 #include "Main/MenuHandler.h"
 #include "Main/SettingsManager.h"
 #include "ParameterPanel.h"
@@ -43,22 +44,26 @@ public:
   void paint(juce::Graphics &g) override {
     auto bounds = getLocalBounds().toFloat();
     g.setColour(juce::Colour(0xFF333333u));
-    g.fillRoundedRectangle(bounds, 2.0f);
+    g.fillRoundedRectangle(bounds, 7.0f);
 
-    g.setColour(juce::Colours::white.withAlpha(0.92f));
-    g.setFont(juce::Font(juce::FontOptions(16.0f)).boldened());
-    g.drawText(title, getLocalBounds().withHeight(44),
+    g.setColour(juce::Colour(0xFFEFEFEFu));
+    g.setFont(AppFont::getFont(16.0f));
+    g.drawText(title, getLocalBounds().withHeight(44).translated(0, 4),
                juce::Justification::centred, false);
 
     auto bar = juce::Rectangle<float>(29.0f, 53.0f, bounds.getWidth() - 58.0f, 20.0f);
-    g.setColour(juce::Colour(0xFF242424u));
-    g.fillRoundedRectangle(bar, 5.0f);
+    const auto barRadius = bar.getHeight() * 0.5f;
+    g.setColour(juce::Colour(0xFF191717u));
+    g.fillRoundedRectangle(bar, barRadius);
 
-    auto fill = bar.withWidth(bar.getWidth() * static_cast<float>(progress));
-    g.setColour(juce::Colour(0xFF777777u));
-    g.fillRoundedRectangle(fill, 5.0f);
+    auto fillBounds = bar.reduced(2.0f);
+    auto fill = fillBounds.withWidth(fillBounds.getWidth() * static_cast<float>(progress));
+    if (fill.getWidth() > 0.0f) {
+      g.setColour(juce::Colour(0xFF9A9A9Au));
+      g.fillRoundedRectangle(fill, fillBounds.getHeight() * 0.5f);
+    }
 
-    g.setColour(juce::Colours::white);
+    g.setColour(juce::Colour(0xFFEFEFEFu));
     g.setFont(juce::Font(juce::FontOptions(12.0f)).boldened());
     g.drawText(juce::String(static_cast<int>(std::round(progress * 100.0))) + "%",
                bar.toNearestInt(), juce::Justification::centred, false);

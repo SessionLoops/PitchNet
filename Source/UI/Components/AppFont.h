@@ -4,8 +4,8 @@
 #include "../../Utils/UI/DPIScaleManager.h"
 
 /**
- * Global font manager - uses system font by default.
- * Falls back to system font if custom font is not found.
+ * Global font manager - uses Montserrat Medium by default.
+ * Falls back through JUCE if Montserrat is not installed.
  * Uses reference counting to support multiple plugin instances.
  * Supports DPI-aware font scaling.
  */
@@ -22,7 +22,8 @@ public:
 
         instance.initialized = true;
 
-        // Custom font removed; keep system font
+        // Use the installed Montserrat family by name. If unavailable, JUCE
+        // falls back to an available system font.
     }
 
     /**
@@ -56,15 +57,7 @@ public:
                        juce::FontOptions(instance.customTypeface).withHeight(
                            height));
 
-        // Fallback to system font
-#if JUCE_MAC
-        return juce::Font(juce::FontOptions(height));
-#elif JUCE_WINDOWS
-        return juce::Font(
-            juce::FontOptions("Yu Gothic UI", height, juce::Font::plain));
-#else
-        return juce::Font(juce::FontOptions(height));
-#endif
+        return juce::Font(juce::FontOptions("Montserrat", "Medium", height));
     }
 
     /**
@@ -91,15 +84,8 @@ public:
                            height))
                 .boldened();
 
-        // Fallback to system font
-#if JUCE_MAC
-        return juce::Font(juce::FontOptions(height)).boldened();
-#elif JUCE_WINDOWS
-        return juce::Font(
-            juce::FontOptions("Yu Gothic UI", height, juce::Font::bold));
-#else
-        return juce::Font(juce::FontOptions(height)).boldened();
-#endif
+        return juce::Font(juce::FontOptions("Montserrat", "Medium", height))
+            .boldened();
     }
 
     /**

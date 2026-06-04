@@ -38,7 +38,9 @@ private:
   juce::Rectangle<float> toggleBg;
   double lastOverviewCursorTime = -1.0;
 
-  static constexpr int overviewHeight = 60;
+  static constexpr int overviewHeight = 84;
+  static constexpr int thumbnailOuterHorizontalPadding = 7;
+  static constexpr int thumbnailOuterBottomPadding = 6;
   static constexpr int cardGap = 6;
   static constexpr int toggleSize = 22;
   static constexpr int toggleMargin = 6;

@@ -65,7 +65,8 @@ inline void smoothAttackRelease(std::vector<float> &values)
 inline std::vector<float> build(const float *samples, int totalSamples,
                                 int startSample, int endSample, int pointCount,
                                 float displayWidthPixels, double sampleRate,
-                                float pixelsPerSecond)
+                                float pixelsPerSecond,
+                                bool adaptWindowToPixels = true)
 {
   std::vector<float> values(static_cast<size_t>(std::max(0, pointCount)), 0.0f);
   if (!samples || totalSamples <= 0 || pointCount <= 0 || endSample <= startSample ||
@@ -78,8 +79,10 @@ inline std::vector<float> build(const float *samples, int totalSamples,
   const double samplesPerPixel =
       static_cast<double>(endSample - startSample) / displayWidthPixels;
   const int windowSamples = std::max(
-      1, static_cast<int>(std::round(std::max(sampleRate * 0.012,
-                                              samplesPerPixel * 10.0))));
+      1, static_cast<int>(std::round(
+             adaptWindowToPixels
+                 ? std::max(sampleRate * 0.012, samplesPerPixel * 10.0)
+                 : sampleRate * 0.012)));
   const int halfWindowSamples = windowSamples / 2;
   const int prefixStartSample = std::max(0, startSample - halfWindowSamples - 1);
   const int prefixEndSample = std::min(totalSamples, endSample + halfWindowSamples + 1);

@@ -237,6 +237,8 @@ void PianoRollComponent::paint(juce::Graphics &g)
              getHeight() - headerHeight - horizontalScrollBarSize);
   if (showHorizontalScrollBar)
   {
+    g.fillRect(0, getHeight() - horizontalScrollBarSize, pianoKeysWidth,
+               horizontalScrollBarSize);
     g.fillRect(pianoKeysWidth, getHeight() - horizontalScrollBarSize,
                getWidth() - pianoKeysWidth - verticalScrollBarSize,
                horizontalScrollBarSize);
@@ -816,6 +818,69 @@ double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const
   return std::max(0.0, snapped);
 }
 
+bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
+{
+  return e.x >= pianoKeysWidth && e.y >= headerHeight &&
+         e.x < pianoKeysWidth + getVisibleContentWidth() &&
+         e.y < headerHeight + getVisibleContentHeight();
+}
+
+bool PianoRollComponent::isModifierZoomDrag(const juce::MouseEvent &e) const
+{
+#if JUCE_MAC
+  return e.mods.isAltDown();
+#else
+  return e.mods.isCtrlDown();
+#endif
+}
+
+void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
+{
+  const float deltaX = e.position.x - modifierZoomLastPosition.x;
+  const float deltaY = modifierZoomLastPosition.y - e.position.y;
+  modifierZoomLastPosition = e.position;
+
+  if (std::abs(deltaX) < 0.01f && std::abs(deltaY) < 0.01f)
+    return;
+
+  const float mouseX = static_cast<float>(e.x - pianoKeysWidth);
+  const float mouseY = static_cast<float>(e.y - headerHeight);
+
+  if (std::abs(deltaX) >= 0.01f)
+  {
+    const float zoomFactorX = std::pow(1.0065f, deltaX);
+    const double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
+    const int visibleWidth = getVisibleContentWidth();
+    const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
+    const float minPpsX =
+        (visibleWidth > 0 && totalTime > 0.0)
+            ? std::max(MIN_PIXELS_PER_SECOND,
+                       static_cast<float>(visibleWidth / totalTime))
+            : MIN_PIXELS_PER_SECOND;
+    const float newPpsX = juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND,
+                                       pixelsPerSecond * zoomFactorX);
+
+    pixelsPerSecond = newPpsX;
+    coordMapper->setPixelsPerSecond(newPpsX);
+
+    const float newMouseX = static_cast<float>(timeAtMouse * newPpsX);
+    scrollX = std::max(0.0, static_cast<double>(newMouseX - mouseX));
+    coordMapper->setScrollX(scrollX);
+  }
+
+  if (std::abs(deltaY) >= 0.01f)
+  {
+    const float zoomFactorY = std::pow(1.0065f, deltaY);
+    setPixelsPerSemitone(pixelsPerSemitone * zoomFactorY, mouseY);
+  }
+
+  updateScrollBars();
+  repaint();
+
+  if (std::abs(deltaX) >= 0.01f && onZoomChanged)
+    onZoomChanged(pixelsPerSecond);
+}
+
 void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 {
   if (!project)
@@ -826,6 +891,13 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+
+  if (isCanvasPoint(e) && isModifierZoomDrag(e))
+  {
+    modifierZoomDragActive = true;
+    modifierZoomLastPosition = e.position;
+    return;
+  }
 
   // Handle timeline clicks - seek to position
   if (e.y < timelineHeight && e.x >= pianoKeysWidth)
@@ -852,6 +924,12 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
+  if (modifierZoomDragActive)
+  {
+    applyModifierZoomDrag(e);
+    return;
+  }
+
   // Throttle repaints during drag to ~60fps max
   juce::int64 now = juce::Time::getMillisecondCounter();
   bool shouldRepaint = (now - lastDragRepaintTime) >= minDragRepaintInterval;
@@ -886,6 +964,12 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
   // Ensure keyboard focus is maintained after mouse operations
   grabKeyboardFocus();
+
+  if (modifierZoomDragActive)
+  {
+    modifierZoomDragActive = false;
+    return;
+  }
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);

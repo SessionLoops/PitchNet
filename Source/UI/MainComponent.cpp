@@ -1351,6 +1351,7 @@ void MainComponent::onNoteSelected(Note *note)
 void MainComponent::onPitchEdited()
 {
   pianoRoll.repaint();
+  pianoRollView.refreshOverview();
   parameterPanel.updateFromNote();
 }
 
@@ -1386,6 +1387,7 @@ void MainComponent::undo()
     parameterPanel.updateFromNote();
     pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
     pianoRoll.repaint();
+    pianoRollView.refreshOverview();
 
     if (getProject())
     {
@@ -1409,6 +1411,7 @@ void MainComponent::redo()
     parameterPanel.updateFromNote();
     pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
     pianoRoll.repaint();
+    pianoRollView.refreshOverview();
 
     if (getProject())
     {

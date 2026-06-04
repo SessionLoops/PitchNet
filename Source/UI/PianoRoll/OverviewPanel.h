@@ -18,15 +18,20 @@ public:
 
   void setProject(Project *proj) {
     project = proj;
+    invalidateThumbnailCache();
+  }
+  void invalidateThumbnailCache() {
+    staticCache = {};
+    cacheDirty = true;
     repaint();
   }
   void setDrawBackground(bool shouldDraw) {
     drawBackground = shouldDraw;
-    repaint();
+    invalidateThumbnailCache();
   }
   void setShowSegmentsDebug(bool show) {
     showSegmentsDebug = show;
-    repaint();
+    invalidateThumbnailCache();
   }
 
   std::function<ViewState()> getViewState;
@@ -34,6 +39,8 @@ public:
   std::function<void(float)> onZoomChanged;
 
   void paint(juce::Graphics &g) override;
+  void resized() override;
+  void repaintPlayhead(double previousTime, double newTime);
   void mouseDown(const juce::MouseEvent &e) override;
   void mouseDrag(const juce::MouseEvent &e) override;
   void mouseUp(const juce::MouseEvent &e) override;
@@ -56,9 +63,15 @@ private:
   ViewportInfo computeViewport() const;
   double timeForX(float x, const juce::Rectangle<float> &content) const;
   juce::Rectangle<float> getContentBounds() const;
+  juce::Rectangle<int> getPlayheadRepaintBounds(double time) const;
+  void paintStaticContent(juce::Graphics &g);
+  void paintViewport(juce::Graphics &g);
+  void paintPlayhead(juce::Graphics &g);
   void updateCursor(DragMode mode);
 
   Project *project = nullptr;
+  juce::Image staticCache;
+  bool cacheDirty = true;
   bool drawBackground = true;
   bool showSegmentsDebug = false;
   DragMode dragMode = DragMode::None;
@@ -67,7 +80,7 @@ private:
   double dragStartEndTime = 0.0;
   double dragStartVisibleTime = 0.0;
 
-  static constexpr int padding = 6;
+  static constexpr int padding = 0;
   static constexpr float handleHitWidth = 6.0f;
   static constexpr float minViewportPixels = 12.0f;
 
