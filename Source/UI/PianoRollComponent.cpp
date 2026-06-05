@@ -948,7 +948,10 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   // Delegate to current mode handler
   if (currentHandler_)
+  {
     currentHandler_->mouseDown(e, adjustedX, adjustedY);
+    updatePreviewButtonBounds();
+  }
 }
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
@@ -981,6 +984,7 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
   // Delegate to current mode handler
   if (currentHandler_ && currentHandler_->mouseDrag(e, adjustedX, adjustedY))
   {
+    updatePreviewButtonBounds();
     if (shouldRepaint)
     {
       repaint();
@@ -1009,7 +1013,10 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 
   // Delegate to current mode handler
   if (currentHandler_)
+  {
     currentHandler_->mouseUp(e, adjustedX, adjustedY);
+    updatePreviewButtonBounds();
+  }
 }
 
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
@@ -2016,7 +2023,7 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   const float buttonWidth = static_cast<float>(previewButtonWidth);
   const float buttonHeight = static_cast<float>(previewButtonHeight);
   const float buttonX = shadowBounds.getCentreX() - buttonWidth * 0.5f;
-  const float buttonY = shadowBounds.getBottom() + 2.0f;
+  const float buttonY = shadowBounds.getBottom() + 7.0f;
   return {buttonX, buttonY, buttonWidth, buttonHeight};
 }
 
@@ -2053,7 +2060,16 @@ PianoRollComponent::getPreviewButtonLocalBounds(const Note &note) const
 
 void PianoRollComponent::updatePreviewButtonBounds()
 {
-  if (!hoveredNote || !project)
+  const bool isChangingPitch =
+      (selectHandler_ && (selectHandler_->isSingleNoteDragging() ||
+                          selectHandler_->getIsDeltaScaleDragging() ||
+                          selectHandler_->getIsDeltaOffsetDragging())) ||
+      (pitchToolController && pitchToolController->isDragging()) ||
+      (pitchEditor && (pitchEditor->isDraggingNote() ||
+                       pitchEditor->isDraggingMultiNotes() ||
+                       pitchEditor->isDrawingPitch()));
+
+  if (!hoveredNote || !project || isChangingPitch)
   {
     previewButton.setVisible(false);
     return;

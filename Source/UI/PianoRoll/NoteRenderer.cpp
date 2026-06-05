@@ -484,8 +484,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
       g.setColour(juce::Colour(0xFF2E2E2Du));
       g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
-      g.setColour(juce::Colours::white);
-      g.setFont(juce::FontOptions(12.0f));
+      g.setColour(juce::Colour(0xFFEFEFEFu));
+      g.setFont(juce::Font("Montserrat", "Regular", 11.0f).withPointHeight(11.0f));
       g.drawFittedText(label, static_cast<int>(labelX),
                        static_cast<int>(labelY),
                        static_cast<int>(labelWidth),
