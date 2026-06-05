@@ -38,6 +38,14 @@ public:
   void setPitchEditor(PitchEditor *e) { pitchEditor = e; }
   void setBoxSelector(BoxSelector *b) { boxSelector = b; }
   void setHoveredNote(Note *note) { hoveredNote = note; }
+  void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
+                               double currentTime)
+  {
+    previewPlaybackActive = active;
+    previewStartFrame = startFrame;
+    previewEndFrame = endFrame;
+    previewCurrentTime = currentTime;
+  }
 
   void draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             int componentWidth);
@@ -50,6 +58,10 @@ private:
   PitchEditor *pitchEditor = nullptr;
   BoxSelector *boxSelector = nullptr;
   Note *hoveredNote = nullptr;
+  bool previewPlaybackActive = false;
+  int previewStartFrame = 0;
+  int previewEndFrame = 0;
+  double previewCurrentTime = 0.0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NoteRenderer)
 };

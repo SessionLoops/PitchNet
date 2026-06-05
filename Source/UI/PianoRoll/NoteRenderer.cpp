@@ -141,6 +141,58 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   int globalTotalSamples =
       (drawBodies || drawHoverShadow) ? audioData.waveform.getNumSamples() : 0;
 
+  auto getHighlightedShadowBounds = [&](const Note &note, float x, float y,
+                                        float renderedWidth, float noteWidth,
+                                        float noteHeight)
+  {
+    auto shadowVisualBounds =
+        juce::Rectangle<float>(x, y, renderedWidth, noteHeight);
+    const float *samples = globalSamples;
+    int totalSamples = globalTotalSamples;
+    int startSample = 0;
+    int endSample = 0;
+    const auto &clipWaveform = note.getClipWaveform();
+
+    if (!clipWaveform.empty())
+    {
+      samples = clipWaveform.data();
+      totalSamples = static_cast<int>(clipWaveform.size());
+      endSample = totalSamples;
+    }
+    else if (samples && totalSamples > 0)
+    {
+      startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
+                                     audioData.sampleRate);
+      endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
+                                   audioData.sampleRate);
+      startSample = std::max(0, std::min(startSample, totalSamples - 1));
+      endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
+    }
+
+    if (samples && totalSamples > 0 && noteWidth > 2.0f &&
+        endSample > startSample)
+    {
+      const int shadowPointCount =
+          std::max(2, std::min(512, static_cast<int>(std::ceil(noteWidth)) + 1));
+      const auto shadowEnvelope = VisualWaveformEnvelope::build(
+          samples, totalSamples, startSample, endSample, shadowPointCount,
+          renderedWidth, audioData.sampleRate, pixelsPerSecond);
+      const float maxSample =
+          shadowEnvelope.empty()
+              ? 0.0f
+              : *std::max_element(shadowEnvelope.begin(), shadowEnvelope.end());
+
+      const float centerY = y + noteHeight * 0.5f;
+      const float waveHeight = noteHeight * 3.0f;
+      shadowVisualBounds =
+          juce::Rectangle<float>(x, centerY - maxSample * waveHeight * 0.5f,
+                                 renderedWidth, maxSample * waveHeight);
+    }
+
+    return shadowVisualBounds.expanded(4.0f, 4.0f)
+        .getSmallestIntegerContainer();
+  };
+
   // Calculate visible time range for culling
   const double visibleStartTime = scrollX / pixelsPerSecond;
   const double visibleEndTime = (scrollX + componentWidth) / pixelsPerSecond;
@@ -168,57 +220,21 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         coordMapper->midiToY(note.getMidiNote()) + pixelsPerSemitone * 0.5f;
     const float pitchOffsetPixels = -note.getPitchOffset() * pixelsPerSemitone;
     const float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
+    const bool isPreviewPlaybackNote =
+        previewPlaybackActive && note.getEndFrame() > previewStartFrame &&
+        note.getStartFrame() < previewEndFrame;
+    if (drawHoveredBody && isPreviewPlaybackNote)
+      continue;
 
     if (drawHoverShadow)
     {
       if (&note != hoveredNote)
         continue;
-
-      auto shadowVisualBounds = juce::Rectangle<float>(x, y, renderedWidth, h);
-      const float *samples = globalSamples;
-      int totalSamples = globalTotalSamples;
-      int startSample = 0;
-      int endSample = 0;
-      const auto &clipWaveform = note.getClipWaveform();
-
-      if (!clipWaveform.empty())
-      {
-        samples = clipWaveform.data();
-        totalSamples = static_cast<int>(clipWaveform.size());
-        endSample = totalSamples;
-      }
-      else if (samples && totalSamples > 0)
-      {
-        startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
-                                       audioData.sampleRate);
-        endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
-                                     audioData.sampleRate);
-        startSample = std::max(0, std::min(startSample, totalSamples - 1));
-        endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
-      }
-
-      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
-      {
-        const int shadowPointCount =
-            std::max(2, std::min(512, static_cast<int>(std::ceil(w)) + 1));
-        const auto shadowEnvelope = VisualWaveformEnvelope::build(
-            samples, totalSamples, startSample, endSample, shadowPointCount,
-            renderedWidth, audioData.sampleRate, pixelsPerSecond);
-        const float maxSample =
-            shadowEnvelope.empty()
-                ? 0.0f
-                : *std::max_element(shadowEnvelope.begin(),
-                                    shadowEnvelope.end());
-
-        const float centerY = y + h * 0.5f;
-        const float waveHeight = h * 3.0f;
-        shadowVisualBounds =
-            juce::Rectangle<float>(x, centerY - maxSample * waveHeight * 0.5f,
-                                   renderedWidth, maxSample * waveHeight);
-      }
+      if (isPreviewPlaybackNote)
+        return;
 
       const auto shadowBounds =
-          shadowVisualBounds.expanded(4.0f, 4.0f).getSmallestIntegerContainer();
+          getHighlightedShadowBounds(note, x, y, renderedWidth, w, h);
       g.setColour(juce::Colours::white.withAlpha(0.08f));
       g.fillRoundedRectangle(shadowBounds.toFloat(), 3.0f);
       return;
@@ -265,9 +281,32 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const size_t numPoints = waveValues.size();
         if (numPoints < 2)
         {
-          setNoteGradientFill(g, noteVisualBounds, noteVisualBounds.getCentreY(),
-                              noteColours);
+          if (isPreviewPlaybackNote)
+            g.setColour(juce::Colours::white.withAlpha(0.20f));
+          else
+            setNoteGradientFill(g, noteVisualBounds,
+                                noteVisualBounds.getCentreY(), noteColours);
+
           g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+
+          if (isPreviewPlaybackNote)
+          {
+            const float previewProgressX =
+                static_cast<float>(previewCurrentTime * pixelsPerSecond);
+            const float clipRight =
+                juce::jlimit(x, x + renderedWidth, previewProgressX);
+            if (clipRight > x)
+            {
+              juce::Graphics::ScopedSaveState previewClipState(g);
+              g.reduceClipRegion(
+                  juce::Rectangle<float>(x, y, clipRight - x, h)
+                      .getSmallestIntegerContainer());
+              setNoteGradientFill(g, noteVisualBounds,
+                                  noteVisualBounds.getCentreY(), noteColours);
+              g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+            }
+          }
+
           noteVisualBounds = {x, y, renderedWidth, h};
         }
         else
@@ -353,15 +392,63 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
           waveformPath.closeSubPath();
           noteVisualBounds = waveformPath.getBounds();
-          setNoteGradientFill(g, noteVisualBounds, centerY, noteColours);
-          g.fillPath(waveformPath);
+
+          if (isPreviewPlaybackNote)
+          {
+            g.setColour(juce::Colours::white.withAlpha(0.20f));
+            g.fillPath(waveformPath);
+
+            const float previewProgressX =
+                static_cast<float>(previewCurrentTime * pixelsPerSecond);
+            const float clipRight =
+                juce::jlimit(x, x + renderedWidth, previewProgressX);
+            if (clipRight > x)
+            {
+              juce::Graphics::ScopedSaveState previewClipState(g);
+              const auto clipBounds =
+                  juce::Rectangle<float>(x - 2.0f, y - h * 2.0f,
+                                         (clipRight - x) + 2.0f, h * 5.0f)
+                      .getSmallestIntegerContainer();
+              g.reduceClipRegion(clipBounds);
+              setNoteGradientFill(g, noteVisualBounds, centerY, noteColours);
+              g.fillPath(waveformPath);
+            }
+          }
+          else
+          {
+            setNoteGradientFill(g, noteVisualBounds, centerY, noteColours);
+            g.fillPath(waveformPath);
+          }
         }
       }
       else
       {
-        setNoteGradientFill(g, noteVisualBounds, noteVisualBounds.getCentreY(),
-                            noteColours);
+        if (isPreviewPlaybackNote)
+          g.setColour(juce::Colours::white.withAlpha(0.20f));
+        else
+          setNoteGradientFill(g, noteVisualBounds, noteVisualBounds.getCentreY(),
+                              noteColours);
+
         g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+
+        if (isPreviewPlaybackNote)
+        {
+          const float previewProgressX =
+              static_cast<float>(previewCurrentTime * pixelsPerSecond);
+          const float clipRight =
+              juce::jlimit(x, x + renderedWidth, previewProgressX);
+          if (clipRight > x)
+          {
+            juce::Graphics::ScopedSaveState previewClipState(g);
+            g.reduceClipRegion(
+                juce::Rectangle<float>(x, y, clipRight - x, h)
+                    .getSmallestIntegerContainer());
+            setNoteGradientFill(g, noteVisualBounds,
+                                noteVisualBounds.getCentreY(), noteColours);
+            g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+          }
+        }
+
         noteVisualBounds = {x, y, renderedWidth, h};
       }
 
@@ -384,21 +471,21 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     if (drawOverlays && shouldShowPitchTip)
     {
       const float deltaSemitones = note.getPitchOffset();
-      const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
+      const juce::String prefix = deltaSemitones > 0.0f ? "+" : "";
       const juce::String label =
           prefix + juce::String(deltaSemitones, 1) + " st";
 
-      constexpr float labelHeight = 16.0f;
-      constexpr float margin = 4.0f;
-      const float labelWidth =
-          std::max(44.0f, static_cast<float>(label.length()) * 7.2f);
+      constexpr float labelWidth = 60.0f;
+      constexpr float labelHeight = 20.0f;
       const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
-      const float labelY = y - labelHeight - margin;
+      const auto shadowBounds =
+          getHighlightedShadowBounds(note, x, y, renderedWidth, w, h);
+      const float labelY = shadowBounds.toFloat().getY() - labelHeight;
 
-      g.setColour(juce::Colours::black.withAlpha(0.72f));
+      g.setColour(juce::Colour(0xFF2E2E2Du));
       g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
       g.setColour(juce::Colours::white);
-      g.setFont(juce::FontOptions(11.0f));
+      g.setFont(juce::FontOptions(12.0f));
       g.drawFittedText(label, static_cast<int>(labelX),
                        static_cast<int>(labelY),
                        static_cast<int>(labelWidth),

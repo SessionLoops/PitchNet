@@ -186,6 +186,8 @@ private:
   void pause();
   void stop();
   void seek(double time);
+  void previewNoteRegion(int startFrame, int endFrame);
+  void finishPreviewRegion(bool restorePosition);
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
   void showSettings();
@@ -226,6 +228,10 @@ private:
   std::unique_ptr<EditorController> editorController;
   std::unique_ptr<PitchUndoManager> undoManager;
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;
+  bool previewRegionActive = false;
+  double previewRegionEndTime = 0.0;
+  double previewRegionReturnTime = 0.0;
+  bool previewRegionWasProjectPlaying = false;
 
   // New modular components
   std::unique_ptr<AudioFileManager> fileManager;

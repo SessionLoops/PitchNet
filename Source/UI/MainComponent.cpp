@@ -173,6 +173,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Setup piano roll callbacks
   pianoRoll.onSeek = [this](double time)
   { seek(time); };
+  pianoRoll.onPreviewRegionRequested = [this](int startFrame, int endFrame)
+  { previewNoteRegion(startFrame, endFrame); };
   pianoRoll.onNoteSelected = [this](Note *note)
   { onNoteSelected(note); };
   pianoRoll.onPitchEdited = [this]()
@@ -462,6 +464,15 @@ void MainComponent::timerCallback()
   {
     double position = pendingCursorTime.load();
     hasPendingCursorUpdate.store(false);
+
+    if (previewRegionActive)
+    {
+      if (position >= previewRegionEndTime)
+        finishPreviewRegion(true);
+      else
+        pianoRoll.setPreviewPlaybackPosition(position);
+      return;
+    }
 
     pianoRoll.setCursorTime(position);
     toolbar.setCurrentTime(position);
@@ -1166,6 +1177,12 @@ void MainComponent::play()
 
 void MainComponent::pause()
 {
+  if (previewRegionActive)
+  {
+    finishPreviewRegion(true);
+    return;
+  }
+
   // In plugin mode, playback is controlled by the host
   if (isPluginMode())
   {
@@ -1187,6 +1204,11 @@ void MainComponent::pause()
 
 void MainComponent::stop()
 {
+  if (previewRegionActive)
+  {
+    finishPreviewRegion(false);
+  }
+
   // In plugin mode, playback is controlled by the host
   if (isPluginMode())
   {
@@ -1253,6 +1275,59 @@ void MainComponent::seek(double time)
     }
     pianoRoll.setScrollX(newScrollX);
   }
+}
+
+void MainComponent::previewNoteRegion(int startFrame, int endFrame)
+{
+  if (endFrame <= startFrame)
+    return;
+
+  const double startTime = framesToSeconds(startFrame);
+  const double endTime = framesToSeconds(endFrame);
+  if (endTime <= startTime)
+    return;
+
+  if (isPluginMode())
+    return;
+
+  auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr;
+  if (!audioEngine)
+    return;
+
+  previewRegionActive = true;
+  previewRegionEndTime = endTime;
+  previewRegionReturnTime = pianoRoll.getCursorTime();
+  previewRegionWasProjectPlaying = isPlaying;
+  pianoRoll.setPreviewPlaybackState(true, startFrame, endFrame);
+  pianoRoll.setPreviewPlaybackPosition(startTime);
+
+  audioEngine->seek(startTime);
+  audioEngine->play();
+}
+
+void MainComponent::finishPreviewRegion(bool restorePosition)
+{
+  if (!previewRegionActive)
+    return;
+
+  const double returnTime = previewRegionReturnTime;
+  const bool shouldResumeProjectPlayback =
+      previewRegionWasProjectPlaying && restorePosition;
+  previewRegionActive = false;
+  previewRegionWasProjectPlaying = false;
+  pianoRoll.setPreviewPlaybackState(false, 0, 0);
+
+  if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
+  {
+    audioEngine->pause();
+    if (restorePosition)
+      audioEngine->seek(returnTime);
+    if (shouldResumeProjectPlayback)
+      audioEngine->play();
+  }
+
+  pendingCursorTime.store(returnTime);
+  hasPendingCursorUpdate.store(false);
 }
 
 void MainComponent::jumpTransport(bool forward)

@@ -7,10 +7,12 @@
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
+#include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
 #include "PianoRoll/States/DrawHandler.h"
 #include "PianoRoll/States/SplitHandler.h"
+#include "BinaryData.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -184,6 +186,22 @@ PianoRollComponent::PianoRollComponent()
   setWantsKeyboardFocus(true);
 
   // No extra controls here; overview lives outside the piano roll.
+  int previewImageSize = 0;
+  if (const auto *previewImageData =
+          BinaryData::getNamedResource("preview_png", previewImageSize))
+  {
+    previewButton.setImage(
+        juce::ImageFileFormat::loadFrom(previewImageData, previewImageSize));
+    previewButtonWidth = std::max(1, previewButton.getWidth());
+    previewButtonHeight = std::max(1, previewButton.getHeight());
+  }
+  previewButton.setVisible(false);
+  previewButton.onClick = [this]()
+  {
+    if (hoveredNote)
+      triggerPreviewForNote(*hoveredNote);
+  };
+  addAndMakeVisible(previewButton);
 }
 
 PianoRollComponent::~PianoRollComponent()
@@ -353,6 +371,7 @@ void PianoRollComponent::resized()
       bounds.getHeight() - horizontalScrollBarSize - headerHeight);
 
   updateScrollBars();
+  updatePreviewButtonBounds();
 }
 
 void PianoRollComponent::drawBackgroundWaveform(
@@ -733,6 +752,10 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
 
   const bool splitModeActive = editMode == EditMode::Split;
   noteRenderer->setHoveredNote(hoveredNote);
+  noteRenderer->setPreviewPlaybackState(previewPlaybackActive,
+                                        previewPlaybackStartFrame,
+                                        previewPlaybackEndFrame,
+                                        previewPlaybackCurrentTime);
   noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
 }
 
@@ -917,6 +940,12 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
 
+  if (auto *note = findPreviewButtonNoteAt(adjustedX, adjustedY))
+  {
+    triggerPreviewForNote(*note);
+    return;
+  }
+
   // Delegate to current mode handler
   if (currentHandler_)
     currentHandler_->mouseDown(e, adjustedX, adjustedY);
@@ -991,6 +1020,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   Note *noteUnderMouse = nullptr;
   if (e.y >= headerHeight && e.x >= pianoKeysWidth)
     noteUnderMouse = findNoteAt(adjustedX, adjustedY);
+  if (!noteUnderMouse)
+    noteUnderMouse = findPreviewButtonNoteAt(adjustedX, adjustedY);
+  if (!noteUnderMouse && hoveredNote &&
+      getPreviewHoverBounds(*hoveredNote).contains(adjustedX, adjustedY))
+  {
+    noteUnderMouse = hoveredNote;
+  }
   setHoveredNote(noteUnderMouse);
 
   // Loop timeline cursor handling (always active)
@@ -1023,6 +1059,9 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseExit(const juce::MouseEvent &)
 {
+  if (previewButton.isMouseOverOrDragging())
+    return;
+
   setHoveredNote(nullptr);
 }
 
@@ -1249,12 +1288,15 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
     scrollY = newRangeStart;
     coordMapper->setScrollY(newRangeStart);
   }
+  updatePreviewButtonBounds();
   repaint();
 }
 
 void PianoRollComponent::setProject(Project *proj)
 {
   project = proj;
+  hoveredNote = nullptr;
+  setPreviewPlaybackState(false, 0, 0);
   selectedScaleMode =
       project != nullptr ? project->getScaleMode() : ScaleMode::None;
   selectedScaleRootNote = project != nullptr ? project->getScaleRootNote() : -1;
@@ -1651,6 +1693,7 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
   pixelsPerSecond = newPps;
   coordMapper->setPixelsPerSecond(newPps);
   updateScrollBars();
+  updatePreviewButtonBounds();
   repaint();
 
   // Don't call onZoomChanged here to avoid infinite recursion
@@ -1694,6 +1737,7 @@ void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
   coordMapper->setScrollY(scrollY);
 
   updateScrollBars();
+  updatePreviewButtonBounds();
   repaint();
 }
 
@@ -1716,6 +1760,7 @@ void PianoRollComponent::setScrollX(double x)
   // The caller is responsible for synchronizing other components
 
   repaint();
+  updatePreviewButtonBounds();
 }
 
 void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
@@ -1740,6 +1785,7 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
   scrollY = newScrollY;
   coordMapper->setScrollY(newScrollY);
   verticalScrollBar.setCurrentRangeStart(newScrollY);
+  updatePreviewButtonBounds();
   repaint();
 }
 
@@ -1784,6 +1830,7 @@ void PianoRollComponent::fitPitchRangeToView(float minMidi, float maxMidi)
   coordMapper->setScrollY(scrollY);
 
   updateScrollBars();
+  updatePreviewButtonBounds();
   repaint();
 }
 
@@ -1908,12 +1955,241 @@ Note *PianoRollComponent::findNoteAt(float x, float y)
   return nullptr;
 }
 
+juce::Rectangle<float>
+PianoRollComponent::getPreviewButtonBounds(const Note &note) const
+{
+  if (!project)
+    return {};
+
+  const auto &audioData = project->getAudioData();
+  const float noteStartTime = static_cast<float>(framesToSeconds(note.getStartFrame()));
+  const float noteEndTime = static_cast<float>(framesToSeconds(note.getEndFrame()));
+  const float x = noteStartTime * pixelsPerSecond;
+  const float w = (noteEndTime - noteStartTime) * pixelsPerSecond;
+  const float renderedWidth = std::max(w, 4.0f);
+  const float h = pixelsPerSemitone;
+  const float y = midiToY(note.getAdjustedMidiNote());
+
+  juce::Rectangle<float> shadowBounds(x, y, renderedWidth, h);
+  const float *samples = nullptr;
+  int totalSamples = 0;
+  int startSample = 0;
+  int endSample = 0;
+  const auto &clipWaveform = note.getClipWaveform();
+
+  if (!clipWaveform.empty())
+  {
+    samples = clipWaveform.data();
+    totalSamples = static_cast<int>(clipWaveform.size());
+    endSample = totalSamples;
+  }
+  else if (audioData.waveform.getNumSamples() > 0)
+  {
+    samples = audioData.waveform.getReadPointer(0);
+    totalSamples = audioData.waveform.getNumSamples();
+    startSample = static_cast<int>(noteStartTime * audioData.sampleRate);
+    endSample = static_cast<int>(noteEndTime * audioData.sampleRate);
+    startSample = std::max(0, std::min(startSample, totalSamples - 1));
+    endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
+  }
+
+  if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
+  {
+    const int pointCount =
+        std::max(2, std::min(512, static_cast<int>(std::ceil(w)) + 1));
+    const auto envelope = VisualWaveformEnvelope::build(
+        samples, totalSamples, startSample, endSample, pointCount,
+        renderedWidth, audioData.sampleRate, pixelsPerSecond);
+    const float maxSample =
+        envelope.empty()
+            ? 0.0f
+            : *std::max_element(envelope.begin(), envelope.end());
+
+    const float centreY = y + h * 0.5f;
+    const float waveHeight = h * 3.0f;
+    shadowBounds = juce::Rectangle<float>(x, centreY - maxSample * waveHeight * 0.5f,
+                                          renderedWidth, maxSample * waveHeight);
+  }
+
+  shadowBounds = shadowBounds.expanded(4.0f, 4.0f);
+
+  const float buttonWidth = static_cast<float>(previewButtonWidth);
+  const float buttonHeight = static_cast<float>(previewButtonHeight);
+  const float buttonX = shadowBounds.getCentreX() - buttonWidth * 0.5f;
+  const float buttonY = shadowBounds.getBottom() + 2.0f;
+  return {buttonX, buttonY, buttonWidth, buttonHeight};
+}
+
+juce::Rectangle<float>
+PianoRollComponent::getPreviewHoverBounds(const Note &note) const
+{
+  const float noteStartTime =
+      static_cast<float>(framesToSeconds(note.getStartFrame()));
+  const float noteEndTime =
+      static_cast<float>(framesToSeconds(note.getEndFrame()));
+  const float noteX = noteStartTime * pixelsPerSecond;
+  const float noteW = std::max((noteEndTime - noteStartTime) * pixelsPerSecond,
+                               4.0f);
+  const float noteY = midiToY(note.getAdjustedMidiNote());
+  const juce::Rectangle<float> noteBounds(noteX, noteY, noteW,
+                                          pixelsPerSemitone);
+
+  return noteBounds.getUnion(getPreviewButtonBounds(note)).expanded(4.0f);
+}
+
+juce::Rectangle<int>
+PianoRollComponent::getPreviewButtonLocalBounds(const Note &note) const
+{
+  const auto bounds =
+      getPreviewButtonBounds(note)
+          .translated(static_cast<float>(pianoKeysWidth) -
+                          static_cast<float>(scrollX),
+                      static_cast<float>(headerHeight) -
+                          static_cast<float>(scrollY));
+  return {static_cast<int>(std::round(bounds.getX())),
+          static_cast<int>(std::round(bounds.getY())), previewButtonWidth,
+          previewButtonHeight};
+}
+
+void PianoRollComponent::updatePreviewButtonBounds()
+{
+  if (!hoveredNote || !project)
+  {
+    previewButton.setVisible(false);
+    return;
+  }
+
+  const auto bounds = getPreviewButtonLocalBounds(*hoveredNote);
+  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
+  constexpr int verticalScrollBarSize = 8;
+  const auto mainArea = getLocalBounds()
+                            .withTrimmedLeft(pianoKeysWidth)
+                            .withTrimmedTop(headerHeight)
+                            .withTrimmedBottom(horizontalScrollBarSize)
+                            .withTrimmedRight(verticalScrollBarSize);
+
+  previewButton.setBounds(bounds);
+  previewButton.setVisible(bounds.intersects(mainArea));
+}
+
+Note *PianoRollComponent::findPreviewButtonNoteAt(float x, float y) const
+{
+  if (!hoveredNote || !project)
+    return nullptr;
+
+  return getPreviewButtonBounds(*hoveredNote).contains(x, y) ? hoveredNote
+                                                             : nullptr;
+}
+
+void PianoRollComponent::triggerPreviewForNote(Note &note)
+{
+  if (!project)
+    return;
+
+  auto &notes = project->getNotes();
+  auto it = std::find_if(notes.begin(), notes.end(),
+                         [&note](const Note &candidate)
+                         { return &candidate == &note; });
+  if (it == notes.end())
+    return;
+
+  const auto &chunkRanges = project->getAudioData().segmentChunkRanges;
+  const int noteMidFrame = note.getStartFrame() +
+                           std::max(0, note.getDurationFrames()) / 2;
+  int regionStartFrame = std::numeric_limits<int>::min();
+  int regionEndFrame = std::numeric_limits<int>::max();
+  for (const auto &range : chunkRanges)
+  {
+    if (noteMidFrame >= range.first && noteMidFrame < range.second)
+    {
+      regionStartFrame = range.first;
+      regionEndFrame = range.second;
+      break;
+    }
+  }
+
+  auto isInSameRegion = [&](const Note &candidate)
+  {
+    if (chunkRanges.empty())
+      return true;
+
+    const int candidateMidFrame =
+        candidate.getStartFrame() +
+        std::max(0, candidate.getDurationFrames()) / 2;
+    return candidateMidFrame >= regionStartFrame &&
+           candidateMidFrame < regionEndFrame;
+  };
+
+  Note *startNote = &note;
+  Note *endNote = &note;
+
+  for (auto prev = it; prev != notes.begin();)
+  {
+    --prev;
+    if (chunkRanges.empty() || prev->getEndFrame() > regionStartFrame)
+    {
+      if (!prev->isRest() && isInSameRegion(*prev))
+      {
+        startNote = &(*prev);
+        break;
+      }
+    }
+    else
+    {
+      break;
+    }
+  }
+
+  for (auto next = std::next(it); next != notes.end(); ++next)
+  {
+    if (!chunkRanges.empty() && next->getStartFrame() >= regionEndFrame)
+      break;
+
+    if (!next->isRest() && isInSameRegion(*next))
+    {
+      endNote = &(*next);
+      break;
+    }
+  }
+
+  const int startFrame = std::max(0, startNote->getStartFrame());
+  const int endFrame = std::max(startFrame, endNote->getEndFrame());
+  setPreviewPlaybackState(endFrame > startFrame, startFrame, endFrame);
+
+  if (endFrame > startFrame && onPreviewRegionRequested)
+    onPreviewRegionRequested(startFrame, endFrame);
+}
+
+void PianoRollComponent::setPreviewPlaybackState(bool active, int startFrame,
+                                                 int endFrame)
+{
+  previewPlaybackActive = active && endFrame > startFrame;
+  previewPlaybackStartFrame = previewPlaybackActive ? startFrame : 0;
+  previewPlaybackEndFrame = previewPlaybackActive ? endFrame : 0;
+  previewPlaybackCurrentTime =
+      previewPlaybackActive ? framesToSeconds(startFrame) : 0.0;
+  repaint();
+}
+
+void PianoRollComponent::setPreviewPlaybackPosition(double timeSeconds)
+{
+  if (!previewPlaybackActive)
+    return;
+
+  if (std::abs(previewPlaybackCurrentTime - timeSeconds) < 0.0001)
+    return;
+
+  previewPlaybackCurrentTime = timeSeconds;
+  repaint();
+}
+
 void PianoRollComponent::setHoveredNote(Note *note)
 {
   if (hoveredNote == note)
     return;
 
   hoveredNote = note;
+  updatePreviewButtonBounds();
   repaint();
 }
 

@@ -20,6 +20,7 @@
 #include "PianoRoll/PitchToolHandles.h"
 #include "PianoRoll/PianoRollViewState.h"
 #include "PianoRoll/ScrollZoomController.h"
+#include "Buttons.h"
 
 #include <memory>
 #include <optional>
@@ -179,8 +180,12 @@ public:
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
   std::function<void(const LoopRange &)> onLoopRangeChanged;
+  std::function<void(int, int)> onPreviewRegionRequested;
   std::function<void(int, int)>
       onReinterpolateUV; // Called to re-infer UV regions (startFrame, endFrame)
+
+  void setPreviewPlaybackState(bool active, int startFrame, int endFrame);
+  void setPreviewPlaybackPosition(double timeSeconds);
 
 private:
   enum class NoteRenderPass
@@ -221,6 +226,12 @@ private:
   void applyModifierZoomDrag(const juce::MouseEvent &e);
 
   Note *findNoteAt(float x, float y);
+  Note *findPreviewButtonNoteAt(float x, float y) const;
+  juce::Rectangle<float> getPreviewButtonBounds(const Note &note) const;
+  juce::Rectangle<float> getPreviewHoverBounds(const Note &note) const;
+  juce::Rectangle<int> getPreviewButtonLocalBounds(const Note &note) const;
+  void updatePreviewButtonBounds();
+  void triggerPreviewForNote(Note &note);
   void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
@@ -250,6 +261,13 @@ private:
   PianoRollViewState viewState;
   int &hoveredPitchToolHandle = viewState.hoveredPitchToolHandle;
   Note *hoveredNote = nullptr;
+  Button previewButton;
+  int previewButtonWidth = 28;
+  int previewButtonHeight = 28;
+  bool previewPlaybackActive = false;
+  int previewPlaybackStartFrame = 0;
+  int previewPlaybackEndFrame = 0;
+  double previewPlaybackCurrentTime = 0.0;
 
   float &pixelsPerSecond = viewState.pixelsPerSecond;
   float &pixelsPerSemitone = viewState.pixelsPerSemitone;
