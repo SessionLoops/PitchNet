@@ -28,6 +28,9 @@ private:
     void setupARAMode();
     void setupNonARAMode();
     void setupCallbacks();
+    void setupHostTransportUiSync(bool includePlayState);
+    void requestMainViewKeyboardFocus();
+    void requestMainViewKeyboardFocusAsync();
 
     PitchNetAudioProcessor& audioProcessor;
     std::unique_ptr<IMainView> mainView;

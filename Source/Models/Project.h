@@ -35,6 +35,7 @@ struct AudioData
     juce::AudioBuffer<float> originalWaveform; // pristine copy for blend (never modified after analysis)
 
     int sampleRate = 44100;
+    double timelineOffsetSeconds = 0.0;
 
     // Extracted features
     std::vector<std::vector<float>> melSpectrogram;      // [T, NUM_MELS]

@@ -70,6 +70,14 @@ void PluginTransportController::processBlock(juce::AudioPlayHead* playHead, doub
     }
 }
 
+void PluginTransportController::processPendingRequestsOnly(juce::AudioPlayHead* playHead)
+{
+    if (playHead != nullptr)
+        hostCanControlTransport.store(playHead->canControlTransport(), std::memory_order_relaxed);
+
+    processPendingRequests(playHead);
+}
+
 void PluginTransportController::processPendingRequests(juce::AudioPlayHead* playHead)
 {
     if (playHead == nullptr)
@@ -94,6 +102,12 @@ void PluginTransportController::processPendingRequests(juce::AudioPlayHead* play
     if (pendingSeekRequest.exchange(false, std::memory_order_acquire))
     {
         double seekPos = requestedSeekPosition.load(std::memory_order_relaxed);
+
+        // JUCE's AudioPlayHead transport control can only request rewind, not an
+        // arbitrary timeline seek. Still ask the host when the target is the
+        // start; otherwise keep PitchNet's cursor in sync locally.
+        if (canControl && seekPos <= 0.0001)
+            playHead->transportRewind();
 
         // Store for internal tracking (host may not support seek)
         // Note: We do NOT stop playback when seeking - just update internal cursor
@@ -182,6 +196,22 @@ void PluginTransportController::togglePlayPause()
 void PluginTransportController::setPlayStateCallback(PlayStateCallback callback)
 {
     std::atomic_store(&playStateCallback, std::make_shared<PlayStateCallback>(std::move(callback)));
+    hostSync.setTransportCallback([this](const HostSyncService::TransportState& state) {
+        if (state.isPlaying != previousPlayState)
+        {
+            previousPlayState = state.isPlaying;
+
+            auto cb = std::atomic_load(&playStateCallback);
+            if (cb && *cb)
+            {
+                bool playing = state.isPlaying;
+                juce::MessageManager::callAsync([cb, playing]() {
+                    if (*cb)
+                        (*cb)(playing);
+                });
+            }
+        }
+    });
 }
 
 void PluginTransportController::setPositionCallback(PositionCallback callback)

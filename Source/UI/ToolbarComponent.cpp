@@ -50,16 +50,6 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(followButton);
     addAndMakeVisible(parametersButton);
 
-    // Plugin mode buttons (hidden by default)
-    addChildComponent(reanalyzeButton);
-    addChildComponent(araModeLabel);
-
-    // ARA mode label style (background drawn in paint() for rounded corners)
-    araModeLabel.setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-    araModeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-    araModeLabel.setJustificationType(juce::Justification::centred);
-    araModeLabel.setFont(AppFont::getBoldFont(11.0f));
-
     goToStartButton.addListener(this);
     playButton.addListener(this);
     stopButton.addListener(this);
@@ -69,7 +59,6 @@ ToolbarComponent::ToolbarComponent()
     splitModeButton.addListener(this);
     followButton.addListener(this);
     parametersButton.addListener(this);
-    reanalyzeButton.addListener(this);
 
     // Set localized text (tooltips for icon buttons)
     selectModeButton.setTooltip(TR("toolbar.select"));
@@ -77,14 +66,7 @@ ToolbarComponent::ToolbarComponent()
     followButton.setTooltip(TR("toolbar.follow"));
     loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
-    reanalyzeButton.setButtonText(TR("toolbar.reanalyze"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
-
-    // Style reanalyze button — transparent background (custom painted in paint()), bold white text
-    reanalyzeButton.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-    reanalyzeButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
-    reanalyzeButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    reanalyzeButton.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
 
     // Set default active states
     selectModeButton.setActive(true);
@@ -124,11 +106,6 @@ ToolbarComponent::ToolbarComponent()
     progressBar.setColour(juce::ProgressBar::backgroundColourId, juce::Colours::transparentBlack);
     progressBar.setLookAndFeel(&DarkLookAndFeel::getInstance());
 
-    // Status label (hidden by default)
-    addChildComponent(statusLabel);
-    statusLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
-    statusLabel.setJustificationType(juce::Justification::centredLeft);
-    statusLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
 }
 
 ToolbarComponent::~ToolbarComponent()
@@ -154,41 +131,12 @@ void ToolbarComponent::paint(juce::Graphics &g)
                     0, 0, logoImage.getWidth(), logoImage.getHeight());
     }
 
-    // Transport capsule background (standalone) or ARA/reanalyze area (plugin)
+    // Transport capsule background
     if (!transportCapsuleBounds.isEmpty())
     {
         auto capsule = transportCapsuleBounds.toFloat();
         g.setColour(juce::Colour(0xFF191818u));
         g.fillRoundedRectangle(capsule, 8.0f);
-    }
-
-    // ARA mode badge (plugin mode)
-    if (pluginMode && araModeLabel.isVisible())
-    {
-        auto araBounds = araModeLabel.getBounds().toFloat();
-        auto badgeColour = araMode ? APP_COLOR_PRIMARY : APP_COLOR_SURFACE_RAISED;
-        g.setColour(badgeColour.withAlpha(0.85f));
-        g.fillRoundedRectangle(araBounds, 6.0f);
-        if (!araMode)
-        {
-            g.setColour(APP_COLOR_BORDER.withAlpha(0.5f));
-            g.drawRoundedRectangle(araBounds.reduced(0.5f), 6.0f, 0.75f);
-        }
-    }
-
-    // Reanalyze button custom background (plugin mode — draw as a prominent action button)
-    if (pluginMode && reanalyzeButton.isVisible())
-    {
-        auto rBounds = reanalyzeButton.getBounds().toFloat();
-        bool isHover = reanalyzeButton.isMouseOver();
-        bool isDown = reanalyzeButton.isMouseButtonDown();
-        auto baseColour = APP_COLOR_SECONDARY;
-        if (isDown)
-            baseColour = baseColour.darker(0.15f);
-        else if (isHover)
-            baseColour = baseColour.brighter(0.08f);
-        g.setColour(baseColour.withAlpha(0.9f));
-        g.fillRoundedRectangle(rBounds, 7.0f);
     }
 }
 
@@ -202,7 +150,7 @@ void ToolbarComponent::resized()
     const int capsuleY = yOffset + (contentH - capsuleH) / 2;
 
     // =========================================================================
-    // RIGHT SIDE — Parameters button + status/progress
+    // RIGHT SIDE — Parameters button
     // =========================================================================
     const int rightButtonSize = 30;
     auto rightSection = bounds.removeFromRight(250);
@@ -214,12 +162,6 @@ void ToolbarComponent::resized()
         capsuleY + (capsuleH - rightButtonSize) / 2,
         rightButtonSize, rightButtonSize);
 
-    // Status in remaining right area
-    if (showingStatus && !showingProgress)
-    {
-        statusLabel.setBounds(rightSection.getX(), capsuleY, 140, capsuleH);
-    }
-
     // Hide center controls (time/tools removed from toolbar) and zoom controls
     timeLabel.setVisible(false);
     selectModeButton.setVisible(false);
@@ -230,72 +172,48 @@ void ToolbarComponent::resized()
     toolContainerBounds = {};
     timeCapsuleBounds = {};
 
-    if (pluginMode)
+    goToStartButton.setVisible(true);
+    playButton.setVisible(true);
+    stopButton.setVisible(true);
+    goToEndButton.setVisible(true);
+    loopButton.setVisible(true);
+
+    // Transport controls grouped in capsule. In plugin mode these buttons
+    // request host transport changes through MainComponent.
+    const int transportSlotSize = 30;
+    const int transportPad = 5;
+    const int numCenteredTransport = 4;
+    const int numTransport = 5;
+    const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
+    const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
+    int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
+    const int transportCapsuleH = 38;
+    const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
+    transportCapsuleBounds = juce::Rectangle<int>(cx, transportCapsuleY, capsuleW, transportCapsuleH);
+    if (showingProgress)
+        progressBar.setBounds(transportCapsuleBounds.getX(),
+                              transportCapsuleBounds.getBottom() - 2,
+                              transportCapsuleBounds.getWidth(), 2);
+
+    auto setButtonInSlot = [&](juce::Button &button, int slotX)
     {
-        goToStartButton.setVisible(false);
-        playButton.setVisible(false);
-        stopButton.setVisible(false);
-        goToEndButton.setVisible(false);
-        loopButton.setVisible(false);
+        const int buttonW = button.getWidth() > 0 ? button.getWidth() : transportSlotSize;
+        const int buttonH = button.getHeight() > 0 ? button.getHeight() : transportSlotSize;
+        button.setBounds(slotX + (transportSlotSize - buttonW) / 2,
+                         transportCapsuleY + (transportCapsuleH - buttonH) / 2,
+                         buttonW, buttonH);
+    };
 
-        // ARA badge
-        const int araW = 80;
-        const int araH = 28;
-        int araY = capsuleY + (capsuleH - araH) / 2;
-        araModeLabel.setBounds(bounds.getX(), araY, araW, araH);
-
-        // Reanalyze button — prominent action button
-        const int reanalyzeW = 110;
-        const int reanalyzeH = 32;
-        int reanalyzeY = capsuleY + (capsuleH - reanalyzeH) / 2;
-        reanalyzeButton.setBounds(bounds.getX() + araW + 8, reanalyzeY, reanalyzeW, reanalyzeH);
-
-        transportCapsuleBounds = {}; // no transport capsule in plugin mode
-    }
-    else
-    {
-        goToStartButton.setVisible(true);
-        playButton.setVisible(true);
-        stopButton.setVisible(true);
-        goToEndButton.setVisible(true);
-        loopButton.setVisible(true);
-
-        // Transport controls grouped in capsule
-        const int transportSlotSize = 30;
-        const int transportPad = 5;
-        const int numCenteredTransport = 4;
-        const int numTransport = 5;
-        const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
-        const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
-        int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
-        const int transportCapsuleH = 38;
-        const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
-        transportCapsuleBounds = juce::Rectangle<int>(cx, transportCapsuleY, capsuleW, transportCapsuleH);
-        if (showingProgress)
-            progressBar.setBounds(transportCapsuleBounds.getX(),
-                                  transportCapsuleBounds.getBottom() - 2,
-                                  transportCapsuleBounds.getWidth(), 2);
-
-        auto setButtonInSlot = [&](juce::Button &button, int slotX)
-        {
-            const int buttonW = button.getWidth() > 0 ? button.getWidth() : transportSlotSize;
-            const int buttonH = button.getHeight() > 0 ? button.getHeight() : transportSlotSize;
-            button.setBounds(slotX + (transportSlotSize - buttonW) / 2,
-                             transportCapsuleY + (transportCapsuleH - buttonH) / 2,
-                             buttonW, buttonH);
-        };
-
-        int slotX = cx + transportPad;
-        setButtonInSlot(stopButton, slotX);
-        slotX += transportSlotSize + 2;
-        setButtonInSlot(playButton, slotX);
-        slotX += transportSlotSize + 2;
-        setButtonInSlot(goToStartButton, slotX);
-        slotX += transportSlotSize + 2;
-        setButtonInSlot(goToEndButton, slotX);
-        slotX += transportSlotSize + 2;
-        setButtonInSlot(loopButton, slotX);
-    }
+    int slotX = cx + transportPad;
+    setButtonInSlot(stopButton, slotX);
+    slotX += transportSlotSize + 2;
+    setButtonInSlot(playButton, slotX);
+    slotX += transportSlotSize + 2;
+    setButtonInSlot(goToStartButton, slotX);
+    slotX += transportSlotSize + 2;
+    setButtonInSlot(goToEndButton, slotX);
+    slotX += transportSlotSize + 2;
+    setButtonInSlot(loopButton, slotX);
 }
 
 void ToolbarComponent::buttonClicked(juce::Button *button)
@@ -326,8 +244,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onToggleLoop)
             onToggleLoop(loopEnabled);
     }
-    else if (button == &reanalyzeButton && onReanalyze)
-        onReanalyze();
     else if (button == &selectModeButton)
     {
         setEditMode(EditMode::Select);
@@ -364,6 +280,15 @@ void ToolbarComponent::setPlaying(bool playing)
 {
     isPlaying = playing;
     playButton.setToggleState(playing, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setTransportEnabled(bool enabled)
+{
+    stopButton.setEnabled(enabled);
+    playButton.setEnabled(enabled);
+    goToStartButton.setEnabled(enabled);
+    goToEndButton.setEnabled(enabled);
+    loopButton.setEnabled(enabled);
 }
 
 void ToolbarComponent::setCurrentTime(double time)
@@ -434,19 +359,7 @@ void ToolbarComponent::setProgress(float progress)
 
 void ToolbarComponent::setStatusMessage(const juce::String &message)
 {
-    if (message.isEmpty())
-    {
-        showingStatus = false;
-        statusLabel.setVisible(false);
-    }
-    else
-    {
-        showingStatus = true;
-        statusLabel.setText(message, juce::dontSendNotification);
-        statusLabel.setVisible(true);
-    }
-    resized();
-    repaint();
+    juce::ignoreUnused(message);
 }
 
 void ToolbarComponent::updateTimeDisplay()
@@ -493,21 +406,14 @@ void ToolbarComponent::setPluginMode(bool isPlugin)
 {
     pluginMode = isPlugin;
 
-    goToStartButton.setVisible(!isPlugin);
-    playButton.setVisible(!isPlugin);
-    stopButton.setVisible(!isPlugin);
-    goToEndButton.setVisible(!isPlugin);
-    reanalyzeButton.setVisible(isPlugin);
-    araModeLabel.setVisible(isPlugin);
+    goToStartButton.setVisible(true);
+    playButton.setVisible(true);
+    stopButton.setVisible(true);
+    goToEndButton.setVisible(true);
+    loopButton.setVisible(true);
 
     // In plugin mode, hide follow button (host controls playback)
     followButton.setVisible(!isPlugin);
 
     resized();
-}
-
-void ToolbarComponent::setARAMode(bool isARA)
-{
-    araMode = isARA;
-    araModeLabel.setText(isARA ? TR("toolbar.ara_mode") : TR("toolbar.non_ara"), juce::dontSendNotification);
 }

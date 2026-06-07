@@ -11,6 +11,7 @@
 #include "../Utils/PlatformPaths.h"
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/UI/WindowSizing.h"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <iostream>
@@ -113,6 +114,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Configure toolbar for plugin mode
   if (isPluginMode())
     toolbar.setPluginMode(true);
+  toolbar.setTransportEnabled(isPluginMode());
 
   // Set undo manager for piano roll
   pianoRoll.setUndoManager(undoManager.get());
@@ -161,12 +163,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     workspace.showPanel("parameters", visible);
   };
 
-  // Plugin mode callbacks
-  toolbar.onReanalyze = [this]()
-  {
-    if (onReanalyzeRequested)
-      onReanalyzeRequested();
-  };
   // Removed onRender callback - Melodyne-style: edits automatically trigger
   // real-time processing
 
@@ -1130,26 +1126,22 @@ void MainComponent::exportMidiFile()
 void MainComponent::play()
 {
   auto *project = getProject();
-  if (!project)
-    return;
 
-  if (project->getAudioData().waveform.getNumSamples() == 0)
-  {
-    isPlaying = false;
-    toolbar.setPlaying(false);
-    return;
-  }
-
-  // In plugin mode, playback is controlled by the host
-  // We only update UI state, but don't actually start playback
+  // In plugin mode, playback is controlled by the host. Update immediately for
+  // responsiveness; host/ARA callbacks will keep the state in sync.
   if (isPluginMode())
   {
     if (onRequestHostPlayState)
       onRequestHostPlayState(true);
-    // UI will be kept in sync by host callbacks; still update immediately for
-    // responsiveness
     isPlaying = true;
     toolbar.setPlaying(true);
+    return;
+  }
+
+  if (!project || project->getAudioData().waveform.getNumSamples() == 0)
+  {
+    isPlaying = false;
+    toolbar.setPlaying(false);
     return;
   }
 
@@ -1232,16 +1224,15 @@ void MainComponent::stop()
 
 void MainComponent::seek(double time)
 {
-  // In plugin mode, we can only update the UI cursor position
-  // The host controls the actual playback position (no seek API available)
+  // In plugin mode, request a host seek when the host supports it and update
+  // the UI cursor immediately for responsiveness.
   if (isPluginMode())
   {
-    // Update UI cursor position only - don't try to control host
+    if (onRequestHostSeek)
+      onRequestHostSeek(time);
     pendingCursorTime.store(time);
     pianoRoll.setCursorTime(time);
     toolbar.setCurrentTime(time);
-    // Note: We don't call onRequestHostSeek because hosts don't support seek
-    // The cursor position shown is for visual reference only
     return;
   }
 
@@ -1689,7 +1680,8 @@ void MainComponent::filesDropped(const juce::StringArray &files, int /*x*/,
 }
 
 void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
-                                 double sampleRate)
+                                 double sampleRate,
+                                 double timelineOffsetSeconds)
 {
   if (!isPluginMode())
     return;
@@ -1714,7 +1706,7 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
           safeThis->toolbar.hideProgress();
           safeThis->showAnalysisProgress(p); });
       },
-      [safeThis](const juce::AudioBuffer<float> &original)
+      [safeThis, timelineOffsetSeconds](const juce::AudioBuffer<float> &original)
       {
         if (safeThis == nullptr)
           return;
@@ -1726,10 +1718,14 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
         if (!project)
           return;
 
+        project->getAudioData().timelineOffsetSeconds =
+            std::max(0.0, timelineOffsetSeconds);
+
         safeThis->pianoRoll.setProject(project);
         safeThis->pianoRollView.setProject(project);
         safeThis->parameterPanel.setProject(project);
         safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
+        safeThis->toolbar.setTransportEnabled(true);
 
         safeThis->fitAnalyzedPitchRangeToView(*project);
 
@@ -1773,28 +1769,185 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
       });
 }
 
+void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
+{
+  if (!isPluginMode())
+    return;
+
+  auto *project = getProject();
+  if (!project)
+    return;
+
+  auto &audioData = project->getAudioData();
+  if (audioData.waveform.getNumSamples() == 0 || audioData.sampleRate <= 0)
+  {
+    audioData.timelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
+    return;
+  }
+
+  const double newOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
+  const double oldOffsetSeconds = std::max(0.0, audioData.timelineOffsetSeconds);
+  if (std::abs(newOffsetSeconds - oldOffsetSeconds) < 0.000001)
+    return;
+
+  const int sampleRate = audioData.sampleRate;
+  const int oldOffsetSamples = std::max(
+      0, static_cast<int>(std::llround(oldOffsetSeconds * sampleRate)));
+  const int newOffsetSamples = std::max(
+      0, static_cast<int>(std::llround(newOffsetSeconds * sampleRate)));
+  const int oldOffsetFrames = std::max(
+      0, static_cast<int>(std::llround(oldOffsetSeconds * sampleRate /
+                                       static_cast<double>(HOP_SIZE))));
+  const int newOffsetFrames = std::max(
+      0, static_cast<int>(std::llround(newOffsetSeconds * sampleRate /
+                                       static_cast<double>(HOP_SIZE))));
+  const int frameDelta = newOffsetFrames - oldOffsetFrames;
+
+  auto repadBuffer = [&](juce::AudioBuffer<float> &buffer)
+  {
+    const int oldSamples = buffer.getNumSamples();
+    if (oldSamples <= 0)
+      return;
+
+    const int contentStart = std::min(oldOffsetSamples, oldSamples);
+    const int contentSamples = oldSamples - contentStart;
+    const int newSamples = newOffsetSamples + contentSamples;
+    juce::AudioBuffer<float> shifted(buffer.getNumChannels(), newSamples);
+    shifted.clear();
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+      shifted.copyFrom(ch, newOffsetSamples, buffer, ch, contentStart,
+                       contentSamples);
+    buffer = std::move(shifted);
+  };
+
+  auto repadFloatVector = [&](std::vector<float> &values)
+  {
+    const int oldSize = static_cast<int>(values.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    std::vector<float> shifted(static_cast<size_t>(
+        newOffsetFrames + std::max(0, oldSize - contentStart)));
+    std::copy(values.begin() + contentStart, values.end(),
+              shifted.begin() + newOffsetFrames);
+    values = std::move(shifted);
+  };
+
+  auto repadBoolVector = [&](std::vector<bool> &values)
+  {
+    const int oldSize = static_cast<int>(values.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    std::vector<bool> shifted(static_cast<size_t>(
+        newOffsetFrames + std::max(0, oldSize - contentStart)), false);
+    for (int i = contentStart; i < oldSize; ++i)
+      shifted[static_cast<size_t>(newOffsetFrames + i - contentStart)] =
+          values[static_cast<size_t>(i)];
+    values = std::move(shifted);
+  };
+
+  auto repadMel = [&](std::vector<std::vector<float>> &frames)
+  {
+    const int oldSize = static_cast<int>(frames.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    const size_t numMels = oldSize > 0 ? frames[static_cast<size_t>(
+                                             std::min(contentStart, oldSize - 1))]
+                                             .size()
+                                       : 0;
+    std::vector<std::vector<float>> shifted(
+        static_cast<size_t>(newOffsetFrames + std::max(0, oldSize - contentStart)),
+        std::vector<float>(numMels, 0.0f));
+    std::move(frames.begin() + contentStart, frames.end(),
+              shifted.begin() + newOffsetFrames);
+    frames = std::move(shifted);
+  };
+
+  repadBuffer(audioData.waveform);
+  repadBuffer(audioData.originalWaveform);
+  repadMel(audioData.melSpectrogram);
+  repadFloatVector(audioData.f0);
+  repadFloatVector(audioData.baseF0);
+  repadFloatVector(audioData.basePitch);
+  repadFloatVector(audioData.deltaPitch);
+  repadBoolVector(audioData.voicedMask);
+  repadBoolVector(audioData.vadMask);
+
+  auto shiftFrame = [frameDelta](int frame)
+  {
+    return std::max(0, frame + frameDelta);
+  };
+
+  for (auto &note : project->getNotes())
+  {
+    note.setStartFrame(shiftFrame(note.getStartFrame()));
+    note.setEndFrame(shiftFrame(note.getEndFrame()));
+    note.setSrcStartFrame(shiftFrame(note.getSrcStartFrame()));
+    note.setSrcEndFrame(shiftFrame(note.getSrcEndFrame()));
+  }
+
+  for (auto &range : audioData.segmentChunkRanges)
+  {
+    range.first = shiftFrame(range.first);
+    range.second = shiftFrame(range.second);
+  }
+
+  for (auto &chunk : audioData.segmentDebugChunks)
+  {
+    chunk.startFrame = shiftFrame(chunk.startFrame);
+    chunk.endFrame = shiftFrame(chunk.endFrame);
+    for (auto &event : chunk.events)
+    {
+      event.startFrame = shiftFrame(event.startFrame);
+      event.endFrame = shiftFrame(event.endFrame);
+      event.attachedStartFrame = shiftFrame(event.attachedStartFrame);
+    }
+  }
+
+  audioData.timelineOffsetSeconds = newOffsetSeconds;
+  toolbar.setTotalTime(audioData.getDuration());
+  pianoRoll.setProject(project);
+  pianoRollView.setProject(project);
+  parameterPanel.setProject(project);
+  repaint();
+  notifyProjectDataChanged();
+}
+
+void MainComponent::clearHostAudio()
+{
+  if (!isPluginMode())
+    return;
+
+  clearProjectForNewLoad();
+  hideAnalysisProgress();
+  toolbar.hideProgress();
+  notifyProjectDataChanged();
+}
+
 void MainComponent::updatePlaybackPosition(double timeSeconds)
 {
   if (!isPluginMode())
     return;
 
-  // Only follow host position if we have a valid project with audio
   auto *project = getProject();
-  if (!project || project->getAudioData().waveform.getNumSamples() == 0)
-    return;
+  double displayTime = std::max(0.0, timeSeconds);
 
-  // Clamp position to audio duration (don't go beyond the end)
-  double duration = project->getAudioData().getDuration();
-  double clampedTime = std::min(timeSeconds, static_cast<double>(duration));
+  // Clamp only when project audio exists. Empty ARA tracks still need to follow
+  // the host playhead position.
+  if (project && project->getAudioData().waveform.getNumSamples() > 0)
+  {
+    double duration = project->getAudioData().getDuration();
+    displayTime = std::min(displayTime, static_cast<double>(duration));
+  }
 
   // Update cursor position using the same mechanism as AudioEngine
-  pendingCursorTime.store(clampedTime);
+  pendingCursorTime.store(displayTime);
   hasPendingCursorUpdate.store(true);
+}
 
-  // In plugin mode, the host controls playback state
-  // Set isPlaying to true when we receive position updates
-  // This enables "follow playback" feature
-  isPlaying = true;
+void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
+{
+  if (!isPluginMode())
+    return;
+
+  isPlaying = hostIsPlaying;
+  toolbar.setPlaying(hostIsPlaying);
 }
 
 void MainComponent::updateHostLoopRange(double startSeconds, double endSeconds,
@@ -1869,8 +2022,7 @@ void MainComponent::notifyHostStopped()
   if (!isPluginMode())
     return;
 
-  // In plugin mode, the host controls playback state
-  isPlaying = false;
+  updateHostPlaybackState(false);
 }
 
 void MainComponent::triggerResynthesis()
@@ -2203,7 +2355,8 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     return true;
 
   case CommandIDs::goToStart:
-    seek(0.0);
+    if (auto *project = getProject())
+      seek(std::max(0.0, project->getAudioData().timelineOffsetSeconds));
     return true;
 
   case CommandIDs::goToEnd:

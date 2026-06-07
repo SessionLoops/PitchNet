@@ -306,6 +306,7 @@ private:
 
     // Previous state for change detection
     TransportState previousTransport;
+    PositionInfo previousPosition;
     TempoInfo previousTempo;
     LoopInfo previousLoop;
 

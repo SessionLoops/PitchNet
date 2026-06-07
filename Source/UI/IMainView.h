@@ -19,8 +19,6 @@ public:
   virtual juce::String serializeProjectJson() const = 0;
   virtual bool restoreProjectJson(const juce::String &json) = 0;
   virtual void setStatusMessage(const juce::String &message) = 0;
-  virtual void setARAMode(bool enabled) = 0;
-  virtual void setOnReanalyzeRequested(std::function<void()> callback) = 0;
   virtual void setOnProjectDataChanged(std::function<void()> callback) = 0;
   virtual void setOnPitchEditFinished(std::function<void()> callback) = 0;
   virtual void setOnRequestHostPlayState(
@@ -30,8 +28,12 @@ public:
       std::function<void(double)> callback) = 0;
 
   virtual void setHostAudio(const juce::AudioBuffer<float> &buffer,
-                            double sampleRate) = 0;
+                            double sampleRate,
+                            double timelineOffsetSeconds = 0.0) = 0;
+  virtual void updateHostAudioTimelineOffset(double timelineOffsetSeconds) = 0;
+  virtual void clearHostAudio() = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
+  virtual void updateHostPlaybackState(bool isPlaying) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
                                    bool enabled, bool hasRange) = 0;
   virtual void notifyHostStopped() = 0;

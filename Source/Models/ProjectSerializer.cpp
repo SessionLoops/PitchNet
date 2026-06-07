@@ -31,6 +31,8 @@ juce::var ProjectSerializer::toJson(const Project& project) {
 
     // Audio settings
     obj->setProperty("sampleRate", project.getAudioData().sampleRate);
+    obj->setProperty("timelineOffsetSeconds",
+                     project.getAudioData().timelineOffsetSeconds);
 
     // Global parameters
     obj->setProperty("globalPitchOffset", project.getGlobalPitchOffset());
@@ -85,6 +87,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     // Audio settings
     auto& audioData = project.getAudioData();
     audioData.sampleRate = json.getProperty("sampleRate", 44100);
+    audioData.timelineOffsetSeconds =
+        static_cast<double>(json.getProperty("timelineOffsetSeconds", 0.0));
 
     // Global parameters
     project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));

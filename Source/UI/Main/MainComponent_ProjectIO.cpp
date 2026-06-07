@@ -131,6 +131,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
                 safeThis->parameterPanel.setProject(project);
                 safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
                 safeThis->toolbar.setLoopEnabled(project->getLoopRange().enabled);
+                safeThis->toolbar.setTransportEnabled(true);
 
                 auto &activeAudioData = project->getAudioData();
                 if (safeThis->isPluginMode()) {
@@ -331,6 +332,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
         safeThis->parameterPanel.setProject(project);
         safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
         safeThis->toolbar.setLoopEnabled(project->getLoopRange().enabled);
+        safeThis->toolbar.setTransportEnabled(true);
 
         auto &audioData = project->getAudioData();
 
@@ -420,5 +422,6 @@ void MainComponent::clearProjectForNewLoad() {
   toolbar.setCurrentTime(0.0);
   toolbar.setTotalTime(0.0);
   toolbar.setLoopEnabled(false);
+  toolbar.setTransportEnabled(isPluginMode());
   pianoRoll.setCursorTime(0.0);
 }

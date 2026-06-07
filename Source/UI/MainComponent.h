@@ -126,10 +126,6 @@ public:
   void setStatusMessage(const juce::String &message) override {
     toolbar.setStatusMessage(message);
   }
-  void setARAMode(bool enabled) override { toolbar.setARAMode(enabled); }
-  void setOnReanalyzeRequested(std::function<void()> callback) override {
-    onReanalyzeRequested = std::move(callback);
-  }
   void setOnProjectDataChanged(std::function<void()> callback) override {
     onProjectDataChanged = std::move(callback);
   }
@@ -149,16 +145,18 @@ public:
   }
   juce::Point<int> getSavedWindowSize() const;
 
-  // Check if ARA mode is active (for UI display)
+  // Check if ARA mode is active.
   bool isARAModeActive() const;
 
   // Plugin mode - host audio handling
   void setHostAudio(const juce::AudioBuffer<float> &buffer,
-                    double sampleRate) override;
+                    double sampleRate,
+                    double timelineOffsetSeconds = 0.0) override;
+  void updateHostAudioTimelineOffset(double timelineOffsetSeconds) override;
+  void clearHostAudio() override;
   void renderProcessedAudio();
 
   // Plugin mode callbacks
-  std::function<void()> onReanalyzeRequested;
   std::function<void()>
       onProjectDataChanged; // Called when project data is ready or changed
   std::function<void()>
@@ -173,6 +171,7 @@ public:
 
   // Plugin mode - update playback position from host
   void updatePlaybackPosition(double timeSeconds) override;
+  void updateHostPlaybackState(bool isPlaying) override;
   void updateHostLoopRange(double startSeconds, double endSeconds,
                            bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback

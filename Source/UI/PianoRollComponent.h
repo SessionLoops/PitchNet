@@ -63,6 +63,7 @@ public:
   void mouseDrag(const juce::MouseEvent &e) override;
   void mouseUp(const juce::MouseEvent &e) override;
   void mouseMove(const juce::MouseEvent &e) override;
+  void mouseEnter(const juce::MouseEvent &e) override;
   void mouseExit(const juce::MouseEvent &e) override;
   void mouseDoubleClick(const juce::MouseEvent &e) override;
   void mouseWheelMove(const juce::MouseEvent &e,
@@ -77,6 +78,8 @@ public:
   bool keyPressed(const juce::KeyPress &key) override;
   bool keyPressed(const juce::KeyPress &key,
                   juce::Component *originatingComponent) override;
+
+  void requestCanvasKeyboardFocus();
 
   // ScrollBar::Listener
   void scrollBarMoved(juce::ScrollBar *scrollBar,

@@ -288,6 +288,7 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                            juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
   juce::ScopedNoDenormals noDenormals;
+  bool didProcessHostSync = false;
 
   // Check bypass — if bypassed, pass through input unchanged
   const bool bypassed = bypassParamValue->load() >= 0.5f;
@@ -297,16 +298,15 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     return; // Input buffer passes through unchanged
   }
 
-  // Process transport control requests and update sync state
-  transportController.processBlock(getPlayHead(), hostSampleRate);
-
-  // Check for parameter automation changes (pitch offset, formant shift)
-  checkParameterChanges();
-
 #if JucePlugin_Enable_ARA
-  // ARA mode: let ARA renderer handle audio, then apply output processing
-  if (isARAModeActive()) {
-    // Save dry copy before ARA processing
+  // ARA mode: let ARA renderer handle audio, then apply output processing.
+  // Do not call isARAModeActive() here; it queries the editor and must only run
+  // on the message thread.
+  {
+    transportController.processBlock(getPlayHead(), hostSampleRate);
+    didProcessHostSync = true;
+    checkParameterChanges();
+
     juce::AudioBuffer<float> dryBuffer;
     const float dryWet = dryWetParamValue->load();
     if (dryWet < 99.9f)
@@ -318,6 +318,14 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     }
   }
 #endif
+
+  // Process transport control requests and update sync state. ARA reaches this
+  // point only when the ARA path did not handle the block.
+  if (!didProcessHostSync)
+    transportController.processBlock(getPlayHead(), hostSampleRate);
+
+  // Check for parameter automation changes (pitch offset, formant shift)
+  checkParameterChanges();
 
   // Non-ARA mode
   juce::AudioPlayHead::PositionInfo posInfo;

@@ -137,6 +137,7 @@ add_subdirectory(third_party/JUCE)
 juce_add_gui_app(PitchNet
     PRODUCT_NAME "PitchNet"
     COMPANY_NAME "Session Loops"
+    COMPANY_WEBSITE "https://sessionloops.com"
     BUNDLE_ID "com.sessionloops.pitchnet"
     COMPANY_COPYRIGHT "Copyright 2026"
     MICROPHONE_PERMISSION_ENABLED TRUE
@@ -168,6 +169,7 @@ endif()
 juce_add_plugin(PitchNetPlugin
     PRODUCT_NAME "PitchNet"
     COMPANY_NAME "Session Loops"
+    COMPANY_WEBSITE "https://sessionloops.com"
     BUNDLE_ID "com.sessionloops.pitchnet"
     PLUGIN_MANUFACTURER_CODE SLPS
     PLUGIN_CODE PTE1

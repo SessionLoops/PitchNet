@@ -35,19 +35,19 @@ void HostSyncService::updateFromPositionInfo(const juce::AudioPlayHead::Position
     // Update position info
     PositionInfo newPosition;
 
-    if (auto timeInSamples = info.getTimeInSamples())
-    {
-        newPosition.timeInSamples = *timeInSamples;
-        newPosition.hasTimeInSamples = true;
-        newPosition.timeInSeconds = static_cast<double>(*timeInSamples) / sampleRate;
-        newPosition.hasTimeInSeconds = true;
-    }
-    else if (auto timeInSeconds = info.getTimeInSeconds())
+    if (auto timeInSeconds = info.getTimeInSeconds())
     {
         newPosition.timeInSeconds = *timeInSeconds;
         newPosition.hasTimeInSeconds = true;
         newPosition.timeInSamples = static_cast<juce::int64>(*timeInSeconds * sampleRate);
         newPosition.hasTimeInSamples = true;
+    }
+    else if (auto timeInSamples = info.getTimeInSamples())
+    {
+        newPosition.timeInSamples = *timeInSamples;
+        newPosition.hasTimeInSamples = true;
+        newPosition.timeInSeconds = static_cast<double>(*timeInSamples) / sampleRate;
+        newPosition.hasTimeInSeconds = true;
     }
 
     if (auto ppq = info.getPpqPosition())
@@ -143,16 +143,32 @@ void HostSyncService::updateFromPositionInfo(const juce::AudioPlayHead::Position
         notifyLoopChange(newLoop);
     }
 
-    // Position update notification (throttled)
-    if (newTransport.isPlaying && positionCallbackEnabled)
+    const bool positionChanged =
+        newPosition.hasTimeInSeconds &&
+        (!previousPosition.hasTimeInSeconds ||
+         std::abs(newPosition.timeInSeconds - previousPosition.timeInSeconds) >
+             0.0001);
+
+    // Position update notification. Playback is throttled; stopped host seek
+    // moves are emitted on change so the UI follows manual playhead edits.
+    if (positionCallbackEnabled && newPosition.hasTimeInSeconds)
     {
         auto now = juce::Time::getMillisecondCounter();
-        if (now - lastPositionCallbackTime >= static_cast<juce::int64>(positionUpdateIntervalMs))
+        const bool shouldNotifyPlaying =
+            newTransport.isPlaying &&
+            now - lastPositionCallbackTime >=
+                static_cast<juce::int64>(positionUpdateIntervalMs);
+        const bool shouldNotifyStoppedSeek =
+            !newTransport.isPlaying && positionChanged;
+
+        if (shouldNotifyPlaying || shouldNotifyStoppedSeek)
         {
             lastPositionCallbackTime = now;
             notifyPositionUpdate(newPosition.timeInSeconds);
         }
     }
+
+    previousPosition = newPosition;
 }
 
 HostSyncService::SyncState HostSyncService::getCurrentState() const

@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <thread>
 
 #if JucePlugin_Enable_ARA
@@ -31,7 +32,9 @@ public:
 private:
   struct HostUiSyncState {
     std::atomic<double> latestSeconds{0.0};
+    std::atomic<bool> latestPlaying{false};
     std::atomic<bool> posPending{false};
+    std::atomic<bool> playStatePending{false};
     std::atomic<bool> stoppedPending{false};
   };
 
@@ -62,6 +65,16 @@ public:
 
   void didAddAudioSourceToDocument(juce::ARADocument *doc,
                                    juce::ARAAudioSource *audioSource) override;
+  void willRemoveAudioSourceFromDocument(
+      juce::ARADocument *doc, juce::ARAAudioSource *audioSource) override;
+  void didAddPlaybackRegionToAudioModification(
+      juce::ARAAudioModification *audioModification,
+      juce::ARAPlaybackRegion *playbackRegion) override;
+  void willRemovePlaybackRegionFromAudioModification(
+      juce::ARAAudioModification *audioModification,
+      juce::ARAPlaybackRegion *playbackRegion) override;
+  void didUpdatePlaybackRegionProperties(
+      juce::ARAPlaybackRegion *playbackRegion) override;
   void reanalyze();
 
   void setMainComponent(IMainView *mc) { mainComponent = mc; }
@@ -73,6 +86,7 @@ public:
   RealtimePitchProcessor *getRealtimeProcessor() const {
     return realtimeProcessor;
   }
+  bool processExistingAudioSources(juce::ARADocument *document);
 
 protected:
   juce::ARAPlaybackRenderer *doCreatePlaybackRenderer() noexcept override;
@@ -85,6 +99,14 @@ protected:
 
 private:
   void processAudioSource(juce::ARAAudioSource *source);
+  void updateAudioSourceTimelineOffset(
+      juce::ARAAudioSource *source,
+      juce::ARAPlaybackRegion *excludedRegion = nullptr);
+  void clearMainComponentHostAudio();
+  std::optional<double>
+  getTimelineOffsetSecondsForSource(
+      juce::ARAAudioSource *source,
+      juce::ARAPlaybackRegion *excludedRegion = nullptr) const;
 
   void stopAnalysisThread();
 

@@ -69,6 +69,7 @@ public:
     void sliderValueChanged(juce::Slider *slider) override;
 
     void setPlaying(bool playing);
+    void setTransportEnabled(bool enabled);
     void setCurrentTime(double time);
     void setTotalTime(double time);
     void setEditMode(EditMode mode);
@@ -80,16 +81,13 @@ public:
 
     // Plugin mode
     void setPluginMode(bool isPlugin);
-    void setARAMode(bool isARA); // Set ARA mode indicator
 
     // Progress bar control
     void showProgress(const juce::String &message);
     void hideProgress();
     void setProgress(float progress); // 0.0 to 1.0, or -1 for indeterminate
 
-    // Status display
-    void setStatusMessage(const juce::String &message); // Show status (e.g., "ARA Mode" or "Non-ARA Mode")
-    juce::String getStatusText() const { return statusLabel.getText(); }
+    void setStatusMessage(const juce::String &message);
 
     std::function<void()> onPlay;
     std::function<void()> onPause;
@@ -100,8 +98,6 @@ public:
     std::function<void(EditMode)> onEditModeChanged;
     std::function<void(bool)> onToggleLoop;
 
-    // Plugin mode callbacks
-    std::function<void()> onReanalyze;
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing
 
@@ -116,11 +112,7 @@ private:
     ToggleButton loopButton;
     juce::Image logoImage;
 
-    // Plugin mode buttons
-    juce::TextButton reanalyzeButton{"Re-analyze"};
-    juce::Label araModeLabel; // ARA mode indicator tag
     bool pluginMode = false;
-    bool araMode = false;
     // Note: Removed renderButton - Melodyne-style: automatic real-time processing
 
     // Edit mode buttons
@@ -142,10 +134,6 @@ private:
     juce::ProgressBar progressBar{progressValue};
     juce::Label progressLabel;
     bool showingProgress = false;
-
-    // Status label (for mode indication)
-    juce::Label statusLabel;
-    bool showingStatus = false;
 
     bool parametersVisible = false;
 

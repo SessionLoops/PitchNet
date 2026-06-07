@@ -53,6 +53,12 @@ public:
     void processBlock(juce::AudioPlayHead* playHead, double sampleRate);
 
     /**
+     * Process pending host transport requests without publishing host sync
+     * callbacks. ARA playback renderers own UI playhead sync in ARA mode.
+     */
+    void processPendingRequestsOnly(juce::AudioPlayHead* playHead);
+
+    /**
      * Get the current sync state (thread-safe snapshot).
      */
     HostSyncService::SyncState getCurrentState() const;

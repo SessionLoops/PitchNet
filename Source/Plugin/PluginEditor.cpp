@@ -19,9 +19,13 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
 
   // Enable keyboard focus for the editor
   setWantsKeyboardFocus(true);
+  setMouseClickGrabsKeyboardFocus(true);
 
   addAndMakeVisible(*mainView->getComponent());
+  mainView->getComponent()->setWantsKeyboardFocus(true);
+  mainView->getComponent()->setMouseClickGrabsKeyboardFocus(true);
   audioProcessor.setMainComponent(mainView.get());
+  addMouseListener(this, true);
 
 #if JucePlugin_Enable_ARA
   setupARAMode();
@@ -35,19 +39,19 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
   setSize(size.x, size.y);
   setResizable(true, true);
 
-  // Grab keyboard focus on mainComponent when editor is shown
-  mainView->getComponent()->grabKeyboardFocus();
+  // Keyboard focus is requested once the host has actually shown the editor.
+  requestMainViewKeyboardFocusAsync();
 }
 
 PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
+  removeMouseListener(this);
+  audioProcessor.getTransportController().clearCallbacks();
   audioProcessor.setMainComponent(nullptr);
   shutdownUiResources();
 }
 
 void PitchNetAudioProcessorEditor::setupARAMode() {
 #if JucePlugin_Enable_ARA
-  mainView->setARAMode(true);
-
   auto *editorView = getARAEditorView();
   if (!editorView) {
     setupNonARAMode();
@@ -74,11 +78,6 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   pitchDocController->setRealtimeProcessor(
       &audioProcessor.getRealtimeProcessor());
 
-  // Setup re-analyze callback
-  mainView->setOnReanalyzeRequested([pitchDocController]() {
-    pitchDocController->reanalyze();
-  });
-
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
     audioProcessor.requestHostPlayState(shouldPlay);
   });
@@ -88,45 +87,30 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   });
 
   mainView->setOnRequestHostSeek([this](double timeInSeconds) {
-    audioProcessor.requestHostSeek(timeInSeconds);
-  });
-
-  audioProcessor.getTransportController().setLoopCallback(
-      [safeMain = juce::Component::SafePointer<juce::Component>(
-           mainView->getComponent())](const HostSyncService::LoopInfo &loop) {
-        if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
-          view->updateHostLoopRange(loop.loopStartSeconds, loop.loopEndSeconds,
-                                    loop.isLoopEnabled, loop.hasLoopPoints);
-      });
-
-  // Check for existing audio sources
-  auto *juceDocument = docController->getDocument();
-  if (juceDocument) {
-    auto &audioSources = juceDocument->getAudioSources<juce::ARAAudioSource>();
-
-    if (!audioSources.empty()) {
-      // Process first audio source
-      auto *source = audioSources.front();
-      if (source && source->getSampleCount() > 0) {
-        juce::ARAAudioSourceReader reader(source);
-        int numSamples = static_cast<int>(source->getSampleCount());
-        int numChannels = source->getChannelCount();
-        double sampleRate = source->getSampleRate();
-
-        juce::AudioBuffer<float> buffer(numChannels, numSamples);
-        if (reader.read(&buffer, 0, numSamples, 0, true, true)) {
-          mainView->setHostAudio(buffer, sampleRate);
+    if (auto *editorView = getARAEditorView()) {
+      if (auto *docController = editorView->getDocumentController()) {
+        if (auto *playbackController =
+                docController->getHostPlaybackController()) {
+          playbackController->requestSetPlaybackPosition(timeInSeconds);
           return;
         }
       }
     }
-  }
+
+    audioProcessor.requestHostSeek(timeInSeconds);
+  });
+
+  setupHostTransportUiSync(true);
+
+  // Check for existing audio sources
+  auto *juceDocument = docController->getDocument();
+  if (pitchDocController->processExistingAudioSources(
+          static_cast<juce::ARADocument *>(juceDocument)))
+    return;
 #endif
 }
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
-  mainView->setARAMode(false);
-
   // Setup host transport control callbacks for non-ARA mode
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
     audioProcessor.requestHostPlayState(shouldPlay);
@@ -140,9 +124,38 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
     audioProcessor.requestHostSeek(timeInSeconds);
   });
 
+  setupHostTransportUiSync(true);
+}
+
+void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
+    bool includePlayState) {
+  auto safeMain =
+      juce::Component::SafePointer<juce::Component>(mainView->getComponent());
+
+  if (includePlayState) {
+    audioProcessor.getTransportController().setPlayStateCallback(
+        [safeMain](bool isPlaying) {
+          auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
+          if (!view)
+            return;
+
+          view->updateHostPlaybackState(isPlaying);
+        });
+  } else {
+    audioProcessor.getTransportController().setPlayStateCallback(nullptr);
+  }
+
+  audioProcessor.getTransportController().setPositionCallback(
+      [safeMain](double timeInSeconds) {
+        auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
+        if (!view)
+          return;
+
+        view->updatePlaybackPosition(timeInSeconds);
+      });
+
   audioProcessor.getTransportController().setLoopCallback(
-      [safeMain = juce::Component::SafePointer<juce::Component>(
-           mainView->getComponent())](const HostSyncService::LoopInfo &loop) {
+      [safeMain](const HostSyncService::LoopInfo &loop) {
         if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
           view->updateHostLoopRange(loop.loopStartSeconds, loop.loopEndSeconds,
                                     loop.isLoopEnabled, loop.hasLoopPoints);
@@ -166,14 +179,41 @@ void PitchNetAudioProcessorEditor::paint(juce::Graphics &) {
 
 void PitchNetAudioProcessorEditor::resized() {
   mainView->getComponent()->setBounds(getLocalBounds());
+  requestMainViewKeyboardFocusAsync();
+}
+
+void PitchNetAudioProcessorEditor::requestMainViewKeyboardFocus() {
+  auto *component = mainView ? mainView->getComponent() : nullptr;
+  if (!component || (!component->isShowing() && !component->isOnDesktop()))
+    return;
+
+  if (auto *focused = juce::Component::getCurrentlyFocusedComponent()) {
+    if (focused == this || isParentOf(focused) || focused == component ||
+        component->isParentOf(focused))
+      return;
+  }
+
+  if (auto *peer = getPeer())
+    peer->grabFocus();
+
+  grabKeyboardFocus();
+  component->grabKeyboardFocus();
+}
+
+void PitchNetAudioProcessorEditor::requestMainViewKeyboardFocusAsync() {
+  juce::Component::SafePointer<PitchNetAudioProcessorEditor> safeThis(this);
+  juce::MessageManager::callAsync([safeThis]() {
+    if (safeThis != nullptr)
+      safeThis->requestMainViewKeyboardFocus();
+  });
 }
 
 void PitchNetAudioProcessorEditor::visibilityChanged() {
   if (isVisible())
-    mainView->getComponent()->grabKeyboardFocus();
+    requestMainViewKeyboardFocusAsync();
 }
 
 void PitchNetAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
   juce::ignoreUnused(e);
-  mainView->getComponent()->grabKeyboardFocus();
+  requestMainViewKeyboardFocusAsync();
 }
