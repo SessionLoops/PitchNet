@@ -296,8 +296,9 @@ void PianoRollComponent::paint(juce::Graphics &g)
                 headerHeight - static_cast<int>(scrollY));
 
     drawGrid(g, false, true);
-    drawGameChunksDebugOverlay(g);
+    drawAudioSourceRegionOverlay(g);
     drawLoopOverlay(g);
+    drawGameChunksDebugOverlay(g);
     drawNotes(g, NoteRenderPass::Body);
     drawNotes(g, NoteRenderPass::HoverShadow);
     drawNotes(g, NoteRenderPass::HoveredBody);
@@ -410,6 +411,34 @@ void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
   gridRenderer->draw(g, params);
 }
 
+void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
+{
+  if (!project)
+    return;
+
+  const auto &audioData = project->getAudioData();
+  const double duration = static_cast<double>(audioData.getDuration());
+  if (audioData.waveform.getNumSamples() <= 0 || duration <= 0.0)
+    return;
+
+  const double startSeconds =
+      juce::jlimit(0.0, duration, audioData.timelineOffsetSeconds);
+  if (startSeconds >= duration)
+    return;
+
+  const float startX = timeToX(startSeconds);
+  const float endX = timeToX(duration);
+  const float height =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+
+  g.setColour(juce::Colours::white.withAlpha(0.04f));
+  g.fillRect(startX, 0.0f, endX - startX, height);
+
+  g.setColour(juce::Colours::white.withAlpha(0.25f));
+  g.fillRect(startX - 0.5f, 0.0f, 1.0f, height);
+  g.fillRect(endX - 0.5f, 0.0f, 1.0f, height);
+}
+
 void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
 {
   if (!project)
@@ -447,7 +476,7 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
-  g.setColour(juce::Colours::white.withAlpha(0.05f));
+  g.setColour(juce::Colours::white.withAlpha(0.04f));
   g.fillRect(startX, 0.0f, endX - startX, height);
 }
 

@@ -208,6 +208,7 @@ private:
   void drawPitchCurves(juce::Graphics &g);
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
+  void drawAudioSourceRegionOverlay(juce::Graphics &g);
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
