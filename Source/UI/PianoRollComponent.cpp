@@ -184,6 +184,7 @@ PianoRollComponent::PianoRollComponent()
 
   // Enable keyboard focus for shortcuts
   setWantsKeyboardFocus(true);
+  setMouseClickGrabsKeyboardFocus(true);
 
   // No extra controls here; overview lives outside the piano roll.
   int previewImageSize = 0;
@@ -909,9 +910,6 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (!project)
     return;
 
-  // Grab keyboard focus so shortcuts work after mouse operations
-  grabKeyboardFocus();
-
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
@@ -995,9 +993,6 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
-  // Ensure keyboard focus is maintained after mouse operations
-  grabKeyboardFocus();
-
   if (modifierZoomDragActive)
   {
     modifierZoomDragActive = false;

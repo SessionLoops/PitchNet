@@ -18,10 +18,10 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
-    // Grab keyboard focus when editor becomes visible
+    // Grab keyboard focus when the editor becomes visible / is clicked, so that
+    // MainComponent holds focus and host-forwarded key events are dispatched to
+    // its command-key mappings.
     void visibilityChanged() override;
-
-    // Handle mouse clicks to grab focus
     void mouseDown(const juce::MouseEvent& e) override;
 
 private:

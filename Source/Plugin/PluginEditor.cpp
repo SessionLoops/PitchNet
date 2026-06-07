@@ -17,7 +17,10 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
   // Initialize UI resources
   initializeUiResources();
 
-  // Enable keyboard focus for the editor
+  // Enable keyboard focus for the editor and the main view. This is required so
+  // that when the host forwards a key event (see the IPlugView::onKeyDown patch
+  // in juce_audio_plugin_client_VST3.cpp), MainComponent is the focused
+  // component and its command-key mappings sit in the dispatch chain.
   setWantsKeyboardFocus(true);
   setMouseClickGrabsKeyboardFocus(true);
 
@@ -39,7 +42,7 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
   setSize(size.x, size.y);
   setResizable(true, true);
 
-  // Keyboard focus is requested once the host has actually shown the editor.
+  // Grab keyboard focus once the host has actually shown the editor.
   requestMainViewKeyboardFocusAsync();
 }
 
@@ -182,6 +185,16 @@ void PitchNetAudioProcessorEditor::resized() {
   requestMainViewKeyboardFocusAsync();
 }
 
+void PitchNetAudioProcessorEditor::visibilityChanged() {
+  if (isVisible())
+    requestMainViewKeyboardFocusAsync();
+}
+
+void PitchNetAudioProcessorEditor::mouseDown(const juce::MouseEvent &e) {
+  juce::ignoreUnused(e);
+  requestMainViewKeyboardFocusAsync();
+}
+
 void PitchNetAudioProcessorEditor::requestMainViewKeyboardFocus() {
   auto *component = mainView ? mainView->getComponent() : nullptr;
   if (!component || (!component->isShowing() && !component->isOnDesktop()))
@@ -206,14 +219,4 @@ void PitchNetAudioProcessorEditor::requestMainViewKeyboardFocusAsync() {
     if (safeThis != nullptr)
       safeThis->requestMainViewKeyboardFocus();
   });
-}
-
-void PitchNetAudioProcessorEditor::visibilityChanged() {
-  if (isVisible())
-    requestMainViewKeyboardFocusAsync();
-}
-
-void PitchNetAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
-  juce::ignoreUnused(e);
-  requestMainViewKeyboardFocusAsync();
 }
