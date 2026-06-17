@@ -105,9 +105,13 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
         audioProcessor.requestAraSourceAnalysis(sourceKey, buffer, sampleRate,
                                                 timelineOffsetSeconds);
       });
+  pitchDocController->setTimelineOffsetCallback(
+      [this](double timelineOffsetSeconds) {
+        audioProcessor.updateAraTimelineOffset(timelineOffsetSeconds);
+      });
 
   mainView->setOnRequestBackendRender([this](const Project &project) {
-    audioProcessor.requestAraProjectRender(project);
+    audioProcessor.requestPluginProjectRender(project);
   });
 
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
@@ -163,7 +167,9 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 }
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
-  mainView->setOnRequestBackendRender(nullptr);
+  mainView->setOnRequestBackendRender([this](const Project &project) {
+    audioProcessor.requestPluginProjectRender(project);
+  });
 
   // Setup host transport control callbacks for non-ARA mode
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {

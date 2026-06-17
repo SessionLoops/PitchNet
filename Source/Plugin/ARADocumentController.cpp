@@ -378,9 +378,16 @@ void PitchNetDocumentController::updateAudioSourceTimelineOffset(
 
   const double timelineOffsetSeconds = std::max(0.0, *timelineOffset);
 
+  auto updateTimelineOffset = timelineOffsetCallback;
   juce::Component::SafePointer<juce::Component> safeMain(
       mainComponent->getComponent());
-  juce::MessageManager::callAsync([safeMain, timelineOffsetSeconds]() {
+  juce::MessageManager::callAsync([safeMain, timelineOffsetSeconds,
+                                   updateTimelineOffset]() {
+    if (updateTimelineOffset) {
+      updateTimelineOffset(timelineOffsetSeconds);
+      return;
+    }
+
     if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
       view->updateHostAudioTimelineOffset(timelineOffsetSeconds);
   });

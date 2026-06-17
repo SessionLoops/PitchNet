@@ -410,21 +410,15 @@ void PitchNetAudioProcessor::processNonARAMode(
       NonAraCaptureController::FinalizeResult result;
       if (captureController->finalizeCapture(hostSampleRate, result) &&
           mainComponent) {
-        juce::Component::SafePointer<juce::Component> safeMain(
-            mainComponent->getComponent());
         auto controller = captureController;
-        juce::MessageManager::callAsync([safeMain, controller,
+        juce::MessageManager::callAsync([this, controller,
                                          samples = result.numSamples,
                                          sr = result.sampleRate]() mutable {
-          auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
-          if (!view)
-            return;
           if (!controller)
             return;
           auto trimmed = controller->copyCapturedAudio(samples);
           controller->onAnalysisDispatched();
-          view->setStatusMessage(TR("progress.analyzing"));
-          view->setHostAudio(trimmed, sr);
+          requestCapturedAudioAnalysis(trimmed, sr);
         });
       }
     }
@@ -474,21 +468,15 @@ void PitchNetAudioProcessor::processNonARAMode(
     NonAraCaptureController::FinalizeResult result;
     if (captureController->finalizeCapture(hostSampleRate, result) &&
         mainComponent) {
-      juce::Component::SafePointer<juce::Component> safeMain(
-          mainComponent->getComponent());
       auto controller = captureController;
-      juce::MessageManager::callAsync([safeMain, controller,
+      juce::MessageManager::callAsync([this, controller,
                                        samples = result.numSamples,
                                        sr = result.sampleRate]() mutable {
-        auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
-        if (!view)
-          return;
         if (!controller)
           return;
         auto trimmed = controller->copyCapturedAudio(samples);
         controller->onAnalysisDispatched();
-        view->setStatusMessage(TR("progress.analyzing"));
-        view->setHostAudio(trimmed, sr);
+        requestCapturedAudioAnalysis(trimmed, sr);
       });
     }
   }
@@ -516,12 +504,30 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
   if (mainComponent && araAnalysisReady && araAnalysisProjectSnapshot) {
     mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
     mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
+    if (auto *project = mainComponent->getProject()) {
+      project->getAudioData().timelineOffsetSeconds =
+          araAnalysisTimelineOffsetSeconds;
+      araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+      araAnalysisProjectJson =
+          juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+      if (araAnalysisController)
+        araAnalysisController->setProject(std::make_unique<Project>(*project));
+    }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
     mainComponent->hideAnalysisProgress();
   } else if (mainComponent && araAnalysisReady &&
              araAnalysisProjectJson.isNotEmpty()) {
     mainComponent->restoreProjectJson(araAnalysisProjectJson);
     mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
+    if (auto *project = mainComponent->getProject()) {
+      project->getAudioData().timelineOffsetSeconds =
+          araAnalysisTimelineOffsetSeconds;
+      araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+      araAnalysisProjectJson =
+          juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+      if (araAnalysisController)
+        araAnalysisController->setProject(std::make_unique<Project>(*project));
+    }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
     mainComponent->hideAnalysisProgress();
   } else if (mainComponent && araAnalysisLoading) {
@@ -597,11 +603,68 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
       });
 }
 
-void PitchNetAudioProcessor::requestAraProjectRender(const Project &project) {
+void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
+    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+  if (buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
+    return;
+
   if (!araAnalysisController)
     araAnalysisController = std::make_unique<EditorController>(false);
 
-  araAnalysisController->setProject(std::make_unique<Project>(project));
+  araAnalysisSourceKey = 0;
+  araAnalysisLoading = true;
+  araAnalysisReady = false;
+  araAnalysisTimelineOffsetSeconds = 0.0;
+  araAnalysisProjectSnapshot.reset();
+  araAnalysisProjectJson.clear();
+
+  if (mainComponent) {
+    mainComponent->setStatusMessage(TR("progress.analyzing"));
+    mainComponent->showAnalysisProgress(0.0);
+  }
+
+  araAnalysisController->setHostAudioAsync(
+      buffer, sampleRate,
+      [this](double progress, const juce::String &msg) {
+        juce::Component::SafePointer<juce::Component> safeMain(
+            mainComponent ? mainComponent->getComponent() : nullptr);
+        juce::MessageManager::callAsync([safeMain, progress, msg]() {
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
+            view->setStatusMessage(msg);
+            view->showAnalysisProgress(progress);
+          }
+        });
+      },
+      [this](const juce::AudioBuffer<float> &) {
+        if (!araAnalysisController)
+          return;
+
+        auto *project = araAnalysisController->getProject();
+        if (!project)
+          return;
+
+        araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+        araAnalysisProjectJson =
+            juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+        araAnalysisLoading = false;
+        araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
+
+        if (mainComponent && araAnalysisReady) {
+          mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+          mainComponent->bindRealtimeProcessor(realtimeProcessor);
+          mainComponent->hideAnalysisProgress();
+        } else if (mainComponent) {
+          mainComponent->hideAnalysisProgress();
+        }
+      });
+}
+
+void PitchNetAudioProcessor::requestPluginProjectRender(
+    const Project &projectToRender) {
+  if (!araAnalysisController)
+    araAnalysisController = std::make_unique<EditorController>(false);
+
+  araAnalysisController->setProject(std::make_unique<Project>(projectToRender));
 
   juce::Component::SafePointer<juce::Component> safeMain(
       mainComponent ? mainComponent->getComponent() : nullptr);
@@ -615,22 +678,26 @@ void PitchNetAudioProcessor::requestAraProjectRender(const Project &project) {
         });
       },
       [this](bool success) {
-        auto *project = araAnalysisController ? araAnalysisController->getProject()
-                                              : nullptr;
+        auto *renderedProject =
+            araAnalysisController ? araAnalysisController->getProject()
+                                  : nullptr;
 
-        if (success && project) {
-          project->getAudioData().timelineOffsetSeconds =
+        if (success && renderedProject) {
+          renderedProject->getAudioData().timelineOffsetSeconds =
               araAnalysisTimelineOffsetSeconds;
-          araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+          araAnalysisProjectSnapshot =
+              std::make_unique<Project>(*renderedProject);
           araAnalysisProjectJson =
-              juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+              juce::JSON::toString(
+                  ProjectSerializer::toJson(*renderedProject), false);
           araAnalysisReady = true;
         }
 
-        juce::Component::SafePointer<juce::Component> safeMain(
+        juce::Component::SafePointer<juce::Component> renderSafeMain(
             mainComponent ? mainComponent->getComponent() : nullptr);
-        juce::MessageManager::callAsync([this, safeMain, success]() {
-          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
+        juce::MessageManager::callAsync([this, renderSafeMain, success]() {
+          if (auto *view =
+                  dynamic_cast<IMainView *>(renderSafeMain.getComponent())) {
             if (success && araAnalysisProjectSnapshot) {
               view->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
               view->updateHostAudioTimelineOffset(
@@ -643,6 +710,33 @@ void PitchNetAudioProcessor::requestAraProjectRender(const Project &project) {
         });
       },
       araRenderPendingRerun, true);
+}
+
+void PitchNetAudioProcessor::updateAraTimelineOffset(
+    double timelineOffsetSeconds) {
+  araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
+
+  if (!mainComponent)
+    return;
+
+  mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
+
+  auto *project = mainComponent->getProject();
+  if (!project)
+    return;
+
+  project->getAudioData().timelineOffsetSeconds =
+      araAnalysisTimelineOffsetSeconds;
+  araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+  araAnalysisProjectJson =
+      juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+
+  if (!araAnalysisController)
+    araAnalysisController = std::make_unique<EditorController>(false);
+  araAnalysisController->setProject(std::make_unique<Project>(*project));
+
+  if (araAnalysisReady)
+    mainComponent->bindRealtimeProcessor(realtimeProcessor);
 }
 
 // ============================================================================

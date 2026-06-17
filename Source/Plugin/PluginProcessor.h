@@ -80,7 +80,10 @@ public:
                                 const juce::AudioBuffer<float> &buffer,
                                 double sampleRate,
                                 double timelineOffsetSeconds);
-  void requestAraProjectRender(const Project &project);
+  void requestPluginProjectRender(const Project &project);
+  void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
+                                    double sampleRate);
+  void updateAraTimelineOffset(double timelineOffsetSeconds);
 
   // ========== Host Transport Control ==========
 

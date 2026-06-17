@@ -114,6 +114,9 @@ public:
       std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &,
                          double, double)>
           requestAnalysis);
+  void setTimelineOffsetCallback(std::function<void(double)> callback) {
+    timelineOffsetCallback = std::move(callback);
+  }
 
   void setRealtimeProcessor(RealtimePitchProcessor *processor) {
     realtimeProcessor = processor;
@@ -157,6 +160,7 @@ private:
   std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
                      double)>
       requestAnalysisCallback;
+  std::function<void(double)> timelineOffsetCallback;
 
   std::shared_ptr<AnalysisState> analysisState =
       std::make_shared<AnalysisState>();
