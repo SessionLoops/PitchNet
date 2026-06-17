@@ -119,7 +119,7 @@ private:
   GAMEDetector *externalGAMEDetector = nullptr;
 
   bool useFCPE = true;
-  PitchDetectorType detectorType = PitchDetectorType::RMVPE;
+  PitchDetectorType detectorType = PitchDetectorType::FCPE;
   std::atomic<bool> cancelFlag{false};
   std::atomic<bool> isRunning{false};
   std::thread analysisThread;

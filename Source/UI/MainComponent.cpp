@@ -1398,6 +1398,12 @@ void MainComponent::resynthesizeIncremental()
   toolbar.setProgress(-1.0f);
   toolbar.setEnabled(false);
 
+  if (isPluginMode() && onRequestBackendRender)
+  {
+    onRequestBackendRender(*project);
+    return;
+  }
+
   juce::Component::SafePointer<MainComponent> safeThis(this);
   editorController->resynthesizeIncrementalAsync(
       *project,
@@ -1579,6 +1585,18 @@ void MainComponent::hideAnalysisProgress()
     analysisProgressPopup.setVisible(false);
   if (analysisBackdrop.isVisible())
     analysisBackdrop.setVisible(false);
+}
+
+void MainComponent::finishBackendRender(bool success)
+{
+  toolbar.setEnabled(true);
+  toolbar.hideProgress();
+
+  if (!success)
+    return;
+
+  pianoRoll.invalidateWaveformCache();
+  pianoRoll.repaint();
 }
 
 void MainComponent::showSettings()
@@ -2047,9 +2065,43 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
     auto json = juce::JSON::parse(jsonString);
     if (json.isObject())
     {
-      ProjectSerializer::fromJson(*project, json);
+      if (!ProjectSerializer::fromJson(*project, json))
+        return false;
+
+      pianoRoll.setProject(project);
+      pianoRollView.setProject(project);
+      parameterPanel.setProject(project);
+      toolbar.setTotalTime(project->getAudioData().getDuration());
+      toolbar.setTransportEnabled(true);
+      toolbar.setLoopEnabled(project->getLoopRange().enabled);
+      applyCachedHostLoopRange();
+      if (hasAnalyzedProject())
+        fitAnalyzedPitchRangeToView(*project);
+      repaint();
+      notifyProjectDataChanged();
       return true;
     }
+  }
+  return false;
+}
+
+bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
+{
+  if (auto *project = getProject())
+  {
+    *project = snapshot;
+    pianoRoll.setProject(project);
+    pianoRollView.setProject(project);
+    parameterPanel.setProject(project);
+    toolbar.setTotalTime(project->getAudioData().getDuration());
+    toolbar.setTransportEnabled(true);
+    toolbar.setLoopEnabled(project->getLoopRange().enabled);
+    applyCachedHostLoopRange();
+    if (hasAnalyzedProject())
+      fitAnalyzedPitchRangeToView(*project);
+    repaint();
+    notifyProjectDataChanged();
+    return true;
   }
   return false;
 }

@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+#include "../Audio/EditorController.h"
+#include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
 #include "PluginEditor.h"
@@ -59,6 +61,7 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
+  araAnalysisController = std::make_unique<EditorController>(false);
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() = default;
@@ -503,11 +506,156 @@ void PitchNetAudioProcessor::startCapture() {
 
 void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
 
+bool PitchNetAudioProcessor::attachCachedAraAnalysis(
+    std::uintptr_t sourceKey, double timelineOffsetSeconds) {
+  if (sourceKey == 0 || sourceKey != araAnalysisSourceKey)
+    return false;
+
+  araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
+
+  if (mainComponent && araAnalysisReady && araAnalysisProjectSnapshot) {
+    mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+    mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
+    mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    mainComponent->hideAnalysisProgress();
+  } else if (mainComponent && araAnalysisReady &&
+             araAnalysisProjectJson.isNotEmpty()) {
+    mainComponent->restoreProjectJson(araAnalysisProjectJson);
+    mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
+    mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    mainComponent->hideAnalysisProgress();
+  } else if (mainComponent && araAnalysisLoading) {
+    mainComponent->setStatusMessage(TR("progress.analyzing"));
+    mainComponent->showAnalysisProgress(0.0);
+  }
+
+  return araAnalysisReady || araAnalysisLoading;
+}
+
+void PitchNetAudioProcessor::requestAraSourceAnalysis(
+    std::uintptr_t sourceKey, const juce::AudioBuffer<float> &buffer,
+    double sampleRate, double timelineOffsetSeconds) {
+  if (sourceKey == 0 || buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
+    return;
+
+  if (attachCachedAraAnalysis(sourceKey, timelineOffsetSeconds))
+    return;
+
+  if (!araAnalysisController)
+    araAnalysisController = std::make_unique<EditorController>(false);
+
+  araAnalysisSourceKey = sourceKey;
+  araAnalysisLoading = true;
+  araAnalysisReady = false;
+  araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
+  araAnalysisProjectSnapshot.reset();
+  araAnalysisProjectJson.clear();
+
+  if (mainComponent)
+  {
+    mainComponent->setStatusMessage(TR("progress.analyzing"));
+    mainComponent->showAnalysisProgress(0.0);
+  }
+
+  araAnalysisController->setHostAudioAsync(
+      buffer, sampleRate,
+      [this](double progress, const juce::String &msg) {
+        juce::Component::SafePointer<juce::Component> safeMain(
+            mainComponent ? mainComponent->getComponent() : nullptr);
+        juce::MessageManager::callAsync([safeMain, progress, msg]() {
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
+            view->setStatusMessage(msg);
+            view->showAnalysisProgress(progress);
+          }
+        });
+      },
+      [this, sourceKey](const juce::AudioBuffer<float> &) {
+        if (sourceKey != araAnalysisSourceKey || !araAnalysisController)
+          return;
+
+        auto *project = araAnalysisController->getProject();
+        if (!project)
+          return;
+
+        project->getAudioData().timelineOffsetSeconds =
+            araAnalysisTimelineOffsetSeconds;
+        araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+        araAnalysisProjectJson =
+            juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+        araAnalysisLoading = false;
+        araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
+
+        if (mainComponent && araAnalysisReady) {
+          mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+          mainComponent->updateHostAudioTimelineOffset(
+              araAnalysisTimelineOffsetSeconds);
+          mainComponent->bindRealtimeProcessor(realtimeProcessor);
+          mainComponent->hideAnalysisProgress();
+        } else if (mainComponent) {
+          mainComponent->hideAnalysisProgress();
+        }
+      });
+}
+
+void PitchNetAudioProcessor::requestAraProjectRender(const Project &project) {
+  if (!araAnalysisController)
+    araAnalysisController = std::make_unique<EditorController>(false);
+
+  araAnalysisController->setProject(std::make_unique<Project>(project));
+
+  juce::Component::SafePointer<juce::Component> safeMain(
+      mainComponent ? mainComponent->getComponent() : nullptr);
+
+  araAnalysisController->resynthesizeIncrementalAsync(
+      *araAnalysisController->getProject(),
+      [safeMain](const juce::String &message) {
+        juce::MessageManager::callAsync([safeMain, message]() {
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+            view->setStatusMessage(message);
+        });
+      },
+      [this](bool success) {
+        auto *project = araAnalysisController ? araAnalysisController->getProject()
+                                              : nullptr;
+
+        if (success && project) {
+          project->getAudioData().timelineOffsetSeconds =
+              araAnalysisTimelineOffsetSeconds;
+          araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+          araAnalysisProjectJson =
+              juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+          araAnalysisReady = true;
+        }
+
+        juce::Component::SafePointer<juce::Component> safeMain(
+            mainComponent ? mainComponent->getComponent() : nullptr);
+        juce::MessageManager::callAsync([this, safeMain, success]() {
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
+            if (success && araAnalysisProjectSnapshot) {
+              view->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+              view->updateHostAudioTimelineOffset(
+                  araAnalysisTimelineOffsetSeconds);
+              view->bindRealtimeProcessor(realtimeProcessor);
+            }
+            view->finishBackendRender(success);
+            view->setStatusMessage({});
+          }
+        });
+      },
+      araRenderPendingRerun, true);
+}
+
 // ============================================================================
 // Editor Connection
 // ============================================================================
 
 void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
+  if (mc == nullptr && mainComponent != nullptr) {
+    auto projectJson = mainComponent->serializeProjectJson();
+    if (projectJson.isNotEmpty())
+      pendingStateJson = projectJson;
+  }
+
   mainComponent = mc;
   if (mc) {
     mc->bindRealtimeProcessor(realtimeProcessor);

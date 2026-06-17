@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <thread>
 
@@ -108,6 +109,11 @@ public:
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
+  void setAnalysisCallbacks(
+      std::function<bool(std::uintptr_t, double)> attachCachedAnalysis,
+      std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &,
+                         double, double)>
+          requestAnalysis);
 
   void setRealtimeProcessor(RealtimePitchProcessor *processor) {
     realtimeProcessor = processor;
@@ -147,6 +153,10 @@ private:
   IMainView *mainComponent = nullptr;
   juce::ARAAudioSource *currentAudioSource = nullptr;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
+  std::function<bool(std::uintptr_t, double)> attachCachedAnalysisCallback;
+  std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
+                     double)>
+      requestAnalysisCallback;
 
   std::shared_ptr<AnalysisState> analysisState =
       std::make_shared<AnalysisState>();

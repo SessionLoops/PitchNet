@@ -9,6 +9,8 @@
 #include <memory>
 
 class IMainView;
+class EditorController;
+class Project;
 
 /**
  * PitchNet Audio Processor
@@ -72,6 +74,13 @@ public:
   // Editor connection
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
+  bool attachCachedAraAnalysis(std::uintptr_t sourceKey,
+                               double timelineOffsetSeconds);
+  void requestAraSourceAnalysis(std::uintptr_t sourceKey,
+                                const juce::AudioBuffer<float> &buffer,
+                                double sampleRate,
+                                double timelineOffsetSeconds);
+  void requestAraProjectRender(const Project &project);
 
   // ========== Host Transport Control ==========
 
@@ -171,6 +180,14 @@ private:
   double hostSampleRate = 44100.0;
 
   juce::String pendingStateJson;
+  std::unique_ptr<EditorController> araAnalysisController;
+  std::uintptr_t araAnalysisSourceKey = 0;
+  bool araAnalysisLoading = false;
+  bool araAnalysisReady = false;
+  double araAnalysisTimelineOffsetSeconds = 0.0;
+  std::unique_ptr<Project> araAnalysisProjectSnapshot;
+  juce::String araAnalysisProjectJson;
+  std::atomic<bool> araRenderPendingRerun{false};
 
   // Non-ARA capture (Stage 2A): decoupled controller
   std::shared_ptr<NonAraCaptureController> captureController =

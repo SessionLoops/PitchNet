@@ -54,6 +54,7 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
               getSpecialisedDocumentController<PitchNetDocumentController>(
                   araDocController)) {
         pitchDocController->setRealtimeProcessor(nullptr);
+        pitchDocController->setAnalysisCallbacks(nullptr, nullptr);
         pitchDocController->setMainComponent(nullptr);
       }
     }
@@ -93,6 +94,21 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   pitchDocController->setMainComponent(mainView.get());
   pitchDocController->setRealtimeProcessor(
       &audioProcessor.getRealtimeProcessor());
+  pitchDocController->setAnalysisCallbacks(
+      [this](std::uintptr_t sourceKey, double timelineOffsetSeconds) {
+        return audioProcessor.attachCachedAraAnalysis(sourceKey,
+                                                      timelineOffsetSeconds);
+      },
+      [this](std::uintptr_t sourceKey,
+             const juce::AudioBuffer<float> &buffer, double sampleRate,
+             double timelineOffsetSeconds) {
+        audioProcessor.requestAraSourceAnalysis(sourceKey, buffer, sampleRate,
+                                                timelineOffsetSeconds);
+      });
+
+  mainView->setOnRequestBackendRender([this](const Project &project) {
+    audioProcessor.requestAraProjectRender(project);
+  });
 
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
     audioProcessor.requestHostPlayState(shouldPlay);
@@ -147,6 +163,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 }
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
+  mainView->setOnRequestBackendRender(nullptr);
+
   // Setup host transport control callbacks for non-ARA mode
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
     audioProcessor.requestHostPlayState(shouldPlay);

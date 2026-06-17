@@ -200,6 +200,15 @@ bool EditorController::isInferenceBusy() const
   return false;
 }
 
+bool EditorController::isSelectedPitchDetectorLoaded() const
+{
+  if (pitchDetectorType == PitchDetectorType::FCPE)
+    return fcpePitchDetector && fcpePitchDetector->isLoaded();
+  if (pitchDetectorType == PitchDetectorType::RMVPE)
+    return rmvpePitchDetector && rmvpePitchDetector->isLoaded();
+  return false;
+}
+
 void EditorController::requestCancelLoading()
 {
   cancelLoadingFlag = true;
@@ -359,6 +368,19 @@ void EditorController::setHostAudioAsync(
 
   loaderThread = std::thread([this, buffer, sampleRate, onProgress, onComplete, jobId]() mutable
                              {
+    if (cancelLoadingFlag.load() || hostAnalysisJobId.load() != jobId)
+    {
+      isLoadingAudio = false;
+      return;
+    }
+
+    if (!isSelectedPitchDetectorLoaded())
+    {
+      if (onProgress)
+        onProgress(0.05, TR("progress.loading"));
+      reloadInferenceModels(false);
+    }
+
     if (cancelLoadingFlag.load() || hostAnalysisJobId.load() != jobId)
     {
       isLoadingAudio = false;
@@ -533,9 +555,16 @@ void EditorController::resynthesizeIncrementalAsync(
   }
   if (!vocoder->isLoaded())
   {
-    if (onComplete)
-      onComplete(false);
-    return;
+    if (onProgress)
+      onProgress(TR("progress.loading_vocoder"));
+
+    auto modelPath = PlatformPaths::getVocoderModelFile();
+    if (!modelPath.exists() || !vocoder->loadModel(modelPath))
+    {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
   }
 
   if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())

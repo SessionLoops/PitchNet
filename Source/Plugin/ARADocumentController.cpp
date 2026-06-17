@@ -266,6 +266,15 @@ void PitchNetDocumentController::setMainComponent(IMainView *mc) {
   mainComponent = mc;
 }
 
+void PitchNetDocumentController::setAnalysisCallbacks(
+    std::function<bool(std::uintptr_t, double)> attachCachedAnalysis,
+    std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
+                       double)>
+        requestAnalysis) {
+  attachCachedAnalysisCallback = std::move(attachCachedAnalysis);
+  requestAnalysisCallback = std::move(requestAnalysis);
+}
+
 void PitchNetDocumentController::stopAnalysisThread() {
   if (analysisState)
     analysisState->cancel.store(true);
@@ -282,7 +291,21 @@ void PitchNetDocumentController::stopAnalysisThread() {
 
 void PitchNetDocumentController::processAudioSource(
     juce::ARAAudioSource *source) {
-  if (!mainComponent || !source)
+  if (!source)
+    return;
+
+  auto numSamples = static_cast<int>(source->getSampleCount());
+  auto numChannels = source->getChannelCount();
+  auto sourceSampleRate = source->getSampleRate();
+  const double timelineOffsetSeconds =
+      std::max(0.0, getTimelineOffsetSecondsForSource(source).value_or(0.0));
+  const auto sourceKey = reinterpret_cast<std::uintptr_t>(source);
+
+  if (attachCachedAnalysisCallback &&
+      attachCachedAnalysisCallback(sourceKey, timelineOffsetSeconds))
+    return;
+
+  if (numSamples <= 0 || numChannels <= 0 || sourceSampleRate <= 0)
     return;
 
   stopAnalysisThread();
@@ -291,33 +314,21 @@ void PitchNetDocumentController::processAudioSource(
   analysisState->cancel.store(false);
   const auto jobId = analysisState->jobId.fetch_add(1) + 1;
 
-  auto numSamples = static_cast<int>(source->getSampleCount());
-  auto numChannels = source->getChannelCount();
-  auto sourceSampleRate = source->getSampleRate();
-  const double timelineOffsetSeconds =
-      std::max(0.0, getTimelineOffsetSecondsForSource(source).value_or(0.0));
-
-  if (numSamples <= 0 || numChannels <= 0 || sourceSampleRate <= 0)
-    return;
-
-  juce::Component::SafePointer<juce::Component> safeMain(
-      mainComponent->getComponent());
   auto *sourcePtr = source;
   auto state = analysisState;
-  analysisThread = std::thread([safeMain, sourcePtr, state, jobId, numSamples,
+  auto requestAnalysis = requestAnalysisCallback;
+  analysisThread = std::thread([sourcePtr, state, jobId, numSamples,
                                 numChannels, sourceSampleRate,
-                                timelineOffsetSeconds]() mutable {
-    auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
-    if (!view)
-      return;
+                                timelineOffsetSeconds, sourceKey,
+                                requestAnalysis]() mutable {
     if (!state)
       return;
     if (state->cancel.load() || state->jobId.load() != jobId)
       return;
 
     juce::ARAAudioSourceReader reader(sourcePtr);
-    juce::AudioBuffer<float> buffer(numChannels, numSamples);
-    if (!reader.read(&buffer, 0, numSamples, 0, true, true))
+    juce::AudioBuffer<float> sourceBuffer(numChannels, numSamples);
+    if (!reader.read(&sourceBuffer, 0, numSamples, 0, true, true))
       return;
 
     const auto offsetSamples64 = static_cast<juce::int64>(
@@ -331,26 +342,24 @@ void PitchNetDocumentController::processAudioSource(
                                        offsetSamples + numSamples);
       shifted.clear();
       for (int ch = 0; ch < numChannels; ++ch)
-        shifted.copyFrom(ch, offsetSamples, buffer, ch, 0, numSamples);
-      buffer = std::move(shifted);
+        shifted.copyFrom(ch, offsetSamples, sourceBuffer, ch, 0, numSamples);
+      sourceBuffer = std::move(shifted);
     }
 
     if (state->cancel.load() || state->jobId.load() != jobId)
       return;
 
-    juce::MessageManager::callAsync([safeMain, buffer = std::move(buffer),
+    juce::MessageManager::callAsync([buffer = std::move(sourceBuffer),
                                      sourceSampleRate, timelineOffsetSeconds,
-                                     state, jobId]() mutable {
-      if (safeMain == nullptr)
-        return;
-      auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
-      if (!view)
-        return;
+                                     state, jobId, sourceKey,
+                                     requestAnalysis]() mutable {
       if (!state)
         return;
       if (state->jobId.load() != jobId)
         return;
-      view->setHostAudio(buffer, sourceSampleRate, timelineOffsetSeconds);
+      if (requestAnalysis)
+        requestAnalysis(sourceKey, buffer, sourceSampleRate,
+                        timelineOffsetSeconds);
     });
   });
 }
@@ -441,14 +450,18 @@ bool PitchNetDocumentController::processExistingAudioSources(
 
     if (getTimelineOffsetSecondsForSource(source).has_value()) {
       currentAudioSource = source;
-      processAudioSource(source);
+      if (mainComponent && mainComponent->hasAnalyzedProject())
+        updateAudioSourceTimelineOffset(source);
+      else
+        processAudioSource(source);
       return true;
     }
   }
 
   if (fallbackSource) {
     currentAudioSource = fallbackSource;
-    processAudioSource(fallbackSource);
+    if (!mainComponent || !mainComponent->hasAnalyzedProject())
+      processAudioSource(fallbackSource);
     return true;
   }
 

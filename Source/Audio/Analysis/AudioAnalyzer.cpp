@@ -118,16 +118,16 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
     extracted = true;
   }
 
-  // Fallback chain: RMVPE -> FCPE
+  // Fallback chain: FCPE -> RMVPE
   if (!extracted)
   {
-    if (isRMVPEAvailable())
-    {
-      extractF0WithRMVPE(audioData, targetFrames);
-    }
-    else if (isFCPEAvailable())
+    if (isFCPEAvailable())
     {
       extractF0WithFCPE(audioData, targetFrames);
+    }
+    else if (isRMVPEAvailable())
+    {
+      extractF0WithRMVPE(audioData, targetFrames);
     }
   }
 

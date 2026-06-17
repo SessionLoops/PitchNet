@@ -123,14 +123,22 @@ public:
   void bindRealtimeProcessor(RealtimePitchProcessor &processor) override;
   juce::String serializeProjectJson() const override;
   bool restoreProjectJson(const juce::String &json) override;
+  bool restoreProjectSnapshot(const Project &project) override;
   void setStatusMessage(const juce::String &message) override {
     toolbar.setStatusMessage(message);
   }
+  void showAnalysisProgress(double progress) override;
+  void hideAnalysisProgress() override;
+  void finishBackendRender(bool success) override;
   void setOnProjectDataChanged(std::function<void()> callback) override {
     onProjectDataChanged = std::move(callback);
   }
   void setOnPitchEditFinished(std::function<void()> callback) override {
     onPitchEditFinished = std::move(callback);
+  }
+  void setOnRequestBackendRender(
+      std::function<void(const Project &)> callback) override {
+    onRequestBackendRender = std::move(callback);
   }
   void setOnRequestHostPlayState(
       std::function<void(bool)> callback) override {
@@ -166,6 +174,7 @@ public:
   std::function<void()>
       onPitchEditFinished; // Called when pitch editing is finished
                            // (Melodyne-style: triggers real-time update)
+  std::function<void(const Project &)> onRequestBackendRender;
 
   // Plugin mode - request host transport control (optional; only works if host
   // supports it)
@@ -223,8 +232,6 @@ private:
       std::function<void()> onComplete = nullptr);
   void segmentIntoNotes();
   void segmentIntoNotes(Project &targetProject);
-  void showAnalysisProgress(double progress);
-  void hideAnalysisProgress();
 
   void saveProject();
 

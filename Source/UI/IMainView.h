@@ -18,9 +18,15 @@ public:
   virtual void bindRealtimeProcessor(RealtimePitchProcessor &processor) = 0;
   virtual juce::String serializeProjectJson() const = 0;
   virtual bool restoreProjectJson(const juce::String &json) = 0;
+  virtual bool restoreProjectSnapshot(const Project &project) = 0;
   virtual void setStatusMessage(const juce::String &message) = 0;
+  virtual void showAnalysisProgress(double progress) = 0;
+  virtual void hideAnalysisProgress() = 0;
+  virtual void finishBackendRender(bool success) = 0;
   virtual void setOnProjectDataChanged(std::function<void()> callback) = 0;
   virtual void setOnPitchEditFinished(std::function<void()> callback) = 0;
+  virtual void setOnRequestBackendRender(
+      std::function<void(const Project &)> callback) = 0;
   virtual void setOnRequestHostPlayState(
       std::function<void(bool)> callback) = 0;
   virtual void setOnRequestHostStop(std::function<void()> callback) = 0;

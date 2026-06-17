@@ -237,6 +237,7 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
       }
       catch (const Ort::Exception &e)
       {
+        LOG("FCPE DirectML provider setup failed: " + juce::String(e.what()));
       }
     }
     else
@@ -254,6 +255,7 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
       }
       catch (const Ort::Exception &e)
       {
+        LOG("FCPE CUDA provider setup failed: " + juce::String(e.what()));
       }
     }
     else
@@ -267,6 +269,7 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
       }
       catch (const Ort::Exception &e)
       {
+        LOG("FCPE CoreML provider setup failed: " + juce::String(e.what()));
       }
     }
     else
@@ -322,11 +325,15 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
   }
   catch (const Ort::Exception &e)
   {
+    LOG("FCPE model load failed for " + modelPath.getFullPathName() + ": " +
+        juce::String(e.what()));
     loaded = false;
     return false;
   }
   catch (const std::exception &e)
   {
+    LOG("FCPE model load failed for " + modelPath.getFullPathName() + ": " +
+        juce::String(e.what()));
     loaded = false;
     return false;
   }

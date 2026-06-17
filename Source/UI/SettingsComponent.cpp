@@ -172,7 +172,7 @@ SettingsComponent::SettingsComponent(
   pitchDetectorComboBox.addItem("RMVPE", 1);
   pitchDetectorComboBox.addItem("FCPE", 2);
   pitchDetectorComboBox.setSelectedId(
-      1, juce::dontSendNotification); // Default to RMVPE
+      2, juce::dontSendNotification); // Default to FCPE
   pitchDetectorComboBox.addListener(this);
   pitchDetectorComboBox.setLookAndFeel(&settingsLookAndFeel);
   addAndMakeVisible(pitchDetectorComboBox);

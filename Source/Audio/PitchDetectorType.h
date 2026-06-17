@@ -7,8 +7,8 @@
  */
 enum class PitchDetectorType
 {
-    RMVPE = 0,  // Default - Robust Model for Vocal Pitch Estimation
-    FCPE        // Fast Context-aware Pitch Estimation
+    RMVPE = 0,  // Robust Model for Vocal Pitch Estimation
+    FCPE        // Default - Fast Context-aware Pitch Estimation
 };
 
 /**
@@ -20,7 +20,7 @@ inline const char* pitchDetectorTypeToString(PitchDetectorType type)
     {
         case PitchDetectorType::RMVPE: return "RMVPE";
         case PitchDetectorType::FCPE:  return "FCPE";
-        default: return "RMVPE";
+        default: return "FCPE";
     }
 }
 
@@ -30,5 +30,5 @@ inline const char* pitchDetectorTypeToString(PitchDetectorType type)
 inline PitchDetectorType stringToPitchDetectorType(const juce::String& str)
 {
     if (str == "FCPE")  return PitchDetectorType::FCPE;
-    return PitchDetectorType::RMVPE;  // Default
+    return PitchDetectorType::FCPE;  // Default
 }

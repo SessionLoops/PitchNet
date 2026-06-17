@@ -84,7 +84,7 @@ private:
   // Settings
   juce::String device = "CPU";
   int threads = 0;
-  PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
+  PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   int gpuDeviceId = 0;
   juce::String language = "auto";
 

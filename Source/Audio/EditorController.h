@@ -105,6 +105,7 @@ public:
 
 private:
   GPUProvider getProviderFromDevice(const juce::String &device) const;
+  bool isSelectedPitchDetectorLoaded() const;
 
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;
@@ -121,7 +122,7 @@ private:
   juce::File centTablePath;
   juce::File rmvpeModelPath;
   juce::File gameModelDir;
-  PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
+  PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   juce::String device = "CPU";
   int deviceId = 0;
 
