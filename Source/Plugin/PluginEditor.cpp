@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 #include "HostCompatibility.h"
+#include "../Models/Project.h"
+#include "../Utils/Constants.h"
 
 #if JucePlugin_Enable_ARA
 #include "ARADocumentController.h"
@@ -113,12 +115,49 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
+  mainView->setOnRequestBackendPreview(
+      [pitchDocController](const Project &project, int startFrame,
+                           int endFrame) {
+        const auto &audioData = project.getAudioData();
+        const double sampleRate =
+            audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
+                                     : static_cast<double>(SAMPLE_RATE);
+        pitchDocController->startPreviewRange(
+            static_cast<double>(startFrame) * HOP_SIZE / sampleRate,
+            static_cast<double>(endFrame) * HOP_SIZE / sampleRate);
+      });
+  mainView->setOnStopBackendPreview(
+      [pitchDocController]() { pitchDocController->stopPreview(); });
 
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
+    if (auto *araEditorView = getARAEditorView()) {
+      if (auto *araDocController = araEditorView->getDocumentController()) {
+        if (auto *playbackController =
+                araDocController->getHostPlaybackController()) {
+          if (shouldPlay)
+            playbackController->requestStartPlayback();
+          else
+            playbackController->requestStopPlayback();
+          return;
+        }
+      }
+    }
+
     audioProcessor.requestHostPlayState(shouldPlay);
   });
 
   mainView->setOnRequestHostStop([this]() {
+    if (auto *araEditorView = getARAEditorView()) {
+      if (auto *araDocController = araEditorView->getDocumentController()) {
+        if (auto *playbackController =
+                araDocController->getHostPlaybackController()) {
+          playbackController->requestStopPlayback();
+          playbackController->requestSetPlaybackPosition(0.0);
+          return;
+        }
+      }
+    }
+
     audioProcessor.requestHostStop();
   });
 
@@ -170,6 +209,9 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
+  mainView->setOnRequestBackendPreview(
+      [](const Project &, int, int) {});
+  mainView->setOnStopBackendPreview([]() {});
 
   // Setup host transport control callbacks for non-ARA mode
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {

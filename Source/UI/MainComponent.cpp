@@ -483,30 +483,67 @@ void MainComponent::timerCallback()
 
     if (previewRegionActive)
     {
-      if (position >= previewRegionEndTime)
+      if (isPluginMode())
+      {
+        // ARA editor preview is driven locally below; host stopped/position
+        // updates should not interrupt or move that preview.
+      }
+      else if (position >= previewRegionEndTime)
+      {
         finishPreviewRegion(true);
+        return;
+      }
       else
+      {
         pianoRoll.setPreviewPlaybackPosition(position);
-      return;
+        return;
+      }
     }
 
-    pianoRoll.setCursorTime(position);
-    toolbar.setCurrentTime(position);
-
-    // Follow playback: scroll to keep cursor visible
-    if (isPlaying && toolbar.isFollowPlayback())
+    if (!previewRegionActive || !isPluginMode())
     {
-      float cursorX =
-          static_cast<float>(position * pianoRoll.getPixelsPerSecond());
-      float viewWidth = static_cast<float>(pianoRoll.getVisibleContentWidth());
-      float scrollX = static_cast<float>(pianoRoll.getScrollX());
+      pianoRoll.setCursorTime(position);
+      toolbar.setCurrentTime(position);
 
-      // If cursor is outside visible area, scroll to center it
-      if (cursorX < scrollX || cursorX > scrollX + viewWidth)
+      // Follow playback: scroll to keep cursor visible
+      if (isPlaying && toolbar.isFollowPlayback())
       {
-        double newScrollX =
-            std::max(0.0, static_cast<double>(cursorX - viewWidth * 0.3f));
-        pianoRoll.setScrollX(newScrollX);
+        float cursorX =
+            static_cast<float>(position * pianoRoll.getPixelsPerSecond());
+        float viewWidth =
+            static_cast<float>(pianoRoll.getVisibleContentWidth());
+        float scrollX = static_cast<float>(pianoRoll.getScrollX());
+
+        // If cursor is outside visible area, scroll to center it
+        if (cursorX < scrollX || cursorX > scrollX + viewWidth)
+        {
+          double newScrollX =
+              std::max(0.0, static_cast<double>(cursorX - viewWidth * 0.3f));
+          pianoRoll.setScrollX(newScrollX);
+        }
+      }
+    }
+  }
+
+  if (previewRegionActive && isPluginMode())
+  {
+    const double elapsedSeconds =
+        (juce::Time::getMillisecondCounterHiRes() -
+         previewRegionWallClockStartMs) /
+        1000.0;
+    const double previewDuration =
+        std::max(0.0, previewRegionEndTime - previewRegionStartTime);
+    if (previewDuration > 0.0)
+    {
+      if (elapsedSeconds >= previewDuration)
+      {
+        pianoRoll.setPreviewPlaybackPosition(previewRegionEndTime);
+        finishPreviewRegion(true);
+      }
+      else
+      {
+        pianoRoll.setPreviewPlaybackPosition(previewRegionStartTime +
+                                            elapsedSeconds);
       }
     }
   }
@@ -1299,15 +1336,31 @@ void MainComponent::previewNoteRegion(int startFrame, int endFrame)
     return;
 
   if (isPluginMode())
+  {
+    previewRegionActive = true;
+    previewRegionStartTime = startTime;
+    previewRegionEndTime = endTime;
+    previewRegionReturnTime = pianoRoll.getCursorTime();
+    previewRegionWallClockStartMs = juce::Time::getMillisecondCounterHiRes();
+    previewRegionWasProjectPlaying = isPlaying;
+    pianoRoll.setPreviewPlaybackState(true, startFrame, endFrame);
+    pianoRoll.setPreviewPlaybackPosition(startTime);
+
+    if (auto *project = getProject(); project && onRequestBackendPreview)
+      onRequestBackendPreview(*project, startFrame, endFrame);
+
     return;
+  }
 
   auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr;
   if (!audioEngine)
     return;
 
   previewRegionActive = true;
+  previewRegionStartTime = startTime;
   previewRegionEndTime = endTime;
   previewRegionReturnTime = pianoRoll.getCursorTime();
+  previewRegionWallClockStartMs = juce::Time::getMillisecondCounterHiRes();
   previewRegionWasProjectPlaying = isPlaying;
   pianoRoll.setPreviewPlaybackState(true, startFrame, endFrame);
   pianoRoll.setPreviewPlaybackPosition(startTime);
@@ -1325,8 +1378,20 @@ void MainComponent::finishPreviewRegion(bool restorePosition)
   const bool shouldResumeProjectPlayback =
       previewRegionWasProjectPlaying && restorePosition;
   previewRegionActive = false;
+  previewRegionStartTime = 0.0;
+  previewRegionWallClockStartMs = 0.0;
   previewRegionWasProjectPlaying = false;
   pianoRoll.setPreviewPlaybackState(false, 0, 0);
+
+  if (isPluginMode())
+  {
+    if (onStopBackendPreview)
+      onStopBackendPreview();
+
+    juce::ignoreUnused(shouldResumeProjectPlayback);
+    hasPendingCursorUpdate.store(false);
+    return;
+  }
 
   if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
   {
@@ -2109,6 +2174,9 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
 void MainComponent::notifyHostStopped()
 {
   if (!isPluginMode())
+    return;
+
+  if (previewRegionActive)
     return;
 
   updateHostPlaybackState(false);

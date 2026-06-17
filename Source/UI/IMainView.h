@@ -27,6 +27,9 @@ public:
   virtual void setOnPitchEditFinished(std::function<void()> callback) = 0;
   virtual void setOnRequestBackendRender(
       std::function<void(const Project &)> callback) = 0;
+  virtual void setOnRequestBackendPreview(
+      std::function<void(const Project &, int, int)> callback) = 0;
+  virtual void setOnStopBackendPreview(std::function<void()> callback) = 0;
   virtual void setOnRequestHostPlayState(
       std::function<void(bool)> callback) = 0;
   virtual void setOnRequestHostStop(std::function<void()> callback) = 0;

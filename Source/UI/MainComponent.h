@@ -140,6 +140,13 @@ public:
       std::function<void(const Project &)> callback) override {
     onRequestBackendRender = std::move(callback);
   }
+  void setOnRequestBackendPreview(
+      std::function<void(const Project &, int, int)> callback) override {
+    onRequestBackendPreview = std::move(callback);
+  }
+  void setOnStopBackendPreview(std::function<void()> callback) override {
+    onStopBackendPreview = std::move(callback);
+  }
   void setOnRequestHostPlayState(
       std::function<void(bool)> callback) override {
     onRequestHostPlayState = std::move(callback);
@@ -175,6 +182,8 @@ public:
       onPitchEditFinished; // Called when pitch editing is finished
                            // (Melodyne-style: triggers real-time update)
   std::function<void(const Project &)> onRequestBackendRender;
+  std::function<void(const Project &, int, int)> onRequestBackendPreview;
+  std::function<void()> onStopBackendPreview;
 
   // Plugin mode - request host transport control (optional; only works if host
   // supports it)
@@ -245,6 +254,8 @@ private:
   bool previewRegionActive = false;
   double previewRegionEndTime = 0.0;
   double previewRegionReturnTime = 0.0;
+  double previewRegionStartTime = 0.0;
+  double previewRegionWallClockStartMs = 0.0;
   bool previewRegionWasProjectPlaying = false;
 
   // New modular components

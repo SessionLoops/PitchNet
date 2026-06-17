@@ -15,6 +15,12 @@
 class IMainView;
 class PitchNetDocumentController;
 
+struct AraPreviewState {
+  std::atomic<double> previewStartTime{0.0};
+  std::atomic<double> previewEndTime{0.0};
+  std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
+};
+
 /**
  * ARA Playback Renderer
  * Reads audio from ARA sources and applies pitch correction
@@ -81,6 +87,42 @@ private:
   int numChannels = 2;
 };
 
+class PitchNetEditorRenderer : public juce::ARAEditorRenderer {
+public:
+  using ARAEditorRenderer::ARAEditorRenderer;
+
+  void prepareToPlay(double sampleRateIn, int maxBlockSize, int numChannelsIn,
+                     juce::AudioProcessor::ProcessingPrecision,
+                     AlwaysNonRealtime alwaysNonRealtime) override;
+  void releaseResources() override;
+  bool processBlock(
+      juce::AudioBuffer<float> &buffer, juce::AudioProcessor::Realtime realtime,
+      const juce::AudioPlayHead::PositionInfo &positionInfo) noexcept override;
+
+private:
+  void renderPreviewBuffer(juce::ARAPlaybackRegion *region,
+                           double previewStartTime, double previewEndTime);
+  bool readPlaybackRangeIntoBuffer(juce::Range<double> playbackRange,
+                                   juce::ARAPlaybackRegion *region,
+                                   juce::AudioBuffer<float> &buffer);
+  void writePreviewOnce(juce::AudioBuffer<float> &buffer);
+  bool readFromARARegions(juce::AudioBuffer<float> &buffer,
+                          juce::int64 timeInSamples, int numSamples);
+  PitchNetDocumentController *getDocController() const;
+
+  std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
+      readers;
+  std::unique_ptr<juce::AudioBuffer<float>> previewBuffer;
+  juce::Range<juce::int64> previewLoopRange;
+  juce::int64 previewLoopPosition = 0;
+  double lastPreviewStartTime = -1.0;
+  double lastPreviewEndTime = -1.0;
+  juce::ARAPlaybackRegion *lastPreviewRegion = nullptr;
+  bool wasPreviewing = false;
+  double sampleRate = 44100.0;
+  int numChannels = 2;
+};
+
 /**
  * ARA Document Controller
  * Manages ARA document lifecycle and audio source analysis
@@ -125,9 +167,13 @@ public:
     return realtimeProcessor;
   }
   bool processExistingAudioSources(juce::ARADocument *document);
+  void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
+  void stopPreview();
+  const AraPreviewState &getPreviewState() const { return previewState; }
 
 protected:
   juce::ARAPlaybackRenderer *doCreatePlaybackRenderer() noexcept override;
+  juce::ARAEditorRenderer *doCreateEditorRenderer() override;
   bool doRestoreObjectsFromStream(
       juce::ARAInputStream &input,
       const juce::ARARestoreObjectsFilter *filter) noexcept override;
@@ -155,7 +201,9 @@ private:
 
   IMainView *mainComponent = nullptr;
   juce::ARAAudioSource *currentAudioSource = nullptr;
+  juce::ARAPlaybackRegion *currentPlaybackRegion = nullptr;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
+  AraPreviewState previewState;
   std::function<bool(std::uintptr_t, double)> attachCachedAnalysisCallback;
   std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
                      double)>
