@@ -4,6 +4,7 @@
 #include "../JuceHeader.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <thread>
@@ -33,20 +34,48 @@ private:
   struct HostUiSyncState {
     std::atomic<double> latestSeconds{0.0};
     std::atomic<bool> latestPlaying{false};
+    std::atomic<double> latestLoopStartSeconds{0.0};
+    std::atomic<double> latestLoopEndSeconds{0.0};
+    std::atomic<bool> latestLoopEnabled{false};
+    std::atomic<bool> latestLoopHasRange{false};
     std::atomic<bool> posPending{false};
     std::atomic<bool> playStatePending{false};
     std::atomic<bool> stoppedPending{false};
+    std::atomic<bool> loopPending{false};
+  };
+
+  struct HostLoopState {
+    double startSeconds = 0.0;
+    double endSeconds = 0.0;
+    bool enabled = false;
+    bool hasRange = false;
+
+    bool operator==(const HostLoopState &other) const {
+      constexpr double epsilon = 0.0001;
+      return std::abs(startSeconds - other.startSeconds) < epsilon &&
+             std::abs(endSeconds - other.endSeconds) < epsilon &&
+             enabled == other.enabled && hasRange == other.hasRange;
+    }
+
+    bool operator!=(const HostLoopState &other) const {
+      return !(*this == other);
+    }
   };
 
   bool readFromARARegions(juce::AudioBuffer<float> &buffer,
                           juce::int64 timeInSamples, int numSamples);
   PitchNetDocumentController *getDocController() const;
+  void syncHostLoopState(PitchNetDocumentController *docCtrl,
+                         const juce::AudioPlayHead::PositionInfo &posInfo,
+                         bool shouldSyncUi);
 
   std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
       readers;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
+  HostLoopState previousLoopState;
+  bool hasPreviousLoopState = false;
   double sampleRate = 44100.0;
   int numChannels = 2;
 };
@@ -77,7 +106,7 @@ public:
       juce::ARAPlaybackRegion *playbackRegion) override;
   void reanalyze();
 
-  void setMainComponent(IMainView *mc) { mainComponent = mc; }
+  void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
 
   void setRealtimeProcessor(RealtimePitchProcessor *processor) {

@@ -116,6 +116,7 @@ bool PitchNetPlaybackRenderer::processBlock(
 
   // Get document controller for accessing MainComponent
   auto *docCtrl = getDocController();
+  syncHostLoopState(docCtrl, posInfo, shouldSyncUi);
 
   auto notifyHostStopped = [&]() {
     if (shouldSyncUi && docCtrl && docCtrl->getMainComponent()) {
@@ -195,16 +196,74 @@ bool PitchNetPlaybackRenderer::processBlock(
   return true;
 }
 
+void PitchNetPlaybackRenderer::syncHostLoopState(
+    PitchNetDocumentController *docCtrl,
+    const juce::AudioPlayHead::PositionInfo &posInfo, bool shouldSyncUi) {
+  if (!shouldSyncUi || !docCtrl || !docCtrl->getMainComponent())
+    return;
+
+  HostLoopState loopState;
+  loopState.enabled = posInfo.getIsLooping();
+
+  if (auto loopPoints = posInfo.getLoopPoints()) {
+    if (auto bpm = posInfo.getBpm()) {
+      if (*bpm > 0.0) {
+        loopState.startSeconds = loopPoints->ppqStart * 60.0 / *bpm;
+        loopState.endSeconds = loopPoints->ppqEnd * 60.0 / *bpm;
+        loopState.hasRange = loopState.endSeconds > loopState.startSeconds;
+      }
+    }
+  }
+
+  if (hasPreviousLoopState && loopState == previousLoopState)
+    return;
+
+  previousLoopState = loopState;
+  hasPreviousLoopState = true;
+  auto state = hostUiSyncState;
+  state->latestLoopStartSeconds.store(loopState.startSeconds);
+  state->latestLoopEndSeconds.store(loopState.endSeconds);
+  state->latestLoopEnabled.store(loopState.enabled);
+  state->latestLoopHasRange.store(loopState.hasRange);
+
+  if (!state->loopPending.exchange(true)) {
+    juce::Component::SafePointer<juce::Component> safeMain(
+        docCtrl->getMainComponent()->getComponent());
+    juce::MessageManager::callAsync([safeMain, state]() {
+      state->loopPending.store(false);
+      if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
+        view->updateHostLoopRange(
+            state->latestLoopStartSeconds.load(),
+            state->latestLoopEndSeconds.load(),
+            state->latestLoopEnabled.load(),
+            state->latestLoopHasRange.load());
+      }
+    });
+  }
+}
+
 //==============================================================================
 // PitchNetDocumentController
 //==============================================================================
 
 PitchNetDocumentController::~PitchNetDocumentController() {
+  mainComponent = nullptr;
+  realtimeProcessor = nullptr;
+  currentAudioSource = nullptr;
   stopAnalysisThread();
   if (analysisThread.joinable())
     analysisThread.join();
   if (analysisJoinerThread.joinable())
     analysisJoinerThread.join();
+}
+
+void PitchNetDocumentController::setMainComponent(IMainView *mc) {
+  if (mc == nullptr && mainComponent != nullptr) {
+    stopAnalysisThread();
+    currentAudioSource = nullptr;
+  }
+
+  mainComponent = mc;
 }
 
 void PitchNetDocumentController::stopAnalysisThread() {

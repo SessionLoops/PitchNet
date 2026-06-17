@@ -143,6 +143,10 @@ public:
       std::function<void(double)> callback) override {
     onRequestHostSeek = std::move(callback);
   }
+  void setOnRequestHostLoopRange(
+      std::function<void(double, double, bool, bool)> callback) override {
+    onRequestHostLoopRange = std::move(callback);
+  }
   juce::Point<int> getSavedWindowSize() const;
 
   // Check if ARA mode is active.
@@ -168,6 +172,9 @@ public:
   std::function<void(bool shouldPlay)> onRequestHostPlayState;
   std::function<void()> onRequestHostStop;
   std::function<void(double timeInSeconds)> onRequestHostSeek;
+  std::function<void(double startSeconds, double endSeconds, bool enabled,
+                     bool hasRange)>
+      onRequestHostLoopRange;
 
   // Plugin mode - update playback position from host
   void updatePlaybackPosition(double timeSeconds) override;
@@ -204,6 +211,7 @@ private:
 
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;
+  void applyCachedHostLoopRange();
 
   void loadAudioFile(const juce::File &file);
   void clearProjectForNewLoad();
@@ -276,6 +284,12 @@ private:
   // Cursor update throttling
   std::atomic<double> pendingCursorTime{0.0};
   std::atomic<bool> hasPendingCursorUpdate{false};
+
+  bool hasCachedHostLoopRange = false;
+  double cachedHostLoopStartSeconds = 0.0;
+  double cachedHostLoopEndSeconds = 0.0;
+  bool cachedHostLoopEnabled = false;
+  bool cachedHostLoopHasRange = false;
   juce::int64 lastCursorUpdateTime = 0;
 
 #if JUCE_MAC

@@ -47,6 +47,19 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
 }
 
 PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
+#if JucePlugin_Enable_ARA
+  if (auto *araEditorView = getARAEditorView()) {
+    if (auto *araDocController = araEditorView->getDocumentController()) {
+      if (auto *pitchDocController = juce::ARADocumentControllerSpecialisation::
+              getSpecialisedDocumentController<PitchNetDocumentController>(
+                  araDocController)) {
+        pitchDocController->setRealtimeProcessor(nullptr);
+        pitchDocController->setMainComponent(nullptr);
+      }
+    }
+  }
+#endif
+
   removeMouseListener(this);
   audioProcessor.getTransportController().clearCallbacks();
   audioProcessor.setMainComponent(nullptr);
@@ -90,10 +103,10 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   });
 
   mainView->setOnRequestHostSeek([this](double timeInSeconds) {
-    if (auto *editorView = getARAEditorView()) {
-      if (auto *docController = editorView->getDocumentController()) {
+    if (auto *araEditorView = getARAEditorView()) {
+      if (auto *araDocController = araEditorView->getDocumentController()) {
         if (auto *playbackController =
-                docController->getHostPlaybackController()) {
+                araDocController->getHostPlaybackController()) {
           playbackController->requestSetPlaybackPosition(timeInSeconds);
           return;
         }
@@ -102,6 +115,26 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 
     audioProcessor.requestHostSeek(timeInSeconds);
   });
+
+  mainView->setOnRequestHostLoopRange(
+      [this](double startSeconds, double endSeconds, bool enabled,
+             bool hasRange) {
+        if (auto *araEditorView = getARAEditorView()) {
+          if (auto *araDocController = araEditorView->getDocumentController()) {
+            if (auto *playbackController =
+                    araDocController->getHostPlaybackController()) {
+              if (hasRange && endSeconds > startSeconds)
+                playbackController->requestSetCycleRange(
+                    startSeconds, endSeconds - startSeconds);
+
+              playbackController->requestEnableCycle(enabled);
+              return;
+            }
+          }
+        }
+
+        juce::ignoreUnused(startSeconds, endSeconds, enabled, hasRange);
+      });
 
   setupHostTransportUiSync(true);
 
@@ -126,6 +159,8 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setOnRequestHostSeek([this](double timeInSeconds) {
     audioProcessor.requestHostSeek(timeInSeconds);
   });
+
+  mainView->setOnRequestHostLoopRange(nullptr);
 
   setupHostTransportUiSync(true);
 }
@@ -163,6 +198,36 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
           view->updateHostLoopRange(loop.loopStartSeconds, loop.loopEndSeconds,
                                     loop.isLoopEnabled, loop.hasLoopPoints);
       });
+
+  syncHostLoopSnapshotFromPlayHead();
+}
+
+void PitchNetAudioProcessorEditor::syncHostLoopSnapshotFromPlayHead() {
+  auto *playHead = audioProcessor.getPlayHead();
+  if (!playHead)
+    return;
+
+  auto posInfo = playHead->getPosition();
+  if (!posInfo.hasValue())
+    return;
+
+  double startSeconds = 0.0;
+  double endSeconds = 0.0;
+  bool hasRange = false;
+
+  if (auto loopPoints = posInfo->getLoopPoints()) {
+    if (auto bpm = posInfo->getBpm()) {
+      if (*bpm > 0.0) {
+        startSeconds = loopPoints->ppqStart * 60.0 / *bpm;
+        endSeconds = loopPoints->ppqEnd * 60.0 / *bpm;
+        hasRange = endSeconds > startSeconds;
+      }
+    }
+  }
+
+  if (auto *view = mainView.get())
+    view->updateHostLoopRange(startSeconds, endSeconds,
+                              posInfo->getIsLooping(), hasRange);
 }
 
 void PitchNetAudioProcessorEditor::setupCallbacks() {

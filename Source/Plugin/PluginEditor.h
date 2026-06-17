@@ -29,6 +29,7 @@ private:
     void setupNonARAMode();
     void setupCallbacks();
     void setupHostTransportUiSync(bool includePlayState);
+    void syncHostLoopSnapshotFromPlayHead();
     void requestMainViewKeyboardFocus();
     void requestMainViewKeyboardFocusAsync();
 

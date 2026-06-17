@@ -44,8 +44,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Initialize new modular components
   fileManager = std::make_unique<AudioFileManager>();
-  menuHandler = std::make_unique<MenuHandler>();
   settingsManager = std::make_unique<SettingsManager>();
+  if (!isPluginMode())
+    menuHandler = std::make_unique<MenuHandler>();
 
   LOG("MainComponent: loading ONNX models...");
   editorController->setPitchDetectorType(
@@ -55,14 +56,17 @@ MainComponent::MainComponent(bool enableAudioDevice)
   editorController->reloadInferenceModels(false);
 
   LOG("MainComponent: wiring up components...");
-  menuHandler->setUndoManager(undoManager.get());
-  menuHandler->setCommandManager(commandManager.get());
-  menuHandler->setPluginMode(isPluginMode());
   recentFiles = settingsManager->getRecentFiles();
-  refreshRecentFilesMenu();
-  menuHandler->setOnRecentFileSelected(
-      [this](const juce::File &file)
-      { openRecentFile(file); });
+  if (menuHandler)
+  {
+    menuHandler->setUndoManager(undoManager.get());
+    menuHandler->setCommandManager(commandManager.get());
+    menuHandler->setPluginMode(false);
+    refreshRecentFilesMenu();
+    menuHandler->setOnRecentFileSelected(
+        [this](const juce::File &file)
+        { openRecentFile(file); });
+  }
   settingsManager->setVocoder(editorController->getVocoder());
 
   // Load vocoder settings
@@ -90,12 +94,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRollView.setShowSegmentsDebug(
       settingsManager->getShowSegmentsDebug());
 
-  // Add child components - macOS uses native menu, others use in-app menu bar
+  // Add child components - standalone uses menus; plugin instances do not.
 #if JUCE_MAC
 #else
-  menuBar.setModel(menuHandler.get());
-  menuBar.setLookAndFeel(&menuBarLookAndFeel);
-  addAndMakeVisible(menuBar);
+  if (!isPluginMode() && menuHandler)
+  {
+    menuBar.setModel(menuHandler.get());
+    menuBar.setLookAndFeel(&menuBarLookAndFeel);
+    addAndMakeVisible(menuBar);
+  }
 #endif
   addAndMakeVisible(toolbar);
   addAndMakeVisible(workspace);
@@ -144,6 +151,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
       const bool hasValidRange = range.endSeconds > range.startSeconds;
       toolbar.setLoopEnabled(enabled);
       pianoRoll.repaint();
+
+      if (isPluginMode() && onRequestHostLoopRange)
+        onRequestHostLoopRange(range.startSeconds, range.endSeconds,
+                               range.enabled, hasValidRange);
 
       if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
       {
@@ -197,6 +208,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     toolbar.setLoopEnabled(range.enabled);
     pianoRoll.repaint();
+    if (isPluginMode() && onRequestHostLoopRange)
+      onRequestHostLoopRange(range.startSeconds, range.endSeconds,
+                             range.enabled,
+                             range.endSeconds > range.startSeconds);
+
     if (auto *audioEngine = editorController
                                 ? editorController->getAudioEngine()
                                 : nullptr)
@@ -314,12 +330,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   commandManager->registerAllCommandsForTarget(this);
   commandManager->setFirstCommandTarget(this);
 
-  // Connect MenuHandler to ApplicationCommandManager for automatic menu updates
-  // This is required for macOS native menu bar to reflect command states
-  menuHandler->setApplicationCommandManagerToWatch(commandManager.get());
+  if (menuHandler)
+    menuHandler->setApplicationCommandManagerToWatch(commandManager.get());
 
 #if JUCE_MAC
-  if (!isPluginMode())
+  if (!isPluginMode() && menuHandler)
   {
     macExtraAppleMenuItems = menuHandler->getMacExtraAppleMenu();
     juce::MenuBarModel::setMacMainMenu(menuHandler.get(), &macExtraAppleMenuItems);
@@ -368,10 +383,14 @@ bool MainComponent::isInferenceBusy() const
 MainComponent::~MainComponent()
 {
 #if JUCE_MAC
-  juce::MenuBarModel::setMacMainMenu(nullptr);
+  if (!isPluginMode() && menuHandler)
+    juce::MenuBarModel::setMacMainMenu(nullptr);
 #else
-  menuBar.setModel(nullptr);
-  menuBar.setLookAndFeel(nullptr);
+  if (!isPluginMode() && menuHandler)
+  {
+    menuBar.setModel(nullptr);
+    menuBar.setLookAndFeel(nullptr);
+  }
 #endif
   removeKeyListener(commandManager->getKeyMappings());
   stopTimer();
@@ -419,7 +438,8 @@ void MainComponent::resized()
 
 #if !JUCE_MAC
   // Menu bar at top for non-mac platforms
-  menuBar.setBounds(bounds.removeFromTop(24));
+  if (!isPluginMode() && menuHandler)
+    menuBar.setBounds(bounds.removeFromTop(24));
 #endif
 
   // Toolbar
@@ -1726,6 +1746,7 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
         safeThis->parameterPanel.setProject(project);
         safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
         safeThis->toolbar.setTransportEnabled(true);
+        safeThis->applyCachedHostLoopRange();
 
         safeThis->fitAnalyzedPitchRangeToView(*project);
 
@@ -1953,24 +1974,40 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 void MainComponent::updateHostLoopRange(double startSeconds, double endSeconds,
                                         bool enabled, bool hasRange)
 {
+  hasCachedHostLoopRange = true;
+  cachedHostLoopStartSeconds = startSeconds;
+  cachedHostLoopEndSeconds = endSeconds;
+  cachedHostLoopEnabled = enabled;
+  cachedHostLoopHasRange = hasRange;
+
+  applyCachedHostLoopRange();
+}
+
+void MainComponent::applyCachedHostLoopRange()
+{
+  if (!hasCachedHostLoopRange)
+    return;
+
   auto *project = getProject();
   if (!project)
     return;
 
-  if (hasRange && endSeconds > startSeconds)
+  if (cachedHostLoopHasRange &&
+      cachedHostLoopEndSeconds > cachedHostLoopStartSeconds)
   {
-    project->setLoopRange(startSeconds, endSeconds);
-    project->setLoopEnabled(enabled);
+    project->setLoopRange(cachedHostLoopStartSeconds,
+                          cachedHostLoopEndSeconds);
+    project->setLoopEnabled(cachedHostLoopEnabled);
   }
   else
   {
-    if (hasRange)
+    if (cachedHostLoopHasRange)
       project->clearLoopRange();
     else
       project->setLoopEnabled(false);
   }
 
-  toolbar.setLoopEnabled(enabled);
+  toolbar.setLoopEnabled(cachedHostLoopEnabled);
   pianoRoll.repaint();
 }
 
