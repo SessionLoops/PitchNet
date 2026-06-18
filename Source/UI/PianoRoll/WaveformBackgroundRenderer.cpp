@@ -46,43 +46,58 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   if (visibleWidth <= 0 || visibleArea.getHeight() <= 0)
     return;
 
-  int startSample = static_cast<int>(std::floor(
-      scrollX * static_cast<double>(audioData.sampleRate) / pixelsPerSecond));
-  int endSample = static_cast<int>(std::ceil(
-      (scrollX + visibleWidth) * static_cast<double>(audioData.sampleRate) /
-      pixelsPerSecond));
+  const double samplesPerPixel =
+      static_cast<double>(audioData.sampleRate) / pixelsPerSecond;
+  const double waveformStartX = -scrollX;
+  const double waveformEndX =
+      static_cast<double>(numSamples) / samplesPerPixel - scrollX;
+  const int firstPixel = juce::jlimit(
+      0, visibleWidth, static_cast<int>(std::floor(waveformStartX)));
+  const int lastPixel = juce::jlimit(
+      0, visibleWidth, static_cast<int>(std::ceil(waveformEndX)));
 
-  startSample = std::max(0, std::min(startSample, numSamples - 1));
-  endSample = std::max(startSample + 1, std::min(endSample, numSamples));
-
-  const auto displayEnvelope = VisualWaveformEnvelope::build(
-      samples, numSamples, startSample, endSample, visibleWidth,
-      static_cast<float>(visibleWidth), audioData.sampleRate, pixelsPerSecond);
-
-  waveformPath.startNewSubPath(0.0f, centerY);
-
-  // Top half
-  for (int px = 0; px < visibleWidth; ++px)
+  if (lastPixel > firstPixel)
   {
-    const float y =
-        centerY -
-        displayEnvelope[static_cast<size_t>(px)] * waveformHeight * 0.5f;
-    waveformPath.lineTo(static_cast<float>(px), y);
+    // Map only the portion of the viewport covered by real waveform samples.
+    // Clamping the sample range and then drawing it across visibleWidth would
+    // stretch a short waveform to the right edge of the viewport.
+    const int startSample = juce::jlimit(
+        0, numSamples - 1,
+        static_cast<int>(std::floor((scrollX + firstPixel) * samplesPerPixel)));
+    const int endSample = juce::jlimit(
+        startSample + 1, numSamples,
+        static_cast<int>(std::ceil((scrollX + lastPixel) * samplesPerPixel)));
+    const int pointCount = lastPixel - firstPixel;
+
+    const auto displayEnvelope = VisualWaveformEnvelope::build(
+        samples, numSamples, startSample, endSample, pointCount,
+        static_cast<float>(pointCount), audioData.sampleRate, pixelsPerSecond);
+
+    waveformPath.startNewSubPath(static_cast<float>(firstPixel), centerY);
+
+    // Top half
+    for (int px = 0; px < pointCount; ++px)
+    {
+      const float y =
+          centerY -
+          displayEnvelope[static_cast<size_t>(px)] * waveformHeight * 0.5f;
+      waveformPath.lineTo(static_cast<float>(firstPixel + px), y);
+    }
+
+    // Bottom half (reverse)
+    for (int px = pointCount - 1; px >= 0; --px)
+    {
+      const float y =
+          centerY +
+          displayEnvelope[static_cast<size_t>(px)] * waveformHeight * 0.5f;
+      waveformPath.lineTo(static_cast<float>(firstPixel + px), y);
+    }
+
+    waveformPath.closeSubPath();
+
+    cacheGraphics.setColour(juce::Colours::white.withAlpha(0.05f));
+    cacheGraphics.fillPath(waveformPath);
   }
-
-  // Bottom half (reverse)
-  for (int px = visibleWidth - 1; px >= 0; --px)
-  {
-    const float y =
-        centerY +
-        displayEnvelope[static_cast<size_t>(px)] * waveformHeight * 0.5f;
-    waveformPath.lineTo(static_cast<float>(px), y);
-  }
-
-  waveformPath.closeSubPath();
-
-  cacheGraphics.setColour(juce::Colours::white.withAlpha(0.05f));
-  cacheGraphics.fillPath(waveformPath);
 
   cachedScrollX = scrollX;
   cachedPixelsPerSecond = pixelsPerSecond;

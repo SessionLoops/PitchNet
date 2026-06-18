@@ -36,6 +36,12 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
                            : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   if (duration <= 0.0f)
     duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  // The ruler describes the visible canvas, not only the loaded audio. Keep
+  // bar/time markers visible across empty space after a short region.
+  duration = std::max(
+      duration,
+      static_cast<float>((scrollX + timelineArea.getWidth()) /
+                         pixelsPerSecond));
   g.setFont(TimecodeFont::getBoldFont(12.0f));
 
   if (params.displayMode == TimelineDisplayMode::Beats)
@@ -201,6 +207,9 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
                            : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   if (duration <= 0.0f)
     duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  duration = std::max(
+      duration,
+      static_cast<float>((scrollX + loopArea.getWidth()) / pixelsPerSecond));
   if (params.displayMode == TimelineDisplayMode::Beats)
   {
     const double beatSeconds = params.beatSeconds;

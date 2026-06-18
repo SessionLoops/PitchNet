@@ -480,7 +480,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
       const auto shadowBounds =
           getHighlightedShadowBounds(note, x, y, renderedWidth, w, h);
-      const float labelY = shadowBounds.toFloat().getY() - labelHeight;
+      const float labelY =
+          shadowBounds.toFloat().getY() - labelHeight + 5.0f;
 
       g.setColour(juce::Colour(0xFF2E2E2Du));
       g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);

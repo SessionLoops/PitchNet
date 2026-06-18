@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <thread>
 
 #if JucePlugin_Enable_ARA
@@ -152,14 +151,14 @@ public:
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
   void setAnalysisCallbacks(
-      std::function<bool(std::uintptr_t, double)> attachCachedAnalysis,
+      std::function<bool(
+          std::uintptr_t, double,
+          const std::vector<std::pair<double, double>> &)>
+          attachCachedAnalysis,
       std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &,
-                         double, double)>
+                         double, double,
+                         const std::vector<std::pair<double, double>> &)>
           requestAnalysis);
-  void setTimelineOffsetCallback(std::function<void(double)> callback) {
-    timelineOffsetCallback = std::move(callback);
-  }
-
   void setRealtimeProcessor(RealtimePitchProcessor *processor) {
     realtimeProcessor = processor;
   }
@@ -167,6 +166,9 @@ public:
     return realtimeProcessor;
   }
   bool processExistingAudioSources(juce::ARADocument *document);
+  bool processPlaybackRegions(
+      const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
+      double projectSampleRate);
   void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
   void stopPreview();
   const AraPreviewState &getPreviewState() const { return previewState; }
@@ -182,15 +184,10 @@ protected:
       const juce::ARAStoreObjectsFilter *filter) noexcept override;
 
 private:
-  void processAudioSource(juce::ARAAudioSource *source);
-  void updateAudioSourceTimelineOffset(
-      juce::ARAAudioSource *source,
-      juce::ARAPlaybackRegion *excludedRegion = nullptr);
+  void processDocument(juce::ARADocument *document,
+                       juce::ARAPlaybackRegion *excludedRegion = nullptr,
+                       juce::ARAAudioSource *excludedSource = nullptr);
   void clearMainComponentHostAudio();
-  std::optional<double>
-  getTimelineOffsetSecondsForSource(
-      juce::ARAAudioSource *source,
-      juce::ARAPlaybackRegion *excludedRegion = nullptr) const;
 
   void stopAnalysisThread();
 
@@ -201,15 +198,19 @@ private:
 
   IMainView *mainComponent = nullptr;
   juce::ARAAudioSource *currentAudioSource = nullptr;
+  juce::ARADocument *currentDocument = nullptr;
+  juce::ARARegionSequence *currentRegionSequence = nullptr;
   juce::ARAPlaybackRegion *currentPlaybackRegion = nullptr;
+  double analysisTimelineSampleRate = 0.0;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
   AraPreviewState previewState;
-  std::function<bool(std::uintptr_t, double)> attachCachedAnalysisCallback;
+  std::function<bool(std::uintptr_t, double,
+                     const std::vector<std::pair<double, double>> &)>
+      attachCachedAnalysisCallback;
   std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
-                     double)>
+                     double,
+                     const std::vector<std::pair<double, double>> &)>
       requestAnalysisCallback;
-  std::function<void(double)> timelineOffsetCallback;
-
   std::shared_ptr<AnalysisState> analysisState =
       std::make_shared<AnalysisState>();
   std::thread analysisThread;

@@ -76,6 +76,7 @@ public:
     void setZoom(float pixelsPerSecond); // Update zoom slider without triggering callback
     void setLoopEnabled(bool enabled);
     void setParametersVisible(bool visible);
+    void setUndoRedoEnabled(bool undoEnabled, bool redoEnabled);
     bool isFollowPlayback() const { return followPlayback; }
     bool isLoopEnabled() const { return loopEnabled; }
 
@@ -97,6 +98,8 @@ public:
     std::function<void(float)> onZoomChanged;
     std::function<void(EditMode)> onEditModeChanged;
     std::function<void(bool)> onToggleLoop;
+    std::function<void()> onUndo;
+    std::function<void()> onRedo;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing
@@ -119,7 +122,9 @@ private:
     ToolButton selectModeButton{"Select"};
     ToolButton splitModeButton{"Split"};
     ToolButton followButton{"Follow"};
-    ToolButton parametersButton{"Parameters"};
+    Button undoButton;
+    Button redoButton;
+    ToggleButton parametersButton;
     juce::Rectangle<int> toolContainerBounds;    // For drawing container background
     juce::Rectangle<int> transportCapsuleBounds; // For drawing transport capsule background
     juce::Rectangle<int> timeCapsuleBounds;      // For drawing centered time capsule

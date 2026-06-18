@@ -7,6 +7,68 @@
 #include <limits>
 #include <utility>
 
+namespace {
+bool readPlaybackRegionIntoBlock(
+    juce::ARAPlaybackRegion *region, juce::ARAAudioSourceReader &reader,
+    double outputSampleRate, juce::int64 blockStartSample,
+    juce::AudioBuffer<float> &buffer) {
+  if (!region || !region->getAudioModification() || outputSampleRate <= 0.0)
+    return false;
+
+  auto *source = region->getAudioModification()->getAudioSource();
+  if (!source || source->getSampleRate() <= 0.0)
+    return false;
+
+  const juce::Range<double> blockRange(
+      static_cast<double>(blockStartSample) / outputSampleRate,
+      static_cast<double>(blockStartSample + buffer.getNumSamples()) /
+          outputSampleRate);
+  const auto intersection =
+      juce::Range<double>(region->getStartInPlaybackTime(),
+                          region->getEndInPlaybackTime())
+          .getIntersectionWith(blockRange);
+  if (intersection.isEmpty())
+    return false;
+
+  const double sourceRate = source->getSampleRate();
+  const auto sourceStart = region->getStartInAudioModificationSamples() +
+      static_cast<juce::int64>(std::llround(
+          (intersection.getStart() - region->getStartInPlaybackTime()) *
+          sourceRate));
+  const int outputStart = static_cast<int>(std::llround(
+      (intersection.getStart() - blockRange.getStart()) * outputSampleRate));
+  const int outputLength = std::min(
+      buffer.getNumSamples() - outputStart,
+      static_cast<int>(std::llround(intersection.getLength() *
+                                    outputSampleRate)));
+  if (outputStart < 0 || outputLength <= 0)
+    return false;
+
+  const int sourceChannels = source->getChannelCount();
+  if (juce::approximatelyEqual(sourceRate, outputSampleRate))
+    return reader.read(&buffer, outputStart, outputLength, sourceStart, true,
+                       sourceChannels > 1);
+
+  const double ratio = sourceRate / outputSampleRate;
+  const int sourceLength =
+      std::max(1, static_cast<int>(std::ceil(outputLength * ratio)) + 16);
+  juce::AudioBuffer<float> sourceBuffer(buffer.getNumChannels(), sourceLength);
+  sourceBuffer.clear();
+  if (!reader.read(&sourceBuffer, 0, sourceLength, sourceStart, true,
+                   sourceChannels > 1))
+    return false;
+
+  for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+    juce::LagrangeInterpolator interpolator;
+    interpolator.process(
+        ratio, sourceBuffer.getReadPointer(
+                   std::min(ch, sourceBuffer.getNumChannels() - 1)),
+        buffer.getWritePointer(ch, outputStart), outputLength);
+  }
+  return true;
+}
+} // namespace
+
 //==============================================================================
 // PitchNetPlaybackRenderer
 //==============================================================================
@@ -48,59 +110,32 @@ void PitchNetPlaybackRenderer::releaseResources() {
 bool PitchNetPlaybackRenderer::readFromARARegions(
     juce::AudioBuffer<float> &buffer, juce::int64 timeInSamples,
     int numSamples) {
+  buffer.clear();
   bool didRender = false;
-  auto blockRange =
-      juce::Range<juce::int64>::withStartAndLength(timeInSamples, numSamples);
 
   for (auto *region : getPlaybackRegions()) {
-    auto playbackRange = region->getSampleRange(
-        sampleRate, juce::ARAPlaybackRegion::IncludeHeadAndTail::no);
-    auto renderRange = blockRange.getIntersectionWith(playbackRange);
-
-    if (renderRange.isEmpty())
+    if (!region || !region->getAudioModification())
       continue;
 
-    // Get modification range
-    juce::Range<juce::int64> modRange{
-        region->getStartInAudioModificationSamples(),
-        region->getEndInAudioModificationSamples()};
-    auto modOffset = modRange.getStart() - playbackRange.getStart();
-    renderRange = renderRange.getIntersectionWith(
-        modRange.movedToStartAt(playbackRange.getStart()));
-
-    if (renderRange.isEmpty())
-      continue;
-
-    // Get reader
     auto *source = region->getAudioModification()->getAudioSource();
-    auto it = readers.find(const_cast<juce::ARAAudioSource *>(source));
+    if (!source)
+      continue;
+    auto it = readers.find(source);
     if (it == readers.end())
+      it = readers
+               .emplace(source,
+                        std::make_unique<juce::ARAAudioSourceReader>(source))
+               .first;
+
+    tempBuffer->clear();
+    if (!readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
+                                     timeInSamples, *tempBuffer))
       continue;
 
-    int samplesToRead = static_cast<int>(renderRange.getLength());
-    int bufferOffset =
-        static_cast<int>(renderRange.getStart() - blockRange.getStart());
-    auto sourceStart = renderRange.getStart() + modOffset;
-
-    auto &readBuffer = didRender ? *tempBuffer : buffer;
-    if (!it->second->read(&readBuffer, bufferOffset, samplesToRead, sourceStart,
-                          true, true))
-      continue;
-
-    if (didRender) {
-      // Mix with existing
-      for (int ch = 0; ch < numChannels; ++ch)
-        buffer.addFrom(ch, bufferOffset, *tempBuffer, ch, bufferOffset,
-                       samplesToRead);
-    } else {
-      // Clear areas outside render range
-      if (bufferOffset > 0)
-        buffer.clear(0, bufferOffset);
-      int endOffset = bufferOffset + samplesToRead;
-      if (endOffset < numSamples)
-        buffer.clear(endOffset, numSamples - endOffset);
-      didRender = true;
-    }
+    for (int ch = 0; ch < std::min(buffer.getNumChannels(),
+                                   tempBuffer->getNumChannels()); ++ch)
+      buffer.addFrom(ch, 0, *tempBuffer, ch, 0, numSamples);
+    didRender = true;
   }
 
   return didRender;
@@ -390,26 +425,8 @@ bool PitchNetEditorRenderer::readFromARARegions(
     int numSamples) {
   buffer.clear();
   bool didRender = false;
-  auto blockRange =
-      juce::Range<juce::int64>::withStartAndLength(timeInSamples, numSamples);
-
   for (auto *region : getPlaybackRegions()) {
     if (!region || !region->getAudioModification())
-      continue;
-
-    auto playbackRange = region->getSampleRange(
-        sampleRate, juce::ARAPlaybackRegion::IncludeHeadAndTail::no);
-    auto renderRange = blockRange.getIntersectionWith(playbackRange);
-    if (renderRange.isEmpty())
-      continue;
-
-    juce::Range<juce::int64> modRange{
-        region->getStartInAudioModificationSamples(),
-        region->getEndInAudioModificationSamples()};
-    auto modOffset = modRange.getStart() - playbackRange.getStart();
-    renderRange = renderRange.getIntersectionWith(
-        modRange.movedToStartAt(playbackRange.getStart()));
-    if (renderRange.isEmpty())
       continue;
 
     auto *source = region->getAudioModification()->getAudioSource();
@@ -422,20 +439,14 @@ bool PitchNetEditorRenderer::readFromARARegions(
     if (it == readers.end())
       continue;
 
-    const int samplesToRead = static_cast<int>(renderRange.getLength());
-    const int bufferOffset =
-        static_cast<int>(renderRange.getStart() - blockRange.getStart());
-    const auto sourceStart = renderRange.getStart() + modOffset;
-
     juce::AudioBuffer<float> regionBuffer(buffer.getNumChannels(), numSamples);
     regionBuffer.clear();
-    if (!it->second->read(&regionBuffer, bufferOffset, samplesToRead,
-                          sourceStart, true, true))
+    if (!readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
+                                     timeInSamples, regionBuffer))
       continue;
 
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-      buffer.addFrom(ch, bufferOffset, regionBuffer, ch, bufferOffset,
-                     samplesToRead);
+      buffer.addFrom(ch, 0, regionBuffer, ch, 0, numSamples);
     didRender = true;
   }
 
@@ -576,9 +587,13 @@ void PitchNetDocumentController::setMainComponent(IMainView *mc) {
 }
 
 void PitchNetDocumentController::setAnalysisCallbacks(
-    std::function<bool(std::uintptr_t, double)> attachCachedAnalysis,
+    std::function<bool(
+        std::uintptr_t, double,
+        const std::vector<std::pair<double, double>> &)>
+        attachCachedAnalysis,
     std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
-                       double)>
+                       double,
+                       const std::vector<std::pair<double, double>> &)>
         requestAnalysis) {
   attachCachedAnalysisCallback = std::move(attachCachedAnalysis);
   requestAnalysisCallback = std::move(requestAnalysis);
@@ -598,23 +613,106 @@ void PitchNetDocumentController::stopAnalysisThread() {
   }
 }
 
-void PitchNetDocumentController::processAudioSource(
-    juce::ARAAudioSource *source) {
-  if (!source)
+void PitchNetDocumentController::processDocument(
+    juce::ARADocument *document, juce::ARAPlaybackRegion *excludedRegion,
+    juce::ARAAudioSource *excludedSource) {
+  if (!document)
     return;
 
-  auto numSamples = static_cast<int>(source->getSampleCount());
-  auto numChannels = source->getChannelCount();
-  auto sourceSampleRate = source->getSampleRate();
-  const double timelineOffsetSeconds =
-      std::max(0.0, getTimelineOffsetSecondsForSource(source).value_or(0.0));
-  const auto sourceKey = reinterpret_cast<std::uintptr_t>(source);
+  struct RegionRead {
+    juce::ARAAudioSource *source = nullptr;
+    double playbackStart = 0.0;
+    double modificationStart = 0.0;
+    double duration = 0.0;
+  };
+
+  std::vector<RegionRead> regions;
+  std::vector<std::pair<double, double>> playbackRegionRanges;
+  double timelineStart = std::numeric_limits<double>::max();
+  double timelineEnd = 0.0;
+  double compositeSampleRate = analysisTimelineSampleRate;
+  int compositeChannels = 0;
+  std::uintptr_t arrangementKey = static_cast<std::uintptr_t>(1469598103934665603ull);
+  auto hashValue = [&arrangementKey](std::uint64_t value) {
+    arrangementKey ^= static_cast<std::uintptr_t>(value);
+    arrangementKey *= static_cast<std::uintptr_t>(1099511628211ull);
+  };
+
+  for (auto *source : document->getAudioSources<juce::ARAAudioSource>()) {
+    if (!source || source == excludedSource || source->getSampleRate() <= 0.0 ||
+        source->getChannelCount() <= 0)
+      continue;
+
+    for (auto *modification : source->getAudioModifications()) {
+      if (!modification)
+        continue;
+      for (auto *region : modification->getPlaybackRegions()) {
+        if (!region || region == excludedRegion)
+          continue;
+        if (currentRegionSequence &&
+            region->getRegionSequence() != currentRegionSequence)
+          continue;
+
+        const double start = region->getStartInPlaybackTime();
+        const double end = region->getEndInPlaybackTime();
+        if (end <= start)
+          continue;
+
+        regions.push_back({source, start,
+                           region->getStartInAudioModificationTime(),
+                           end - start});
+        playbackRegionRanges.emplace_back(std::max(0.0, start), end);
+        timelineStart = std::min(timelineStart, start);
+        timelineEnd = std::max(timelineEnd, end);
+        if (analysisTimelineSampleRate <= 0.0)
+          compositeSampleRate = std::max(compositeSampleRate,
+                                         source->getSampleRate());
+        compositeChannels = std::max(compositeChannels,
+                                     source->getChannelCount());
+
+        hashValue(reinterpret_cast<std::uintptr_t>(source));
+        hashValue(static_cast<std::uint64_t>(
+            std::llround(region->getStartInAudioModificationTime() *
+                         1000000.0)));
+        hashValue(static_cast<std::uint64_t>(
+            std::llround((end - start) * 1000000.0)));
+      }
+    }
+  }
+
+  if (regions.empty() || compositeSampleRate <= 0.0 ||
+      compositeChannels <= 0) {
+    clearMainComponentHostAudio();
+    return;
+  }
+
+  // The project timeline cannot display negative time. Crop any part of a
+  // region before zero, while retaining the exact spacing between regions.
+  timelineStart = std::max(0.0, timelineStart);
+  const double timelineOffsetSeconds = timelineStart;
+  const auto compositeSamples64 = static_cast<juce::int64>(std::ceil(
+      std::max(0.0, timelineEnd - timelineStart) * compositeSampleRate));
+  if (compositeSamples64 <= 0 ||
+      compositeSamples64 > std::numeric_limits<int>::max())
+    return;
+
+  // Include the layout in the cache identity. A source pointer alone is not
+  // sufficient: trimming, splitting, or repeating a source changes the audio
+  // that must be analysed.
+  // Absolute DAW placement is deliberately excluded: moving the complete
+  // arrangement only changes its timeline offset, not its analysed content.
+  for (const auto &region : regions)
+    hashValue(static_cast<std::uint64_t>(std::llround(
+        (region.playbackStart - timelineStart) * 1000000.0)));
+  hashValue(static_cast<std::uint64_t>(
+      std::llround(compositeSampleRate * 1000.0)));
+  hashValue(static_cast<std::uint64_t>(regions.size()));
+  if (arrangementKey == 0)
+    arrangementKey = 1;
 
   if (attachCachedAnalysisCallback &&
-      attachCachedAnalysisCallback(sourceKey, timelineOffsetSeconds))
-    return;
-
-  if (numSamples <= 0 || numChannels <= 0 || sourceSampleRate <= 0)
+      attachCachedAnalysisCallback(arrangementKey, timelineOffsetSeconds,
+                                   playbackRegionRanges))
     return;
 
   stopAnalysisThread();
@@ -622,84 +720,121 @@ void PitchNetDocumentController::processAudioSource(
     analysisState = std::make_shared<AnalysisState>();
   analysisState->cancel.store(false);
   const auto jobId = analysisState->jobId.fetch_add(1) + 1;
-
-  auto *sourcePtr = source;
   auto state = analysisState;
   auto requestAnalysis = requestAnalysisCallback;
-  analysisThread = std::thread([sourcePtr, state, jobId, numSamples,
-                                numChannels, sourceSampleRate,
-                                timelineOffsetSeconds, sourceKey,
-                                requestAnalysis]() mutable {
-    if (!state)
-      return;
-    if (state->cancel.load() || state->jobId.load() != jobId)
-      return;
+  const int compositeSamples = static_cast<int>(compositeSamples64);
 
-    juce::ARAAudioSourceReader reader(sourcePtr);
-    juce::AudioBuffer<float> sourceBuffer(numChannels, numSamples);
-    if (!reader.read(&sourceBuffer, 0, numSamples, 0, true, true))
-      return;
+  analysisThread = std::thread(
+      [regions = std::move(regions), state, jobId, compositeSamples,
+       compositeChannels, compositeSampleRate, timelineStart,
+       timelineOffsetSeconds, arrangementKey,
+       playbackRegionRanges = std::move(playbackRegionRanges),
+       requestAnalysis]() mutable {
+        if (!state || state->cancel.load() || state->jobId.load() != jobId)
+          return;
 
-    const auto offsetSamples64 = static_cast<juce::int64>(
-        std::llround(timelineOffsetSeconds * sourceSampleRate));
-    if (offsetSamples64 > 0 &&
-        offsetSamples64 <=
-            static_cast<juce::int64>(std::numeric_limits<int>::max()) -
-                static_cast<juce::int64>(numSamples)) {
-      const int offsetSamples = static_cast<int>(offsetSamples64);
-      juce::AudioBuffer<float> shifted(numChannels,
-                                       offsetSamples + numSamples);
-      shifted.clear();
-      for (int ch = 0; ch < numChannels; ++ch)
-        shifted.copyFrom(ch, offsetSamples, sourceBuffer, ch, 0, numSamples);
-      sourceBuffer = std::move(shifted);
-    }
+        juce::AudioBuffer<float> composite(compositeChannels,
+                                           compositeSamples);
+        composite.clear();
 
-    if (state->cancel.load() || state->jobId.load() != jobId)
-      return;
+        for (const auto &region : regions) {
+          if (state->cancel.load() || state->jobId.load() != jobId)
+            return;
 
-    juce::MessageManager::callAsync([buffer = std::move(sourceBuffer),
-                                     sourceSampleRate, timelineOffsetSeconds,
-                                     state, jobId, sourceKey,
-                                     requestAnalysis]() mutable {
-      if (!state)
-        return;
-      if (state->jobId.load() != jobId)
-        return;
-      if (requestAnalysis)
-        requestAnalysis(sourceKey, buffer, sourceSampleRate,
-                        timelineOffsetSeconds);
-    });
-  });
-}
+          const double visibleStart = std::max(region.playbackStart,
+                                               timelineStart);
+          const double visibleEnd = region.playbackStart + region.duration;
+          if (visibleEnd <= visibleStart)
+            continue;
 
-void PitchNetDocumentController::updateAudioSourceTimelineOffset(
-    juce::ARAAudioSource *source, juce::ARAPlaybackRegion *excludedRegion) {
-  if (!mainComponent || !source)
-    return;
+          const int outputStart = static_cast<int>(std::llround(
+              (visibleStart - timelineStart) * compositeSampleRate));
+          const int outputLength = std::min(
+              compositeSamples - outputStart,
+              static_cast<int>(std::llround(
+                  (visibleEnd - visibleStart) * compositeSampleRate)));
+          if (outputStart < 0 || outputLength <= 0)
+            continue;
 
-  const auto timelineOffset =
-      getTimelineOffsetSecondsForSource(source, excludedRegion);
-  if (!timelineOffset.has_value()) {
-    clearMainComponentHostAudio();
-    return;
-  }
+          const double sourceRate = region.source->getSampleRate();
+          const auto sourceStart = static_cast<juce::int64>(std::llround(
+              (region.modificationStart + visibleStart -
+               region.playbackStart) * sourceRate));
+          const auto availableSourceSamples =
+              std::max<juce::int64>(0, region.source->getSampleCount() -
+                                           sourceStart);
+          const int renderLength = std::min(
+              outputLength, static_cast<int>(std::floor(
+                                availableSourceSamples *
+                                compositeSampleRate / sourceRate)));
+          if (renderLength <= 0)
+            continue;
+          const int sourceLength = static_cast<int>(std::min<juce::int64>(
+              availableSourceSamples,
+              std::max(1, static_cast<int>(std::ceil(
+                              renderLength * sourceRate /
+                              compositeSampleRate)) + 2)));
+          if (sourceLength <= 0)
+            continue;
+          juce::AudioBuffer<float> sourceBuffer(compositeChannels,
+                                                 sourceLength);
+          sourceBuffer.clear();
+          juce::ARAAudioSourceReader reader(region.source);
+          if (!reader.read(&sourceBuffer, 0, sourceLength, sourceStart, true,
+                           region.source->getChannelCount() > 1))
+            continue;
 
-  const double timelineOffsetSeconds = std::max(0.0, *timelineOffset);
+          juce::AudioBuffer<float> rendered(compositeChannels, renderLength);
+          if (juce::approximatelyEqual(sourceRate, compositeSampleRate)) {
+            for (int ch = 0; ch < compositeChannels; ++ch)
+              rendered.copyFrom(ch, 0, sourceBuffer, ch, 0, renderLength);
+          } else {
+            const double ratio = sourceRate / compositeSampleRate;
+            for (int ch = 0; ch < compositeChannels; ++ch) {
+              juce::LagrangeInterpolator interpolator;
+              interpolator.process(ratio, sourceBuffer.getReadPointer(ch),
+                                   rendered.getWritePointer(ch), renderLength);
+            }
+          }
 
-  auto updateTimelineOffset = timelineOffsetCallback;
-  juce::Component::SafePointer<juce::Component> safeMain(
-      mainComponent->getComponent());
-  juce::MessageManager::callAsync([safeMain, timelineOffsetSeconds,
-                                   updateTimelineOffset]() {
-    if (updateTimelineOffset) {
-      updateTimelineOffset(timelineOffsetSeconds);
-      return;
-    }
+          // Playback regions may overlap, so match the renderer and mix them.
+          for (int ch = 0; ch < compositeChannels; ++ch)
+            composite.addFrom(ch, outputStart, rendered, ch, 0, renderLength);
+        }
 
-    if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
-      view->updateHostAudioTimelineOffset(timelineOffsetSeconds);
-  });
+        if (state->cancel.load() || state->jobId.load() != jobId)
+          return;
+
+        // Existing UI code represents timeline placement as leading silence.
+        const auto offsetSamples64 = static_cast<juce::int64>(std::llround(
+            timelineOffsetSeconds * compositeSampleRate));
+        if (offsetSamples64 > 0 &&
+            offsetSamples64 <=
+                static_cast<juce::int64>(std::numeric_limits<int>::max()) -
+                    composite.getNumSamples()) {
+          const int offsetSamples = static_cast<int>(offsetSamples64);
+          juce::AudioBuffer<float> shifted(
+              compositeChannels, offsetSamples + composite.getNumSamples());
+          shifted.clear();
+          for (int ch = 0; ch < compositeChannels; ++ch)
+            shifted.copyFrom(ch, offsetSamples, composite, ch, 0,
+                             composite.getNumSamples());
+          composite = std::move(shifted);
+        }
+
+        juce::MessageManager::callAsync(
+            [buffer = std::move(composite), compositeSampleRate,
+             timelineOffsetSeconds, arrangementKey, state, jobId,
+             playbackRegionRanges = std::move(playbackRegionRanges),
+             requestAnalysis]() mutable {
+              if (!state || state->jobId.load() != jobId)
+                return;
+              if (requestAnalysis)
+                requestAnalysis(arrangementKey, buffer, compositeSampleRate,
+                                timelineOffsetSeconds,
+                                playbackRegionRanges);
+            });
+      });
 }
 
 void PitchNetDocumentController::clearMainComponentHostAudio() {
@@ -717,37 +852,10 @@ void PitchNetDocumentController::clearMainComponentHostAudio() {
   });
 }
 
-std::optional<double> PitchNetDocumentController::
-    getTimelineOffsetSecondsForSource(
-        juce::ARAAudioSource *source,
-        juce::ARAPlaybackRegion *excludedRegion) const {
-  if (!source)
-    return std::nullopt;
-
-  std::optional<double> earliestOffset;
-  for (auto *audioModification : source->getAudioModifications()) {
-    if (!audioModification)
-      continue;
-
-    for (auto *region : audioModification->getPlaybackRegions()) {
-      if (!region || region == excludedRegion)
-        continue;
-
-      const double offset = region->getStartInPlaybackTime() -
-                            region->getStartInAudioModificationTime();
-      earliestOffset = earliestOffset.has_value()
-                           ? std::min(*earliestOffset, offset)
-                           : std::optional<double>(offset);
-    }
-  }
-
-  return earliestOffset;
-}
-
 void PitchNetDocumentController::didAddAudioSourceToDocument(
-    juce::ARADocument *, juce::ARAAudioSource *audioSource) {
+    juce::ARADocument *document, juce::ARAAudioSource *audioSource) {
+  currentDocument = document;
   currentAudioSource = audioSource;
-  processAudioSource(audioSource);
 }
 
 bool PitchNetDocumentController::processExistingAudioSources(
@@ -755,49 +863,67 @@ bool PitchNetDocumentController::processExistingAudioSources(
   if (!document)
     return false;
 
-  juce::ARAAudioSource *fallbackSource = nullptr;
+  currentDocument = document;
+  bool hasSource = false;
+  currentPlaybackRegion = nullptr;
   for (auto *source : document->getAudioSources<juce::ARAAudioSource>()) {
     if (!source || source->getSampleCount() <= 0 ||
         source->getChannelCount() <= 0 || source->getSampleRate() <= 0.0)
       continue;
 
-    if (!fallbackSource)
-      fallbackSource = source;
-
-    if (getTimelineOffsetSecondsForSource(source).has_value()) {
+    if (!hasSource) {
+      hasSource = true;
       currentAudioSource = source;
-      currentPlaybackRegion = nullptr;
-      for (auto *audioModification : source->getAudioModifications()) {
-        if (!audioModification)
+    }
+    for (auto *modification : source->getAudioModifications()) {
+      if (!modification || currentPlaybackRegion)
+        continue;
+      for (auto *region : modification->getPlaybackRegions()) {
+        if (!region ||
+            (currentRegionSequence &&
+             region->getRegionSequence() != currentRegionSequence))
           continue;
-        const auto &regions = audioModification->getPlaybackRegions();
-        if (!regions.empty()) {
-          currentPlaybackRegion = regions.front();
-          break;
-        }
+        currentPlaybackRegion = region;
+        if (!currentRegionSequence)
+          currentRegionSequence = region->getRegionSequence();
+        break;
       }
-      if (mainComponent && mainComponent->hasAnalyzedProject())
-        updateAudioSourceTimelineOffset(source);
-      else
-        processAudioSource(source);
-      return true;
     }
   }
 
-  if (fallbackSource) {
-    currentAudioSource = fallbackSource;
-    if (!mainComponent || !mainComponent->hasAnalyzedProject())
-      processAudioSource(fallbackSource);
-    return true;
-  }
+  if (hasSource)
+    processDocument(document);
+  return hasSource;
+}
 
-  return false;
+bool PitchNetDocumentController::processPlaybackRegions(
+    const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
+    double projectSampleRate) {
+  auto *firstRegion = playbackRegions.empty() ? nullptr : playbackRegions.front();
+  if (!firstRegion || !firstRegion->getAudioModification())
+    return false;
+
+  currentPlaybackRegion = firstRegion;
+  analysisTimelineSampleRate = projectSampleRate > 0.0 ? projectSampleRate
+                                                       : 0.0;
+  currentRegionSequence = firstRegion->getRegionSequence();
+  currentAudioSource = firstRegion->getAudioModification()->getAudioSource();
+  currentDocument = currentAudioSource ? currentAudioSource->getDocument()
+                                       : nullptr;
+  if (!currentDocument)
+    return false;
+
+  processDocument(currentDocument);
+  return true;
 }
 
 void PitchNetDocumentController::willRemoveAudioSourceFromDocument(
-    juce::ARADocument *, juce::ARAAudioSource *audioSource) {
-  if (audioSource && audioSource == currentAudioSource)
-    clearMainComponentHostAudio();
+    juce::ARADocument *document, juce::ARAAudioSource *audioSource) {
+  if (!document || !audioSource)
+    return;
+  if (audioSource == currentAudioSource)
+    currentAudioSource = nullptr;
+  processDocument(document, nullptr, audioSource);
 }
 
 void PitchNetDocumentController::didAddPlaybackRegionToAudioModification(
@@ -806,12 +932,17 @@ void PitchNetDocumentController::didAddPlaybackRegionToAudioModification(
   if (!audioModification)
     return;
 
+  if (playbackRegion && currentRegionSequence &&
+      playbackRegion->getRegionSequence() != currentRegionSequence)
+    return;
+
   currentAudioSource = audioModification->getAudioSource();
+  currentDocument = currentAudioSource ? currentAudioSource->getDocument()
+                                       : currentDocument;
   currentPlaybackRegion = playbackRegion;
-  if (mainComponent && mainComponent->hasAnalyzedProject())
-    updateAudioSourceTimelineOffset(currentAudioSource);
-  else
-    processAudioSource(currentAudioSource);
+  currentRegionSequence = playbackRegion ? playbackRegion->getRegionSequence()
+                                         : currentRegionSequence;
+  processDocument(currentDocument);
 }
 
 void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
@@ -820,8 +951,12 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
   if (!audioModification || !playbackRegion)
     return;
 
+  if (currentRegionSequence &&
+      playbackRegion->getRegionSequence() != currentRegionSequence)
+    return;
+
   auto *audioSource = audioModification->getAudioSource();
-  if (!audioSource || audioSource != currentAudioSource)
+  if (!audioSource)
     return;
 
   if (playbackRegion == currentPlaybackRegion) {
@@ -829,7 +964,8 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
     currentPlaybackRegion = nullptr;
   }
 
-  updateAudioSourceTimelineOffset(audioSource, playbackRegion);
+  currentDocument = audioSource->getDocument();
+  processDocument(currentDocument, playbackRegion);
 }
 
 void PitchNetDocumentController::didUpdatePlaybackRegionProperties(
@@ -837,28 +973,61 @@ void PitchNetDocumentController::didUpdatePlaybackRegionProperties(
   if (!playbackRegion)
     return;
 
+  if (currentRegionSequence &&
+      playbackRegion->getRegionSequence() != currentRegionSequence)
+    return;
+
   if (auto *audioModification = playbackRegion->getAudioModification()) {
     currentAudioSource = audioModification->getAudioSource();
+    currentDocument = currentAudioSource ? currentAudioSource->getDocument()
+                                         : currentDocument;
     currentPlaybackRegion = playbackRegion;
-    if (mainComponent && mainComponent->hasAnalyzedProject())
-      updateAudioSourceTimelineOffset(currentAudioSource);
-    else
-      processAudioSource(currentAudioSource);
+    currentRegionSequence = playbackRegion->getRegionSequence();
+    processDocument(currentDocument);
   }
 }
 
 void PitchNetDocumentController::reanalyze() {
-  if (currentAudioSource)
-    processAudioSource(currentAudioSource);
+  if (currentDocument)
+    processDocument(currentDocument);
 }
 
 void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
                                                    double previewEndSeconds) {
-  if (!currentPlaybackRegion)
+  if (!currentDocument)
     return;
 
-  const double regionStart = currentPlaybackRegion->getStartInPlaybackTime();
-  const double regionEnd = currentPlaybackRegion->getEndInPlaybackTime();
+  juce::ARAPlaybackRegion *previewRegion = nullptr;
+  for (auto *source : currentDocument->getAudioSources<juce::ARAAudioSource>()) {
+    if (!source)
+      continue;
+    for (auto *modification : source->getAudioModifications()) {
+      if (!modification)
+        continue;
+      for (auto *region : modification->getPlaybackRegions()) {
+        if (!region ||
+            (currentRegionSequence &&
+             region->getRegionSequence() != currentRegionSequence))
+          continue;
+        if (previewEndSeconds > region->getStartInPlaybackTime() &&
+            previewStartSeconds < region->getEndInPlaybackTime()) {
+          previewRegion = region;
+          break;
+        }
+      }
+      if (previewRegion)
+        break;
+    }
+    if (previewRegion)
+      break;
+  }
+
+  if (!previewRegion)
+    return;
+
+  currentPlaybackRegion = previewRegion;
+  const double regionStart = previewRegion->getStartInPlaybackTime();
+  const double regionEnd = previewRegion->getEndInPlaybackTime();
   const double start =
       juce::jlimit(regionStart, regionEnd, previewStartSeconds);
   const double end = juce::jlimit(regionStart, regionEnd, previewEndSeconds);
@@ -867,7 +1036,7 @@ void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
 
   previewState.previewStartTime.store(start);
   previewState.previewEndTime.store(end);
-  previewState.previewedRegion.store(currentPlaybackRegion);
+  previewState.previewedRegion.store(previewRegion);
 }
 
 void PitchNetDocumentController::stopPreview() {

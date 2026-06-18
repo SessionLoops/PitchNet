@@ -18,26 +18,24 @@ ToolbarComponent::ToolbarComponent()
     goToStartButton.setImage(loadImage(BinaryData::backward_png, BinaryData::backward_pngSize));
     goToEndButton.setImage(loadImage(BinaryData::forward_png, BinaryData::forward_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
+    undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
+    redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
 
     // Load remaining SVG icons with white tint
     auto cursorIcon = SvgUtils::loadSvg(BinaryData::cursor_24_filled_svg, BinaryData::cursor_24_filled_svgSize, juce::Colours::white);
     auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
-    const juce::String parametersIconSvg =
-        R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="2" width="2" height="20" rx="1"/><circle cx="4" cy="9" r="3"/><rect x="11" y="2" width="2" height="20" rx="1"/><circle cx="12" cy="15" r="3"/><rect x="19" y="2" width="2" height="20" rx="1"/><circle cx="20" cy="6" r="3"/></svg>)";
-    auto parametersIcon = SvgUtils::createDrawableFromSvg(parametersIconSvg, juce::Colours::white);
+    parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
 
     selectModeButton.setImages(cursorIcon.get());
     splitModeButton.setImages(scissorsIcon.get());
     followButton.setImages(followIcon.get());
-    parametersButton.setImages(parametersIcon.get());
 
     // Set edge indent for icon padding (makes icons smaller within button bounds)
     selectModeButton.setEdgeIndent(6);
     splitModeButton.setEdgeIndent(6);
     followButton.setEdgeIndent(6);
-    parametersButton.setEdgeIndent(6);
 
     // Configure buttons
     addAndMakeVisible(goToStartButton);
@@ -48,6 +46,8 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
+    addAndMakeVisible(undoButton);
+    addAndMakeVisible(redoButton);
     addAndMakeVisible(parametersButton);
 
     goToStartButton.addListener(this);
@@ -58,6 +58,8 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
     followButton.addListener(this);
+    undoButton.addListener(this);
+    redoButton.addListener(this);
     parametersButton.addListener(this);
 
     // Set localized text (tooltips for icon buttons)
@@ -65,13 +67,17 @@ ToolbarComponent::ToolbarComponent()
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
     loopButton.setTooltip(TR("toolbar.loop"));
+    undoButton.setTooltip(TR("command.undo"));
+    redoButton.setTooltip(TR("command.redo"));
     parametersButton.setTooltip(TR("panel.parameters"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
 
     // Set default active states
     selectModeButton.setActive(true);
     followButton.setActive(true); // Follow is on by default
-    parametersButton.setActive(false);
+    undoButton.setEnabled(false);
+    redoButton.setEnabled(false);
+    parametersButton.setToggleState(false, juce::dontSendNotification);
 
     // Time label with app font (larger and bold for readability)
     addAndMakeVisible(timeLabel);
@@ -161,6 +167,16 @@ void ToolbarComponent::resized()
         paramBtnArea.getRight() - rightButtonSize,
         capsuleY + (capsuleH - rightButtonSize) / 2,
         rightButtonSize, rightButtonSize);
+
+    auto redoBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
+    redoButton.setBounds(redoBtnArea.getRight() - rightButtonSize,
+                         capsuleY + (capsuleH - rightButtonSize) / 2,
+                         rightButtonSize, rightButtonSize);
+
+    auto undoBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
+    undoButton.setBounds(undoBtnArea.getRight() - rightButtonSize,
+                         capsuleY + (capsuleH - rightButtonSize) / 2,
+                         rightButtonSize, rightButtonSize);
 
     // Hide center controls (time/tools removed from toolbar) and zoom controls
     timeLabel.setVisible(false);
@@ -261,10 +277,13 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         followPlayback = !followPlayback;
         followButton.setActive(followPlayback);
     }
+    else if (button == &undoButton && onUndo)
+        onUndo();
+    else if (button == &redoButton && onRedo)
+        onRedo();
     else if (button == &parametersButton)
     {
-        parametersVisible = !parametersVisible;
-        parametersButton.setActive(parametersVisible);
+        parametersVisible = parametersButton.getToggleState();
         if (onToggleParameters)
             onToggleParameters(parametersVisible);
     }
@@ -326,7 +345,13 @@ void ToolbarComponent::setLoopEnabled(bool enabled)
 void ToolbarComponent::setParametersVisible(bool visible)
 {
     parametersVisible = visible;
-    parametersButton.setActive(parametersVisible);
+    parametersButton.setToggleState(parametersVisible, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setUndoRedoEnabled(bool undoEnabled, bool redoEnabled)
+{
+    undoButton.setEnabled(undoEnabled);
+    redoButton.setEnabled(redoEnabled);
 }
 
 void ToolbarComponent::showProgress(const juce::String &message)

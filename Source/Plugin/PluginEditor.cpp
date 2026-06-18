@@ -97,21 +97,20 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   pitchDocController->setRealtimeProcessor(
       &audioProcessor.getRealtimeProcessor());
   pitchDocController->setAnalysisCallbacks(
-      [this](std::uintptr_t sourceKey, double timelineOffsetSeconds) {
+      [this](std::uintptr_t sourceKey, double timelineOffsetSeconds,
+             const std::vector<std::pair<double, double>> &regionRanges) {
         return audioProcessor.attachCachedAraAnalysis(sourceKey,
-                                                      timelineOffsetSeconds);
+                                                      timelineOffsetSeconds,
+                                                      regionRanges);
       },
       [this](std::uintptr_t sourceKey,
              const juce::AudioBuffer<float> &buffer, double sampleRate,
-             double timelineOffsetSeconds) {
+             double timelineOffsetSeconds,
+             const std::vector<std::pair<double, double>> &regionRanges) {
         audioProcessor.requestAraSourceAnalysis(sourceKey, buffer, sampleRate,
-                                                timelineOffsetSeconds);
+                                                timelineOffsetSeconds,
+                                                regionRanges);
       });
-  pitchDocController->setTimelineOffsetCallback(
-      [this](double timelineOffsetSeconds) {
-        audioProcessor.updateAraTimelineOffset(timelineOffsetSeconds);
-      });
-
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
@@ -196,6 +195,15 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       });
 
   setupHostTransportUiSync(true);
+
+  // The playback renderer contains the regions assigned to this plugin
+  // instance. Use that set to select the correct track/region sequence rather
+  // than guessing from the first source in the shared ARA document.
+  if (auto *renderer = audioProcessor.getPlaybackRenderer()) {
+    if (pitchDocController->processPlaybackRegions(
+            renderer->getPlaybackRegions(), audioProcessor.getSampleRate()))
+      return;
+  }
 
   // Check for existing audio sources
   auto *juceDocument = docController->getDocument();

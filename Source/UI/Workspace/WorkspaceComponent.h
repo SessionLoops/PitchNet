@@ -10,7 +10,8 @@
  * - Piano roll (main content area with rounded card)
  * - Panel container (right side panels)
  */
-class WorkspaceComponent : public juce::Component
+class WorkspaceComponent : public juce::Component,
+                           private juce::Timer
 {
 public:
     WorkspaceComponent();
@@ -29,17 +30,29 @@ public:
 
     PanelContainer& getPanelContainer() { return panelContainer; }
     RoundedCard& getMainCard() { return mainCard; }
+    int getMainViewRight() const { return mainCard.getRight(); }
 
     std::function<void(const juce::String&, bool)> onPanelVisibilityChanged;
+    std::function<void()> onLayoutAnimationUpdated;
 
 private:
     void updatePanelContainerVisibility();
+    void startPanelAnimation(bool visible);
+    void timerCallback() override;
 
     RoundedCard mainCard;
     PanelContainer panelContainer;
 
     juce::Component* mainContent = nullptr;
     int panelContainerWidth = 320;
+    std::map<juce::String, bool> requestedPanelVisibility;
+    float panelAnimationProgress = 0.0f;
+    float panelAnimationStartProgress = 0.0f;
+    juce::uint32 panelAnimationStartMs = 0;
+    bool panelAnimationActive = false;
+    bool panelAnimationTargetVisible = false;
+
+    static constexpr int panelAnimationMs = 220;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WorkspaceComponent)
 };

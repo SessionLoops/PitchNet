@@ -497,10 +497,12 @@ void PitchNetAudioProcessor::startCapture() {
 void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
 
 bool PitchNetAudioProcessor::attachCachedAraAnalysis(
-    std::uintptr_t sourceKey, double timelineOffsetSeconds) {
+    std::uintptr_t sourceKey, double timelineOffsetSeconds,
+    const std::vector<std::pair<double, double>> &playbackRegionRanges) {
   if (sourceKey == 0 || sourceKey != araAnalysisSourceKey)
     return false;
 
+  araPlaybackRegionRanges = playbackRegionRanges;
   araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
 
   if (mainComponent && araAnalysisReady && araAnalysisProjectSnapshot) {
@@ -512,6 +514,7 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
     if (auto *project = mainComponent->getProject()) {
       project->getAudioData().timelineOffsetSeconds =
           araAnalysisTimelineOffsetSeconds;
+      project->getAudioData().playbackRegionRanges = araPlaybackRegionRanges;
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
       araAnalysisProjectJson =
           juce::JSON::toString(ProjectSerializer::toJson(*project), false);
@@ -526,6 +529,7 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
     if (auto *project = mainComponent->getProject()) {
       project->getAudioData().timelineOffsetSeconds =
           araAnalysisTimelineOffsetSeconds;
+      project->getAudioData().playbackRegionRanges = araPlaybackRegionRanges;
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
       araAnalysisProjectJson =
           juce::JSON::toString(ProjectSerializer::toJson(*project), false);
@@ -542,11 +546,50 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
 
 void PitchNetAudioProcessor::requestAraSourceAnalysis(
     std::uintptr_t sourceKey, const juce::AudioBuffer<float> &buffer,
-    double sampleRate, double timelineOffsetSeconds) {
+    double sampleRate, double timelineOffsetSeconds,
+    const std::vector<std::pair<double, double>> &playbackRegionRanges) {
   if (sourceKey == 0 || buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
     return;
 
-  if (attachCachedAraAnalysis(sourceKey, timelineOffsetSeconds))
+  const auto previousRanges = araPlaybackRegionRanges;
+  auto findMissingRanges = [](const auto &from, const auto &in) {
+    std::vector<std::pair<double, double>> missing;
+    std::vector<bool> matched(in.size(), false);
+    for (const auto &candidate : from) {
+      bool found = false;
+      for (size_t i = 0; i < in.size(); ++i) {
+        if (!matched[i] &&
+            std::abs(candidate.first - in[i].first) < 0.000001 &&
+            std::abs(candidate.second - in[i].second) < 0.000001) {
+          matched[i] = true;
+          found = true;
+          break;
+        }
+      }
+      if (!found)
+        missing.push_back(candidate);
+    }
+    return missing;
+  };
+
+  if (araAnalysisReady && mainComponent && mainComponent->hasAnalyzedProject()) {
+    const auto removed = findMissingRanges(previousRanges, playbackRegionRanges);
+    const auto added = findMissingRanges(playbackRegionRanges, previousRanges);
+    if (removed.size() == 1 && added.empty()) {
+      removeAraRegionFromProject(sourceKey, removed.front(),
+                                playbackRegionRanges);
+      return;
+    }
+    if (added.size() == 1 && removed.empty()) {
+      analyzeAndMergeAraRegion(sourceKey, buffer, sampleRate, added.front(),
+                               playbackRegionRanges);
+      return;
+    }
+  }
+
+  araPlaybackRegionRanges = playbackRegionRanges;
+  if (attachCachedAraAnalysis(sourceKey, timelineOffsetSeconds,
+                              playbackRegionRanges))
     return;
 
   undoManager->clear();
@@ -589,6 +632,7 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
 
         project->getAudioData().timelineOffsetSeconds =
             araAnalysisTimelineOffsetSeconds;
+        project->getAudioData().playbackRegionRanges = araPlaybackRegionRanges;
         araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
         araAnalysisProjectJson =
             juce::JSON::toString(ProjectSerializer::toJson(*project), false);
@@ -607,6 +651,241 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
       });
 }
 
+void PitchNetAudioProcessor::removeAraRegionFromProject(
+    std::uintptr_t newSourceKey,
+    const std::pair<double, double> &removedRange,
+    const std::vector<std::pair<double, double>> &remainingRanges) {
+  auto *project = mainComponent ? mainComponent->getProject() : nullptr;
+  if (!project)
+    return;
+
+  auto updated = std::make_unique<Project>(*project);
+  auto &audio = updated->getAudioData();
+  const int sampleRate = std::max(1, audio.sampleRate);
+  const int firstSample = juce::jlimit(
+      0, audio.waveform.getNumSamples(),
+      static_cast<int>(std::floor(removedRange.first * sampleRate)));
+  const int lastSample = juce::jlimit(
+      firstSample, audio.waveform.getNumSamples(),
+      static_cast<int>(std::ceil(removedRange.second * sampleRate)));
+  const int firstFrame = std::max(
+      0, static_cast<int>(std::floor(removedRange.first * sampleRate /
+                                     static_cast<double>(HOP_SIZE))));
+  const int lastFrame = std::max(
+      firstFrame, static_cast<int>(std::ceil(
+                      removedRange.second * sampleRate /
+                      static_cast<double>(HOP_SIZE))));
+
+  auto clearBuffer = [firstSample, lastSample](juce::AudioBuffer<float> &b) {
+    const int end = std::min(lastSample, b.getNumSamples());
+    if (end > firstSample)
+      b.clear(firstSample, end - firstSample);
+  };
+  clearBuffer(audio.waveform);
+  clearBuffer(audio.originalWaveform);
+
+  auto clearFloats = [firstFrame, lastFrame](std::vector<float> &v) {
+    const int end = std::min(lastFrame, static_cast<int>(v.size()));
+    if (end > firstFrame)
+      std::fill(v.begin() + firstFrame, v.begin() + end, 0.0f);
+  };
+  auto clearBools = [firstFrame, lastFrame](std::vector<bool> &v) {
+    const int end = std::min(lastFrame, static_cast<int>(v.size()));
+    for (int i = firstFrame; i < end; ++i)
+      v[static_cast<size_t>(i)] = false;
+  };
+  clearFloats(audio.f0);
+  clearFloats(audio.baseF0);
+  clearFloats(audio.basePitch);
+  clearFloats(audio.deltaPitch);
+  clearBools(audio.voicedMask);
+  clearBools(audio.vadMask);
+  for (int i = firstFrame;
+       i < std::min(lastFrame, static_cast<int>(audio.melSpectrogram.size()));
+       ++i)
+    std::fill(audio.melSpectrogram[static_cast<size_t>(i)].begin(),
+              audio.melSpectrogram[static_cast<size_t>(i)].end(), 0.0f);
+
+  auto &notes = updated->getNotes();
+  notes.erase(std::remove_if(notes.begin(), notes.end(),
+                             [firstFrame, lastFrame](const Note &note) {
+                               const int midpoint =
+                                   (note.getSrcStartFrame() +
+                                    note.getSrcEndFrame()) /
+                                   2;
+                               return midpoint >= firstFrame &&
+                                      midpoint < lastFrame;
+                             }),
+              notes.end());
+  audio.segmentChunkRanges.erase(
+      std::remove_if(audio.segmentChunkRanges.begin(),
+                     audio.segmentChunkRanges.end(),
+                     [firstFrame, lastFrame](const auto &range) {
+                       return range.first < lastFrame &&
+                              range.second > firstFrame;
+                     }),
+      audio.segmentChunkRanges.end());
+  audio.segmentDebugChunks.erase(
+      std::remove_if(audio.segmentDebugChunks.begin(),
+                     audio.segmentDebugChunks.end(),
+                     [firstFrame, lastFrame](const auto &chunk) {
+                       return chunk.startFrame < lastFrame &&
+                              chunk.endFrame > firstFrame;
+                     }),
+      audio.segmentDebugChunks.end());
+
+  audio.playbackRegionRanges = remainingRanges;
+  audio.timelineOffsetSeconds = remainingRanges.empty()
+                                    ? 0.0
+                                    : std::max(0.0, std::min_element(
+                                          remainingRanges.begin(),
+                                          remainingRanges.end())->first);
+  araPlaybackRegionRanges = remainingRanges;
+  araAnalysisTimelineOffsetSeconds = audio.timelineOffsetSeconds;
+  araAnalysisSourceKey = newSourceKey;
+  araAnalysisProjectSnapshot = std::make_unique<Project>(*updated);
+  araAnalysisProjectJson =
+      juce::JSON::toString(ProjectSerializer::toJson(*updated), false);
+  mainComponent->restoreProjectSnapshot(*updated);
+  mainComponent->bindRealtimeProcessor(realtimeProcessor);
+}
+
+void PitchNetAudioProcessor::analyzeAndMergeAraRegion(
+    std::uintptr_t newSourceKey, const juce::AudioBuffer<float> &buffer,
+    double sampleRate, const std::pair<double, double> &addedRange,
+    const std::vector<std::pair<double, double>> &allRanges) {
+  const int firstSample = juce::jlimit(
+      0, buffer.getNumSamples(),
+      static_cast<int>(std::floor(addedRange.first * sampleRate)));
+  const int lastSample = juce::jlimit(
+      firstSample, buffer.getNumSamples(),
+      static_cast<int>(std::ceil(addedRange.second * sampleRate)));
+  if (lastSample <= firstSample)
+    return;
+
+  juce::AudioBuffer<float> region(buffer.getNumChannels(),
+                                  lastSample - firstSample);
+  for (int ch = 0; ch < region.getNumChannels(); ++ch)
+    region.copyFrom(ch, 0, buffer, ch, firstSample, region.getNumSamples());
+
+  araIncrementalAnalysisController = std::make_unique<EditorController>(false);
+  auto *controller = araIncrementalAnalysisController.get();
+  mainComponent->setStatusMessage(TR("progress.analyzing"));
+  mainComponent->showAnalysisProgress(0.0);
+  controller->setHostAudioAsync(
+      region, sampleRate,
+      [this](double progress, const juce::String &message) {
+        juce::Component::SafePointer<juce::Component> safeMain(
+            mainComponent ? mainComponent->getComponent() : nullptr);
+        juce::MessageManager::callAsync(
+            [safeMain, progress, message]() {
+              if (auto *view =
+                      dynamic_cast<IMainView *>(safeMain.getComponent())) {
+                view->setStatusMessage(message);
+                view->showAnalysisProgress(progress);
+              }
+            });
+      },
+      [this, controller, newSourceKey, addedRange,
+       allRanges](const juce::AudioBuffer<float> &) {
+        if (!araIncrementalAnalysisController ||
+            araIncrementalAnalysisController.get() != controller ||
+            !mainComponent)
+          return;
+        auto *regionProject = controller->getProject();
+        auto *currentProject = mainComponent->getProject();
+        if (!regionProject || !currentProject)
+          return;
+
+        auto merged = std::make_unique<Project>(*currentProject);
+        auto &dst = merged->getAudioData();
+        const auto &src = regionProject->getAudioData();
+        const int dstRate = std::max(1, dst.sampleRate);
+        const int sampleOffset = static_cast<int>(
+            std::llround(addedRange.first * dstRate));
+        const int frameOffset = static_cast<int>(std::llround(
+            addedRange.first * dstRate / static_cast<double>(HOP_SIZE)));
+
+        auto mergeBuffer = [sampleOffset](juce::AudioBuffer<float> &to,
+                                          const juce::AudioBuffer<float> &from) {
+          const int channels = std::max(to.getNumChannels(),
+                                        from.getNumChannels());
+          const int required = sampleOffset + from.getNumSamples();
+          if (to.getNumChannels() < channels || to.getNumSamples() < required)
+            to.setSize(channels, std::max(to.getNumSamples(), required), true,
+                       true, false);
+          for (int ch = 0; ch < from.getNumChannels(); ++ch)
+            to.copyFrom(ch, sampleOffset, from, ch, 0, from.getNumSamples());
+        };
+        mergeBuffer(dst.waveform, src.waveform);
+        mergeBuffer(dst.originalWaveform, src.originalWaveform);
+
+        auto mergeFloats = [frameOffset](std::vector<float> &to,
+                                         const std::vector<float> &from) {
+          to.resize(std::max(to.size(), static_cast<size_t>(frameOffset) +
+                                           from.size()), 0.0f);
+          std::copy(from.begin(), from.end(), to.begin() + frameOffset);
+        };
+        auto mergeBools = [frameOffset](std::vector<bool> &to,
+                                        const std::vector<bool> &from) {
+          to.resize(std::max(to.size(), static_cast<size_t>(frameOffset) +
+                                           from.size()), false);
+          for (size_t i = 0; i < from.size(); ++i)
+            to[static_cast<size_t>(frameOffset) + i] = from[i];
+        };
+        mergeFloats(dst.f0, src.f0);
+        mergeFloats(dst.baseF0, src.baseF0);
+        mergeFloats(dst.basePitch, src.basePitch);
+        mergeFloats(dst.deltaPitch, src.deltaPitch);
+        mergeBools(dst.voicedMask, src.voicedMask);
+        mergeBools(dst.vadMask, src.vadMask);
+        dst.melSpectrogram.resize(
+            std::max(dst.melSpectrogram.size(),
+                     static_cast<size_t>(frameOffset) +
+                         src.melSpectrogram.size()));
+        std::copy(src.melSpectrogram.begin(), src.melSpectrogram.end(),
+                  dst.melSpectrogram.begin() + frameOffset);
+
+        for (auto note : regionProject->getNotes()) {
+          note.setStartFrame(note.getStartFrame() + frameOffset);
+          note.setEndFrame(note.getEndFrame() + frameOffset);
+          note.setSrcStartFrame(note.getSrcStartFrame() + frameOffset);
+          note.setSrcEndFrame(note.getSrcEndFrame() + frameOffset);
+          merged->addNote(std::move(note));
+        }
+        for (auto range : src.segmentChunkRanges)
+          dst.segmentChunkRanges.emplace_back(range.first + frameOffset,
+                                              range.second + frameOffset);
+        for (auto chunk : src.segmentDebugChunks) {
+          chunk.startFrame += frameOffset;
+          chunk.endFrame += frameOffset;
+          for (auto &event : chunk.events) {
+            event.startFrame += frameOffset;
+            event.endFrame += frameOffset;
+            event.attachedStartFrame += frameOffset;
+          }
+          dst.segmentDebugChunks.push_back(std::move(chunk));
+        }
+
+        dst.playbackRegionRanges = allRanges;
+        dst.timelineOffsetSeconds = allRanges.empty()
+                                        ? 0.0
+                                        : std::max(0.0, std::min_element(
+                                              allRanges.begin(),
+                                              allRanges.end())->first);
+        araPlaybackRegionRanges = allRanges;
+        araAnalysisTimelineOffsetSeconds = dst.timelineOffsetSeconds;
+        araAnalysisSourceKey = newSourceKey;
+        araAnalysisProjectSnapshot = std::make_unique<Project>(*merged);
+        araAnalysisProjectJson =
+            juce::JSON::toString(ProjectSerializer::toJson(*merged), false);
+        mainComponent->restoreProjectSnapshot(*merged);
+        mainComponent->bindRealtimeProcessor(realtimeProcessor);
+        mainComponent->hideAnalysisProgress();
+        mainComponent->setStatusMessage({});
+      });
+}
+
 void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
     const juce::AudioBuffer<float> &buffer, double sampleRate) {
   if (buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
@@ -621,6 +900,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   araAnalysisLoading = true;
   araAnalysisReady = false;
   araAnalysisTimelineOffsetSeconds = 0.0;
+  araPlaybackRegionRanges.clear();
   araAnalysisProjectSnapshot.reset();
   araAnalysisProjectJson.clear();
 

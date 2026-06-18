@@ -47,6 +47,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     {
       if (commandManager)
         commandManager->commandStatusChanged();
+      toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
+                                 undoManager && undoManager->canRedo());
     };
   }
 
@@ -187,6 +189,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     workspace.showPanel("parameters", visible);
   };
+  toolbar.onUndo = [this]() { undo(); };
+  toolbar.onRedo = [this]() { redo(); };
+  toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
+                             undoManager && undoManager->canRedo());
 
   // Removed onRender callback - Melodyne-style: edits automatically trigger
   // real-time processing
@@ -313,6 +319,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (id == "parameters")
       toolbar.setParametersVisible(visible);
   };
+  workspace.onLayoutAnimationUpdated = [this]()
+  {
+    repaint(0, toolbar.getBottom(), getWidth(), 1);
+  };
 
   // Setup audio engine callbacks
   if (auto *audioEngine = editorController
@@ -425,13 +435,21 @@ void MainComponent::bindUndoManager(PitchUndoManager *manager)
     juce::Component::SafePointer<MainComponent> safeThis(this);
     undoManager->onHistoryChanged = [safeThis]()
     {
-      if (safeThis != nullptr && safeThis->commandManager)
+      if (safeThis == nullptr)
+        return;
+
+      if (safeThis->commandManager)
         safeThis->commandManager->commandStatusChanged();
+      safeThis->toolbar.setUndoRedoEnabled(
+          safeThis->undoManager && safeThis->undoManager->canUndo(),
+          safeThis->undoManager && safeThis->undoManager->canRedo());
     };
   }
 
   if (commandManager)
     commandManager->commandStatusChanged();
+  toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
+                             undoManager && undoManager->canRedo());
 }
 
 MainViewViewportState MainComponent::getViewportState() const
@@ -532,8 +550,9 @@ void MainComponent::paintOverChildren(juce::Graphics &g)
   if (y >= getHeight())
     return;
 
+  const int viewRight = workspace.getX() + workspace.getMainViewRight();
   g.setColour(juce::Colour(0xFF3C3C3Cu));
-  g.fillRect(0, y, juce::jmax(0, getWidth() - scrollBarWidth), 1);
+  g.fillRect(0, y, juce::jmax(0, viewRight - scrollBarWidth), 1);
 }
 
 void MainComponent::resized()

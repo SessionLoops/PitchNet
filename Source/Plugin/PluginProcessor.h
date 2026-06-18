@@ -76,15 +76,26 @@ public:
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
   bool attachCachedAraAnalysis(std::uintptr_t sourceKey,
-                               double timelineOffsetSeconds);
+                               double timelineOffsetSeconds,
+                               const std::vector<std::pair<double, double>> &
+                                   playbackRegionRanges);
   void requestAraSourceAnalysis(std::uintptr_t sourceKey,
-                                const juce::AudioBuffer<float> &buffer,
-                                double sampleRate,
-                                double timelineOffsetSeconds);
+                               const juce::AudioBuffer<float> &buffer,
+                               double sampleRate, double timelineOffsetSeconds,
+                               const std::vector<std::pair<double, double>> &
+                                   playbackRegionRanges);
   void requestPluginProjectRender(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate);
   void updateAraTimelineOffset(double timelineOffsetSeconds);
+
+  void removeAraRegionFromProject(
+      std::uintptr_t newSourceKey, const std::pair<double, double> &removedRange,
+      const std::vector<std::pair<double, double>> &remainingRanges);
+  void analyzeAndMergeAraRegion(
+      std::uintptr_t newSourceKey, const juce::AudioBuffer<float> &buffer,
+      double sampleRate, const std::pair<double, double> &addedRange,
+      const std::vector<std::pair<double, double>> &allRanges);
 
   // ========== Host Transport Control ==========
 
@@ -185,12 +196,14 @@ private:
 
   juce::String pendingStateJson;
   std::unique_ptr<EditorController> araAnalysisController;
+  std::unique_ptr<EditorController> araIncrementalAnalysisController;
   std::unique_ptr<PitchUndoManager> undoManager;
   MainViewViewportState viewportState;
   std::uintptr_t araAnalysisSourceKey = 0;
   bool araAnalysisLoading = false;
   bool araAnalysisReady = false;
   double araAnalysisTimelineOffsetSeconds = 0.0;
+  std::vector<std::pair<double, double>> araPlaybackRegionRanges;
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
   juce::String araAnalysisProjectJson;
   std::atomic<bool> araRenderPendingRerun{false};

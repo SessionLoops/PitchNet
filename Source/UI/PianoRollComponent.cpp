@@ -421,22 +421,28 @@ void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
   if (audioData.waveform.getNumSamples() <= 0 || duration <= 0.0)
     return;
 
-  const double startSeconds =
-      juce::jlimit(0.0, duration, audioData.timelineOffsetSeconds);
-  if (startSeconds >= duration)
-    return;
-
-  const float startX = timeToX(startSeconds);
-  const float endX = timeToX(duration);
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  auto drawRange = [&](double startSeconds, double endSeconds) {
+    startSeconds = juce::jlimit(0.0, duration, startSeconds);
+    endSeconds = juce::jlimit(0.0, duration, endSeconds);
+    if (endSeconds <= startSeconds)
+      return;
+    const float startX = timeToX(startSeconds);
+    const float endX = timeToX(endSeconds);
+    g.setColour(juce::Colours::white.withAlpha(0.04f));
+    g.fillRect(startX, 0.0f, endX - startX, height);
+    g.setColour(juce::Colours::white.withAlpha(0.25f));
+    g.fillRect(startX - 0.5f, 0.0f, 1.0f, height);
+    g.fillRect(endX - 0.5f, 0.0f, 1.0f, height);
+  };
 
-  g.setColour(juce::Colours::white.withAlpha(0.04f));
-  g.fillRect(startX, 0.0f, endX - startX, height);
-
-  g.setColour(juce::Colours::white.withAlpha(0.25f));
-  g.fillRect(startX - 0.5f, 0.0f, 1.0f, height);
-  g.fillRect(endX - 0.5f, 0.0f, 1.0f, height);
+  if (!audioData.playbackRegionRanges.empty()) {
+    for (const auto &[start, end] : audioData.playbackRegionRanges)
+      drawRange(start, end);
+  } else {
+    drawRange(audioData.timelineOffsetSeconds, duration);
+  }
 }
 
 void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)

@@ -36,6 +36,9 @@ struct AudioData
 
     int sampleRate = 44100;
     double timelineOffsetSeconds = 0.0;
+    // Absolute host-timeline ranges occupied by ARA playback regions.
+    // Empty for standalone/non-ARA projects.
+    std::vector<std::pair<double, double>> playbackRegionRanges;
 
     // Extracted features
     std::vector<std::vector<float>> melSpectrogram;      // [T, NUM_MELS]
