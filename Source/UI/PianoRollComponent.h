@@ -125,6 +125,8 @@ public:
   // Scroll
   void setScrollX(double x);
   double getScrollX() const { return scrollX; }
+  void setScrollY(double y);
+  double getScrollY() const { return scrollY; }
   void centerOnPitchRange(float minMidi, float maxMidi);
   void fitPitchRangeToView(float minMidi, float maxMidi);
   int getVisibleContentWidth() const;

@@ -175,14 +175,12 @@ void DrawHandler::commitPitchDrawing() {
   // Create undo action
   if (owner_.undoManager && owner_.project) {
     auto &audioData = owner_.project->getAudioData();
+    auto *projectPtr = owner_.project;
     auto action = std::make_unique<F0EditAction>(
         &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
-        drawingEdits, [this](int minFrame, int maxFrame) {
-          if (owner_.project) {
-            owner_.project->setF0DirtyRange(minFrame, maxFrame + 1);
-            if (owner_.onPitchEditFinished)
-              owner_.onPitchEditFinished();
-          }
+        drawingEdits, [projectPtr](int minFrame, int maxFrame) {
+          if (projectPtr)
+            projectPtr->setF0DirtyRange(minFrame, maxFrame + 1);
         });
     owner_.undoManager->addAction(std::move(action));
   }

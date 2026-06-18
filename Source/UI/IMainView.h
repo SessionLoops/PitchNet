@@ -6,6 +6,17 @@
 class Project;
 class Vocoder;
 class RealtimePitchProcessor;
+class EditorController;
+class PitchUndoManager;
+
+struct MainViewViewportState
+{
+  double scrollX = 0.0;
+  double scrollY = 0.0;
+  float pixelsPerSecond = 100.0f;
+  float pixelsPerSemitone = 12.0f;
+  bool valid = false;
+};
 
 class IMainView {
 public:
@@ -14,6 +25,10 @@ public:
   virtual juce::Component *getComponent() = 0;
   virtual Project *getProject() const = 0;
   virtual Vocoder *getVocoder() const = 0;
+  virtual void bindBackendController(EditorController *controller) = 0;
+  virtual void bindUndoManager(PitchUndoManager *manager) = 0;
+  virtual MainViewViewportState getViewportState() const = 0;
+  virtual void restoreViewportState(const MainViewViewportState &state) = 0;
   virtual bool hasAnalyzedProject() const = 0;
   virtual void bindRealtimeProcessor(RealtimePitchProcessor &processor) = 0;
   virtual juce::String serializeProjectJson() const = 0;

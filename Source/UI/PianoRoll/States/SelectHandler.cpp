@@ -8,6 +8,36 @@
 
 #include <unordered_set>
 
+namespace
+{
+void rebuildProjectForNotes(Project *project,
+                            const std::vector<Note *> &notes)
+{
+  if (!project)
+    return;
+
+  PitchCurveProcessor::rebuildBaseFromNotes(*project);
+
+  int minFrame = std::numeric_limits<int>::max();
+  int maxFrame = std::numeric_limits<int>::min();
+  for (auto *note : notes)
+  {
+    if (!note)
+      continue;
+    note->markSynthDirty();
+    minFrame = std::min(minFrame, note->getStartFrame());
+    maxFrame = std::max(maxFrame, note->getEndFrame());
+  }
+
+  if (minFrame <= maxFrame)
+  {
+    const int f0Size = static_cast<int>(project->getAudioData().f0.size());
+    project->setF0DirtyRange(std::max(0, minFrame - 60),
+                             std::min(f0Size, maxFrame + 60));
+  }
+}
+}
+
 SelectHandler::SelectHandler(PianoRollComponent &owner)
     : InteractionHandler(owner) {}
 
@@ -341,14 +371,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (owner_.pitchToolController &&
       owner_.pitchToolController->isDragging())
   {
-    auto *ownerPtr = &owner_;
-    auto onRangeChanged = [ownerPtr](int startFrame, int endFrame)
-    {
-      if (ownerPtr->onReinterpolateUV)
-        ownerPtr->onReinterpolateUV(startFrame, endFrame);
-    };
     owner_.pitchToolController->mouseUp(e, owner_.undoManager,
-                                        onRangeChanged);
+                                        nullptr);
     owner_.updatePitchToolHandlesFromSelection();
     if (owner_.onPitchEdited)
       owner_.onPitchEdited();
@@ -418,15 +442,9 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Create undo action using PitchToolAction (saves per-note params)
       if (owner_.undoManager)
       {
-        auto *ownerPtr = &owner_;
-        auto onRangeChanged = [ownerPtr](int startFrame, int endFrame)
-        {
-          if (ownerPtr->onPitchEditFinished)
-            ownerPtr->onPitchEditFinished();
-        };
         auto action = std::make_unique<PitchToolAction>(
             project, deltaScaleTargetNotes, oldParams, newParams,
-            onRangeChanged);
+            nullptr);
         owner_.undoManager->addAction(std::move(action));
       }
 
@@ -506,15 +524,9 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Create undo action using PitchToolAction (saves per-note params)
       if (owner_.undoManager)
       {
-        auto *ownerPtr = &owner_;
-        auto onRangeChanged = [ownerPtr](int startFrame, int endFrame)
-        {
-          if (ownerPtr->onPitchEditFinished)
-            ownerPtr->onPitchEditFinished();
-        };
         auto action = std::make_unique<PitchToolAction>(
             project, deltaOffsetTargetNotes, oldParams, newParams,
-            onRangeChanged);
+            nullptr);
         owner_.undoManager->addAction(std::move(action));
       }
 
@@ -639,24 +651,22 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
         int capturedExpandedStart = expandedStart;
         int capturedExpandedEnd = expandedEnd;
         int capturedF0Size = f0Size;
-        auto *ownerPtr = &owner_;
+        auto *projectPtr = project;
         auto action = std::make_unique<NotePitchDragAction>(
             draggedNote, &audioData.f0, originalMidiNote,
             finalMidiNote, std::move(f0Edits),
-            [ownerPtr, capturedExpandedStart, capturedExpandedEnd,
+            [projectPtr, capturedExpandedStart, capturedExpandedEnd,
              capturedF0Size](Note *n)
             {
-              if (ownerPtr->project)
+              if (projectPtr)
               {
                 PitchCurveProcessor::rebuildBaseFromNotes(
-                    *ownerPtr->project);
-                ownerPtr->invalidateBasePitchCache();
+                    *projectPtr);
                 int smoothStart =
                     std::max(0, capturedExpandedStart - 60);
                 int smoothEnd = std::min(capturedF0Size,
                                          capturedExpandedEnd + 60);
-                ownerPtr->project->setF0DirtyRange(smoothStart,
-                                                   smoothEnd);
+                projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
                 if (n)
                 {
                   n->markSynthDirty();
@@ -793,8 +803,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           {
             auto action = std::make_unique<PitchToolAction>(
                 project, selectedNotes, oldParams, newParams,
-                [this](int, int)
-                { rebuildAndNotify(); });
+                nullptr);
             owner_.undoManager->addAction(std::move(action));
           }
 
@@ -857,8 +866,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           auto action = std::make_unique<MultiNoteFloatPropertyAction>(
               selectedNotes, oldScales, newScales,
               &Note::setVarianceScale, "Toggle Variance Scale",
-              [this]()
-              { rebuildAndNotify(); });
+              [project, selectedNotes]()
+              { rebuildProjectForNotes(project, selectedNotes); });
           owner_.undoManager->addAction(std::move(action));
         }
 
@@ -900,8 +909,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           auto action = std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Left,
               oldTilts, oldMidiNotes,
-              [this]()
-              { rebuildAndNotify(); });
+              [project, selectedNotes]()
+              { rebuildProjectForNotes(project, selectedNotes); });
           owner_.undoManager->addAction(std::move(action));
         }
 
@@ -952,8 +961,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           auto action = std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Right,
               oldTilts, oldMidiNotes,
-              [this]()
-              { rebuildAndNotify(); });
+              [project, selectedNotes]()
+              { rebuildProjectForNotes(project, selectedNotes); });
           owner_.undoManager->addAction(std::move(action));
         }
 
@@ -1058,9 +1067,9 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             auto action =
                 std::make_unique<MultiNoteSnapToSemitoneAction>(
                     notesToSnap, oldMidis, oldOffsets, newMidis,
-                    [this](const std::vector<Note *> &)
+                    [project](const std::vector<Note *> &notes)
                     {
-                      rebuildAndNotify();
+                      rebuildProjectForNotes(project, notes);
                     });
             owner_.undoManager->addAction(std::move(action));
           }
@@ -1091,8 +1100,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         auto action =
             std::make_unique<NoteSnapToSemitoneAction>(
                 note, oldMidi, oldOffset, snappedMidi,
-                [this](Note *)
-                { rebuildAndNotify(); });
+                [project](Note *changedNote)
+                { rebuildProjectForNotes(project, {changedNote}); });
         owner_.undoManager->addAction(std::move(action));
       }
 

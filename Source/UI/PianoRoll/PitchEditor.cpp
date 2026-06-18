@@ -163,21 +163,20 @@ void PitchEditor::endNoteDrag()
       int capturedExpandedStart = expandedStart;
       int capturedExpandedEnd = expandedEnd;
       int capturedF0Size = f0Size;
+      auto *projectPtr = project;
       auto action = std::make_unique<NotePitchDragAction>(
           draggedNote, &audioData.f0, originalMidiNote,
           originalMidiNote + newOffset, std::move(f0Edits),
-          [this, capturedExpandedStart, capturedExpandedEnd,
+          [projectPtr, capturedExpandedStart, capturedExpandedEnd,
            capturedF0Size](Note *n)
           {
-            if (project)
+            if (projectPtr)
             {
-              PitchCurveProcessor::rebuildBaseFromNotes(*project);
-              if (onBasePitchCacheInvalidated)
-                onBasePitchCacheInvalidated();
+              PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
               int smoothStart = std::max(0, capturedExpandedStart - 60);
               int smoothEnd =
                   std::min(capturedF0Size, capturedExpandedEnd + 60);
-              project->setF0DirtyRange(smoothStart, smoothEnd);
+              projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
               if (n)
                 n->markSynthDirty();
             }
@@ -279,15 +278,14 @@ void PitchEditor::endDrawing()
   if (undoManager && project)
   {
     auto &audioData = project->getAudioData();
+    auto *projectPtr = project;
     auto action = std::make_unique<F0EditAction>(
         &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
-        drawingEdits, [this](int minFrame, int maxFrame)
+        drawingEdits, [projectPtr](int minFrame, int maxFrame)
         {
-          if (project) {
-            project->setF0DirtyRange(minFrame, maxFrame + 1);
-            if (onPitchEditFinished)
-              onPitchEditFinished();
-          } });
+          if (projectPtr)
+            projectPtr->setF0DirtyRange(minFrame, maxFrame + 1);
+        });
     undoManager->addAction(std::move(action));
   }
 
@@ -655,22 +653,21 @@ void PitchEditor::endMultiNoteDrag()
       std::vector<Note *> capturedNotes = draggedNotes;
       std::vector<float> capturedOriginalMidi = originalMidiNotes;
       float capturedNewOffset = newOffset;
+      auto *projectPtr = project;
 
       auto action = std::make_unique<MultiNotePitchDragAction>(
           capturedNotes, &audioData.f0, capturedOriginalMidi, capturedNewOffset,
           std::move(f0Edits),
-          [this, capturedExpandedStart, capturedExpandedEnd,
+          [projectPtr, capturedExpandedStart, capturedExpandedEnd,
            capturedF0Size](const std::vector<Note *> &)
           {
-            if (project)
+            if (projectPtr)
             {
-              PitchCurveProcessor::rebuildBaseFromNotes(*project);
-              if (onBasePitchCacheInvalidated)
-                onBasePitchCacheInvalidated();
+              PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
               int smoothStart = std::max(0, capturedExpandedStart - 60);
               int smoothEnd =
                   std::min(capturedF0Size, capturedExpandedEnd + 60);
-              project->setF0DirtyRange(smoothStart, smoothEnd);
+              projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
             }
           });
       undoManager->addAction(std::move(action));

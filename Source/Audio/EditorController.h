@@ -54,6 +54,7 @@ public:
   }
 
   void reloadInferenceModels(bool async);
+  bool isSelectedPitchDetectorLoaded() const;
   bool isInferenceBusy() const;
   bool isLoading() const { return isLoadingAudio.load(); }
   bool isRendering() const { return isRenderingFlag.load(); }
@@ -105,8 +106,6 @@ public:
 
 private:
   GPUProvider getProviderFromDevice(const juce::String &device) const;
-  bool isSelectedPitchDetectorLoaded() const;
-
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;
   std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;

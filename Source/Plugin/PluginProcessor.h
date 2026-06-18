@@ -3,14 +3,15 @@
 #include "../Audio/Engine/PluginTransportController.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
+#include "../UI/IMainView.h"
 #include "HostCompatibility.h"
 #include "NonAraCaptureController.h"
 #include <atomic>
 #include <memory>
 
-class IMainView;
 class EditorController;
 class Project;
+class PitchUndoManager;
 
 /**
  * PitchNet Audio Processor
@@ -184,6 +185,8 @@ private:
 
   juce::String pendingStateJson;
   std::unique_ptr<EditorController> araAnalysisController;
+  std::unique_ptr<PitchUndoManager> undoManager;
+  MainViewViewportState viewportState;
   std::uintptr_t araAnalysisSourceKey = 0;
   bool araAnalysisLoading = false;
   bool araAnalysisReady = false;

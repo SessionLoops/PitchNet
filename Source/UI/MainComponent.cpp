@@ -28,19 +28,27 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   LOG("MainComponent: creating core components...");
   // Initialize components
-  editorController = std::make_unique<EditorController>(enableAudioDeviceFlag);
   if (enableAudioDeviceFlag)
   {
+    ownedEditorController = std::make_unique<EditorController>(true);
+    editorController = ownedEditorController.get();
     if (auto *project = editorController->getProject())
       project->setTimelineDisplayMode(TimelineDisplayMode::Time);
   }
-  undoManager = std::make_unique<PitchUndoManager>(100);
-  commandManager = std::make_unique<juce::ApplicationCommandManager>();
-  undoManager->onHistoryChanged = [this]()
+  if (!isPluginMode())
   {
-    if (commandManager)
-      commandManager->commandStatusChanged();
-  };
+    ownedUndoManager = std::make_unique<PitchUndoManager>(100);
+    undoManager = ownedUndoManager.get();
+  }
+  commandManager = std::make_unique<juce::ApplicationCommandManager>();
+  if (undoManager)
+  {
+    undoManager->onHistoryChanged = [this]()
+    {
+      if (commandManager)
+        commandManager->commandStatusChanged();
+    };
+  }
 
   // Initialize new modular components
   fileManager = std::make_unique<AudioFileManager>();
@@ -49,17 +57,20 @@ MainComponent::MainComponent(bool enableAudioDevice)
     menuHandler = std::make_unique<MenuHandler>();
 
   LOG("MainComponent: loading ONNX models...");
-  editorController->setPitchDetectorType(
-      settingsManager->getPitchDetectorType());
-  editorController->setDeviceConfig(settingsManager->getDevice(),
-                                    settingsManager->getGPUDeviceId());
-  editorController->reloadInferenceModels(false);
+  if (editorController)
+  {
+    editorController->setPitchDetectorType(
+        settingsManager->getPitchDetectorType());
+    editorController->setDeviceConfig(settingsManager->getDevice(),
+                                      settingsManager->getGPUDeviceId());
+    editorController->reloadInferenceModels(false);
+  }
 
   LOG("MainComponent: wiring up components...");
   recentFiles = settingsManager->getRecentFiles();
   if (menuHandler)
   {
-    menuHandler->setUndoManager(undoManager.get());
+    menuHandler->setUndoManager(undoManager);
     menuHandler->setCommandManager(commandManager.get());
     menuHandler->setPluginMode(false);
     refreshRecentFilesMenu();
@@ -67,14 +78,17 @@ MainComponent::MainComponent(bool enableAudioDevice)
         [this](const juce::File &file)
         { openRecentFile(file); });
   }
-  settingsManager->setVocoder(editorController->getVocoder());
+  settingsManager->setVocoder(editorController ? editorController->getVocoder()
+                                               : nullptr);
 
   // Load vocoder settings
   settingsManager->applySettings();
 
   LOG("MainComponent: initializing audio device...");
   // Initialize audio (standalone app only)
-  if (auto *audioEngine = editorController->getAudioEngine())
+  if (auto *audioEngine = editorController
+                              ? editorController->getAudioEngine()
+                              : nullptr)
     audioEngine->initializeAudio();
   LOG("MainComponent: audio initialized");
 
@@ -124,8 +138,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   toolbar.setTransportEnabled(isPluginMode());
 
   // Set undo manager for piano roll
-  pianoRoll.setUndoManager(undoManager.get());
-  parameterPanel.setUndoManager(undoManager.get());
+  pianoRoll.setUndoManager(undoManager);
+  parameterPanel.setUndoManager(undoManager);
 
   // Setup toolbar callbacks
   toolbar.onPlay = [this]()
@@ -301,7 +315,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
 
   // Setup audio engine callbacks
-  if (auto *audioEngine = editorController->getAudioEngine())
+  if (auto *audioEngine = editorController
+                              ? editorController->getAudioEngine()
+                              : nullptr)
   {
     juce::Component::SafePointer<MainComponent> safeThis(this);
 
@@ -323,8 +339,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   }
 
   // Set initial project
-  pianoRoll.setProject(editorController->getProject());
-  pianoRollView.setProject(editorController->getProject());
+  pianoRoll.setProject(getProject());
+  pianoRollView.setProject(getProject());
 
   // Register commands with the command manager
   commandManager->registerAllCommandsForTarget(this);
@@ -355,6 +371,92 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Start timer for UI updates
   startTimerHz(30);
   LOG("MainComponent: constructor complete");
+}
+
+void MainComponent::bindBackendController(EditorController *controller)
+{
+  if (!isPluginMode())
+    return;
+
+  editorController = controller;
+
+  if (settingsManager)
+  {
+    settingsManager->setVocoder(editorController
+                                    ? editorController->getVocoder()
+                                    : nullptr);
+    if (editorController)
+    {
+      editorController->setPitchDetectorType(
+          settingsManager->getPitchDetectorType());
+      editorController->setDeviceConfig(settingsManager->getDevice(),
+                                        settingsManager->getGPUDeviceId());
+      if (!editorController->isSelectedPitchDetectorLoaded())
+        editorController->reloadInferenceModels(false);
+      settingsManager->applySettings();
+    }
+  }
+
+  auto *project = getProject();
+  pianoRoll.setProject(project);
+  pianoRollView.setProject(project);
+  parameterPanel.setProject(project);
+  if (project)
+  {
+    toolbar.setTotalTime(project->getAudioData().getDuration());
+    toolbar.setLoopEnabled(project->getLoopRange().enabled);
+  }
+}
+
+void MainComponent::bindUndoManager(PitchUndoManager *manager)
+{
+  if (!isPluginMode())
+    return;
+
+  if (undoManager)
+    undoManager->onHistoryChanged = nullptr;
+
+  undoManager = manager;
+  pianoRoll.setUndoManager(undoManager);
+  parameterPanel.setUndoManager(undoManager);
+
+  if (undoManager)
+  {
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    undoManager->onHistoryChanged = [safeThis]()
+    {
+      if (safeThis != nullptr && safeThis->commandManager)
+        safeThis->commandManager->commandStatusChanged();
+    };
+  }
+
+  if (commandManager)
+    commandManager->commandStatusChanged();
+}
+
+MainViewViewportState MainComponent::getViewportState() const
+{
+  MainViewViewportState state;
+  state.scrollX = pianoRoll.getScrollX();
+  state.scrollY = pianoRoll.getScrollY();
+  state.pixelsPerSecond = pianoRoll.getPixelsPerSecond();
+  state.pixelsPerSemitone = pianoRoll.getPixelsPerSemitone();
+  state.valid = true;
+  return state;
+}
+
+void MainComponent::restoreViewportState(
+    const MainViewViewportState &state)
+{
+  if (!state.valid)
+    return;
+
+  pianoRoll.setPixelsPerSecond(state.pixelsPerSecond, false);
+  pianoRoll.setPixelsPerSemitone(state.pixelsPerSemitone, 0.0f);
+  pianoRoll.setScrollX(state.scrollX);
+  pianoRoll.setScrollY(state.scrollY);
+  toolbar.setZoom(pianoRoll.getPixelsPerSecond());
+  pianoRollView.refreshOverview();
 }
 
 void MainComponent::reloadInferenceModels(bool async)
@@ -395,7 +497,9 @@ MainComponent::~MainComponent()
   removeKeyListener(commandManager->getKeyMappings());
   stopTimer();
 
-  if (auto *audioEngine = editorController->getAudioEngine())
+  if (auto *audioEngine = editorController
+                              ? editorController->getAudioEngine()
+                              : nullptr)
   {
     audioEngine->clearCallbacks();
     audioEngine->shutdownAudio();
@@ -1755,6 +1859,9 @@ void MainComponent::showSettings()
 
 bool MainComponent::isInterestedInFileDrag(const juce::StringArray &files)
 {
+  if (isPluginMode())
+    return false;
+
   for (const auto &file : files)
   {
     if (file.endsWithIgnoreCase(".htpx") || file.endsWithIgnoreCase(".wav") ||
@@ -1769,6 +1876,9 @@ bool MainComponent::isInterestedInFileDrag(const juce::StringArray &files)
 void MainComponent::filesDropped(const juce::StringArray &files, int /*x*/,
                                  int /*y*/)
 {
+  if (isPluginMode())
+    return;
+
   if (files.isEmpty())
     return;
 
@@ -2338,7 +2448,8 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   case CommandIDs::undo:
     result.setInfo(TR("command.undo"), TR("command.undo.desp"), "Edit", 0);
     result.addDefaultKeypress('z', primaryModifier);
-    result.setActive(isPluginMode() || (undoManager != nullptr && undoManager->canUndo()));
+    result.setActive(isPluginMode() ||
+                     (undoManager != nullptr && undoManager->canUndo()));
     break;
 
   case CommandIDs::redo:
@@ -2348,7 +2459,8 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
 #else
     result.addDefaultKeypress('y', primaryModifier);
 #endif
-    result.setActive(isPluginMode() || (undoManager != nullptr && undoManager->canRedo()));
+    result.setActive(isPluginMode() ||
+                     (undoManager != nullptr && undoManager->canRedo()));
     break;
 
   case CommandIDs::selectAll:

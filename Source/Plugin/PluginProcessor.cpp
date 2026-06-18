@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "../Audio/EditorController.h"
+#include "../Undo/PitchUndoManager.h"
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
@@ -62,6 +63,7 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
   araAnalysisController = std::make_unique<EditorController>(false);
+  undoManager = std::make_unique<PitchUndoManager>(100);
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() = default;
@@ -502,7 +504,10 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
   araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
 
   if (mainComponent && araAnalysisReady && araAnalysisProjectSnapshot) {
-    mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+    if (!mainComponent->hasAnalyzedProject()) {
+      undoManager->clear();
+      mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+    }
     mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
     if (auto *project = mainComponent->getProject()) {
       project->getAudioData().timelineOffsetSeconds =
@@ -510,13 +515,12 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
       araAnalysisProjectJson =
           juce::JSON::toString(ProjectSerializer::toJson(*project), false);
-      if (araAnalysisController)
-        araAnalysisController->setProject(std::make_unique<Project>(*project));
     }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
     mainComponent->hideAnalysisProgress();
   } else if (mainComponent && araAnalysisReady &&
              araAnalysisProjectJson.isNotEmpty()) {
+    undoManager->clear();
     mainComponent->restoreProjectJson(araAnalysisProjectJson);
     mainComponent->updateHostAudioTimelineOffset(araAnalysisTimelineOffsetSeconds);
     if (auto *project = mainComponent->getProject()) {
@@ -525,8 +529,6 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
       araAnalysisProjectJson =
           juce::JSON::toString(ProjectSerializer::toJson(*project), false);
-      if (araAnalysisController)
-        araAnalysisController->setProject(std::make_unique<Project>(*project));
     }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
     mainComponent->hideAnalysisProgress();
@@ -546,6 +548,8 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
 
   if (attachCachedAraAnalysis(sourceKey, timelineOffsetSeconds))
     return;
+
+  undoManager->clear();
 
   if (!araAnalysisController)
     araAnalysisController = std::make_unique<EditorController>(false);
@@ -608,6 +612,8 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   if (buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
     return;
 
+  undoManager->clear();
+
   if (!araAnalysisController)
     araAnalysisController = std::make_unique<EditorController>(false);
 
@@ -664,13 +670,23 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   if (!araAnalysisController)
     araAnalysisController = std::make_unique<EditorController>(false);
 
-  araAnalysisController->setProject(std::make_unique<Project>(projectToRender));
+  auto *backendProject = araAnalysisController->getProject();
+  if (!backendProject)
+  {
+    araAnalysisController->setProject(
+        std::make_unique<Project>(projectToRender));
+    backendProject = araAnalysisController->getProject();
+  }
+  else if (backendProject != &projectToRender)
+  {
+    *backendProject = projectToRender;
+  }
 
   juce::Component::SafePointer<juce::Component> safeMain(
       mainComponent ? mainComponent->getComponent() : nullptr);
 
   araAnalysisController->resynthesizeIncrementalAsync(
-      *araAnalysisController->getProject(),
+      *backendProject,
       [safeMain](const juce::String &message) {
         juce::MessageManager::callAsync([safeMain, message]() {
           if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
@@ -698,8 +714,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         juce::MessageManager::callAsync([this, renderSafeMain, success]() {
           if (auto *view =
                   dynamic_cast<IMainView *>(renderSafeMain.getComponent())) {
-            if (success && araAnalysisProjectSnapshot) {
-              view->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+            if (success) {
               view->updateHostAudioTimelineOffset(
                   araAnalysisTimelineOffsetSeconds);
               view->bindRealtimeProcessor(realtimeProcessor);
@@ -731,10 +746,6 @@ void PitchNetAudioProcessor::updateAraTimelineOffset(
   araAnalysisProjectJson =
       juce::JSON::toString(ProjectSerializer::toJson(*project), false);
 
-  if (!araAnalysisController)
-    araAnalysisController = std::make_unique<EditorController>(false);
-  araAnalysisController->setProject(std::make_unique<Project>(*project));
-
   if (araAnalysisReady)
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
 }
@@ -744,14 +755,18 @@ void PitchNetAudioProcessor::updateAraTimelineOffset(
 // ============================================================================
 
 void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
-  if (mc == nullptr && mainComponent != nullptr) {
-    auto projectJson = mainComponent->serializeProjectJson();
-    if (projectJson.isNotEmpty())
-      pendingStateJson = projectJson;
+  if (mainComponent != nullptr && mainComponent != mc) {
+    viewportState = mainComponent->getViewportState();
+    mainComponent->bindUndoManager(nullptr);
+    mainComponent->bindBackendController(nullptr);
   }
 
   mainComponent = mc;
   if (mc) {
+    if (!araAnalysisController)
+      araAnalysisController = std::make_unique<EditorController>(false);
+    mc->bindBackendController(araAnalysisController.get());
+    mc->bindUndoManager(undoManager.get());
     mc->bindRealtimeProcessor(realtimeProcessor);
 
     // Sync current APVTS parameter values to project
@@ -779,6 +794,8 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
                                            project->getFormantShift()));
       }
     }
+
+    mc->restoreViewportState(viewportState);
   } else {
     realtimeProcessor.setProject(nullptr);
     realtimeProcessor.setVocoder(nullptr);
@@ -811,6 +828,10 @@ void PitchNetAudioProcessor::getStateInformation(
     projectJson = mainComponent->serializeProjectJson();
   } else if (pendingStateJson.isNotEmpty()) {
     projectJson = pendingStateJson;
+  } else if (araAnalysisController && araAnalysisController->getProject()) {
+    projectJson = juce::JSON::toString(
+        ProjectSerializer::toJson(*araAnalysisController->getProject()),
+        false);
   }
 
   if (projectJson.isNotEmpty()) {
@@ -832,6 +853,8 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
   auto parsed = juce::JSON::parse(rawString);
   if (!parsed.isObject())
     return;
+
+  undoManager->clear();
 
   // Check if this is a versioned envelope or legacy project JSON
   if (parsed.hasProperty("pluginStateVersion")) {

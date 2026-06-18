@@ -1606,11 +1606,23 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
 
   if (undoManager)
   {
+    auto *projectPtr = project;
     auto action = std::make_unique<MultiNoteMidiNudgeAction>(
         notesToMove, oldMidis, newMidis,
-        [rebuildAndNotify](const std::vector<Note *> &notes)
+        [projectPtr, dirtyStartFrame,
+         dirtyEndFrame](const std::vector<Note *> &notes)
         {
-          rebuildAndNotify(notes);
+          if (!projectPtr)
+            return;
+          PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
+          for (auto *note : notes)
+            if (note)
+              note->markSynthDirty();
+          const int f0Size = static_cast<int>(
+              projectPtr->getAudioData().f0.size());
+          projectPtr->setF0DirtyRange(
+              std::max(0, dirtyStartFrame - 60),
+              std::min(f0Size, dirtyEndFrame + 60));
         });
     undoManager->addAction(std::move(action));
   }
@@ -1792,6 +1804,24 @@ void PianoRollComponent::setScrollX(double x)
 
   repaint();
   updatePreviewButtonBounds();
+}
+
+void PianoRollComponent::setScrollY(double y)
+{
+  const double totalHeight =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  const double maxScrollY = std::max(
+      0.0, totalHeight - static_cast<double>(getVisibleContentHeight()));
+  const double clampedY = juce::jlimit(0.0, maxScrollY, y);
+
+  if (std::abs(scrollY - clampedY) < 0.01)
+    return;
+
+  scrollY = clampedY;
+  coordMapper->setScrollY(clampedY);
+  verticalScrollBar.setCurrentRangeStart(clampedY);
+  updatePreviewButtonBounds();
+  repaint();
 }
 
 void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)

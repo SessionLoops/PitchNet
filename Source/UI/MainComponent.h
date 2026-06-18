@@ -119,6 +119,10 @@ public:
   Vocoder *getVocoder() const override {
     return editorController ? editorController->getVocoder() : nullptr;
   }
+  void bindBackendController(EditorController *controller) override;
+  void bindUndoManager(PitchUndoManager *manager) override;
+  MainViewViewportState getViewportState() const override;
+  void restoreViewportState(const MainViewViewportState &state) override;
   bool hasAnalyzedProject() const override;
   void bindRealtimeProcessor(RealtimePitchProcessor &processor) override;
   juce::String serializeProjectJson() const override;
@@ -248,8 +252,10 @@ private:
   void redo();
   void setEditMode(EditMode mode);
 
-  std::unique_ptr<EditorController> editorController;
-  std::unique_ptr<PitchUndoManager> undoManager;
+  std::unique_ptr<EditorController> ownedEditorController;
+  EditorController *editorController = nullptr;
+  std::unique_ptr<PitchUndoManager> ownedUndoManager;
+  PitchUndoManager *undoManager = nullptr;
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;
   bool previewRegionActive = false;
   double previewRegionEndTime = 0.0;
