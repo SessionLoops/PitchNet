@@ -142,6 +142,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Set undo manager for piano roll
   pianoRoll.setUndoManager(undoManager);
   parameterPanel.setUndoManager(undoManager);
+  parameterPanel.setPluginMode(isPluginMode());
 
   // Setup toolbar callbacks
   toolbar.onPlay = [this]()
@@ -2181,6 +2182,17 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);
+}
+
+void MainComponent::updateHostTimelineState(double bpm, int numerator,
+                                            int denominator)
+{
+  if (!isPluginMode())
+    return;
+
+  parameterPanel.setHostTimelineState(bpm, numerator, denominator);
+  pianoRoll.setTimelineTempoBpm(bpm);
+  pianoRoll.setTimelineBeatSignature(numerator, denominator);
 }
 
 void MainComponent::updateHostLoopRange(double startSeconds, double endSeconds,

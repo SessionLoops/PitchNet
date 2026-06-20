@@ -17,27 +17,9 @@ void DraggablePanel::paint(juce::Graphics& g)
     clipPath.addRoundedRectangle(bounds, corner);
     g.reduceClipRegion(clipPath);
 
-    // Flat surface background
-    g.setColour(APP_COLOR_SURFACE);
+    // Side-panel background
+    g.setColour(juce::Colour(0xFF232323u));
     g.fillRect(bounds);
-
-    // Header — slightly raised
-    auto headerBounds = bounds.removeFromTop(static_cast<float>(headerHeight));
-    g.setColour(APP_COLOR_SURFACE_RAISED);
-    g.fillRect(headerBounds);
-
-    // Accent line at top of header (thin primary stripe)
-    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.45f));
-    g.fillRect(headerBounds.removeFromTop(1.5f));
-
-    // Header text
-    g.setColour(APP_COLOR_TEXT_PRIMARY);
-    g.setFont(juce::FontOptions(12.5f).withStyle("Bold"));
-    g.drawText(title, headerBounds.reduced(12, 0).toNearestInt(), juce::Justification::centredLeft);
-
-    // Separator under header
-    g.setColour(APP_COLOR_BORDER_SUBTLE);
-    g.drawHorizontalLine(headerHeight - 1, 0, static_cast<float>(getWidth()));
 }
 
 void DraggablePanel::paintOverChildren(juce::Graphics& g)

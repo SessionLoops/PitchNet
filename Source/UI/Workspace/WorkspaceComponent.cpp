@@ -25,7 +25,7 @@ void WorkspaceComponent::resized()
     auto bounds = getLocalBounds();
     const int margin = 0;
     const int topMargin = 0;
-    const int panelGap = 8; // Gap between piano roll and panel
+    const int panelGap = 0; // Side panel sits flush against the main view
 
     // Apply top margin first so sidebar aligns with content
     bounds.removeFromTop(topMargin);

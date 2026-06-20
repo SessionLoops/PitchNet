@@ -273,6 +273,24 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
                                     loop.isLoopEnabled, loop.hasLoopPoints);
       });
 
+  audioProcessor.getTransportController().setTempoCallback(
+      [safeMain](const HostSyncService::TempoInfo &tempo) {
+        if (!tempo.hasBpm || !tempo.hasTimeSignature)
+          return;
+
+        if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+          view->updateHostTimelineState(tempo.bpm, tempo.timeSigNumerator,
+                                        tempo.timeSigDenominator);
+      });
+
+  const auto hostState =
+      audioProcessor.getTransportController().getCurrentState();
+  if (hostState.tempo.hasBpm && hostState.tempo.hasTimeSignature)
+    if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+      view->updateHostTimelineState(hostState.tempo.bpm,
+                                    hostState.tempo.timeSigNumerator,
+                                    hostState.tempo.timeSigDenominator);
+
   syncHostLoopSnapshotFromPlayHead();
 }
 

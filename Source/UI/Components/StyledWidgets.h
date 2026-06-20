@@ -92,6 +92,80 @@ public:
 };
 
 /**
+ * Compact radio button matching VocalNet's selector rendering.
+ */
+class RadioButton : public juce::ToggleButton
+{
+public:
+    explicit RadioButton(const juce::String& buttonText = {})
+        : juce::ToggleButton(buttonText)
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paintButton(juce::Graphics& g, bool highlighted, bool /*down*/) override
+    {
+        constexpr float diameter = 16.0f;
+        const juce::Rectangle<float> circle(
+            4.0f, (static_cast<float>(getHeight()) - diameter) * 0.5f + 1.0f,
+            diameter, diameter);
+
+        const bool selected = getToggleState();
+        g.setColour(selected ? juce::Colours::white
+                             : juce::Colour(highlighted ? 0xFF9B9B9Bu : 0xFF515151u));
+        g.drawEllipse(circle, 1.0f);
+        if (selected)
+            g.fillEllipse(circle.reduced(3.0f));
+
+        g.setColour(selected ? juce::Colour(0xFFE6E6E6u)
+                             : juce::Colour(highlighted ? 0xFF9B9B9Bu : 0xFF515151u));
+        g.setFont(AppFont::getFont(15.0f));
+        if (!isEnabled())
+            g.setOpacity(0.5f);
+
+        g.drawFittedText(getButtonText(),
+                         getLocalBounds().withTrimmedLeft(30).withTrimmedRight(2),
+                         juce::Justification::centredLeft, 1);
+    }
+};
+
+/** Compact borderless selector used for beat and grid values. */
+class CompactSelectionButton : public juce::TextButton
+{
+public:
+    explicit CompactSelectionButton(const juce::String& buttonText = {})
+        : juce::TextButton(buttonText)
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    void setEnabled(bool shouldBeEnabled)
+    {
+        juce::TextButton::setEnabled(shouldBeEnabled);
+        setMouseCursor(shouldBeEnabled ? juce::MouseCursor::PointingHandCursor
+                                       : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+    {
+        auto colour = juce::Colour(0xFF30302Eu);
+        if (down)
+            colour = colour.brighter(0.10f);
+        else if (highlighted)
+            colour = colour.brighter(0.05f);
+
+        g.setColour(colour);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), 5.0f);
+        g.setColour(juce::Colour(0xFFE6E6E6u)
+                        .withMultipliedAlpha(isEnabled() ? 1.0f : 0.5f));
+        g.setFont(AppFont::getFont(13.0f));
+        g.drawFittedText(getButtonText(), getLocalBounds().reduced(3, 0),
+                         juce::Justification::centred, 1);
+    }
+};
+
+/**
  * Pre-styled label — muted secondary text.
  */
 class StyledLabel : public juce::Label

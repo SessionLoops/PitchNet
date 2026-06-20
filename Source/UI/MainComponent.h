@@ -201,6 +201,8 @@ public:
   // Plugin mode - update playback position from host
   void updatePlaybackPosition(double timeSeconds) override;
   void updateHostPlaybackState(bool isPlaying) override;
+  void updateHostTimelineState(double bpm, int numerator,
+                               int denominator) override;
   void updateHostLoopRange(double startSeconds, double endSeconds,
                            bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback

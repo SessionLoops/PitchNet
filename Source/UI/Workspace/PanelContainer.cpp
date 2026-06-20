@@ -7,12 +7,7 @@ PanelContainer::PanelContainer()
 
 void PanelContainer::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
-    juce::ColourGradient bgGradient(
-        APP_COLOR_SURFACE_ALT, bounds.getX(), bounds.getY(),
-        APP_COLOR_BACKGROUND, bounds.getX(), bounds.getBottom(), false);
-    g.setGradientFill(bgGradient);
-    g.fillAll();
+    g.fillAll(juce::Colour(0xFF232323u));
 }
 
 void PanelContainer::resized()

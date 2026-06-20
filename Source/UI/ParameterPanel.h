@@ -6,6 +6,7 @@
 #include "../Undo/UndoActions.h"
 #include "../Utils/UI/Theme.h"
 #include "StyledComponents.h"
+#include "Sliders.h"
 #include <optional>
 
 class ParameterPanel : public juce::Component,
@@ -24,6 +25,8 @@ public:
     void textEditorFocusLost(juce::TextEditor& editor) override;
 
     void setProject(Project* proj);
+    void setPluginMode(bool pluginMode);
+    void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
     void updateFromNote();
@@ -69,7 +72,6 @@ private:
     void refreshScaleControlEnabling();
     void applyReferenceEditorValue(bool notify);
     void refreshTimelineModeToggles();
-    void applyTimelineTempoEditorValue(bool notify);
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
     void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
     void setTimelineTempoBpmInternal(double bpm, bool notify);
@@ -104,14 +106,14 @@ private:
     juce::Label doubleClickSnapLabel { {}, "Double Click Snap" };
     juce::TextButton doubleClickSnapButton { "Pitch Center" };
 
-    StyledToggleButton beatsTimelineToggle { "Beats" };
-    StyledToggleButton timeTimelineToggle { "Time" };
+    RadioButton beatsTimelineToggle { "Beats" };
+    RadioButton timeTimelineToggle { "Time" };
     juce::Label timelineBeatLabel { {}, "Beat" };
-    juce::TextButton timelineBeatButton { "4/4" };
+    CompactSelectionButton timelineBeatButton { "4/4" };
     juce::Label timelineTempoLabel { {}, "Tempo" };
-    juce::TextEditor timelineTempoEditor;
+    SliderBox timelineTempoSlider { "Tempo" };
     juce::Label timelineGridLabel { {}, "Grid" };
-    juce::TextButton timelineGridButton { "1/4" };
+    CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle { "Snap Cycle" };
 
     int selectedScaleRootNote = -1;

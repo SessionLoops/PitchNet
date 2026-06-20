@@ -7,8 +7,7 @@
 class PanelContainer;
 
 /**
- * Base class for draggable panels in the panel container.
- * Panels have a header that can be dragged to reorder.
+ * Base wrapper for content hosted in the side-panel container.
  */
 class DraggablePanel : public juce::Component
 {
@@ -35,7 +34,7 @@ public:
     void setPanelContainer(PanelContainer* container) { panelContainer = container; }
 
     int getPreferredHeight() const;
-    static constexpr int headerHeight = 36;
+    static constexpr int headerHeight = 0;
 
 protected:
     virtual void paintContent(juce::Graphics& g, juce::Rectangle<int> contentArea);

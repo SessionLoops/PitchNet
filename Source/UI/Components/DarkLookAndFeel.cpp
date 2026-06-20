@@ -172,30 +172,20 @@ void DarkLookAndFeel::drawTickBox(juce::Graphics& g, juce::Component& component,
     const float trackX = x;
     const float trackY = y + (h - trackH) * 0.5f;
     const float trackRadius = trackH * 0.5f;
-    const bool isHovered = shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown;
+    juce::ignoreUnused(shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown);
     const float alpha = isEnabled ? 1.0f : 0.4f;
 
     juce::Rectangle<float> track(trackX, trackY, trackW, trackH);
 
     if (ticked)
     {
-        // Active track — primary color fill
-        g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha * 0.85f));
+        g.setColour(juce::Colour(0xFF575757u).withMultipliedAlpha(alpha));
         g.fillRoundedRectangle(track, trackRadius);
-        if (isHovered)
-        {
-            g.setColour(APP_COLOR_PRIMARY_GLOW.withAlpha(0.12f));
-            g.fillRoundedRectangle(track, trackRadius);
-        }
     }
     else
     {
-        // Inactive track — dark surface
-        auto bgBrightness = isHovered ? 1.1f : 1.0f;
-        g.setColour(APP_COLOR_SURFACE_ALT.withMultipliedBrightness(bgBrightness).withAlpha(alpha));
+        g.setColour(juce::Colour(0xFF30302Eu).withMultipliedAlpha(alpha));
         g.fillRoundedRectangle(track, trackRadius);
-        g.setColour(APP_COLOR_BORDER.withAlpha(alpha * 0.7f));
-        g.drawRoundedRectangle(track.reduced(0.5f), trackRadius, 0.85f);
     }
 
     // Thumb circle
@@ -204,7 +194,8 @@ void DarkLookAndFeel::drawTickBox(juce::Graphics& g, juce::Component& component,
     const float thumbX = ticked ? (trackX + trackW - thumbD - thumbPad) : (trackX + thumbPad);
     const float thumbY = trackY + thumbPad;
 
-    g.setColour(juce::Colours::white.withAlpha(alpha * 0.95f));
+    g.setColour((ticked ? juce::Colours::white : juce::Colour(0xFF575757u))
+                    .withMultipliedAlpha(alpha));
     g.fillEllipse(thumbX, thumbY, thumbD, thumbD);
 }
 

@@ -8,6 +8,8 @@
 
 namespace
 {
+constexpr bool kShowPitchCard = false;
+
 struct ScaleModeOption
 {
     ScaleMode mode;
@@ -75,16 +77,13 @@ constexpr std::array<ScaleMode, 7> kDetectedScaleModes {{
     ScaleMode::Locrian
 }};
 
-constexpr std::array<TimelineBeatOption, 9> kTimelineBeatOptions {{
-    { 2, 4, "2/4" },
+constexpr std::array<TimelineBeatOption, 6> kTimelineBeatOptions {{
     { 3, 4, "3/4" },
     { 4, 4, "4/4" },
     { 5, 4, "5/4" },
     { 6, 8, "6/8" },
     { 7, 8, "7/8" },
-    { 9, 8, "9/8" },
-    { 12, 8, "12/8" },
-    { 3, 8, "3/8" }
+    { 12, 8, "12/8" }
 }};
 
 constexpr std::array<TimelineGridOption, 6> kTimelineGridOptions {{
@@ -224,7 +223,8 @@ public:
     {
         setColour(juce::PopupMenu::backgroundColourId, juce::Colours::transparentBlack);
         setColour(juce::PopupMenu::textColourId, APP_COLOR_TEXT_PRIMARY);
-        setColour(juce::PopupMenu::highlightedBackgroundColourId, APP_COLOR_PRIMARY.withAlpha(0.25f));
+        setColour(juce::PopupMenu::highlightedBackgroundColourId,
+                  juce::Colour(0xFF171717u));
         setColour(juce::PopupMenu::highlightedTextColourId, APP_COLOR_TEXT_PRIMARY);
     }
 
@@ -236,10 +236,9 @@ public:
         juce::Path shape;
         shape.addRoundedRectangle(area, 9.0f);
 
-        // Single-layer rounded menu background (darker) to avoid square-inside-round look.
-        g.setColour(APP_COLOR_SURFACE_ALT.withMultipliedBrightness(0.82f));
+        g.setColour(juce::Colour(0xFF30302Eu));
         g.fillPath(shape);
-        g.setColour(APP_COLOR_BORDER.withAlpha(0.92f));
+        g.setColour(juce::Colour(0xFF3E3E3Eu));
         g.strokePath(shape, juce::PathStrokeType(1.0f));
     }
 
@@ -271,7 +270,9 @@ public:
 
     void getIdealSize(int& idealWidth, int& idealHeight) override
     {
-        idealWidth = 200;
+        const int textWidth = juce::GlyphArrangement::getStringWidthInt(
+            AppFont::getFont(14.0f), itemText);
+        idealWidth = textWidth + 44; // matching 22 px left/right insets
         idealHeight = 26;
     }
 
@@ -280,13 +281,13 @@ public:
         const auto area = getLocalBounds().toFloat();
         if (isItemHighlighted())
         {
-            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.25f));
+            g.setColour(juce::Colour(0xFF171717u));
             g.fillRoundedRectangle(area.reduced(2.0f, 1.0f), 5.0f);
         }
 
         if (isSelected)
         {
-            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.95f));
+            g.setColour(juce::Colour(0xFFEFEFEFu));
             g.fillEllipse(8.0f, area.getCentreY() - 3.5f, 7.0f, 7.0f);
         }
 
@@ -320,19 +321,25 @@ private:
 ParameterPanel::ParameterPanel()
 {
     addAndMakeVisible(pitchSectionLabel);
-    pitchSectionLabel.setColour(juce::Label::textColourId, APP_COLOR_PRIMARY);
-    pitchSectionLabel.setFont(AppFont::getBoldFont(14.0f));
+    pitchSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    pitchSectionLabel.setFont(AppFont::getBoldFont(16.0f));
     addAndMakeVisible(timeSectionLabel);
-    timeSectionLabel.setColour(juce::Label::textColourId, APP_COLOR_PRIMARY);
-    timeSectionLabel.setFont(AppFont::getBoldFont(14.0f));
+    timeSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    timeSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
     for (auto* toggle : { &chromaticToggle, &scaleToggle, &showScaleColorsToggle,
-                          &snapToSemitonesToggle, &beatsTimelineToggle, &timeTimelineToggle,
-                          &timelineSnapCycleToggle })
+                          &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
         addAndMakeVisible(toggle);
         toggle->setClickingTogglesState(true);
         toggle->addListener(this);
+    }
+
+    for (auto* radio : { &beatsTimelineToggle, &timeTimelineToggle })
+    {
+        addAndMakeVisible(radio);
+        radio->setClickingTogglesState(true);
+        radio->addListener(this);
     }
 
     for (auto* label : { &referenceLabel, &scaleRootLabel, &scaleModeLabel, &doubleClickSnapLabel,
@@ -342,9 +349,18 @@ ParameterPanel::ParameterPanel()
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     }
 
-    for (auto* button : { &referenceMenuButton, &scaleRootButton, &scaleModeButton,
-                          &showDetectedScalesButton, &doubleClickSnapButton,
-                          &timelineBeatButton, &timelineGridButton })
+    for (auto* label : { &timelineBeatLabel, &timelineTempoLabel, &timelineGridLabel })
+    {
+        label->setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
+        label->setFont(AppFont::getFont(16.0f));
+    }
+
+    const std::array<juce::TextButton*, 7> textButtons {{
+        &referenceMenuButton, &scaleRootButton, &scaleModeButton,
+        &showDetectedScalesButton, &doubleClickSnapButton,
+        &timelineBeatButton, &timelineGridButton
+    }};
+    for (auto* button : textButtons)
     {
         setupTextButton(*button);
         addAndMakeVisible(button);
@@ -361,15 +377,26 @@ ParameterPanel::ParameterPanel()
     referenceEditor.addListener(this);
     addAndMakeVisible(referenceEditor);
 
-    timelineTempoEditor.setInputRestrictions(6, "0123456789.");
-    timelineTempoEditor.setText(juce::String(timelineTempoBpm, 2), juce::dontSendNotification);
-    timelineTempoEditor.setJustification(juce::Justification::centred);
-    timelineTempoEditor.setColour(juce::TextEditor::backgroundColourId, APP_COLOR_SURFACE_ALT);
-    timelineTempoEditor.setColour(juce::TextEditor::textColourId, APP_COLOR_TEXT_PRIMARY);
-    timelineTempoEditor.setColour(juce::TextEditor::outlineColourId, APP_COLOR_BORDER.withAlpha(0.8f));
-    timelineTempoEditor.setColour(juce::TextEditor::focusedOutlineColourId, APP_COLOR_PRIMARY.withAlpha(0.85f));
-    timelineTempoEditor.addListener(this);
-    addAndMakeVisible(timelineTempoEditor);
+    timelineTempoSlider.setRange(20.0, 300.0, 0.01);
+    timelineTempoSlider.setValue(timelineTempoBpm, juce::dontSendNotification);
+    timelineTempoSlider.setNumDecimalPlacesToDisplay(2);
+    timelineTempoSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 54, 22);
+    timelineTempoSlider.setColour(juce::Slider::backgroundColourId,
+                                  juce::Colour(0xFF30302Eu));
+    timelineTempoSlider.setColour(juce::Slider::trackColourId,
+                                  juce::Colour(0xFF30302Eu));
+    timelineTempoSlider.setColour(juce::Slider::textBoxBackgroundColourId,
+                                  juce::Colours::transparentBlack);
+    timelineTempoSlider.setColour(juce::Slider::textBoxOutlineColourId,
+                                  juce::Colours::transparentBlack);
+    timelineTempoSlider.setColour(juce::Slider::textBoxTextColourId,
+                                  juce::Colour(0xFFE6E6E6u));
+    timelineTempoSlider.onValueChange = [this]()
+    {
+        if (!isUpdating)
+            setTimelineTempoBpmInternal(timelineTempoSlider.getValue(), true);
+    };
+    addAndMakeVisible(timelineTempoSlider);
 
     scaleRootButton.setButtonText(getScaleRootLabel(selectedScaleRootNote));
     scaleModeButton.setButtonText(getScaleModeLabel(selectedScaleMode));
@@ -377,6 +404,16 @@ ParameterPanel::ParameterPanel()
     timelineBeatButton.setButtonText(getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
+
+    const std::array<juce::Component*, 15> pitchComponents {{
+        &pitchSectionLabel, &chromaticToggle, &scaleToggle,
+        &referenceLabel, &referenceEditor, &referenceMenuButton,
+        &scaleRootLabel, &scaleRootButton, &scaleModeLabel, &scaleModeButton,
+        &showDetectedScalesButton, &showScaleColorsToggle,
+        &snapToSemitonesToggle, &doubleClickSnapLabel, &doubleClickSnapButton
+    }};
+    for (auto* component : pitchComponents)
+        component->setVisible(kShowPitchCard);
 
     refreshModeToggles();
     refreshScaleControlEnabling();
@@ -403,7 +440,7 @@ void ParameterPanel::paint(juce::Graphics& g)
     if (!pitchCardBounds.isEmpty())
     {
         auto pitchRect = pitchCardBounds.toFloat();
-        g.setColour(APP_COLOR_SURFACE_RAISED.withAlpha(0.72f));
+        g.setColour(juce::Colour(0xFF171717u));
         g.fillRoundedRectangle(pitchRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
         g.drawRoundedRectangle(pitchRect.reduced(0.5f), radius, 0.75f);
@@ -412,7 +449,7 @@ void ParameterPanel::paint(juce::Graphics& g)
     if (!timeCardBounds.isEmpty())
     {
         auto timeRect = timeCardBounds.toFloat();
-        g.setColour(APP_COLOR_SURFACE_RAISED.withAlpha(0.72f));
+        g.setColour(juce::Colour(0xFF171717u));
         g.fillRoundedRectangle(timeRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
         g.drawRoundedRectangle(timeRect.reduced(0.5f), radius, 0.75f);
@@ -423,7 +460,7 @@ void ParameterPanel::resized()
 {
     auto outerBounds = getLocalBounds();
 
-    constexpr int cardPadX = 8;    // horizontal padding outside cards
+    constexpr int cardPadX = 5;    // horizontal padding outside cards
     constexpr int cardPadY = 6;    // vertical padding outside cards
     constexpr int cardGap = 6;     // gap between pitch and time cards
     constexpr int innerPadX = 10;  // padding inside each card
@@ -439,7 +476,7 @@ void ParameterPanel::resized()
     auto bounds = cardArea;
     bounds = bounds.reduced(innerPadX, innerPadY);
 
-    pitchSectionLabel.setBounds(bounds.removeFromTop(16));
+    pitchSectionLabel.setBounds(bounds.removeFromTop(20));
     bounds.removeFromTop(rowGap + 2);
 
     // Mode toggles: Chromatic | Scale
@@ -489,44 +526,47 @@ void ParameterPanel::resized()
 
     // Pitch card ends here (content bottom + inner padding)
     int pitchCardBottom = bounds.getY() + innerPadY;
-    pitchCardBounds = juce::Rectangle<int>(cardArea.getX(), pitchCardStart,
-                                            cardArea.getWidth(), pitchCardBottom - pitchCardStart);
+    pitchCardBounds = kShowPitchCard
+        ? juce::Rectangle<int>(cardArea.getX(), pitchCardStart,
+                               cardArea.getWidth(), pitchCardBottom - pitchCardStart)
+        : juce::Rectangle<int>();
 
     // =========================================================================
     // TIME CARD
     // =========================================================================
-    int timeCardStart = pitchCardBottom + cardGap;
+    int timeCardStart = kShowPitchCard ? pitchCardBottom + cardGap : cardArea.getY();
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
-    timeSectionLabel.setBounds(bounds.removeFromTop(16));
+    timeSectionLabel.setBounds(bounds.removeFromTop(20));
     bounds.removeFromTop(rowGap + 2);
 
     // Timeline mode: Beats | Time
-    auto timelineModeRow = bounds.removeFromTop(22);
-    auto beatsArea = timelineModeRow.removeFromLeft((timelineModeRow.getWidth() - columnGap) / 2);
+    auto timelineModeRow = bounds.removeFromTop(32);
+    constexpr int radioButtonWidth = 82;
+    beatsTimelineToggle.setBounds(timelineModeRow.removeFromLeft(radioButtonWidth));
     timelineModeRow.removeFromLeft(columnGap);
-    beatsTimelineToggle.setBounds(beatsArea);
-    timeTimelineToggle.setBounds(timelineModeRow);
+    timeTimelineToggle.setBounds(timelineModeRow.removeFromLeft(radioButtonWidth));
 
     bounds.removeFromTop(rowGap + 1);
 
     // Beat / Tempo row
     auto beatTempoRow = bounds.removeFromTop(26);
-    timelineBeatLabel.setBounds(beatTempoRow.removeFromLeft(36));
-    auto beatButtonArea = beatTempoRow.removeFromLeft(60);
-    timelineBeatButton.setBounds(beatButtonArea);
-    beatTempoRow.removeFromLeft(8);
-    timelineTempoLabel.setBounds(beatTempoRow.removeFromLeft(46));
-    timelineTempoEditor.setBounds(beatTempoRow.reduced(0, 1));
+    timelineBeatLabel.setBounds(beatTempoRow.removeFromLeft(38));
+    auto beatButtonArea = beatTempoRow.removeFromLeft(44);
+    timelineBeatButton.setBounds(beatButtonArea.withSizeKeepingCentre(40, 22));
+    beatTempoRow.removeFromLeft(10);
+    timelineTempoLabel.setBounds(beatTempoRow.removeFromLeft(50));
+    timelineTempoSlider.setBounds(beatTempoRow.reduced(0, 2));
 
     bounds.removeFromTop(rowGap);
 
     // Grid / Snap Cycle row
     auto gridRow = bounds.removeFromTop(26);
-    timelineGridLabel.setBounds(gridRow.removeFromLeft(36));
-    timelineGridButton.setBounds(gridRow.removeFromLeft(74));
-    gridRow.removeFromLeft(8);
+    timelineGridLabel.setBounds(gridRow.removeFromLeft(38));
+    timelineGridButton.setBounds(
+        gridRow.removeFromLeft(44).withSizeKeepingCentre(40, 22));
+    gridRow.removeFromLeft(10);
     timelineSnapCycleToggle.setBounds(gridRow);
 
     int timeCardBottom = bounds.getY() + innerPadY;
@@ -659,22 +699,31 @@ void ParameterPanel::textEditorReturnKeyPressed(juce::TextEditor& editor)
 {
     if (&editor == &referenceEditor)
         applyReferenceEditorValue(true);
-    else if (&editor == &timelineTempoEditor)
-        applyTimelineTempoEditorValue(true);
 }
 
 void ParameterPanel::textEditorFocusLost(juce::TextEditor& editor)
 {
     if (&editor == &referenceEditor)
         applyReferenceEditorValue(true);
-    else if (&editor == &timelineTempoEditor)
-        applyTimelineTempoEditorValue(true);
 }
 
 void ParameterPanel::setProject(Project* proj)
 {
     project = proj;
     updateGlobalSliders();
+}
+
+void ParameterPanel::setPluginMode(bool pluginMode)
+{
+    timelineBeatButton.setEnabled(!pluginMode);
+    timelineTempoSlider.setEnabled(!pluginMode);
+    timelineGridButton.setEnabled(true);
+}
+
+void ParameterPanel::setHostTimelineState(double bpm, int numerator, int denominator)
+{
+    setTimelineTempoBpmInternal(bpm, false);
+    setTimelineBeatSignatureInternal(numerator, denominator, false);
 }
 
 void ParameterPanel::setSelectedNote(Note* note)
@@ -735,7 +784,7 @@ void ParameterPanel::updateGlobalSliders()
     doubleClickSnapButton.setButtonText(getDoubleClickSnapLabel(doubleClickSnapMode));
     timelineBeatButton.setButtonText(
         getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
-    timelineTempoEditor.setText(juce::String(timelineTempoBpm, 2), juce::dontSendNotification);
+    timelineTempoSlider.setValue(timelineTempoBpm, juce::dontSendNotification);
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
 
@@ -919,7 +968,7 @@ void ParameterPanel::setTimelineTempoBpmInternal(double bpm, bool notify)
     const double normalized = juce::jlimit(20.0, 300.0, bpm);
     const bool changed = std::abs(timelineTempoBpm - normalized) > 1.0e-6;
     timelineTempoBpm = normalized;
-    timelineTempoEditor.setText(juce::String(normalized, 2), juce::dontSendNotification);
+    timelineTempoSlider.setValue(normalized, juce::dontSendNotification);
 
     if (project != nullptr && changed)
         project->setTimelineTempoBpm(normalized);
@@ -973,13 +1022,6 @@ void ParameterPanel::applyReferenceEditorValue(bool notify)
 {
     const int parsed = referenceEditor.getText().getIntValue();
     setPitchReferenceInternal(parsed <= 0 ? pitchReferenceHz : parsed, notify);
-}
-
-void ParameterPanel::applyTimelineTempoEditorValue(bool notify)
-{
-    const auto text = timelineTempoEditor.getText().trim();
-    const double parsed = text.getDoubleValue();
-    setTimelineTempoBpmInternal(parsed > 0.0 ? parsed : timelineTempoBpm, notify);
 }
 
 void ParameterPanel::showScaleRootMenu()
@@ -1170,7 +1212,7 @@ void ParameterPanel::showTimelineBeatMenu()
     auto options = juce::PopupMenu::Options()
         .withTargetComponent(&timelineBeatButton)
         .withParentComponent(this)
-        .withMinimumWidth(juce::jmax(170, timelineBeatButton.getWidth()));
+        .withMinimumWidth(timelineBeatButton.getWidth());
 
     menu.showMenuAsync(options,
                        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
@@ -1207,7 +1249,7 @@ void ParameterPanel::showTimelineGridMenu()
     auto options = juce::PopupMenu::Options()
         .withTargetComponent(&timelineGridButton)
         .withParentComponent(this)
-        .withMinimumWidth(juce::jmax(170, timelineGridButton.getWidth()));
+        .withMinimumWidth(timelineGridButton.getWidth());
 
     menu.showMenuAsync(options,
                        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)

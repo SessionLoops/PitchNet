@@ -44,7 +44,7 @@ private:
     PanelContainer panelContainer;
 
     juce::Component* mainContent = nullptr;
-    int panelContainerWidth = 320;
+    int panelContainerWidth = 250;
     std::map<juce::String, bool> requestedPanelVisibility;
     float panelAnimationProgress = 0.0f;
     float panelAnimationStartProgress = 0.0f;

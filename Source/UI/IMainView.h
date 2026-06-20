@@ -60,6 +60,8 @@ public:
   virtual void clearHostAudio() = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
   virtual void updateHostPlaybackState(bool isPlaying) = 0;
+  virtual void updateHostTimelineState(double bpm, int numerator,
+                                       int denominator) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
                                    bool enabled, bool hasRange) = 0;
   virtual void notifyHostStopped() = 0;
