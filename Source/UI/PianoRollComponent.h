@@ -86,6 +86,9 @@ public:
 
   // Project
   void setProject(Project *proj);
+  void beginLiveRecordingWaveform(double sampleRate,
+                                  double timelineOffsetSeconds);
+  void appendLiveRecordingWaveform(const juce::AudioBuffer<float> &buffer);
   Project *getProject() const { return project; }
   std::vector<Note *> getSelectedNotes() const;
   PianoRollInteractionContext &getInteractionContext()
@@ -242,6 +245,7 @@ private:
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   void reapplyBasePitchForNote(
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
+  double getTimelineDuration() const;
 
   Project *project = nullptr;
   PitchUndoManager *undoManager = nullptr;
@@ -252,6 +256,8 @@ private:
   std::unique_ptr<GridRenderer> gridRenderer;
   std::unique_ptr<TimelineRenderer> timelineRenderer;
   std::unique_ptr<WaveformBackgroundRenderer> waveformBackgroundRenderer;
+  double liveTimelineEndSeconds = 0.0;
+  double liveRecordingSampleRate = 0.0;
   std::unique_ptr<NoteRenderer> noteRenderer;
   std::unique_ptr<PitchCurveRenderer> pitchCurveRenderer;
   std::unique_ptr<ScrollZoomController> scrollZoomController;

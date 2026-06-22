@@ -29,6 +29,9 @@ public:
 
   // Called from message thread
   juce::AudioBuffer<float> copyCapturedAudio(int numSamples) const;
+  juce::AudioBuffer<float> copyCapturedAudioRange(int startSample,
+                                                  int numSamples) const;
+  int getCapturedSampleCount() const { return publishedCapturePosition.load(); }
 
   // Called from message thread after the captured audio has been copied out and
   // dispatched for analysis.
@@ -50,6 +53,7 @@ private:
 
   juce::AudioBuffer<float> captureBuffer;
   int capturePosition = 0;
+  std::atomic<int> publishedCapturePosition{0};
   int stopDebounceBlocks = 0;
   int finalLength = 0;
 

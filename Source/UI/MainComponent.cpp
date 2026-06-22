@@ -192,6 +192,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   toolbar.onUndo = [this]() { undo(); };
   toolbar.onRedo = [this]() { redo(); };
+  toolbar.onToggleRecord = [this](bool armed) {
+    if (onRecordArmChanged)
+      onRecordArmChanged(armed);
+  };
   toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
                              undoManager && undoManager->canRedo());
 
@@ -2003,6 +2007,23 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
       });
 }
 
+void MainComponent::beginLiveRecording(double sampleRate,
+                                       double timelineOffsetSeconds)
+{
+  if (!isPluginMode())
+    return;
+  liveRecordingActive = true;
+  pianoRoll.beginLiveRecordingWaveform(sampleRate, timelineOffsetSeconds);
+}
+
+void MainComponent::appendLiveRecordingAudio(
+    const juce::AudioBuffer<float> &buffer)
+{
+  if (!isPluginMode())
+    return;
+  pianoRoll.appendLiveRecordingWaveform(buffer);
+}
+
 void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
 {
   if (!isPluginMode())
@@ -2164,7 +2185,8 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
 
   // Clamp only when project audio exists. Empty ARA tracks still need to follow
   // the host playhead position.
-  if (project && project->getAudioData().waveform.getNumSamples() > 0)
+  if (!liveRecordingActive && project &&
+      project->getAudioData().waveform.getNumSamples() > 0)
   {
     double duration = project->getAudioData().getDuration();
     displayTime = std::min(displayTime, static_cast<double>(duration));
@@ -2293,6 +2315,7 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
 
 bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
 {
+  liveRecordingActive = false;
   if (auto *project = getProject())
   {
     *project = snapshot;

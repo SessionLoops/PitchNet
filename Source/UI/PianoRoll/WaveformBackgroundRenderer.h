@@ -18,6 +18,9 @@ public:
   void setProject(Project *proj)
   {
     project = proj;
+    liveWaveform.setSize(0, 0);
+    liveNumSamples = 0;
+    liveSampleRate = 0.0;
     // Free old image when project changes; metadata reset forces rebuild.
     waveformCache = juce::Image();
     cachedScrollX = -1.0;
@@ -27,6 +30,8 @@ public:
   }
 
   void draw(juce::Graphics &g, const juce::Rectangle<int> &visibleArea);
+  void beginLiveWaveform(double sampleRate, double timelineOffsetSeconds);
+  void appendLiveWaveform(const juce::AudioBuffer<float> &buffer);
 
   // Soft invalidation: next draw will regenerate the cache. Does not free the
   // image buffer; matches the prior PianoRollComponent::invalidateWaveformCache.
@@ -41,6 +46,10 @@ private:
   float cachedPixelsPerSecond = -1.0f;
   int cachedWidth = 0;
   int cachedHeight = 0;
+  juce::AudioBuffer<float> liveWaveform;
+  int liveNumSamples = 0;
+  double liveSampleRate = 0.0;
+  double liveTimelineOffsetSeconds = 0.0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformBackgroundRenderer)
 };

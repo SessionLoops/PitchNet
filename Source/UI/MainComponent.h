@@ -166,6 +166,19 @@ public:
       std::function<void(double, double, bool, bool)> callback) override {
     onRequestHostLoopRange = std::move(callback);
   }
+  void setOnRecordArmChanged(std::function<void(bool)> callback) override {
+    onRecordArmChanged = std::move(callback);
+  }
+  void setRecordControlVisible(bool visible) override {
+    toolbar.setRecordControlVisible(visible);
+  }
+  void updateRecordArmState(bool armed) override {
+    toolbar.setRecordArmed(armed);
+  }
+  void beginLiveRecording(double sampleRate,
+                          double timelineOffsetSeconds) override;
+  void appendLiveRecordingAudio(
+      const juce::AudioBuffer<float> &buffer) override;
   juce::Point<int> getSavedWindowSize() const;
 
   // Check if ARA mode is active.
@@ -197,6 +210,7 @@ public:
   std::function<void(double startSeconds, double endSeconds, bool enabled,
                      bool hasRange)>
       onRequestHostLoopRange;
+  std::function<void(bool armed)> onRecordArmChanged;
 
   // Plugin mode - update playback position from host
   void updatePlaybackPosition(double timeSeconds) override;
@@ -292,6 +306,7 @@ private:
   juce::StringArray recentFiles;
 
   bool isPlaying = false;
+  bool liveRecordingActive = false;
 
   // Sync flag to prevent infinite loops
   bool isSyncingZoom = false;

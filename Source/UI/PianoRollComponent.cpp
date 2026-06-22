@@ -1309,8 +1309,7 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 {
   if (scrollBar == &horizontalScrollBar)
   {
-    const double totalWidth =
-        project ? project->getAudioData().getDuration() * pixelsPerSecond : 0.0;
+    const double totalWidth = getTimelineDuration() * pixelsPerSecond;
     const double maxScrollX =
         std::max(0.0, totalWidth - static_cast<double>(getVisibleContentWidth()));
     scrollX = juce::jlimit(0.0, maxScrollX, newRangeStart);
@@ -1331,6 +1330,8 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 
 void PianoRollComponent::setProject(Project *proj)
 {
+  liveTimelineEndSeconds = 0.0;
+  liveRecordingSampleRate = 0.0;
   project = proj;
   hoveredNote = nullptr;
   setPreviewPlaybackState(false, 0, 0);
@@ -1375,6 +1376,28 @@ void PianoRollComponent::setProject(Project *proj)
 
   updatePitchToolHandlesFromSelection();
 
+  updateScrollBars();
+  repaint();
+}
+
+void PianoRollComponent::beginLiveRecordingWaveform(
+    double sampleRate, double timelineOffsetSeconds)
+{
+  waveformBackgroundRenderer->beginLiveWaveform(sampleRate,
+                                                timelineOffsetSeconds);
+  liveRecordingSampleRate = sampleRate;
+  liveTimelineEndSeconds = std::max(0.0, timelineOffsetSeconds);
+  updateScrollBars();
+  repaint();
+}
+
+void PianoRollComponent::appendLiveRecordingWaveform(
+    const juce::AudioBuffer<float> &buffer)
+{
+  waveformBackgroundRenderer->appendLiveWaveform(buffer);
+  if (liveRecordingSampleRate > 0.0)
+    liveTimelineEndSeconds +=
+        static_cast<double>(buffer.getNumSamples()) / liveRecordingSampleRate;
   updateScrollBars();
   repaint();
 }
@@ -1792,8 +1815,7 @@ void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 
 void PianoRollComponent::setScrollX(double x)
 {
-  const double totalWidth =
-      project ? project->getAudioData().getDuration() * pixelsPerSecond : 0.0;
+  const double totalWidth = getTimelineDuration() * pixelsPerSecond;
   const double maxScrollX =
       std::max(0.0, totalWidth - static_cast<double>(getVisibleContentWidth()));
   const double clampedX = juce::jlimit(0.0, maxScrollX, x);
@@ -2273,7 +2295,8 @@ void PianoRollComponent::updateScrollBars()
 {
   if (project)
   {
-    float totalWidth = project->getAudioData().getDuration() * pixelsPerSecond;
+    float totalWidth =
+        static_cast<float>(getTimelineDuration()) * pixelsPerSecond;
     float totalHeight = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
     int visibleWidth = getVisibleContentWidth();
@@ -2290,6 +2313,13 @@ void PianoRollComponent::updateScrollBars()
     verticalScrollBar.setRangeLimits(0, totalHeight);
     verticalScrollBar.setCurrentRange(scrollY, visibleHeight);
   }
+}
+
+double PianoRollComponent::getTimelineDuration() const
+{
+  const double projectDuration =
+      project ? static_cast<double>(project->getAudioData().getDuration()) : 0.0;
+  return std::max(projectDuration, liveTimelineEndSeconds);
 }
 
 void PianoRollComponent::reapplyBasePitchForNote(Note *note)

@@ -14,19 +14,21 @@ void NonAraCaptureController::prepare(double sampleRate, int numChannels,
     captureBuffer.setSize(numChannels, maxSamples);
     captureBuffer.clear();
     capturePosition = 0;
+    publishedCapturePosition.store(0);
     finalLength = 0;
     stopDebounceBlocks = 0;
   }
 
   analysisPending.store(false);
   shouldFinalizeFlag.store(false);
-  state.store(State::WaitingForAudio);
+  state.store(State::Idle);
 }
 
 void NonAraCaptureController::resetToWaiting() {
   const juce::SpinLock::ScopedLockType lock(bufferLock);
   captureBuffer.clear();
   capturePosition = 0;
+  publishedCapturePosition.store(0);
   finalLength = 0;
   stopDebounceBlocks = 0;
   analysisPending.store(false);
@@ -41,23 +43,14 @@ void NonAraCaptureController::processBlock(
 
   auto currentState = state.load();
 
-  // Wait for audio
+  // An armed capture begins with the first block processed while the host is
+  // running. Record silence too: the incoming timeline must remain intact.
   if (currentState == State::WaitingForAudio && hostIsPlaying) {
-    float maxLevel = 0.0f;
-    for (int ch = 0; ch < input.getNumChannels(); ++ch) {
-      const float *data = input.getReadPointer(ch);
-      for (int i = 0; i < input.getNumSamples(); ++i)
-        maxLevel = std::max(maxLevel, std::abs(data[i]));
-    }
-
-    if (maxLevel > audioThreshold) {
-      const juce::SpinLock::ScopedLockType lock(bufferLock);
-      capturePosition = 0;
-      stopDebounceBlocks = 0;
-      state.store(State::Capturing);
-      shouldFinalizeFlag.store(false);
-      return;
-    }
+    const juce::SpinLock::ScopedLockType lock(bufferLock);
+    capturePosition = 0;
+    stopDebounceBlocks = 0;
+    state.store(State::Capturing);
+    shouldFinalizeFlag.store(false);
   }
 
   currentState = state.load();
@@ -78,15 +71,14 @@ void NonAraCaptureController::processBlock(
       for (int ch = 0; ch < channelsToCopy; ++ch)
         captureBuffer.copyFrom(ch, capturePosition, input, ch, 0, toCopy);
       capturePosition += toCopy;
+      publishedCapturePosition.store(capturePosition);
     }
 
     if (capturePosition >= captureBuffer.getNumSamples()) {
       shouldFinalizeFlag.store(true);
     }
   } else {
-    ++stopDebounceBlocks;
-    if (stopDebounceBlocks >= kStopDebounceBlocks)
-      shouldFinalizeFlag.store(true);
+    shouldFinalizeFlag.store(true);
   }
 }
 
@@ -106,7 +98,7 @@ bool NonAraCaptureController::finalizeCapture(double hostSampleRate,
   }
 
   if (captured < minSamples) {
-    resetToWaiting();
+    stop();
     return false;
   }
 
@@ -138,11 +130,23 @@ NonAraCaptureController::copyCapturedAudio(int numSamples) const {
   return trimmed;
 }
 
+juce::AudioBuffer<float> NonAraCaptureController::copyCapturedAudioRange(
+    int startSample, int numSamples) const {
+  juce::AudioBuffer<float> chunk;
+  const juce::SpinLock::ScopedLockType lock(bufferLock);
+  const int start = juce::jlimit(0, capturePosition, startSample);
+  const int length = juce::jlimit(0, capturePosition - start, numSamples);
+  chunk.setSize(captureBuffer.getNumChannels(), length);
+  for (int ch = 0; ch < captureBuffer.getNumChannels(); ++ch)
+    chunk.copyFrom(ch, 0, captureBuffer, ch, start, length);
+  return chunk;
+}
+
 void NonAraCaptureController::onAnalysisDispatched() {
   analysisPending.store(false);
   shouldFinalizeFlag.store(false);
   stopDebounceBlocks = 0;
-  state.store(State::WaitingForAudio);
+  state.store(State::Idle);
 }
 
 void NonAraCaptureController::stop() {
@@ -150,6 +154,7 @@ void NonAraCaptureController::stop() {
     const juce::SpinLock::ScopedLockType lock(bufferLock);
     captureBuffer.clear();
     capturePosition = 0;
+    publishedCapturePosition.store(0);
     finalLength = 0;
     stopDebounceBlocks = 0;
   }

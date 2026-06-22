@@ -52,6 +52,13 @@ public:
       std::function<void(double)> callback) = 0;
   virtual void setOnRequestHostLoopRange(
       std::function<void(double, double, bool, bool)> callback) = 0;
+  virtual void setOnRecordArmChanged(std::function<void(bool)> callback) = 0;
+  virtual void setRecordControlVisible(bool visible) = 0;
+  virtual void updateRecordArmState(bool armed) = 0;
+  virtual void beginLiveRecording(double sampleRate,
+                                  double timelineOffsetSeconds) = 0;
+  virtual void appendLiveRecordingAudio(
+      const juce::AudioBuffer<float> &buffer) = 0;
 
   virtual void setHostAudio(const juce::AudioBuffer<float> &buffer,
                             double sampleRate,

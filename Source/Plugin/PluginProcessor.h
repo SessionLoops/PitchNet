@@ -86,7 +86,8 @@ public:
                                    playbackRegionRanges);
   void requestPluginProjectRender(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
-                                    double sampleRate);
+                                    double sampleRate,
+                                    double timelineOffsetSeconds);
   void updateAraTimelineOffset(double timelineOffsetSeconds);
 
   void removeAraRegionFromProject(
@@ -130,6 +131,13 @@ public:
     return captureController && captureController->getState() ==
                                     NonAraCaptureController::State::Capturing;
   }
+  bool isCaptureArmed() const {
+    if (!captureController)
+      return false;
+    const auto state = captureController->getState();
+    return state == NonAraCaptureController::State::WaitingForAudio ||
+           state == NonAraCaptureController::State::Capturing;
+  }
 
   // ========== Parameter Access ==========
 
@@ -152,6 +160,8 @@ private:
   void processNonARAMode(juce::AudioBuffer<float> &buffer,
                          const juce::AudioPlayHead::PositionInfo &posInfo,
                          bool isRealtime);
+  void disarmCaptureUi();
+  void dispatchLiveCaptureUpdate();
 
   /** Apply bypass, dry/wet mix, and output gain to the processed buffer. */
   void applyOutputProcessing(juce::AudioBuffer<float> &processedBuffer,
@@ -213,6 +223,16 @@ private:
       std::make_shared<NonAraCaptureController>();
   NonAraCaptureController::State lastCaptureUiState =
       NonAraCaptureController::State::Idle;
+  struct LiveCaptureUiState {
+    std::atomic<bool> pending{false};
+    std::atomic<int> latestSamples{0};
+    std::atomic<int> sentSamples{0};
+    std::atomic<unsigned int> generation{0};
+    std::atomic<double> timelineOffsetSeconds{0.0};
+  };
+  std::shared_ptr<LiveCaptureUiState> liveCaptureUiState =
+      std::make_shared<LiveCaptureUiState>();
+  double captureTimelineOffsetSeconds = 0.0;
   static constexpr int MAX_CAPTURE_SECONDS = 300; // 5 minutes max
 
   // Plugin state version for forward/backward compatibility

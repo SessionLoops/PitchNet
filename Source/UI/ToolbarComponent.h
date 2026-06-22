@@ -82,6 +82,8 @@ public:
 
     // Plugin mode
     void setPluginMode(bool isPlugin);
+    void setRecordControlVisible(bool visible);
+    void setRecordArmed(bool armed);
 
     // Progress bar control
     void showProgress(const juce::String &message);
@@ -100,6 +102,7 @@ public:
     std::function<void(bool)> onToggleLoop;
     std::function<void()> onUndo;
     std::function<void()> onRedo;
+    std::function<void(bool)> onToggleRecord;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing
@@ -108,6 +111,7 @@ private:
     void updateTimeDisplay();
     juce::String formatTime(double seconds);
 
+    ToggleButton recordButton;
     ToggleButton playButton;
     Button stopButton;
     Button goToStartButton;

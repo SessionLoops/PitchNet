@@ -13,6 +13,7 @@ ToolbarComponent::ToolbarComponent()
         return juce::ImageFileFormat::loadFrom(data, static_cast<size_t>(size));
     };
 
+    recordButton.setImage(loadImage(BinaryData::record_png, BinaryData::record_pngSize));
     playButton.setImage(loadImage(BinaryData::play_png, BinaryData::play_pngSize));
     stopButton.setImage(loadImage(BinaryData::stop_png, BinaryData::stop_pngSize));
     goToStartButton.setImage(loadImage(BinaryData::backward_png, BinaryData::backward_pngSize));
@@ -38,6 +39,7 @@ ToolbarComponent::ToolbarComponent()
     followButton.setEdgeIndent(6);
 
     // Configure buttons
+    addChildComponent(recordButton);
     addAndMakeVisible(goToStartButton);
     addAndMakeVisible(playButton);
     addAndMakeVisible(stopButton);
@@ -50,6 +52,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(redoButton);
     addAndMakeVisible(parametersButton);
 
+    recordButton.addListener(this);
     goToStartButton.addListener(this);
     playButton.addListener(this);
     stopButton.addListener(this);
@@ -67,6 +70,7 @@ ToolbarComponent::ToolbarComponent()
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
     loopButton.setTooltip(TR("toolbar.loop"));
+    recordButton.setTooltip("Record");
     undoButton.setTooltip(TR("command.undo"));
     redoButton.setTooltip(TR("command.redo"));
     parametersButton.setTooltip(TR("panel.parameters"));
@@ -199,13 +203,14 @@ void ToolbarComponent::resized()
     const int transportSlotSize = 30;
     const int transportPad = 5;
     const int numCenteredTransport = 4;
-    const int numTransport = 5;
+    const int numTransport = recordButton.isVisible() ? 6 : 5;
     const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
     const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
     int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
+    const int capsuleX = cx - (recordButton.isVisible() ? transportSlotSize + 2 : 0);
     const int transportCapsuleH = 38;
     const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
-    transportCapsuleBounds = juce::Rectangle<int>(cx, transportCapsuleY, capsuleW, transportCapsuleH);
+    transportCapsuleBounds = juce::Rectangle<int>(capsuleX, transportCapsuleY, capsuleW, transportCapsuleH);
     if (showingProgress)
         progressBar.setBounds(transportCapsuleBounds.getX(),
                               transportCapsuleBounds.getBottom() - 2,
@@ -220,7 +225,11 @@ void ToolbarComponent::resized()
                          buttonW, buttonH);
     };
 
-    int slotX = cx + transportPad;
+    int slotX = capsuleX + transportPad;
+    if (recordButton.isVisible()) {
+        setButtonInSlot(recordButton, slotX);
+        slotX += transportSlotSize + 2;
+    }
     setButtonInSlot(stopButton, slotX);
     slotX += transportSlotSize + 2;
     setButtonInSlot(playButton, slotX);
@@ -234,7 +243,12 @@ void ToolbarComponent::resized()
 
 void ToolbarComponent::buttonClicked(juce::Button *button)
 {
-    if (button == &goToStartButton && onGoToStart)
+    if (button == &recordButton)
+    {
+        if (onToggleRecord)
+            onToggleRecord(recordButton.getToggleState());
+    }
+    else if (button == &goToStartButton && onGoToStart)
         onGoToStart();
     else if (button == &goToEndButton && onGoToEnd)
         onGoToEnd();
@@ -303,6 +317,7 @@ void ToolbarComponent::setPlaying(bool playing)
 
 void ToolbarComponent::setTransportEnabled(bool enabled)
 {
+    recordButton.setEnabled(enabled);
     stopButton.setEnabled(enabled);
     playButton.setEnabled(enabled);
     goToStartButton.setEnabled(enabled);
@@ -441,4 +456,18 @@ void ToolbarComponent::setPluginMode(bool isPlugin)
     followButton.setVisible(!isPlugin);
 
     resized();
+}
+
+void ToolbarComponent::setRecordControlVisible(bool visible)
+{
+    recordButton.setVisible(visible);
+    if (!visible)
+        recordButton.setToggleState(false, juce::dontSendNotification);
+    resized();
+    repaint();
+}
+
+void ToolbarComponent::setRecordArmed(bool armed)
+{
+    recordButton.setToggleState(armed, juce::dontSendNotification);
 }

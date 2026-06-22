@@ -406,6 +406,9 @@ void PitchNetAudioProcessor::processNonARAMode(
   if (!hostIsPlaying) {
     // Still let the capture state machine observe transport stop so it can
     // finalize and dispatch analysis, but never output audio when stopped.
+    const bool captureWasRunning =
+        captureController->getState() ==
+        NonAraCaptureController::State::Capturing;
     captureController->processBlock(buffer, false);
 
     if (captureController->shouldFinalize()) {
@@ -415,21 +418,26 @@ void PitchNetAudioProcessor::processNonARAMode(
         auto controller = captureController;
         juce::MessageManager::callAsync([this, controller,
                                          samples = result.numSamples,
-                                         sr = result.sampleRate]() mutable {
+                                         sr = result.sampleRate,
+                                         timelineOffset =
+                                             captureTimelineOffsetSeconds]() mutable {
           if (!controller)
             return;
           auto trimmed = controller->copyCapturedAudio(samples);
           controller->onAnalysisDispatched();
-          requestCapturedAudioAnalysis(trimmed, sr);
+          requestCapturedAudioAnalysis(trimmed, sr, timelineOffset);
         });
       }
     }
+
+    if (captureWasRunning)
+      disarmCaptureUi();
 
     buffer.clear();
     return;
   }
 
-  if (hasProject && realtimeProcessor.isReady()) {
+  if (!isCaptureArmed() && hasProject && realtimeProcessor.isReady()) {
     // Save dry copy for dry/wet mixing
     juce::AudioBuffer<float> dryBuffer;
     const float dryWet = dryWetParamValue->load();
@@ -449,7 +457,21 @@ void PitchNetAudioProcessor::processNonARAMode(
   }
 
   // Capture mode
+  const auto stateBeforeCapture = captureController->getState();
+  if (stateBeforeCapture == NonAraCaptureController::State::WaitingForAudio) {
+    if (auto samples = posInfo.getTimeInSamples())
+      captureTimelineOffsetSeconds =
+          std::max(0.0, static_cast<double>(*samples) / hostSampleRate);
+    else if (auto seconds = posInfo.getTimeInSeconds())
+      captureTimelineOffsetSeconds = std::max(0.0, *seconds);
+    else
+      captureTimelineOffsetSeconds = 0.0;
+    liveCaptureUiState->timelineOffsetSeconds.store(
+        captureTimelineOffsetSeconds);
+  }
+
   captureController->processBlock(buffer, hostIsPlaying);
+  dispatchLiveCaptureUpdate();
 
   // UI: transition into recording
   auto currentState = captureController->getState();
@@ -473,14 +495,17 @@ void PitchNetAudioProcessor::processNonARAMode(
       auto controller = captureController;
       juce::MessageManager::callAsync([this, controller,
                                        samples = result.numSamples,
-                                       sr = result.sampleRate]() mutable {
+                                       sr = result.sampleRate,
+                                       timelineOffset =
+                                           captureTimelineOffsetSeconds]() mutable {
         if (!controller)
           return;
         auto trimmed = controller->copyCapturedAudio(samples);
         controller->onAnalysisDispatched();
-        requestCapturedAudioAnalysis(trimmed, sr);
+        requestCapturedAudioAnalysis(trimmed, sr, timelineOffset);
       });
     }
+    disarmCaptureUi();
   }
 
   // Passthrough during capture
@@ -491,10 +516,67 @@ void PitchNetAudioProcessor::processNonARAMode(
 // ============================================================================
 
 void PitchNetAudioProcessor::startCapture() {
+  auto state = liveCaptureUiState;
+  state->generation.fetch_add(1);
+  state->pending.store(false);
+  state->latestSamples.store(0);
+  state->sentSamples.store(0);
+  state->timelineOffsetSeconds.store(0.0);
+  captureTimelineOffsetSeconds = 0.0;
   captureController->resetToWaiting();
 }
 
 void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
+
+void PitchNetAudioProcessor::disarmCaptureUi() {
+  if (!mainComponent)
+    return;
+
+  juce::Component::SafePointer<juce::Component> safeMain(
+      mainComponent->getComponent());
+  juce::MessageManager::callAsync([safeMain]() {
+    if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+      view->updateRecordArmState(false);
+  });
+}
+
+void PitchNetAudioProcessor::dispatchLiveCaptureUpdate() {
+  if (!mainComponent)
+    return;
+
+  auto state = liveCaptureUiState;
+  const int latest = captureController->getCapturedSampleCount();
+  state->latestSamples.store(latest);
+  if (latest <= state->sentSamples.load() || state->pending.exchange(true))
+    return;
+
+  const auto generation = state->generation.load();
+  auto controller = captureController;
+  juce::Component::SafePointer<juce::Component> safeMain(
+      mainComponent->getComponent());
+  juce::MessageManager::callAsync(
+      [safeMain, controller, state, generation,
+       sampleRate = hostSampleRate]() {
+        if (generation != state->generation.load()) {
+          state->pending.store(false);
+          return;
+        }
+
+        const int start = state->sentSamples.load();
+        const int end = state->latestSamples.load();
+        if (end > start) {
+          auto chunk = controller->copyCapturedAudioRange(start, end - start);
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
+            if (start == 0)
+              view->beginLiveRecording(sampleRate,
+                                       state->timelineOffsetSeconds.load());
+            view->appendLiveRecordingAudio(chunk);
+          }
+          state->sentSamples.store(end);
+        }
+        state->pending.store(false);
+      });
+}
 
 bool PitchNetAudioProcessor::attachCachedAraAnalysis(
     std::uintptr_t sourceKey, double timelineOffsetSeconds,
@@ -643,6 +725,12 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
           mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
           mainComponent->updateHostAudioTimelineOffset(
               araAnalysisTimelineOffsetSeconds);
+          if (auto *positionedProject = mainComponent->getProject()) {
+            araAnalysisProjectSnapshot =
+                std::make_unique<Project>(*positionedProject);
+            araAnalysisProjectJson = juce::JSON::toString(
+                ProjectSerializer::toJson(*positionedProject), false);
+          }
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           mainComponent->hideAnalysisProgress();
         } else if (mainComponent) {
@@ -887,9 +975,23 @@ void PitchNetAudioProcessor::analyzeAndMergeAraRegion(
 }
 
 void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
-    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+    const juce::AudioBuffer<float> &buffer, double sampleRate,
+    double timelineOffsetSeconds) {
   if (buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
     return;
+
+  // Analysis is asynchronous. Preserve the completed regions now rather than
+  // trying to recover them from mutable UI/controller state in the callback.
+  std::shared_ptr<Project> previousCapturedProject;
+  if (mainComponent) {
+    if (auto *current = mainComponent->getProject();
+        current && current->getAudioData().waveform.getNumSamples() > 0)
+      previousCapturedProject = std::make_shared<Project>(*current);
+  }
+  if (!previousCapturedProject && araAnalysisProjectSnapshot &&
+      araAnalysisProjectSnapshot->getAudioData().waveform.getNumSamples() > 0)
+    previousCapturedProject =
+        std::make_shared<Project>(*araAnalysisProjectSnapshot);
 
   undoManager->clear();
 
@@ -899,7 +1001,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   araAnalysisSourceKey = 0;
   araAnalysisLoading = true;
   araAnalysisReady = false;
-  araAnalysisTimelineOffsetSeconds = 0.0;
+  araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
   araPlaybackRegionRanges.clear();
   araAnalysisProjectSnapshot.reset();
   araAnalysisProjectJson.clear();
@@ -921,22 +1023,161 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
           }
         });
       },
-      [this](const juce::AudioBuffer<float> &) {
+      [this, timelineOffsetSeconds,
+       previousCapturedProject](const juce::AudioBuffer<float> &) {
         if (!araAnalysisController)
           return;
 
-        auto *project = araAnalysisController->getProject();
-        if (!project)
+        auto *analyzedProject = araAnalysisController->getProject();
+        if (!analyzedProject)
           return;
 
-        araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+        std::unique_ptr<Project> completedProject;
+        const bool hasPreviousCapture =
+            previousCapturedProject &&
+            previousCapturedProject->getAudioData().waveform.getNumSamples() >
+                0;
+
+        if (hasPreviousCapture) {
+          completedProject =
+              std::make_unique<Project>(*previousCapturedProject);
+          auto &dst = completedProject->getAudioData();
+          const auto &src = analyzedProject->getAudioData();
+          const int dstRate = std::max(1, dst.sampleRate);
+          const int sampleOffset = std::max(
+              0, static_cast<int>(std::llround(timelineOffsetSeconds *
+                                               dstRate)));
+          const int frameOffset = std::max(
+              0, static_cast<int>(std::llround(
+                     timelineOffsetSeconds * dstRate /
+                     static_cast<double>(HOP_SIZE))));
+          const int captureFrames = std::max(
+              1, static_cast<int>(std::ceil(
+                     src.waveform.getNumSamples() /
+                     static_cast<double>(HOP_SIZE))));
+          const int captureEndFrame = frameOffset + captureFrames;
+
+          auto mergeBuffer = [sampleOffset](juce::AudioBuffer<float> &to,
+                                             const juce::AudioBuffer<float> &from) {
+            const int channels =
+                std::max(to.getNumChannels(), from.getNumChannels());
+            const int required = sampleOffset + from.getNumSamples();
+            if (to.getNumChannels() < channels ||
+                to.getNumSamples() < required)
+              to.setSize(channels, std::max(to.getNumSamples(), required),
+                         true, true, false);
+            for (int ch = 0; ch < from.getNumChannels(); ++ch)
+              to.copyFrom(ch, sampleOffset, from, ch, 0,
+                          from.getNumSamples());
+          };
+          mergeBuffer(dst.waveform, src.waveform);
+          mergeBuffer(dst.originalWaveform, src.originalWaveform);
+
+          auto mergeFloats = [frameOffset](std::vector<float> &to,
+                                            const std::vector<float> &from) {
+            to.resize(std::max(to.size(), static_cast<size_t>(frameOffset) +
+                                             from.size()),
+                      0.0f);
+            std::copy(from.begin(), from.end(), to.begin() + frameOffset);
+          };
+          auto mergeBools = [frameOffset](std::vector<bool> &to,
+                                           const std::vector<bool> &from) {
+            to.resize(std::max(to.size(), static_cast<size_t>(frameOffset) +
+                                             from.size()),
+                      false);
+            for (size_t i = 0; i < from.size(); ++i)
+              to[static_cast<size_t>(frameOffset) + i] = from[i];
+          };
+          mergeFloats(dst.f0, src.f0);
+          mergeFloats(dst.baseF0, src.baseF0);
+          mergeFloats(dst.basePitch, src.basePitch);
+          mergeFloats(dst.deltaPitch, src.deltaPitch);
+          mergeBools(dst.voicedMask, src.voicedMask);
+          mergeBools(dst.vadMask, src.vadMask);
+          dst.melSpectrogram.resize(
+              std::max(dst.melSpectrogram.size(),
+                       static_cast<size_t>(frameOffset) +
+                           src.melSpectrogram.size()));
+          std::copy(src.melSpectrogram.begin(), src.melSpectrogram.end(),
+                    dst.melSpectrogram.begin() + frameOffset);
+
+          auto &notes = completedProject->getNotes();
+          notes.erase(
+              std::remove_if(notes.begin(), notes.end(),
+                             [frameOffset, captureEndFrame](const Note &note) {
+                               return note.getSrcStartFrame() < captureEndFrame &&
+                                      note.getSrcEndFrame() > frameOffset;
+                             }),
+              notes.end());
+          for (auto note : analyzedProject->getNotes()) {
+            note.setStartFrame(note.getStartFrame() + frameOffset);
+            note.setEndFrame(note.getEndFrame() + frameOffset);
+            note.setSrcStartFrame(note.getSrcStartFrame() + frameOffset);
+            note.setSrcEndFrame(note.getSrcEndFrame() + frameOffset);
+            completedProject->addNote(std::move(note));
+          }
+
+          dst.segmentChunkRanges.erase(
+              std::remove_if(dst.segmentChunkRanges.begin(),
+                             dst.segmentChunkRanges.end(),
+                             [frameOffset, captureEndFrame](const auto &range) {
+                               return range.first < captureEndFrame &&
+                                      range.second > frameOffset;
+                             }),
+              dst.segmentChunkRanges.end());
+          for (auto range : src.segmentChunkRanges)
+            dst.segmentChunkRanges.emplace_back(range.first + frameOffset,
+                                                range.second + frameOffset);
+
+          dst.segmentDebugChunks.erase(
+              std::remove_if(dst.segmentDebugChunks.begin(),
+                             dst.segmentDebugChunks.end(),
+                             [frameOffset, captureEndFrame](const auto &chunk) {
+                               return chunk.startFrame < captureEndFrame &&
+                                      chunk.endFrame > frameOffset;
+                             }),
+              dst.segmentDebugChunks.end());
+          for (auto chunk : src.segmentDebugChunks) {
+            chunk.startFrame += frameOffset;
+            chunk.endFrame += frameOffset;
+            for (auto &event : chunk.events) {
+              event.startFrame += frameOffset;
+              event.endFrame += frameOffset;
+              event.attachedStartFrame += frameOffset;
+            }
+            dst.segmentDebugChunks.push_back(std::move(chunk));
+          }
+
+          dst.timelineOffsetSeconds =
+              std::min(std::max(0.0, dst.timelineOffsetSeconds),
+                       std::max(0.0, timelineOffsetSeconds));
+        } else {
+          completedProject = std::make_unique<Project>(*analyzedProject);
+        }
+
+        araAnalysisProjectSnapshot =
+            std::make_unique<Project>(*completedProject);
         araAnalysisProjectJson =
-            juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+            juce::JSON::toString(ProjectSerializer::toJson(*completedProject),
+                                 false);
         araAnalysisLoading = false;
         araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
 
         if (mainComponent && araAnalysisReady) {
           mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+          // The first capture is local to zero and still needs positioning.
+          // Later captures are merged directly at their absolute DAW offset.
+          if (!hasPreviousCapture)
+            mainComponent->updateHostAudioTimelineOffset(
+                araAnalysisTimelineOffsetSeconds);
+          // Keep the processor-owned snapshot in the same absolute timeline
+          // representation as the UI project for the next capture.
+          if (auto *positionedProject = mainComponent->getProject()) {
+            araAnalysisProjectSnapshot =
+                std::make_unique<Project>(*positionedProject);
+            araAnalysisProjectJson = juce::JSON::toString(
+                ProjectSerializer::toJson(*positionedProject), false);
+          }
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           mainComponent->hideAnalysisProgress();
         } else if (mainComponent) {

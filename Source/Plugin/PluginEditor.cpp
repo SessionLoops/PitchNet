@@ -92,6 +92,9 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     return;
   }
 
+  mainView->setRecordControlVisible(false);
+  mainView->setOnRecordArmChanged(nullptr);
+
   // Connect ARA controller to UI
   pitchDocController->setMainComponent(mainView.get());
   pitchDocController->setRealtimeProcessor(
@@ -214,6 +217,14 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 }
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
+  mainView->setRecordControlVisible(true);
+  mainView->updateRecordArmState(audioProcessor.isCaptureArmed());
+  mainView->setOnRecordArmChanged([this](bool armed) {
+    if (armed)
+      audioProcessor.startCapture();
+    else
+      audioProcessor.stopCapture();
+  });
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
