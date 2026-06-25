@@ -202,7 +202,21 @@ bool PitchNetPlaybackRenderer::processBlock(
 
   notifyHostPlayState(true);
 
-  // Read from ARA regions
+  // Get processor from document controller (dynamic lookup)
+  auto *realtimeProcessor = docCtrl ? docCtrl->getRealtimeProcessor() : nullptr;
+
+  // Once the analysed timeline is ready, render from it directly.  Reading the
+  // raw ARA source every block forces a second realtime resampling path when
+  // the source rate differs from the project rate, which can produce boundary
+  // clicks even for unedited regions.
+  if (realtimeProcessor && realtimeProcessor->isReady()) {
+    juce::AudioBuffer<float> silentInput(buffer.getNumChannels(), numSamples);
+    silentInput.clear();
+    if (realtimeProcessor->processBlock(silentInput, buffer, &posInfo))
+      return true;
+  }
+
+  // Fallback while analysis is not ready: play the host ARA source directly.
   juce::AudioBuffer<float> inputBuffer(buffer.getNumChannels(), numSamples);
   bool didRender = readFromARARegions(inputBuffer, timeInSamples, numSamples);
 
@@ -211,23 +225,6 @@ bool PitchNetPlaybackRenderer::processBlock(
     return true;
   }
 
-  // Get processor from document controller (dynamic lookup)
-  auto *realtimeProcessor = docCtrl ? docCtrl->getRealtimeProcessor() : nullptr;
-
-  // Apply pitch correction if processor available and ready
-  if (realtimeProcessor && realtimeProcessor->isReady()) {
-    if (realtimeProcessor->processBlock(inputBuffer, buffer, &posInfo)) {
-      return true;
-    } else {
-    }
-  } else {
-    // Log why we're not using the processor
-    if (!realtimeProcessor) {
-    } else if (!realtimeProcessor->isReady()) {
-    }
-  }
-
-  // Fallback: copy input to output
   buffer.makeCopyOf(inputBuffer);
   return true;
 }
@@ -499,13 +496,23 @@ bool PitchNetEditorRenderer::processBlock(
   if (!realtimeProcessor || !realtimeProcessor->isReady())
     return true;
 
-  const auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
   const int numSamples = buffer.getNumSamples();
+  juce::AudioBuffer<float> processed(buffer.getNumChannels(), numSamples);
+  processed.clear();
+
+  juce::AudioBuffer<float> silentInput(buffer.getNumChannels(), numSamples);
+  silentInput.clear();
+  if (realtimeProcessor->processBlock(silentInput, processed, &posInfo)) {
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+      buffer.addFrom(ch, 0, processed, ch, 0, numSamples);
+    return true;
+  }
+
+  const auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
   juce::AudioBuffer<float> inputBuffer(numChannels, numSamples);
   if (!readFromARARegions(inputBuffer, timeInSamples, numSamples))
     return true;
 
-  juce::AudioBuffer<float> processed(buffer.getNumChannels(), numSamples);
   processed.clear();
   if (!realtimeProcessor->processBlock(inputBuffer, processed, &posInfo))
     processed.makeCopyOf(inputBuffer);

@@ -1,6 +1,7 @@
 #include "RealtimePitchProcessor.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 RealtimePitchProcessor::RealtimePitchProcessor() = default;
 
@@ -30,30 +31,58 @@ void RealtimePitchProcessor::setVocoder(Vocoder *voc) {
 void RealtimePitchProcessor::prepareToPlay(double sr, int) {
   sampleRate = sr;
   position.store(0.0);
+  readPosition = 0;
+  readPositionValid = false;
 }
 
 bool RealtimePitchProcessor::processBlock(
     juce::AudioBuffer<float> &input, juce::AudioBuffer<float> &output,
     const juce::AudioPlayHead::PositionInfo *posInfo) {
-  // Get position from host (don't store - let host control position)
-  double pos = 0.0;
+  // Resolve the host playback position as an exact integer sample index.
+  // Do NOT round-trip through seconds (samples -> seconds -> samples): the
+  // float truncation that introduces makes the read pointer advance by
+  // blockSize +/- 1 at a large fraction of block boundaries, producing a
+  // one-sample skip or repeat each time, i.e. an audible click train.
+  juce::int64 hostPos = 0;
+  bool haveHostPos = false;
   if (posInfo) {
-    if (auto time = posInfo->getTimeInSamples())
-      pos = static_cast<double>(*time) / sampleRate;
-    else if (auto time = posInfo->getTimeInSeconds())
-      pos = *time;
+    if (auto time = posInfo->getTimeInSamples()) {
+      hostPos = *time;
+      haveHostPos = true;
+    } else if (auto seconds = posInfo->getTimeInSeconds()) {
+      hostPos = static_cast<juce::int64>(std::llround(*seconds * sampleRate));
+      haveHostPos = true;
+    }
   }
-  position.store(pos);
+  position.store(haveHostPos ? static_cast<double>(hostPos) / sampleRate : 0.0);
 
   // Passthrough if not ready
   if (!ready.load()) {
     output.makeCopyOf(input);
+    readPositionValid = false; // resync to host when playback resumes
     return false;
   }
 
   const int numSamples = output.getNumSamples();
   const int numChannels = output.getNumChannels();
-  auto posSamples = static_cast<juce::int64>(pos * sampleRate);
+
+  // Follow the host position contiguously. During normal playback the host
+  // advances by exactly numSamples per block, so we keep our own integer read
+  // cursor and only resync to the host on a genuine jump (seek/loop). This
+  // keeps the read pointer sample-accurate and free of boundary clicks even if
+  // the host's reported time has sub-sample jitter.
+  const juce::int64 resyncTolerance = juce::jmax<juce::int64>(64, numSamples);
+  juce::int64 posSamples;
+  if (!haveHostPos) {
+    posSamples = readPositionValid ? readPosition : 0;
+  } else if (!readPositionValid ||
+             std::llabs(hostPos - readPosition) > resyncTolerance) {
+    posSamples = hostPos; // first block, seek, or loop
+  } else {
+    posSamples = readPosition; // contiguous playback: ignore host jitter
+  }
+  readPosition = posSamples + numSamples;
+  readPositionValid = true;
 
   // Copy from processed buffer
   {

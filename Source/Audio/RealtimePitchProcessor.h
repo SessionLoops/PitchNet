@@ -51,6 +51,12 @@ private:
     std::atomic<bool> cancelCompute{false};
     std::atomic<double> position{0.0};
 
+    // Continuous read cursor, touched only on the audio thread. Lets playback
+    // follow the host position contiguously and ignore sub-sample jitter in the
+    // host's reported time, which would otherwise cause boundary clicks.
+    juce::int64 readPosition = 0;
+    bool readPositionValid = false;
+
     juce::CriticalSection bufferLock;
     std::unique_ptr<std::thread> computeThread;
 };
