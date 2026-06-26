@@ -135,7 +135,7 @@ void ToolbarComponent::paint(juce::Graphics &g)
     {
         const int logoW = (logoImage.getWidth() + 1) / 2;
         const int logoH = (logoImage.getHeight() + 1) / 2;
-        const int logoX = 16;
+        const int logoX = 17;
         const int logoY = (getHeight() - logoH) / 2;
         g.drawImage(logoImage, logoX, logoY, logoW, logoH,
                     0, 0, logoImage.getWidth(), logoImage.getHeight());
@@ -152,7 +152,7 @@ void ToolbarComponent::paint(juce::Graphics &g)
 
 void ToolbarComponent::resized()
 {
-    auto bounds = getLocalBounds().reduced(10, 0);
+    auto bounds = getLocalBounds().reduced(12, 0);
     const auto fullToolbarBounds = bounds;
     const int contentH = bounds.getHeight() - 2; // leave 1px top/bottom margin + 1px for separator
     const int yOffset = 1;

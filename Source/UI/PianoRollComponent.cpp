@@ -2368,10 +2368,10 @@ void PianoRollComponent::drawSelectionRect(juce::Graphics &g)
   auto rect = boxSelector->getSelectionRect();
 
   // Draw semi-transparent fill
-  g.setColour(APP_COLOR_SELECTION_HIGHLIGHT);
+  g.setColour(juce::Colours::white.withAlpha(0.05f));
   g.fillRect(rect);
 
   // Draw border
-  g.setColour(APP_COLOR_SELECTION_HIGHLIGHT_STRONG);
+  g.setColour(juce::Colours::white.withAlpha(0.25f));
   g.drawRect(rect, 1.0f);
 }

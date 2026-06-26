@@ -6,6 +6,30 @@ namespace
 class SliderBoxLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
+    juce::Label* createSliderTextBox(juce::Slider& slider) override
+    {
+        auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
+
+        label->onEditorShow = [label]
+        {
+            if (auto* editor = label->getCurrentTextEditor())
+            {
+                const auto textColour =
+                    editor->findColour(juce::TextEditor::textColourId);
+                editor->setColour(juce::TextEditor::highlightColourId,
+                                  juce::Colour(0xFF7A7D8Bu));
+                editor->setColour(juce::TextEditor::outlineColourId,
+                                  juce::Colour(0xFF3C3C3Cu));
+                editor->setColour(juce::TextEditor::focusedOutlineColourId,
+                                  juce::Colour(0xFF3C3C3Cu));
+                editor->setColour(juce::CaretComponent::caretColourId,
+                                  textColour);
+            }
+        };
+
+        return label;
+    }
+
     void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPos, float minSliderPos, float maxSliderPos,
                           const juce::Slider::SliderStyle style,
@@ -38,6 +62,10 @@ SliderBox::SliderBox(juce::String helpText)
     setSliderSnapsToMousePosition(false);
     setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
     setLookAndFeel(&getSliderBoxLookAndFeel());
+    setColour(juce::Slider::textBoxHighlightColourId,
+              juce::Colour(0xFF7A7D8Bu));
+    setColour(juce::Slider::textBoxOutlineColourId,
+              juce::Colour(0xFF3C3C3Cu));
 }
 
 SliderBox::~SliderBox()
