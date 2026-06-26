@@ -124,6 +124,13 @@ public:
   RealtimePitchProcessor &getRealtimeProcessor() { return realtimeProcessor; }
   double getHostSampleRate() const { return hostSampleRate; }
 
+  // Non-ARA mode: edit preview. Auditions a frame range of the synthesized
+  // result while the host transport is stopped, mirroring the ARA editor
+  // renderer's preview. These are no-ops in an ARA host, where processNonARAMode
+  // never runs and the ARA preview path handles auditioning instead.
+  void startPluginPreview(double startSeconds, double endSeconds);
+  void stopPluginPreview();
+
   // Non-ARA mode: capture control
   void startCapture();
   void stopCapture();
@@ -162,6 +169,11 @@ private:
                          bool isRealtime);
   void disarmCaptureUi();
   void dispatchLiveCaptureUpdate();
+
+  /** Render the non-ARA edit preview into the buffer. Returns true if preview
+   *  is active (and produced output or intentional silence), false to let the
+   *  normal stopped-transport handling proceed. Audio thread only. */
+  bool processPluginPreview(juce::AudioBuffer<float> &buffer);
 
   /** Apply bypass, dry/wet mix, and output gain to the processed buffer. */
   void applyOutputProcessing(juce::AudioBuffer<float> &processedBuffer,
@@ -234,6 +246,17 @@ private:
       std::make_shared<LiveCaptureUiState>();
   double captureTimelineOffsetSeconds = 0.0;
   static constexpr int MAX_CAPTURE_SECONDS = 300; // 5 minutes max
+
+  // Non-ARA edit preview. Written from the message thread, consumed on the
+  // audio thread; pluginPreviewCursor is audio-thread only.
+  struct PluginPreviewState {
+    std::atomic<bool> active{false};
+    std::atomic<bool> restart{false};
+    std::atomic<double> startSeconds{0.0};
+    std::atomic<double> endSeconds{0.0};
+  };
+  PluginPreviewState pluginPreview;
+  juce::int64 pluginPreviewCursor = 0;
 
   // Plugin state version for forward/backward compatibility
   static constexpr int PLUGIN_STATE_VERSION = 1;

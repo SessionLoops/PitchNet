@@ -433,6 +433,12 @@ void PitchNetAudioProcessor::processNonARAMode(
     if (captureWasRunning)
       disarmCaptureUi();
 
+    // Audition the synthesized edit for the selected range while stopped.
+    // Only fires when a project is analyzed and ready, so it never interferes
+    // with capture finalization above.
+    if (processPluginPreview(buffer))
+      return;
+
     buffer.clear();
     return;
   }
@@ -527,6 +533,68 @@ void PitchNetAudioProcessor::startCapture() {
 }
 
 void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
+
+void PitchNetAudioProcessor::startPluginPreview(double startSeconds,
+                                                double endSeconds) {
+  pluginPreview.startSeconds.store(std::max(0.0, startSeconds));
+  pluginPreview.endSeconds.store(std::max(0.0, endSeconds));
+  pluginPreview.restart.store(true);
+  pluginPreview.active.store(true);
+}
+
+void PitchNetAudioProcessor::stopPluginPreview() {
+  pluginPreview.active.store(false);
+}
+
+bool PitchNetAudioProcessor::processPluginPreview(
+    juce::AudioBuffer<float> &buffer) {
+  if (!pluginPreview.active.load() || !realtimeProcessor.isReady())
+    return false;
+
+  const int numSamples = buffer.getNumSamples();
+  const int numChannels = buffer.getNumChannels();
+
+  // A fresh preview request restarts playback from the start of the range.
+  if (pluginPreview.restart.exchange(false))
+    pluginPreviewCursor = 0;
+
+  const double sr = hostSampleRate > 0.0 ? hostSampleRate : 44100.0;
+  const auto startSample = static_cast<juce::int64>(
+      std::llround(pluginPreview.startSeconds.load() * sr));
+  const auto endSample = static_cast<juce::int64>(
+      std::llround(pluginPreview.endSeconds.load() * sr));
+  const juce::int64 total = endSample - startSample;
+
+  // Active but nothing (more) to play: hold silence until re-triggered or
+  // stopped. This mirrors the ARA editor renderer's play-once behaviour.
+  buffer.clear();
+  if (total <= 0 || pluginPreviewCursor >= total)
+    return true;
+
+  // Read the synthesized timeline at the absolute preview position. isPlaying
+  // is false so the realtime processor treats this as a one-shot render and
+  // does not disturb its streaming cursor.
+  const juce::int64 readStart = startSample + pluginPreviewCursor;
+  juce::AudioPlayHead::PositionInfo pos;
+  pos.setTimeInSamples(readStart);
+  pos.setTimeInSeconds(static_cast<double>(readStart) / sr);
+  pos.setIsPlaying(false);
+
+  juce::AudioBuffer<float> silentInput(numChannels, numSamples);
+  silentInput.clear();
+  juce::AudioBuffer<float> rendered(numChannels, numSamples);
+  rendered.clear();
+  if (!realtimeProcessor.processBlock(silentInput, rendered, &pos))
+    return true; // not ready / no data -> silence
+
+  const int toCopy = static_cast<int>(
+      std::min<juce::int64>(numSamples, total - pluginPreviewCursor));
+  for (int ch = 0; ch < numChannels; ++ch)
+    buffer.copyFrom(ch, 0, rendered, ch, 0, toCopy);
+
+  pluginPreviewCursor += toCopy;
+  return true;
+}
 
 void PitchNetAudioProcessor::disarmCaptureUi() {
   if (!mainComponent)

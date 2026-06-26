@@ -229,8 +229,17 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
     audioProcessor.requestPluginProjectRender(project);
   });
   mainView->setOnRequestBackendPreview(
-      [](const Project &, int, int) {});
-  mainView->setOnStopBackendPreview([]() {});
+      [this](const Project &project, int startFrame, int endFrame) {
+        const auto &audioData = project.getAudioData();
+        const double sampleRate =
+            audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
+                                     : static_cast<double>(SAMPLE_RATE);
+        audioProcessor.startPluginPreview(
+            static_cast<double>(startFrame) * HOP_SIZE / sampleRate,
+            static_cast<double>(endFrame) * HOP_SIZE / sampleRate);
+      });
+  mainView->setOnStopBackendPreview(
+      [this]() { audioProcessor.stopPluginPreview(); });
 
   // Setup host transport control callbacks for non-ARA mode
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
