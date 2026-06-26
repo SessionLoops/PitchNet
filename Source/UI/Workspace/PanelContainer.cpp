@@ -10,6 +10,12 @@ void PanelContainer::paint(juce::Graphics& g)
     g.fillAll(juce::Colour(0xFF232323u));
 }
 
+void PanelContainer::paintOverChildren(juce::Graphics& g)
+{
+    g.setColour(juce::Colour(0xFF3C3C3Cu));
+    g.drawRect(getLocalBounds(), 1);
+}
+
 void PanelContainer::resized()
 {
     updateLayout();

@@ -492,34 +492,20 @@ bool PitchNetEditorRenderer::processBlock(
     return true;
   }
 
-  auto *realtimeProcessor = docCtrl->getRealtimeProcessor();
-  if (!realtimeProcessor || !realtimeProcessor->isReady())
-    return true;
-
-  const int numSamples = buffer.getNumSamples();
-  juce::AudioBuffer<float> processed(buffer.getNumChannels(), numSamples);
-  processed.clear();
-
-  juce::AudioBuffer<float> silentInput(buffer.getNumChannels(), numSamples);
-  silentInput.clear();
-  if (realtimeProcessor->processBlock(silentInput, processed, &posInfo)) {
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-      buffer.addFrom(ch, 0, processed, ch, 0, numSamples);
-    return true;
-  }
-
-  const auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
-  juce::AudioBuffer<float> inputBuffer(numChannels, numSamples);
-  if (!readFromARARegions(inputBuffer, timeInSamples, numSamples))
-    return true;
-
-  processed.clear();
-  if (!realtimeProcessor->processBlock(inputBuffer, processed, &posInfo))
-    processed.makeCopyOf(inputBuffer);
-
-  for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    buffer.addFrom(ch, 0, processed, ch, 0, numSamples);
-
+  // During host playback the PlaybackRenderer already renders the program into
+  // this buffer. The host calls both renderers with the same buffer
+  // (processBlockForARA: playbackRenderer->processBlock then
+  // editorRenderer->processBlock), so if we render and add the program here as
+  // well, the two identical copies sum and the output is +6 dB too loud (for a
+  // stereo source each channel doubles, which sounds like L and R were summed).
+  // The editor renderer only auditions edits via the preview path above while
+  // the transport is stopped; during playback it must contribute nothing.
+  lastPreviewStartTime = -1.0;
+  lastPreviewEndTime = -1.0;
+  lastPreviewRegion = nullptr;
+  previewLoopRange = {};
+  previewLoopPosition = 0;
+  wasPreviewing = false;
   return true;
 }
 
