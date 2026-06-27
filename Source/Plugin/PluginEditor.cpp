@@ -55,7 +55,10 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
       if (auto *pitchDocController = juce::ARADocumentControllerSpecialisation::
               getSpecialisedDocumentController<PitchNetDocumentController>(
                   araDocController)) {
-        pitchDocController->setRealtimeProcessor(nullptr);
+        // Do NOT clear the realtime-processor binding or persistence callbacks
+        // here: both are owned by the processor and must stay live so ARA
+        // playback and project restore keep working headlessly after the editor
+        // closes. The processor detaches them in its destructor.
         pitchDocController->setAnalysisCallbacks(nullptr, nullptr);
         pitchDocController->setMainComponent(nullptr);
       }
@@ -97,8 +100,9 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 
   // Connect ARA controller to UI
   pitchDocController->setMainComponent(mainView.get());
-  pitchDocController->setRealtimeProcessor(
-      &audioProcessor.getRealtimeProcessor());
+  // Bind via the processor so the realtime-processor link outlives the editor:
+  // ARA playback/bounce must keep working after the UI is closed.
+  audioProcessor.setAraDocumentController(pitchDocController);
   pitchDocController->setAnalysisCallbacks(
       [this](std::uintptr_t sourceKey, double timelineOffsetSeconds,
              const std::vector<std::pair<double, double>> &regionRanges) {
@@ -114,6 +118,9 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
                                                 timelineOffsetSeconds,
                                                 regionRanges);
       });
+  // Persistence callbacks are owned by the processor (set in didBindToARA) so
+  // that saved-project restore works with the UI closed; the editor must not
+  // install editor-capturing callbacks that would dangle on close.
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
@@ -345,6 +352,8 @@ void PitchNetAudioProcessorEditor::syncHostLoopSnapshotFromPlayHead() {
 void PitchNetAudioProcessorEditor::setupCallbacks() {
   // When project data changes (analysis complete or synthesis complete)
   mainView->setOnProjectDataChanged([this]() {
+    if (auto *project = mainView->getProject())
+      audioProcessor.updateProjectStateFromEditor(*project);
     mainView->bindRealtimeProcessor(audioProcessor.getRealtimeProcessor());
     audioProcessor.getRealtimeProcessor().invalidate();
   });

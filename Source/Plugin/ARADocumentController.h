@@ -12,6 +12,7 @@
 #if JucePlugin_Enable_ARA
 
 class IMainView;
+class PitchNetAudioProcessor;
 class PitchNetDocumentController;
 
 struct AraPreviewState {
@@ -35,6 +36,11 @@ public:
   bool processBlock(
       juce::AudioBuffer<float> &buffer, juce::AudioProcessor::Realtime realtime,
       const juce::AudioPlayHead::PositionInfo &positionInfo) noexcept override;
+
+  // Public so the processor can reach the document controller when binding to
+  // ARA without an open editor (e.g. loading a saved project with the UI
+  // closed).
+  PitchNetDocumentController *getDocController() const;
 
 private:
   struct HostUiSyncState {
@@ -70,7 +76,6 @@ private:
 
   bool readFromARARegions(juce::AudioBuffer<float> &buffer,
                           juce::int64 timeInSamples, int numSamples);
-  PitchNetDocumentController *getDocController() const;
   void syncHostLoopState(PitchNetDocumentController *docCtrl,
                          const juce::AudioPlayHead::PositionInfo &posInfo,
                          bool shouldSyncUi);
@@ -159,12 +164,18 @@ public:
                          double, double,
                          const std::vector<std::pair<double, double>> &)>
           requestAnalysis);
+  void setPersistenceCallbacks(
+      std::function<bool(juce::MemoryBlock &)> serializeProjectState,
+      std::function<bool(const void *, size_t)> restoreProjectState);
   void setRealtimeProcessor(RealtimePitchProcessor *processor) {
     realtimeProcessor = processor;
   }
-  RealtimePitchProcessor *getRealtimeProcessor() const {
-    return realtimeProcessor;
-  }
+  RealtimePitchProcessor *getRealtimeProcessor();
+  void setOwningProcessor(PitchNetAudioProcessor *processor);
+  void ensureHeadlessPlaybackBinding();
+  void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
+  void setDocumentProjectSnapshot(const Project &project,
+                                  bool notifyHost = true);
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
@@ -188,6 +199,9 @@ private:
                        juce::ARAPlaybackRegion *excludedRegion = nullptr,
                        juce::ARAAudioSource *excludedSource = nullptr);
   void clearMainComponentHostAudio();
+  void notifyAudioModificationContentChanged(bool notifyHost);
+  bool restoreProjectStateToDocument(const void *data, size_t sizeInBytes);
+  bool serializeDocumentProjectState(juce::MemoryBlock &destData) const;
 
   void stopAnalysisThread();
 
@@ -203,6 +217,9 @@ private:
   juce::ARAPlaybackRegion *currentPlaybackRegion = nullptr;
   double analysisTimelineSampleRate = 0.0;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
+  std::unique_ptr<Project> documentProjectSnapshot;
+  RealtimePitchProcessor documentRealtimeProcessor;
+  PitchNetAudioProcessor *owningProcessor = nullptr;
   AraPreviewState previewState;
   std::function<bool(std::uintptr_t, double,
                      const std::vector<std::pair<double, double>> &)>
@@ -211,6 +228,9 @@ private:
                      double,
                      const std::vector<std::pair<double, double>> &)>
       requestAnalysisCallback;
+  std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
+  std::function<bool(const void *, size_t)> restoreProjectStateCallback;
+  juce::MemoryBlock pendingRestoredProjectData;
   std::shared_ptr<AnalysisState> analysisState =
       std::make_shared<AnalysisState>();
   std::thread analysisThread;

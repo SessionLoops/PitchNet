@@ -28,21 +28,42 @@ public:
     /**
      * Convert project to JSON object.
      */
-    static juce::var toJson(const Project& project);
+    static juce::var toJson(const Project& project,
+                            bool includeAnalysisCache = false,
+                            bool includePitchData = true);
 
     /**
      * Load project from JSON object.
      */
     static bool fromJson(Project& project, const juce::var& json);
 
+    /**
+     * Serialize project metadata as compact JSON plus heavy analysis/render
+     * caches as raw binary buffers. Intended for DAW/plugin state archives.
+     */
+    static bool toBinaryArchive(const Project& project,
+                                juce::MemoryBlock& destData);
+
+    /**
+     * Load a project from toBinaryArchive(). Falls back to false for unknown
+     * input so callers can try legacy JSON.
+     */
+    static bool fromBinaryArchive(Project& project, const void* data,
+                                  size_t sizeInBytes);
+
 private:
     // Note serialization
-    static juce::var noteToJson(const Note& note);
+    static juce::var noteToJson(const Note& note, bool includeAnalysisCache,
+                                bool includePitchData);
     static bool noteFromJson(Note& note, const juce::var& json);
 
     // Pitch data serialization
     static juce::var pitchDataToJson(const AudioData& audioData);
     static bool pitchDataFromJson(AudioData& audioData, const juce::var& json);
+    static juce::var audioBufferToJson(const juce::AudioBuffer<float>& buffer);
+    static bool audioBufferFromJson(juce::AudioBuffer<float>& buffer, const juce::var& json);
+    static juce::var melSpectrogramToJson(const std::vector<std::vector<float>>& mel);
+    static bool melSpectrogramFromJson(std::vector<std::vector<float>>& mel, const juce::var& json);
 
     // Array helpers (compact string format)
     static juce::String floatArrayToString(const std::vector<float>& arr, int precision = 4);

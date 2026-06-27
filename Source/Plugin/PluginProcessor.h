@@ -12,6 +12,7 @@
 class EditorController;
 class Project;
 class PitchUndoManager;
+class PitchNetDocumentController;
 
 /**
  * PitchNet Audio Processor
@@ -85,10 +86,13 @@ public:
                                const std::vector<std::pair<double, double>> &
                                    playbackRegionRanges);
   void requestPluginProjectRender(const Project &project);
+  void updateProjectStateFromEditor(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);
   void updateAraTimelineOffset(double timelineOffsetSeconds);
+  bool serializePersistentProjectState(juce::MemoryBlock &destData) const;
+  bool restorePersistentProjectState(const void *data, size_t sizeInBytes);
 
   void removeAraRegionFromProject(
       std::uintptr_t newSourceKey, const std::pair<double, double> &removedRange,
@@ -123,6 +127,19 @@ public:
   // Real-time processor access
   RealtimePitchProcessor &getRealtimeProcessor() { return realtimeProcessor; }
   double getHostSampleRate() const { return hostSampleRate; }
+
+#if JucePlugin_Enable_ARA
+  // Bind the realtime processor to the ARA document controller. Ownership of
+  // the binding lives with the processor (not the editor) so ARA playback keeps
+  // working headlessly after the editor closes; the processor clears it in its
+  // destructor when the realtime processor actually goes away.
+  void setAraDocumentController(PitchNetDocumentController *dc);
+
+  // ARA bind hook: runs when the host binds this instance to ARA, including
+  // when a saved project is loaded with the UI closed. Establishes the
+  // document-controller binding and the headless realtime playback state.
+  void didBindToARA() noexcept override;
+#endif
 
   // Non-ARA mode: edit preview. Auditions a frame range of the synthesized
   // result while the host transport is stopped, mirroring the ARA editor
@@ -179,8 +196,23 @@ private:
   void applyOutputProcessing(juce::AudioBuffer<float> &processedBuffer,
                              const juce::AudioBuffer<float> &dryBuffer);
 
+  /** Bind the realtime processor to the persistent backend snapshot when no
+   *  editor is present (headless ARA playback / bounce). No-op if an editor is
+   *  open (it drives the binding) or no analyzed snapshot exists yet. */
+  void bindRealtimeProcessorHeadless();
+
+#if JucePlugin_Enable_ARA
+  /** Establish the full headless ARA binding (document-controller pointer,
+   *  persistence callbacks, and realtime playback snapshot) at the correct,
+   *  already-prepared sample rate. Safe to call repeatedly; no-op for the
+   *  realtime bind while an editor is open. */
+  void ensureHeadlessAraBinding();
+#endif
+
   /** Detect parameter changes on audio thread and dispatch to message thread. */
   void checkParameterChanges();
+  bool restoreProjectJsonToProcessorState(const juce::String &projectJson);
+  void publishPersistentProjectSnapshot(const Project &project);
 
   static juce::AudioProcessorValueTreeState::ParameterLayout
   createParameterLayout();
@@ -211,6 +243,9 @@ private:
 
   PluginTransportController transportController;
   RealtimePitchProcessor realtimeProcessor;
+#if JucePlugin_Enable_ARA
+  PitchNetDocumentController *araDocumentController = nullptr;
+#endif
   IMainView *mainComponent = nullptr;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();

@@ -2,12 +2,18 @@
 
 #if JucePlugin_Enable_ARA
 
+#include "../Models/ProjectSerializer.h"
+#include "PluginProcessor.h"
 #include "../UI/IMainView.h"
 
 #include <limits>
 #include <utility>
 
 namespace {
+constexpr juce::int64 kPitchNetAraModificationArchiveMagic =
+    -0x504E41524D4F444LL; // -PNARMOD
+constexpr int kPitchNetAraModificationArchiveVersion = 1;
+
 bool readPlaybackRegionIntoBlock(
     juce::ARAPlaybackRegion *region, juce::ARAAudioSourceReader &reader,
     double outputSampleRate, juce::int64 blockStartSample,
@@ -92,6 +98,12 @@ void PitchNetPlaybackRenderer::prepareToPlay(
 
   bool useBuffered = (alwaysNonRealtime == AlwaysNonRealtime::no);
   juce::ignoreUnused(useBuffered);
+
+  if (auto *docCtrl = getDocController()) {
+    docCtrl->ensureHeadlessPlaybackBinding();
+    docCtrl->prepareDocumentPlayback(sampleRate, maxBlockSize);
+    docCtrl->processPlaybackRegions(getPlaybackRegions(), sampleRate);
+  }
 
   // Create readers for all playback regions
   for (auto *region : getPlaybackRegions()) {
@@ -577,6 +589,14 @@ void PitchNetDocumentController::setMainComponent(IMainView *mc) {
   }
 
   mainComponent = mc;
+  if (mainComponent && pendingRestoredProjectData.getSize() > 0 &&
+      !restoreProjectStateCallback) {
+    juce::String jsonString(
+        juce::CharPointer_UTF8(
+            static_cast<const char *>(pendingRestoredProjectData.getData())),
+        pendingRestoredProjectData.getSize());
+    mainComponent->restoreProjectJson(jsonString);
+  }
 }
 
 void PitchNetDocumentController::setAnalysisCallbacks(
@@ -590,6 +610,146 @@ void PitchNetDocumentController::setAnalysisCallbacks(
         requestAnalysis) {
   attachCachedAnalysisCallback = std::move(attachCachedAnalysis);
   requestAnalysisCallback = std::move(requestAnalysis);
+}
+
+void PitchNetDocumentController::setPersistenceCallbacks(
+    std::function<bool(juce::MemoryBlock &)> serializeProjectState,
+    std::function<bool(const void *, size_t)> restoreProjectState) {
+  serializeProjectStateCallback = std::move(serializeProjectState);
+  restoreProjectStateCallback = std::move(restoreProjectState);
+  if (restoreProjectStateCallback && pendingRestoredProjectData.getSize() > 0) {
+    if (restoreProjectStateCallback(pendingRestoredProjectData.getData(),
+                                    pendingRestoredProjectData.getSize()))
+      pendingRestoredProjectData.setSize(0);
+  }
+}
+
+RealtimePitchProcessor *PitchNetDocumentController::getRealtimeProcessor() {
+  // Prefer the live (editor/processor) realtime processor, but ONLY when it is
+  // actually ready. Headless — before any editor has bound its project — the
+  // processor's realtime processor is attached but not ready, because the
+  // restored project landed in documentProjectSnapshot. Returning the not-ready
+  // processor here would force the playback renderer into its raw-ARA-source
+  // fallback, so headless playback would lose all edits and differ from what
+  // the editor shows. In that case use the document's own realtime processor,
+  // which is restored from the saved project and prepared at the host rate.
+  if (realtimeProcessor && realtimeProcessor->isReady())
+    return realtimeProcessor;
+  if (documentProjectSnapshot)
+    return &documentRealtimeProcessor;
+  return realtimeProcessor;
+}
+
+void PitchNetDocumentController::setOwningProcessor(
+    PitchNetAudioProcessor *processor) {
+  owningProcessor = processor;
+  ensureHeadlessPlaybackBinding();
+}
+
+void PitchNetDocumentController::ensureHeadlessPlaybackBinding() {
+  if (!owningProcessor)
+    return;
+
+  setRealtimeProcessor(&owningProcessor->getRealtimeProcessor());
+  setPersistenceCallbacks(
+      [processor = owningProcessor](juce::MemoryBlock &destData) {
+        return processor->serializePersistentProjectState(destData);
+      },
+      [processor = owningProcessor](const void *data, size_t sizeInBytes) {
+        return processor->restorePersistentProjectState(data, sizeInBytes);
+      });
+}
+
+bool PitchNetDocumentController::restoreProjectStateToDocument(
+    const void *data, size_t sizeInBytes) {
+  if (!data || sizeInBytes == 0)
+    return false;
+
+  auto restoredProject = std::make_unique<Project>();
+  if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
+                                           sizeInBytes)) {
+    // Rebuild the global waveform from the persisted per-note synthesis so the
+    // headless document playback path reflects saved edits (no vocoder needed).
+    restoredProject->recomposeFromSynthIfPresent();
+    documentProjectSnapshot = std::move(restoredProject);
+    documentRealtimeProcessor.setProject(documentProjectSnapshot.get());
+    return true;
+  }
+
+  juce::String projectJson(
+      juce::CharPointer_UTF8(static_cast<const char *>(data)), sizeInBytes);
+  auto parsed = juce::JSON::parse(projectJson);
+  if (!parsed.isObject() ||
+      !ProjectSerializer::fromJson(*restoredProject, parsed))
+    return false;
+
+  restoredProject->recomposeFromSynthIfPresent();
+  documentProjectSnapshot = std::move(restoredProject);
+  documentRealtimeProcessor.setProject(documentProjectSnapshot.get());
+  return true;
+}
+
+bool PitchNetDocumentController::serializeDocumentProjectState(
+    juce::MemoryBlock &destData) const {
+  destData.setSize(0);
+  if (!documentProjectSnapshot)
+    return false;
+  return ProjectSerializer::toBinaryArchive(*documentProjectSnapshot, destData);
+}
+
+void PitchNetDocumentController::prepareDocumentPlayback(double sampleRate,
+                                                         int maxBlockSize) {
+  documentRealtimeProcessor.prepareToPlay(sampleRate, maxBlockSize);
+  if (documentProjectSnapshot)
+    documentRealtimeProcessor.setProject(documentProjectSnapshot.get());
+}
+
+void PitchNetDocumentController::setDocumentProjectSnapshot(
+    const Project &project, bool notifyHost) {
+  documentProjectSnapshot = std::make_unique<Project>(project);
+  documentRealtimeProcessor.setProject(documentProjectSnapshot.get());
+  if (notifyHost)
+    notifyAudioModificationContentChanged(true);
+}
+
+void PitchNetDocumentController::notifyAudioModificationContentChanged(
+    bool notifyHost) {
+  auto notifyModification = [notifyHost](juce::ARAAudioModification *mod) {
+    if (!mod)
+      return;
+    mod->notifyContentChanged(
+        juce::ARAContentUpdateScopes::samplesAreAffected(), notifyHost);
+    for (auto *region : mod->getPlaybackRegions())
+      if (region)
+        region->notifyContentChanged(
+            juce::ARAContentUpdateScopes::samplesAreAffected(), notifyHost);
+  };
+
+  if (currentDocument) {
+    for (auto *source : currentDocument->getAudioSources<juce::ARAAudioSource>()) {
+      if (!source)
+        continue;
+      for (auto *modification : source->getAudioModifications()) {
+        if (!modification)
+          continue;
+
+        bool belongsToCurrentSequence = currentRegionSequence == nullptr;
+        for (auto *region : modification->getPlaybackRegions()) {
+          if (region && region->getRegionSequence() == currentRegionSequence) {
+            belongsToCurrentSequence = true;
+            break;
+          }
+        }
+
+        if (belongsToCurrentSequence)
+          notifyModification(modification);
+      }
+    }
+    return;
+  }
+
+  if (currentPlaybackRegion)
+    notifyModification(currentPlaybackRegion->getAudioModification());
 }
 
 void PitchNetDocumentController::stopAnalysisThread() {
@@ -706,6 +866,9 @@ void PitchNetDocumentController::processDocument(
   if (attachCachedAnalysisCallback &&
       attachCachedAnalysisCallback(arrangementKey, timelineOffsetSeconds,
                                    playbackRegionRanges))
+    return;
+
+  if (!requestAnalysisCallback && documentProjectSnapshot)
     return;
 
   stopAnalysisThread();
@@ -892,6 +1055,8 @@ bool PitchNetDocumentController::processExistingAudioSources(
 bool PitchNetDocumentController::processPlaybackRegions(
     const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
     double projectSampleRate) {
+  ensureHeadlessPlaybackBinding();
+
   auto *firstRegion = playbackRegions.empty() ? nullptr : playbackRegions.front();
   if (!firstRegion || !firstRegion->getAudioModification())
     return false;
@@ -1040,6 +1205,7 @@ void PitchNetDocumentController::stopPreview() {
 
 juce::ARAPlaybackRenderer *
 PitchNetDocumentController::doCreatePlaybackRenderer() noexcept {
+  ensureHeadlessPlaybackBinding();
   return new PitchNetPlaybackRenderer(
       ARADocumentControllerSpecialisation::getDocumentController());
 }
@@ -1051,8 +1217,59 @@ juce::ARAEditorRenderer *PitchNetDocumentController::doCreateEditorRenderer() {
 
 bool PitchNetDocumentController::doRestoreObjectsFromStream(
     juce::ARAInputStream &input,
-    const juce::ARARestoreObjectsFilter *) noexcept {
+    const juce::ARARestoreObjectsFilter *filter) noexcept {
   auto dataSize = input.readInt64();
+  if (dataSize == kPitchNetAraModificationArchiveMagic) {
+    const auto version = input.readInt();
+    if (version != kPitchNetAraModificationArchiveVersion)
+      return !input.failed();
+
+    const auto numAudioModifications = input.readInt64();
+    for (juce::int64 i = 0; i < numAudioModifications; ++i) {
+      const auto persistentID = input.readString();
+      const auto archiveSize = input.readInt64();
+      if (archiveSize < 0 ||
+          archiveSize > std::numeric_limits<int>::max())
+        return false;
+
+      juce::MemoryBlock data(static_cast<size_t>(archiveSize));
+      if (archiveSize > 0 &&
+          input.read(data.getData(), static_cast<int>(archiveSize)) !=
+              archiveSize)
+        return false;
+
+      auto *audioModification =
+          filter ? filter->getAudioModificationToRestoreStateWithID<
+                       juce::ARAAudioModification>(
+                       persistentID.getCharPointer())
+                 : nullptr;
+      if (!audioModification)
+        continue;
+
+      restoreProjectStateToDocument(data.getData(), data.getSize());
+
+      if (restoreProjectStateCallback)
+        restoreProjectStateCallback(data.getData(), data.getSize());
+      else if (mainComponent) {
+        juce::String jsonString(
+            juce::CharPointer_UTF8(static_cast<const char *>(data.getData())),
+            data.getSize());
+        mainComponent->restoreProjectJson(jsonString);
+      } else {
+        pendingRestoredProjectData = data;
+      }
+
+      audioModification->notifyContentChanged(
+          juce::ARAContentUpdateScopes::samplesAreAffected(), false);
+      for (auto *region : audioModification->getPlaybackRegions())
+        if (region)
+          region->notifyContentChanged(
+              juce::ARAContentUpdateScopes::samplesAreAffected(), false);
+    }
+
+    return !input.failed();
+  }
+
   if (dataSize <= 0)
     return true;
 
@@ -1060,33 +1277,74 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
   data.setSize(static_cast<size_t>(dataSize));
   input.read(data.getData(), static_cast<int>(dataSize));
 
-  if (mainComponent) {
+  restoreProjectStateToDocument(data.getData(), data.getSize());
+
+  if (restoreProjectStateCallback)
+    restoreProjectStateCallback(data.getData(), data.getSize());
+  else if (mainComponent) {
     juce::String jsonString(
         juce::CharPointer_UTF8(static_cast<const char *>(data.getData())),
         data.getSize());
     mainComponent->restoreProjectJson(jsonString);
   }
+  else
+    pendingRestoredProjectData = data;
 
   return !input.failed();
 }
 
 bool PitchNetDocumentController::doStoreObjectsToStream(
     juce::ARAOutputStream &output,
-    const juce::ARAStoreObjectsFilter *) noexcept {
-  if (!mainComponent) {
+    const juce::ARAStoreObjectsFilter *filter) noexcept {
+  juce::MemoryBlock archiveData;
+  if (serializeProjectStateCallback)
+    serializeProjectStateCallback(archiveData);
+  else
+    serializeDocumentProjectState(archiveData);
+
+  if (archiveData.getSize() == 0)
+    serializeDocumentProjectState(archiveData);
+
+  if (archiveData.getSize() == 0 && mainComponent) {
+    auto jsonString = mainComponent->serializeProjectJson();
+    archiveData.append(jsonString.toRawUTF8(),
+                       jsonString.getNumBytesAsUTF8());
+  }
+
+  if (archiveData.getSize() == 0) {
     output.writeInt64(0);
     return true;
   }
 
-  auto jsonString = mainComponent->serializeProjectJson();
-  if (jsonString.isEmpty()) {
-    output.writeInt64(0);
-    return true;
+  if (filter) {
+    const auto &audioModificationsToPersist =
+        filter->getAudioModificationsToStore<juce::ARAAudioModification>();
+
+    if (!audioModificationsToPersist.empty()) {
+      if (!output.writeInt64(kPitchNetAraModificationArchiveMagic))
+        return false;
+      if (!output.writeInt(kPitchNetAraModificationArchiveVersion))
+        return false;
+      if (!output.writeInt64(
+              static_cast<juce::int64>(audioModificationsToPersist.size())))
+        return false;
+
+      for (auto *audioModification : audioModificationsToPersist) {
+        if (!audioModification)
+          continue;
+        if (!output.writeString(audioModification->getPersistentID()))
+          return false;
+        if (!output.writeInt64(static_cast<juce::int64>(archiveData.getSize())))
+          return false;
+        if (!output.write(archiveData.getData(), archiveData.getSize()))
+          return false;
+      }
+      return true;
+    }
   }
 
-  output.writeInt64(static_cast<juce::int64>(jsonString.getNumBytesAsUTF8()));
-  return output.write(jsonString.toRawUTF8(),
-                      static_cast<int>(jsonString.getNumBytesAsUTF8()));
+  output.writeInt64(static_cast<juce::int64>(archiveData.getSize()));
+  return output.write(archiveData.getData(), archiveData.getSize());
 }
 
 #endif // JucePlugin_Enable_ARA

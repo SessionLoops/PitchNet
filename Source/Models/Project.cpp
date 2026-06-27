@@ -430,6 +430,18 @@ void Project::setTimelineSnapCycle(bool enabled)
 // This ensures that non-note regions (breaths, consonants, silence) are
 // placed from source coordinates into the output timeline.
 // ---------------------------------------------------------------------------
+void Project::recomposeFromSynthIfPresent()
+{
+    for (const auto &note : notes)
+    {
+        if (!note.isRest() && note.hasSynthWaveform())
+        {
+            composeGlobalWaveform();
+            return;
+        }
+    }
+}
+
 void Project::composeGlobalWaveform()
 {
     auto &waveform = audioData.waveform;

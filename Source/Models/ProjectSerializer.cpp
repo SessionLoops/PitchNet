@@ -1,6 +1,141 @@
 #include "ProjectSerializer.h"
 #include "../Utils/PitchCurveProcessor.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+
+namespace
+{
+constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
+constexpr int kProjectArchiveVersion = 1;
+
+bool writeString(juce::OutputStream& out, const juce::String& text)
+{
+    const auto bytes = text.getNumBytesAsUTF8();
+    return out.writeInt64(static_cast<juce::int64>(bytes)) &&
+           out.write(text.toRawUTF8(), bytes);
+}
+
+juce::String readString(juce::InputStream& in)
+{
+    const auto bytes = in.readInt64();
+    if (bytes < 0 || bytes > std::numeric_limits<int>::max())
+        return {};
+
+    juce::MemoryBlock data(static_cast<size_t>(bytes));
+    if (bytes > 0 && in.read(data.getData(), static_cast<int>(bytes)) != bytes)
+        return {};
+
+    return juce::String(
+        juce::CharPointer_UTF8(static_cast<const char*>(data.getData())),
+        static_cast<size_t>(bytes));
+}
+
+bool writeFloatVector(juce::OutputStream& out, const std::vector<float>& values)
+{
+    if (!out.writeInt64(static_cast<juce::int64>(values.size())))
+        return false;
+    if (values.empty())
+        return true;
+    return out.write(values.data(), values.size() * sizeof(float));
+}
+
+bool readFloatVector(juce::InputStream& in, std::vector<float>& values)
+{
+    const auto count = in.readInt64();
+    if (count < 0 || count > std::numeric_limits<int>::max())
+        return false;
+
+    values.resize(static_cast<size_t>(count));
+    if (values.empty())
+        return true;
+
+    const auto bytes = static_cast<int>(values.size() * sizeof(float));
+    return in.read(values.data(), bytes) == bytes;
+}
+
+bool writeBoolVector(juce::OutputStream& out, const std::vector<bool>& values)
+{
+    if (!out.writeInt64(static_cast<juce::int64>(values.size())))
+        return false;
+
+    for (bool value : values)
+        if (!out.writeByte(value ? 1 : 0))
+            return false;
+    return true;
+}
+
+bool readBoolVector(juce::InputStream& in, std::vector<bool>& values)
+{
+    const auto count = in.readInt64();
+    if (count < 0 || count > std::numeric_limits<int>::max())
+        return false;
+
+    values.assign(static_cast<size_t>(count), false);
+    for (size_t i = 0; i < values.size(); ++i)
+        values[i] = in.readByte() != 0;
+    return true;
+}
+
+bool writeAudioBuffer(juce::OutputStream& out,
+                      const juce::AudioBuffer<float>& buffer)
+{
+    if (!out.writeInt(buffer.getNumChannels()) ||
+        !out.writeInt(buffer.getNumSamples()))
+        return false;
+
+    const auto bytes = static_cast<size_t>(buffer.getNumSamples()) *
+                       sizeof(float);
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        if (bytes > 0 && !out.write(buffer.getReadPointer(ch), bytes))
+            return false;
+    return true;
+}
+
+bool readAudioBuffer(juce::InputStream& in, juce::AudioBuffer<float>& buffer)
+{
+    const int channels = in.readInt();
+    const int samples = in.readInt();
+    if (channels < 0 || samples < 0)
+        return false;
+
+    buffer.setSize(channels, samples, false, false, true);
+    buffer.clear();
+    const auto bytes = static_cast<size_t>(samples) * sizeof(float);
+    for (int ch = 0; ch < channels; ++ch)
+        if (bytes > 0 &&
+            in.read(buffer.getWritePointer(ch), static_cast<int>(bytes)) !=
+                static_cast<int>(bytes))
+            return false;
+    return true;
+}
+
+bool writeMel(juce::OutputStream& out,
+              const std::vector<std::vector<float>>& mel)
+{
+    if (!out.writeInt64(static_cast<juce::int64>(mel.size())))
+        return false;
+    for (const auto& frame : mel)
+        if (!writeFloatVector(out, frame))
+            return false;
+    return true;
+}
+
+bool readMel(juce::InputStream& in, std::vector<std::vector<float>>& mel)
+{
+    const auto frames = in.readInt64();
+    if (frames < 0 || frames > std::numeric_limits<int>::max())
+        return false;
+
+    mel.resize(static_cast<size_t>(frames));
+    for (auto& frame : mel)
+        if (!readFloatVector(in, frame))
+            return false;
+    return true;
+}
+} // namespace
+
 bool ProjectSerializer::saveToFile(const Project& project, const juce::File& file) {
     auto json = toJson(project);
     auto jsonString = juce::JSON::toString(json, true); // Pretty print
@@ -20,7 +155,9 @@ bool ProjectSerializer::loadFromFile(Project& project, const juce::File& file) {
     return fromJson(project, json);
 }
 
-juce::var ProjectSerializer::toJson(const Project& project) {
+juce::var ProjectSerializer::toJson(const Project& project,
+                                    bool includeAnalysisCache,
+                                    bool includePitchData) {
     auto* obj = new juce::DynamicObject();
 
     // Metadata
@@ -74,12 +211,55 @@ juce::var ProjectSerializer::toJson(const Project& project) {
     // Notes array
     juce::Array<juce::var> notesArray;
     for (const auto& note : project.getNotes()) {
-        notesArray.add(noteToJson(note));
+        notesArray.add(noteToJson(note, includeAnalysisCache,
+                                  includePitchData));
     }
     obj->setProperty("notes", notesArray);
 
-    // Pitch data
-    obj->setProperty("pitchData", pitchDataToJson(project.getAudioData()));
+    if (includePitchData)
+        obj->setProperty("pitchData", pitchDataToJson(project.getAudioData()));
+    if (includeAnalysisCache) {
+        obj->setProperty("waveform", audioBufferToJson(project.getAudioData().waveform));
+        obj->setProperty("originalWaveform",
+                         audioBufferToJson(project.getAudioData().originalWaveform));
+        obj->setProperty("melSpectrogram",
+                         melSpectrogramToJson(project.getAudioData().melSpectrogram));
+    }
+
+    juce::Array<juce::var> segmentRanges;
+    for (const auto& range : project.getAudioData().segmentChunkRanges) {
+        juce::Array<juce::var> rangeArray;
+        rangeArray.add(range.first);
+        rangeArray.add(range.second);
+        segmentRanges.add(rangeArray);
+    }
+    obj->setProperty("segmentChunkRanges", segmentRanges);
+
+    if (includeAnalysisCache) {
+        juce::Array<juce::var> debugChunks;
+        for (const auto& chunk : project.getAudioData().segmentDebugChunks) {
+            auto* chunkObj = new juce::DynamicObject();
+            chunkObj->setProperty("chunkIndex", chunk.chunkIndex);
+            chunkObj->setProperty("startFrame", chunk.startFrame);
+            chunkObj->setProperty("endFrame", chunk.endFrame);
+            chunkObj->setProperty("shortRestThreshold", chunk.shortRestThreshold);
+            juce::Array<juce::var> events;
+            for (const auto& event : chunk.events) {
+                auto* eventObj = new juce::DynamicObject();
+                eventObj->setProperty("startFrame", event.startFrame);
+                eventObj->setProperty("endFrame", event.endFrame);
+                eventObj->setProperty("attachedStartFrame", event.attachedStartFrame);
+                eventObj->setProperty("midiNote", event.midiNote);
+                eventObj->setProperty("isRest", event.isRest);
+                eventObj->setProperty("durationSeconds", event.durationSeconds);
+                eventObj->setProperty("durationFrames", event.durationFrames);
+                events.add(juce::var(eventObj));
+            }
+            chunkObj->setProperty("events", events);
+            debugChunks.add(juce::var(chunkObj));
+        }
+        obj->setProperty("segmentDebugChunks", debugChunks);
+    }
 
     return juce::var(obj);
 }
@@ -198,6 +378,58 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     if (pitchDataVar.isObject()) {
         pitchDataFromJson(audioData, pitchDataVar);
     }
+    audioBufferFromJson(audioData.waveform,
+                        json.getProperty("waveform", juce::var()));
+    audioBufferFromJson(audioData.originalWaveform,
+                        json.getProperty("originalWaveform", juce::var()));
+    melSpectrogramFromJson(audioData.melSpectrogram,
+                           json.getProperty("melSpectrogram", juce::var()));
+    audioData.segmentChunkRanges.clear();
+    if (auto *ranges = json.getProperty("segmentChunkRanges", juce::var())
+                           .getArray()) {
+        for (const auto& rangeVar : *ranges) {
+            if (auto *range = rangeVar.getArray(); range && range->size() >= 2)
+                audioData.segmentChunkRanges.emplace_back(
+                    static_cast<int>((*range)[0]),
+                    static_cast<int>((*range)[1]));
+        }
+    }
+    audioData.segmentDebugChunks.clear();
+    if (auto *chunks = json.getProperty("segmentDebugChunks", juce::var())
+                           .getArray()) {
+        for (const auto& chunkVar : *chunks) {
+            if (!chunkVar.isObject())
+                continue;
+            AudioData::SegmentDebugChunk chunk;
+            chunk.chunkIndex = static_cast<int>(chunkVar.getProperty("chunkIndex", 0));
+            chunk.startFrame = static_cast<int>(chunkVar.getProperty("startFrame", 0));
+            chunk.endFrame = static_cast<int>(chunkVar.getProperty("endFrame", 0));
+            chunk.shortRestThreshold =
+                static_cast<int>(chunkVar.getProperty("shortRestThreshold", 0));
+            if (auto *events = chunkVar.getProperty("events", juce::var())
+                                   .getArray()) {
+                for (const auto& eventVar : *events) {
+                    if (!eventVar.isObject())
+                        continue;
+                    AudioData::SegmentDebugEvent event;
+                    event.startFrame = static_cast<int>(eventVar.getProperty("startFrame", 0));
+                    event.endFrame = static_cast<int>(eventVar.getProperty("endFrame", 0));
+                    event.attachedStartFrame =
+                        static_cast<int>(eventVar.getProperty("attachedStartFrame", 0));
+                    event.midiNote =
+                        static_cast<float>(eventVar.getProperty("midiNote", 0.0));
+                    event.isRest =
+                        static_cast<bool>(eventVar.getProperty("isRest", false));
+                    event.durationSeconds =
+                        static_cast<float>(eventVar.getProperty("durationSeconds", 0.0));
+                    event.durationFrames =
+                        static_cast<int>(eventVar.getProperty("durationFrames", 0));
+                    chunk.events.push_back(event);
+                }
+            }
+            audioData.segmentDebugChunks.push_back(std::move(chunk));
+        }
+    }
 
     // Rebuild curves if needed
     if (!audioData.f0.empty() && (audioData.basePitch.empty() || audioData.deltaPitch.empty())) {
@@ -238,7 +470,184 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     return true;
 }
 
-juce::var ProjectSerializer::noteToJson(const Note& note) {
+bool ProjectSerializer::toBinaryArchive(const Project& project,
+                                        juce::MemoryBlock& destData)
+{
+    destData.setSize(0);
+    juce::MemoryOutputStream out(destData, false);
+
+    const auto metadataJson =
+        juce::JSON::toString(toJson(project, false, false), false);
+    const auto& audioData = project.getAudioData();
+
+    if (!out.writeInt(static_cast<int>(kProjectArchiveMagic)) ||
+        !out.writeInt(kProjectArchiveVersion) ||
+        !writeString(out, metadataJson) ||
+        !writeAudioBuffer(out, audioData.waveform) ||
+        !writeAudioBuffer(out, audioData.originalWaveform) ||
+        !writeFloatVector(out, audioData.f0) ||
+        !writeFloatVector(out, audioData.baseF0) ||
+        !writeFloatVector(out, audioData.basePitch) ||
+        !writeFloatVector(out, audioData.deltaPitch) ||
+        !writeBoolVector(out, audioData.voicedMask) ||
+        !writeBoolVector(out, audioData.vadMask) ||
+        !writeMel(out, audioData.melSpectrogram))
+        return false;
+
+    if (!out.writeInt64(
+            static_cast<juce::int64>(audioData.segmentDebugChunks.size())))
+        return false;
+    for (const auto& chunk : audioData.segmentDebugChunks) {
+        if (!out.writeInt(chunk.chunkIndex) ||
+            !out.writeInt(chunk.startFrame) ||
+            !out.writeInt(chunk.endFrame) ||
+            !out.writeInt(chunk.shortRestThreshold) ||
+            !out.writeInt64(static_cast<juce::int64>(chunk.events.size())))
+            return false;
+
+        for (const auto& event : chunk.events) {
+            if (!out.writeInt(event.startFrame) ||
+                !out.writeInt(event.endFrame) ||
+                !out.writeInt(event.attachedStartFrame) ||
+                !out.writeFloat(event.midiNote) ||
+                !out.writeBool(event.isRest) ||
+                !out.writeFloat(event.durationSeconds) ||
+                !out.writeInt(event.durationFrames))
+                return false;
+        }
+    }
+
+    const auto& notes = project.getNotes();
+    if (!out.writeInt64(static_cast<juce::int64>(notes.size())))
+        return false;
+    for (const auto& note : notes) {
+        if (!writeFloatVector(out, note.getOriginalDeltaPitch()) ||
+            !writeFloatVector(out, note.getDeltaPitch()) ||
+            !writeFloatVector(out, note.getF0Values()) ||
+            !writeFloatVector(out, note.getClipWaveform()) ||
+            !writeFloatVector(out, note.getSrcClipWaveform()) ||
+            !out.writeInt(note.getSynthPreroll()) ||
+            !writeFloatVector(out, note.getSynthWaveform()) ||
+            !writeMel(out, note.getClipMel()))
+            return false;
+    }
+
+    return true;
+}
+
+bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
+                                          size_t sizeInBytes)
+{
+    if (!data || sizeInBytes < 8)
+        return false;
+
+    juce::MemoryInputStream in(data, sizeInBytes, false);
+    if (static_cast<std::uint32_t>(in.readInt()) != kProjectArchiveMagic)
+        return false;
+    if (in.readInt() != kProjectArchiveVersion)
+        return false;
+
+    const auto metadataJson = readString(in);
+    auto metadata = juce::JSON::parse(metadataJson);
+    if (!metadata.isObject() || !fromJson(project, metadata))
+        return false;
+
+    auto& audioData = project.getAudioData();
+    if (!readAudioBuffer(in, audioData.waveform) ||
+        !readAudioBuffer(in, audioData.originalWaveform) ||
+        !readFloatVector(in, audioData.f0) ||
+        !readFloatVector(in, audioData.baseF0) ||
+        !readFloatVector(in, audioData.basePitch) ||
+        !readFloatVector(in, audioData.deltaPitch) ||
+        !readBoolVector(in, audioData.voicedMask) ||
+        !readBoolVector(in, audioData.vadMask) ||
+        !readMel(in, audioData.melSpectrogram))
+        return false;
+
+    const auto debugChunkCount = in.readInt64();
+    if (debugChunkCount < 0 ||
+        debugChunkCount > std::numeric_limits<int>::max())
+        return false;
+    audioData.segmentDebugChunks.clear();
+    audioData.segmentDebugChunks.reserve(static_cast<size_t>(debugChunkCount));
+    for (juce::int64 i = 0; i < debugChunkCount; ++i) {
+        AudioData::SegmentDebugChunk chunk;
+        chunk.chunkIndex = in.readInt();
+        chunk.startFrame = in.readInt();
+        chunk.endFrame = in.readInt();
+        chunk.shortRestThreshold = in.readInt();
+
+        const auto eventCount = in.readInt64();
+        if (eventCount < 0 || eventCount > std::numeric_limits<int>::max())
+            return false;
+        chunk.events.reserve(static_cast<size_t>(eventCount));
+        for (juce::int64 eventIndex = 0; eventIndex < eventCount;
+             ++eventIndex) {
+            AudioData::SegmentDebugEvent event;
+            event.startFrame = in.readInt();
+            event.endFrame = in.readInt();
+            event.attachedStartFrame = in.readInt();
+            event.midiNote = in.readFloat();
+            event.isRest = in.readBool();
+            event.durationSeconds = in.readFloat();
+            event.durationFrames = in.readInt();
+            chunk.events.push_back(event);
+        }
+        audioData.segmentDebugChunks.push_back(std::move(chunk));
+    }
+
+    const auto noteCount = in.readInt64();
+    if (noteCount < 0 || noteCount > std::numeric_limits<int>::max() ||
+        static_cast<size_t>(noteCount) != project.getNotes().size())
+        return false;
+
+    for (auto& note : project.getNotes()) {
+        std::vector<float> originalDelta;
+        std::vector<float> delta;
+        std::vector<float> f0Values;
+        std::vector<float> clipWaveform;
+        std::vector<float> srcClipWaveform;
+        std::vector<float> synthWaveform;
+        std::vector<std::vector<float>> clipMel;
+
+        if (!readFloatVector(in, originalDelta) ||
+            !readFloatVector(in, delta) ||
+            !readFloatVector(in, f0Values) ||
+            !readFloatVector(in, clipWaveform) ||
+            !readFloatVector(in, srcClipWaveform))
+            return false;
+
+        const int synthPreroll = in.readInt();
+        if (!readFloatVector(in, synthWaveform) ||
+            !readMel(in, clipMel))
+            return false;
+
+        if (!originalDelta.empty())
+            note.setOriginalDeltaPitch(std::move(originalDelta));
+        if (!delta.empty())
+            note.setDeltaPitch(std::move(delta));
+        if (!f0Values.empty())
+            note.setF0Values(std::move(f0Values));
+        if (!clipWaveform.empty())
+            note.setClipWaveform(std::move(clipWaveform));
+        if (!srcClipWaveform.empty())
+            note.setSrcClipWaveform(std::move(srcClipWaveform));
+        if (!synthWaveform.empty())
+            note.setSynthWaveform(std::move(synthWaveform), synthPreroll);
+        if (!clipMel.empty())
+            note.setClipMel(std::move(clipMel));
+    }
+
+    if (audioData.baseF0.empty())
+        audioData.baseF0 = audioData.f0;
+
+    project.setModified(false);
+    return true;
+}
+
+juce::var ProjectSerializer::noteToJson(const Note& note,
+                                        bool includeAnalysisCache,
+                                        bool includePitchData) {
     auto* obj = new juce::DynamicObject();
 
     obj->setProperty("startFrame", note.getStartFrame());
@@ -273,8 +682,25 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
 
     // Per-note original delta pitch (pristine curve from analysis)
-    if (note.hasOriginalDeltaPitch())
+    if (includePitchData && note.hasOriginalDeltaPitch())
         obj->setProperty("originalDeltaPitch", floatArrayToString(note.getOriginalDeltaPitch(), 4));
+
+    if (includeAnalysisCache) {
+        if (note.hasDeltaPitch())
+            obj->setProperty("deltaPitch", floatArrayToString(note.getDeltaPitch(), 4));
+        if (!note.getF0Values().empty())
+            obj->setProperty("f0Values", floatArrayToString(note.getF0Values(), 2));
+        if (note.hasClipWaveform())
+            obj->setProperty("clipWaveform", floatArrayToString(note.getClipWaveform(), 6));
+        if (note.hasSrcClipWaveform())
+            obj->setProperty("srcClipWaveform", floatArrayToString(note.getSrcClipWaveform(), 6));
+        if (note.hasSynthWaveform()) {
+            obj->setProperty("synthWaveform", floatArrayToString(note.getSynthWaveform(), 6));
+            obj->setProperty("synthPreroll", note.getSynthPreroll());
+        }
+        if (note.hasClipMel())
+            obj->setProperty("clipMel", melSpectrogramToJson(note.getClipMel()));
+    }
 
     // Per-note delta scale/offset
     if (std::abs(note.getDeltaScale() - 1.0f) > 0.0001f)
@@ -335,6 +761,27 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     if (!origDeltaStr.isVoid() && origDeltaStr.toString().isNotEmpty())
         note.setOriginalDeltaPitch(stringToFloatArray(origDeltaStr.toString()));
 
+    auto deltaStr = json.getProperty("deltaPitch", juce::var());
+    if (!deltaStr.isVoid() && deltaStr.toString().isNotEmpty())
+        note.setDeltaPitch(stringToFloatArray(deltaStr.toString()));
+    auto f0ValuesStr = json.getProperty("f0Values", juce::var());
+    if (!f0ValuesStr.isVoid() && f0ValuesStr.toString().isNotEmpty())
+        note.setF0Values(stringToFloatArray(f0ValuesStr.toString()));
+    auto clipWaveformStr = json.getProperty("clipWaveform", juce::var());
+    if (!clipWaveformStr.isVoid() && clipWaveformStr.toString().isNotEmpty())
+        note.setClipWaveform(stringToFloatArray(clipWaveformStr.toString()));
+    auto srcClipWaveformStr = json.getProperty("srcClipWaveform", juce::var());
+    if (!srcClipWaveformStr.isVoid() && srcClipWaveformStr.toString().isNotEmpty())
+        note.setSrcClipWaveform(stringToFloatArray(srcClipWaveformStr.toString()));
+    auto synthWaveformStr = json.getProperty("synthWaveform", juce::var());
+    if (!synthWaveformStr.isVoid() && synthWaveformStr.toString().isNotEmpty())
+        note.setSynthWaveform(
+            stringToFloatArray(synthWaveformStr.toString()),
+            static_cast<int>(json.getProperty("synthPreroll", 0)));
+    std::vector<std::vector<float>> clipMel;
+    if (melSpectrogramFromJson(clipMel, json.getProperty("clipMel", juce::var())))
+        note.setClipMel(std::move(clipMel));
+
     // Per-note delta scale/offset
     note.setDeltaScale(static_cast<float>(json.getProperty("deltaScale", 1.0)));
     note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));
@@ -347,6 +794,7 @@ juce::var ProjectSerializer::pitchDataToJson(const AudioData& audioData) {
 
     // Store as compact strings for efficiency
     obj->setProperty("f0", floatArrayToString(audioData.f0, 2));
+    obj->setProperty("baseF0", floatArrayToString(audioData.baseF0, 2));
     obj->setProperty("basePitch", floatArrayToString(audioData.basePitch, 4));
     obj->setProperty("deltaPitch", floatArrayToString(audioData.deltaPitch, 4));
     obj->setProperty("voicedMask", boolArrayToString(audioData.voicedMask));
@@ -360,12 +808,96 @@ bool ProjectSerializer::pitchDataFromJson(AudioData& audioData, const juce::var&
         return false;
 
     audioData.f0 = stringToFloatArray(json.getProperty("f0", "").toString());
-    audioData.baseF0 = audioData.f0; // Initialize baseF0 from loaded f0
+    audioData.baseF0 = stringToFloatArray(json.getProperty("baseF0", "").toString());
+    if (audioData.baseF0.empty())
+        audioData.baseF0 = audioData.f0; // Backward compatibility
     audioData.basePitch = stringToFloatArray(json.getProperty("basePitch", "").toString());
     audioData.deltaPitch = stringToFloatArray(json.getProperty("deltaPitch", "").toString());
     audioData.voicedMask = stringToBoolArray(json.getProperty("voicedMask", "").toString());
     audioData.vadMask = stringToBoolArray(json.getProperty("vadMask", "").toString());
 
+    return true;
+}
+
+juce::var ProjectSerializer::audioBufferToJson(const juce::AudioBuffer<float>& buffer) {
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("channels", buffer.getNumChannels());
+    obj->setProperty("samples", buffer.getNumSamples());
+
+    juce::Array<juce::var> channelData;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+        std::vector<float> samples(static_cast<size_t>(buffer.getNumSamples()));
+        if (!samples.empty())
+            std::copy(buffer.getReadPointer(ch),
+                      buffer.getReadPointer(ch) + buffer.getNumSamples(),
+                      samples.begin());
+        channelData.add(floatArrayToString(samples, 6));
+    }
+    obj->setProperty("data", channelData);
+    return juce::var(obj);
+}
+
+bool ProjectSerializer::audioBufferFromJson(juce::AudioBuffer<float>& buffer, const juce::var& json) {
+    if (!json.isObject())
+        return false;
+
+    auto* data = json.getProperty("data", juce::var()).getArray();
+    if (!data)
+        return false;
+
+    const int channels = std::max(0, static_cast<int>(
+        json.getProperty("channels", data->size())));
+    const int samples = std::max(0, static_cast<int>(
+        json.getProperty("samples", 0)));
+    if (channels <= 0 || samples <= 0) {
+        buffer.setSize(0, 0);
+        return true;
+    }
+
+    buffer.setSize(channels, samples, false, false, true);
+    buffer.clear();
+    for (int ch = 0; ch < std::min(channels, data->size()); ++ch) {
+        auto values = stringToFloatArray((*data)[ch].toString());
+        const int count = std::min(samples, static_cast<int>(values.size()));
+        if (count > 0)
+            std::copy(values.begin(), values.begin() + count,
+                      buffer.getWritePointer(ch));
+    }
+    return true;
+}
+
+juce::var ProjectSerializer::melSpectrogramToJson(const std::vector<std::vector<float>>& mel) {
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("frames", static_cast<int>(mel.size()));
+    obj->setProperty("bins", mel.empty() ? 0 : static_cast<int>(mel.front().size()));
+
+    std::vector<float> flat;
+    size_t total = 0;
+    for (const auto& frame : mel)
+        total += frame.size();
+    flat.reserve(total);
+    for (const auto& frame : mel)
+        flat.insert(flat.end(), frame.begin(), frame.end());
+    obj->setProperty("data", floatArrayToString(flat, 6));
+    return juce::var(obj);
+}
+
+bool ProjectSerializer::melSpectrogramFromJson(std::vector<std::vector<float>>& mel, const juce::var& json) {
+    if (!json.isObject())
+        return false;
+
+    const int frames = std::max(0, static_cast<int>(json.getProperty("frames", 0)));
+    const int bins = std::max(0, static_cast<int>(json.getProperty("bins", 0)));
+    if (frames <= 0 || bins <= 0) {
+        mel.clear();
+        return true;
+    }
+
+    auto flat = stringToFloatArray(json.getProperty("data", "").toString());
+    mel.assign(static_cast<size_t>(frames), std::vector<float>(static_cast<size_t>(bins), 0.0f));
+    const size_t count = std::min(flat.size(), static_cast<size_t>(frames) * static_cast<size_t>(bins));
+    for (size_t i = 0; i < count; ++i)
+        mel[i / static_cast<size_t>(bins)][i % static_cast<size_t>(bins)] = flat[i];
     return true;
 }
 

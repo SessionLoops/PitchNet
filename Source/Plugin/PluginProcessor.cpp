@@ -6,6 +6,33 @@
 #include "../Utils/Localization.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <cstdint>
+#include <limits>
+
+namespace {
+constexpr std::uint32_t kPluginStateMagic = 0x504E5053u; // PNPS
+constexpr int kPluginStateBinaryVersion = 1;
+
+bool writeStateString(juce::OutputStream &out, const juce::String &text) {
+  const auto bytes = text.getNumBytesAsUTF8();
+  return out.writeInt64(static_cast<juce::int64>(bytes)) &&
+         out.write(text.toRawUTF8(), bytes);
+}
+
+juce::String readStateString(juce::InputStream &in) {
+  const auto bytes = in.readInt64();
+  if (bytes < 0 || bytes > std::numeric_limits<int>::max())
+    return {};
+
+  juce::MemoryBlock data(static_cast<size_t>(bytes));
+  if (bytes > 0 && in.read(data.getData(), static_cast<int>(bytes)) != bytes)
+    return {};
+
+  return juce::String(
+      juce::CharPointer_UTF8(static_cast<const char *>(data.getData())),
+      static_cast<size_t>(bytes));
+}
+} // namespace
 
 // ============================================================================
 // Parameter Layout
@@ -66,7 +93,8 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   undoManager = std::make_unique<PitchUndoManager>(100);
 }
 
-PitchNetAudioProcessor::~PitchNetAudioProcessor() = default;
+// Destructor is defined at the bottom of this file, after ARADocumentController.h
+// is included, so the ARA build can detach the document-controller binding.
 
 // ============================================================================
 // AudioProcessor Info
@@ -116,6 +144,13 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
 #if JucePlugin_Enable_ARA
   prepareToPlayForARA(sampleRate, samplesPerBlock,
                       getMainBusNumOutputChannels(), getProcessingPrecision());
+
+  // Rebuild the headless playback buffer now that the host sample rate is known
+  // and the ARA renderers exist. This makes UI-closed playback ready at the
+  // correct rate (fixing the buzz that came from falling back to the raw ARA
+  // source) regardless of whether state restore ran before or after this.
+  if (isPlaybackRenderer())
+    ensureHeadlessAraBinding();
 #endif
 
   // Non-ARA capture controller
@@ -534,6 +569,16 @@ void PitchNetAudioProcessor::startCapture() {
 
 void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
 
+void PitchNetAudioProcessor::bindRealtimeProcessorHeadless() {
+  if (mainComponent != nullptr)
+    return; // an open editor drives the binding
+  if (!araAnalysisProjectSnapshot)
+    return; // nothing analyzed yet
+  realtimeProcessor.setVocoder(
+      araAnalysisController ? araAnalysisController->getVocoder() : nullptr);
+  realtimeProcessor.setProject(araAnalysisProjectSnapshot.get());
+}
+
 void PitchNetAudioProcessor::startPluginPreview(double startSeconds,
                                                 double endSeconds) {
   pluginPreview.startSeconds.store(std::max(0.0, startSeconds));
@@ -649,8 +694,20 @@ void PitchNetAudioProcessor::dispatchLiveCaptureUpdate() {
 bool PitchNetAudioProcessor::attachCachedAraAnalysis(
     std::uintptr_t sourceKey, double timelineOffsetSeconds,
     const std::vector<std::pair<double, double>> &playbackRegionRanges) {
-  if (sourceKey == 0 || sourceKey != araAnalysisSourceKey)
+  if (sourceKey == 0)
     return false;
+
+  if (sourceKey != araAnalysisSourceKey) {
+    // ARA source keys are runtime object identities, so they are not stable
+    // across DAW project reloads. If we restored a complete analyzed snapshot
+    // from the saved project before the host reports its new source key, adopt
+    // the new key instead of discarding the snapshot and starting analysis over.
+    if (araAnalysisSourceKey == 0 && araAnalysisReady &&
+        araAnalysisProjectSnapshot)
+      araAnalysisSourceKey = sourceKey;
+    else
+      return false;
+  }
 
   araPlaybackRegionRanges = playbackRegionRanges;
   araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
@@ -1296,6 +1353,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               juce::JSON::toString(
                   ProjectSerializer::toJson(*renderedProject), false);
           araAnalysisReady = true;
+          publishPersistentProjectSnapshot(*renderedProject);
         }
 
         juce::Component::SafePointer<juce::Component> renderSafeMain(
@@ -1316,6 +1374,19 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       araRenderPendingRerun, true);
 }
 
+void PitchNetAudioProcessor::updateProjectStateFromEditor(
+    const Project &project) {
+  araAnalysisProjectSnapshot = std::make_unique<Project>(project);
+  araAnalysisProjectJson =
+      juce::JSON::toString(ProjectSerializer::toJson(project), false);
+  araAnalysisReady =
+      project.getAudioData().waveform.getNumSamples() > 0 &&
+      !project.getAudioData().f0.empty();
+  cachedPitchOffset = project.getGlobalPitchOffset();
+  cachedFormantShift = project.getFormantShift();
+  publishPersistentProjectSnapshot(project);
+}
+
 void PitchNetAudioProcessor::updateAraTimelineOffset(
     double timelineOffsetSeconds) {
   araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
@@ -1334,9 +1405,148 @@ void PitchNetAudioProcessor::updateAraTimelineOffset(
   araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
   araAnalysisProjectJson =
       juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+  publishPersistentProjectSnapshot(*project);
 
   if (araAnalysisReady)
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
+}
+
+bool PitchNetAudioProcessor::serializePersistentProjectState(
+    juce::MemoryBlock &destData) const {
+  destData.setSize(0);
+
+  if (mainComponent) {
+    if (auto *project = mainComponent->getProject())
+      return ProjectSerializer::toBinaryArchive(*project, destData);
+  }
+
+  if (araAnalysisProjectSnapshot)
+    return ProjectSerializer::toBinaryArchive(*araAnalysisProjectSnapshot,
+                                              destData);
+
+  if (araAnalysisController && araAnalysisController->getProject())
+    return ProjectSerializer::toBinaryArchive(
+        *araAnalysisController->getProject(), destData);
+
+  if (pendingStateJson.isNotEmpty()) {
+    Project pendingProject;
+    if (ProjectSerializer::fromJson(
+            pendingProject, juce::JSON::parse(pendingStateJson)))
+      return ProjectSerializer::toBinaryArchive(pendingProject, destData);
+
+    destData.append(pendingStateJson.toRawUTF8(),
+                    pendingStateJson.getNumBytesAsUTF8());
+    return destData.getSize() > 0;
+  }
+
+  return false;
+}
+
+bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
+    const juce::String &projectJson) {
+  if (projectJson.isEmpty())
+    return false;
+
+  auto parsed = juce::JSON::parse(projectJson);
+  if (!parsed.isObject())
+    return false;
+
+  auto restoredProject = std::make_unique<Project>();
+  if (!ProjectSerializer::fromJson(*restoredProject, parsed))
+    return false;
+
+  // Rebuild the global waveform from the persisted per-note synthesis so
+  // headless playback reflects saved edits (see binary branch above).
+  restoredProject->recomposeFromSynthIfPresent();
+
+  araAnalysisTimelineOffsetSeconds =
+      restoredProject->getAudioData().timelineOffsetSeconds;
+  araPlaybackRegionRanges =
+      restoredProject->getAudioData().playbackRegionRanges;
+  araAnalysisProjectJson = projectJson;
+  araAnalysisProjectSnapshot = std::make_unique<Project>(*restoredProject);
+  araAnalysisLoading = false;
+  araAnalysisReady =
+      restoredProject->getAudioData().waveform.getNumSamples() > 0 &&
+      !restoredProject->getAudioData().f0.empty();
+
+  if (!araAnalysisController)
+    araAnalysisController = std::make_unique<EditorController>(false);
+  araAnalysisController->setProject(std::move(restoredProject));
+  if (araAnalysisProjectSnapshot)
+    publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
+  return true;
+}
+
+bool PitchNetAudioProcessor::restorePersistentProjectState(
+    const void *data, size_t sizeInBytes) {
+  if (!data || sizeInBytes == 0)
+    return false;
+
+  auto restoredProject = std::make_unique<Project>();
+  if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
+                                           sizeInBytes)) {
+    // The global waveform stored in the archive can lag the authoritative
+    // per-note synthesis (it's only refreshed when the editor recomposes).
+    // Rebuild it from originalWaveform + the persisted per-note synthWaveforms
+    // so headless playback reflects the saved edits without needing the editor
+    // open. Guarded so it never reverts a project that has no per-note synthesis.
+    restoredProject->recomposeFromSynthIfPresent();
+    pendingStateJson.clear();
+    araAnalysisTimelineOffsetSeconds =
+        restoredProject->getAudioData().timelineOffsetSeconds;
+    araPlaybackRegionRanges =
+        restoredProject->getAudioData().playbackRegionRanges;
+    araAnalysisProjectJson =
+        juce::JSON::toString(ProjectSerializer::toJson(*restoredProject),
+                             false);
+    araAnalysisProjectSnapshot = std::make_unique<Project>(*restoredProject);
+    araAnalysisLoading = false;
+    araAnalysisReady =
+        restoredProject->getAudioData().waveform.getNumSamples() > 0 &&
+        !restoredProject->getAudioData().f0.empty();
+    cachedPitchOffset = restoredProject->getGlobalPitchOffset();
+    cachedFormantShift = restoredProject->getFormantShift();
+
+    if (!araAnalysisController)
+      araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController->setProject(
+        std::make_unique<Project>(*restoredProject));
+    publishPersistentProjectSnapshot(*restoredProject);
+
+    if (mainComponent) {
+      mainComponent->restoreProjectSnapshot(*restoredProject);
+      mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    } else {
+      // Loaded with the UI closed: bind the realtime processor to the restored
+      // snapshot so ARA playback works without ever opening the editor. The
+      // document-controller pointer is established in didBindToARA().
+      bindRealtimeProcessorHeadless();
+    }
+    return true;
+  }
+
+  juce::String projectJson(
+      juce::CharPointer_UTF8(static_cast<const char *>(data)), sizeInBytes);
+  if (!restoreProjectJsonToProcessorState(projectJson))
+    return false;
+
+  pendingStateJson = projectJson;
+
+  if (mainComponent && mainComponent->restoreProjectJson(projectJson)) {
+    pendingStateJson.clear();
+    if (auto *project = mainComponent->getProject()) {
+      cachedPitchOffset = project->getGlobalPitchOffset();
+      cachedFormantShift = project->getFormantShift();
+      araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+      araAnalysisProjectJson =
+          juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+      publishPersistentProjectSnapshot(*project);
+    }
+    mainComponent->bindRealtimeProcessor(realtimeProcessor);
+  }
+
+  return true;
 }
 
 // ============================================================================
@@ -1345,6 +1555,8 @@ void PitchNetAudioProcessor::updateAraTimelineOffset(
 
 void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
   if (mainComponent != nullptr && mainComponent != mc) {
+    if (auto *project = mainComponent->getProject())
+      updateProjectStateFromEditor(*project);
     viewportState = mainComponent->getViewportState();
     mainComponent->bindUndoManager(nullptr);
     mainComponent->bindBackendController(nullptr);
@@ -1358,6 +1570,18 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     mc->bindUndoManager(undoManager.get());
     mc->bindRealtimeProcessor(realtimeProcessor);
 
+    bool restoredPersistentProject = false;
+    if (pendingStateJson.isNotEmpty() &&
+        mc->restoreProjectJson(pendingStateJson)) {
+      pendingStateJson.clear();
+      restoredPersistentProject = true;
+    } else if (araAnalysisProjectSnapshot) {
+      restoredPersistentProject =
+          mc->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+    } else if (araAnalysisProjectJson.isNotEmpty()) {
+      restoredPersistentProject = mc->restoreProjectJson(araAnalysisProjectJson);
+    }
+
     // Sync current APVTS parameter values to project
     if (auto *project = mc->getProject()) {
       const float po = pitchOffsetParamValue->load();
@@ -1366,13 +1590,8 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
         project->setGlobalPitchOffset(po);
       if (std::abs(fs) > 0.001f)
         project->setFormantShift(fs);
-    }
 
-    if (pendingStateJson.isNotEmpty() &&
-        mc->restoreProjectJson(pendingStateJson)) {
-      pendingStateJson.clear();
-      // After restoring project, sync project values to APVTS
-      if (auto *project = mc->getProject()) {
+      if (restoredPersistentProject) {
         apvts.getParameter(PARAM_PITCH_OFFSET)
             ->setValueNotifyingHost(apvts.getParameter(PARAM_PITCH_OFFSET)
                                        ->convertTo0to1(
@@ -1381,13 +1600,30 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
             ->setValueNotifyingHost(apvts.getParameter(PARAM_FORMANT_SHIFT)
                                        ->convertTo0to1(
                                            project->getFormantShift()));
+        araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+        araAnalysisProjectJson =
+            juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+        araAnalysisReady =
+            project->getAudioData().waveform.getNumSamples() > 0 &&
+            !project->getAudioData().f0.empty();
+        publishPersistentProjectSnapshot(*project);
       }
     }
 
     mc->restoreViewportState(viewportState);
   } else {
-    realtimeProcessor.setProject(nullptr);
-    realtimeProcessor.setVocoder(nullptr);
+    // The editor is closing, but ARA playback/bounce must keep working
+    // headlessly. Re-point the realtime processor at the persistent backend
+    // project snapshot (which holds the edited, synthesized waveform) and the
+    // processor-owned vocoder, instead of nulling it and falling back to the
+    // raw, unedited ARA source (which would lose edits and buzz from per-block
+    // resampling).
+    if (araAnalysisProjectSnapshot) {
+      bindRealtimeProcessorHeadless();
+    } else {
+      realtimeProcessor.setProject(nullptr);
+      realtimeProcessor.setVocoder(nullptr);
+    }
   }
 }
 
@@ -1401,40 +1637,61 @@ juce::AudioProcessorEditor *PitchNetAudioProcessor::createEditor() {
 
 void PitchNetAudioProcessor::getStateInformation(
     juce::MemoryBlock &destData) {
-  // Create versioned envelope containing both APVTS state and project state
-  auto *envelope = new juce::DynamicObject();
-  envelope->setProperty("pluginStateVersion", PLUGIN_STATE_VERSION);
+  destData.setSize(0);
+  juce::MemoryOutputStream out(destData, false);
 
-  // APVTS parameters state (as XML string)
   auto apvtsState = apvts.copyState();
   auto apvtsXml = apvtsState.createXml();
-  if (apvtsXml)
-    envelope->setProperty("parametersXml", apvtsXml->toString());
+  const juce::String parametersXml = apvtsXml ? apvtsXml->toString()
+                                              : juce::String();
 
-  // Project state (existing JSON)
-  juce::String projectJson;
-  if (mainComponent) {
-    projectJson = mainComponent->serializeProjectJson();
-  } else if (pendingStateJson.isNotEmpty()) {
-    projectJson = pendingStateJson;
-  } else if (araAnalysisController && araAnalysisController->getProject()) {
-    projectJson = juce::JSON::toString(
-        ProjectSerializer::toJson(*araAnalysisController->getProject()),
-        false);
-  }
+  juce::MemoryBlock projectArchive;
+  serializePersistentProjectState(projectArchive);
 
-  if (projectJson.isNotEmpty()) {
-    auto parsedProject = juce::JSON::parse(projectJson);
-    if (parsedProject.isObject())
-      envelope->setProperty("projectState", parsedProject);
-  }
-
-  auto jsonString = juce::JSON::toString(juce::var(envelope), false);
-  destData.append(jsonString.toRawUTF8(), jsonString.getNumBytesAsUTF8());
+  out.writeInt(static_cast<int>(kPluginStateMagic));
+  out.writeInt(kPluginStateBinaryVersion);
+  writeStateString(out, parametersXml);
+  out.writeInt64(static_cast<juce::int64>(projectArchive.getSize()));
+  if (projectArchive.getSize() > 0)
+    out.write(projectArchive.getData(), projectArchive.getSize());
 }
 
 void PitchNetAudioProcessor::setStateInformation(const void *data,
                                                    int sizeInBytes) {
+  if (!data || sizeInBytes <= 0)
+    return;
+
+  {
+    juce::MemoryInputStream in(data, static_cast<size_t>(sizeInBytes), false);
+    if (static_cast<std::uint32_t>(in.readInt()) == kPluginStateMagic) {
+      if (in.readInt() != kPluginStateBinaryVersion)
+        return;
+
+      undoManager->clear();
+
+      auto parametersXml = readStateString(in);
+      if (parametersXml.isNotEmpty()) {
+        auto xml = juce::parseXML(parametersXml);
+        if (xml) {
+          auto tree = juce::ValueTree::fromXml(*xml);
+          if (tree.isValid())
+            apvts.replaceState(tree);
+        }
+      }
+
+      const auto projectBytes = in.readInt64();
+      if (projectBytes > 0 &&
+          projectBytes <= std::numeric_limits<int>::max()) {
+        juce::MemoryBlock projectArchive(static_cast<size_t>(projectBytes));
+        if (in.read(projectArchive.getData(), static_cast<int>(projectBytes)) ==
+            projectBytes)
+          restorePersistentProjectState(projectArchive.getData(),
+                                        projectArchive.getSize());
+      }
+      return;
+    }
+  }
+
   juce::String rawString(
       juce::CharPointer_UTF8(static_cast<const char *>(data)),
       static_cast<size_t>(sizeInBytes));
@@ -1463,21 +1720,26 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
     auto projectState = parsed.getProperty("projectState", {});
     if (projectState.isObject()) {
       auto projectJson = juce::JSON::toString(projectState, false);
-      if (mainComponent && mainComponent->restoreProjectJson(projectJson)) {
+      if (restorePersistentProjectState(projectJson.toRawUTF8(),
+                                        projectJson.getNumBytesAsUTF8())) {
         // Sync project values to cached state
-        if (auto *project = mainComponent->getProject()) {
+        if (auto *project =
+                mainComponent ? mainComponent->getProject()
+                              : araAnalysisController->getProject()) {
           cachedPitchOffset = project->getGlobalPitchOffset();
           cachedFormantShift = project->getFormantShift();
         }
         return;
       }
-      pendingStateJson = projectJson;
     }
   } else {
     // Legacy format: raw project JSON (backward compatibility)
-    if (mainComponent && mainComponent->restoreProjectJson(rawString)) {
+    if (restorePersistentProjectState(rawString.toRawUTF8(),
+                                      rawString.getNumBytesAsUTF8())) {
       // Sync legacy project values to APVTS
-      if (auto *project = mainComponent->getProject()) {
+      if (auto *project =
+              mainComponent ? mainComponent->getProject()
+                            : araAnalysisController->getProject()) {
         apvts.getParameter(PARAM_PITCH_OFFSET)
             ->setValueNotifyingHost(apvts.getParameter(PARAM_PITCH_OFFSET)
                                        ->convertTo0to1(
@@ -1491,7 +1753,6 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
       }
       return;
     }
-    pendingStateJson = rawString;
   }
 }
 
@@ -1510,4 +1771,75 @@ const ARA::ARAFactory *JUCE_CALLTYPE createARAFactory() {
   return juce::ARADocumentControllerSpecialisation::createARAFactory<
       PitchNetDocumentController>();
 }
+
+void PitchNetAudioProcessor::setAraDocumentController(
+    PitchNetDocumentController *dc) {
+  araDocumentController = dc;
+  if (dc) {
+    dc->setOwningProcessor(this);
+    dc->setRealtimeProcessor(&realtimeProcessor);
+    if (araAnalysisProjectSnapshot)
+      dc->setDocumentProjectSnapshot(*araAnalysisProjectSnapshot, false);
+  }
+}
+
+void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
+    const Project &project) {
+  if (araDocumentController)
+    araDocumentController->setDocumentProjectSnapshot(project);
+}
+
+void PitchNetAudioProcessor::ensureHeadlessAraBinding() {
+  // Establish the document-controller binding (not only when the editor opens)
+  // so loading a saved project with the UI closed still wires the playback
+  // renderer to the realtime processor and can restore project state.
+  if (auto *pr = getPlaybackRenderer<PitchNetPlaybackRenderer>()) {
+    if (auto *dc = pr->getDocController()) {
+      setAraDocumentController(dc);
+
+      // Own the persistence callbacks at the processor (capturing the
+      // processor, which outlives the editor) so an ARA archive can be restored
+      // headlessly. If restore data arrived earlier, the controller applies it
+      // synchronously here.
+      dc->setPersistenceCallbacks(
+          [this](juce::MemoryBlock &destData) {
+            return serializePersistentProjectState(destData);
+          },
+          [this](const void *data, size_t sizeInBytes) {
+            return restorePersistentProjectState(data, sizeInBytes);
+          });
+    }
+  }
+
+  // Build the headless playback buffer. Called from prepareToPlay too, so the
+  // realtime processor's sample rate is already the host rate and invalidate()
+  // resamples the snapshot correctly (otherwise playback walks off a wrong-rate
+  // buffer and falls back to the buzzing raw-source path).
+  bindRealtimeProcessorHeadless();
+}
+
+void PitchNetAudioProcessor::didBindToARA() noexcept {
+  juce::AudioProcessorARAExtension::didBindToARA();
+  ensureHeadlessAraBinding();
+}
+
+PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+  // Detach only if the document controller still points at *our* realtime
+  // processor (another instance may have rebound it). This keeps headless ARA
+  // playback alive across editor open/close while preventing a dangling pointer
+  // when this instance is removed.
+  if (araDocumentController &&
+      araDocumentController->getRealtimeProcessor() == &realtimeProcessor) {
+    araDocumentController->setRealtimeProcessor(nullptr);
+    araDocumentController->setOwningProcessor(nullptr);
+    // We owned the persistence callbacks (they captured this processor); clear
+    // them so the shared document controller never calls into a dead instance.
+    araDocumentController->setPersistenceCallbacks(nullptr, nullptr);
+  }
+}
+#else
+void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
+    const Project &) {}
+
+PitchNetAudioProcessor::~PitchNetAudioProcessor() = default;
 #endif
