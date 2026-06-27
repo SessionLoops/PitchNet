@@ -34,6 +34,134 @@ public:
 /**
  * Pre-styled combo box with rounded, modern appearance.
  */
+class SidePanelComboLookAndFeel : public DarkLookAndFeel
+{
+public:
+    SidePanelComboLookAndFeel()
+    {
+        setColour(juce::PopupMenu::backgroundColourId, juce::Colours::transparentBlack);
+        setColour(juce::PopupMenu::textColourId, APP_COLOR_TEXT_PRIMARY);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFF171717u));
+        setColour(juce::PopupMenu::highlightedTextColourId, APP_COLOR_TEXT_PRIMARY);
+
+        setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF30302Eu));
+        setColour(juce::ComboBox::textColourId, juce::Colour(0xFFE6E6E6u));
+        setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        setColour(juce::ComboBox::arrowColourId, juce::Colour(0xFFE6E6E6u));
+        setColour(juce::ComboBox::focusedOutlineColourId, juce::Colour(0xFF3E3E3Eu));
+    }
+
+    juce::Font getComboBoxFont(juce::ComboBox&) override
+    {
+        return AppFont::getFont(13.0f);
+    }
+
+    juce::Font getPopupMenuFont() override
+    {
+        return AppFont::getFont(14.0f);
+    }
+
+    void drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
+                      int, int, int, int, juce::ComboBox& box) override
+    {
+        auto colour = box.findColour(juce::ComboBox::backgroundColourId);
+        if (isButtonDown)
+            colour = colour.brighter(0.10f);
+        else if (box.isMouseOver())
+            colour = colour.brighter(0.05f);
+
+        const auto bounds = box.getLocalBounds().toFloat();
+        g.setColour(colour.withMultipliedAlpha(box.isEnabled() ? 1.0f : 0.5f));
+        g.fillRoundedRectangle(bounds, 5.0f);
+
+        if (box.hasKeyboardFocus(true))
+        {
+            g.setColour(box.findColour(juce::ComboBox::focusedOutlineColourId));
+            g.drawRoundedRectangle(bounds.reduced(0.5f), 5.0f, 1.0f);
+        }
+
+        auto arrowZone = juce::Rectangle<float>(
+            static_cast<float>(width) - 20.0f, 0.0f, 14.0f, static_cast<float>(height));
+        juce::Path arrow;
+        const auto cx = arrowZone.getCentreX();
+        const auto cy = arrowZone.getCentreY();
+        arrow.startNewSubPath(cx - 3.5f, cy - 1.5f);
+        arrow.lineTo(cx, cy + 2.0f);
+        arrow.lineTo(cx + 3.5f, cy - 1.5f);
+
+        g.setColour(box.findColour(juce::ComboBox::arrowColourId)
+                        .withMultipliedAlpha(box.isEnabled() ? 1.0f : 0.5f));
+        g.strokePath(arrow, juce::PathStrokeType(1.35f, juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+    }
+
+    void drawPopupMenuBackground(juce::Graphics& g, int width, int height) override
+    {
+        const auto bounds = juce::Rectangle<float>(
+            0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height));
+        const auto area = bounds.reduced(0.5f);
+        juce::Path shape;
+        shape.addRoundedRectangle(area, 9.0f);
+
+        g.setColour(juce::Colour(0xFF30302Eu));
+        g.fillPath(shape);
+        g.setColour(juce::Colour(0xFF3E3E3Eu));
+        g.strokePath(shape, juce::PathStrokeType(1.0f));
+    }
+
+    void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
+                           bool isSeparator, bool isActive, bool isHighlighted,
+                           bool isTicked, bool hasSubMenu,
+                           const juce::String& text, const juce::String& shortcutKeyText,
+                           const juce::Drawable* icon,
+                           const juce::Colour* textColour) override
+    {
+        juce::ignoreUnused(hasSubMenu, icon, textColour);
+
+        if (isSeparator)
+        {
+            g.setColour(juce::Colour(0xFF3E3E3Eu));
+            g.fillRect(area.reduced(10, 0).withHeight(1).withY(area.getCentreY()));
+            return;
+        }
+
+        const auto itemArea = area.toFloat();
+        if (isHighlighted && isActive)
+        {
+            g.setColour(juce::Colour(0xFF171717u));
+            g.fillRoundedRectangle(itemArea.reduced(2.0f, 1.0f), 5.0f);
+        }
+
+        if (isTicked)
+        {
+            g.setColour(juce::Colour(0xFFEFEFEFu));
+            g.fillEllipse(8.0f, itemArea.getCentreY() - 3.5f, 7.0f, 7.0f);
+        }
+
+        g.setColour((isActive ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_TEXT_MUTED)
+                        .withMultipliedAlpha(isActive ? 1.0f : 0.5f));
+        g.setFont(getPopupMenuFont());
+
+        auto textArea = area.withTrimmedLeft(22).withTrimmedRight(10);
+        g.drawText(text, textArea, juce::Justification::centredLeft, true);
+
+        if (shortcutKeyText.isNotEmpty())
+        {
+            g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(0.6f));
+            g.drawText(shortcutKeyText, textArea, juce::Justification::centredRight, true);
+        }
+    }
+
+    void drawResizableFrame(juce::Graphics&, int, int,
+                            const juce::BorderSize<int>&) override {}
+
+    static SidePanelComboLookAndFeel& getInstance()
+    {
+        static SidePanelComboLookAndFeel instance;
+        return instance;
+    }
+};
+
 class StyledComboBox : public juce::ComboBox
 {
 public:
@@ -44,12 +172,12 @@ public:
 
     void applyStyle()
     {
-        setColour(juce::ComboBox::backgroundColourId, APP_COLOR_SURFACE);
-        setColour(juce::ComboBox::textColourId, APP_COLOR_TEXT_PRIMARY);
-        setColour(juce::ComboBox::outlineColourId, APP_COLOR_BORDER);
-        setColour(juce::ComboBox::arrowColourId, APP_COLOR_TEXT_MUTED);
-        setColour(juce::ComboBox::focusedOutlineColourId, APP_COLOR_PRIMARY.withAlpha(0.6f));
-        setLookAndFeel(&DarkLookAndFeel::getInstance());
+        setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF30302Eu));
+        setColour(juce::ComboBox::textColourId, juce::Colour(0xFFE6E6E6u));
+        setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        setColour(juce::ComboBox::arrowColourId, juce::Colour(0xFFE6E6E6u));
+        setColour(juce::ComboBox::focusedOutlineColourId, juce::Colour(0xFF3E3E3Eu));
+        setLookAndFeel(&SidePanelComboLookAndFeel::getInstance());
     }
 
     ~StyledComboBox() override

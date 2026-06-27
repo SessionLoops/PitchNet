@@ -119,14 +119,6 @@ SettingsComponent::SettingsComponent(
   { setActiveTab(SettingsTab::Audio); };
   addAndMakeVisible(audioTabButton);
 
-  // General section label
-  generalSectionLabel.setText(TR("settings.general"),
-                              juce::dontSendNotification);
-  generalSectionLabel.setFont(AppFont::getBoldFont(15.0f));
-  generalSectionLabel.setColour(juce::Label::textColourId,
-                                APP_COLOR_TEXT_MUTED);
-  addAndMakeVisible(generalSectionLabel);
-
   // Language selection
   languageLabel.setText(TR("settings.language"), juce::dontSendNotification);
   configureRowLabel(languageLabel);
@@ -139,7 +131,7 @@ SettingsComponent::SettingsComponent(
   for (int i = 0; i < static_cast<int>(langs.size()); ++i)
     languageComboBox.addItem(langs[i].nativeName, i + 2); // IDs start at 2
   languageComboBox.addListener(this);
-  languageComboBox.setLookAndFeel(&settingsLookAndFeel);
+  languageComboBox.applyStyle();
   addAndMakeVisible(languageComboBox);
 
   // Device selection
@@ -148,7 +140,7 @@ SettingsComponent::SettingsComponent(
   addAndMakeVisible(deviceLabel);
 
   deviceComboBox.addListener(this);
-  deviceComboBox.setLookAndFeel(&settingsLookAndFeel);
+  deviceComboBox.applyStyle();
   addAndMakeVisible(deviceComboBox);
 
   // GPU device ID selection
@@ -158,7 +150,7 @@ SettingsComponent::SettingsComponent(
 
   // GPU device list will be populated dynamically based on available devices
   gpuDeviceComboBox.addListener(this);
-  gpuDeviceComboBox.setLookAndFeel(&settingsLookAndFeel);
+  gpuDeviceComboBox.applyStyle();
   addAndMakeVisible(gpuDeviceComboBox);
   gpuDeviceLabel.setVisible(false);
   gpuDeviceComboBox.setVisible(false);
@@ -174,7 +166,7 @@ SettingsComponent::SettingsComponent(
   pitchDetectorComboBox.setSelectedId(
       2, juce::dontSendNotification); // Default to FCPE
   pitchDetectorComboBox.addListener(this);
-  pitchDetectorComboBox.setLookAndFeel(&settingsLookAndFeel);
+  pitchDetectorComboBox.applyStyle();
   addAndMakeVisible(pitchDetectorComboBox);
 
   gameChunksDebugLabel.setText("Show GAME chunks (debug)",
@@ -269,19 +261,13 @@ SettingsComponent::SettingsComponent(
     deviceManager->addChangeListener(this);
     startTimerHz(1);
 
-    audioSectionLabel.setText(TR("settings.audio"), juce::dontSendNotification);
-    audioSectionLabel.setFont(AppFont::getBoldFont(15.0f));
-    audioSectionLabel.setColour(juce::Label::textColourId,
-                                APP_COLOR_TEXT_MUTED);
-    addAndMakeVisible(audioSectionLabel);
-
     // Audio device type (driver)
     audioDeviceTypeLabel.setText(TR("settings.audio_driver"),
                                  juce::dontSendNotification);
     configureRowLabel(audioDeviceTypeLabel);
     addAndMakeVisible(audioDeviceTypeLabel);
     audioDeviceTypeComboBox.addListener(this);
-    audioDeviceTypeComboBox.setLookAndFeel(&settingsLookAndFeel);
+    audioDeviceTypeComboBox.applyStyle();
     addAndMakeVisible(audioDeviceTypeComboBox);
 
     // Output device
@@ -290,7 +276,7 @@ SettingsComponent::SettingsComponent(
     configureRowLabel(audioOutputLabel);
     addAndMakeVisible(audioOutputLabel);
     audioOutputComboBox.addListener(this);
-    audioOutputComboBox.setLookAndFeel(&settingsLookAndFeel);
+    audioOutputComboBox.applyStyle();
     addAndMakeVisible(audioOutputComboBox);
 
     // Sample rate
@@ -299,7 +285,7 @@ SettingsComponent::SettingsComponent(
     configureRowLabel(sampleRateLabel);
     addAndMakeVisible(sampleRateLabel);
     sampleRateComboBox.addListener(this);
-    sampleRateComboBox.setLookAndFeel(&settingsLookAndFeel);
+    sampleRateComboBox.applyStyle();
     addAndMakeVisible(sampleRateComboBox);
 
     // Buffer size
@@ -308,7 +294,7 @@ SettingsComponent::SettingsComponent(
     configureRowLabel(bufferSizeLabel);
     addAndMakeVisible(bufferSizeLabel);
     bufferSizeComboBox.addListener(this);
-    bufferSizeComboBox.setLookAndFeel(&settingsLookAndFeel);
+    bufferSizeComboBox.applyStyle();
     addAndMakeVisible(bufferSizeComboBox);
 
     // Output channels
@@ -320,7 +306,7 @@ SettingsComponent::SettingsComponent(
     outputChannelsComboBox.addItem(TR("settings.stereo"), 2);
     outputChannelsComboBox.setSelectedId(2, juce::dontSendNotification);
     outputChannelsComboBox.addListener(this);
-    outputChannelsComboBox.setLookAndFeel(&settingsLookAndFeel);
+    outputChannelsComboBox.applyStyle();
     addAndMakeVisible(outputChannelsComboBox);
 
     updateAudioDeviceTypes();
@@ -415,20 +401,12 @@ void SettingsComponent::paint(juce::Graphics &g)
     g.setColour(APP_COLOR_BORDER.withAlpha(0.55f));
     g.drawRoundedRectangle(card.reduced(0.5f), 8.0f, 0.75f);
 
-    g.setColour(APP_COLOR_BORDER_SUBTLE);
-    for (int i = 0; i < separatorYs.size(); ++i)
-    {
-      int y = separatorYs[i];
-      g.drawLine((float)cardBounds.getX() + 14.0f, (float)y,
-                 (float)cardBounds.getRight() - 14.0f, (float)y, 1.0f);
-    }
   }
 }
 
 void SettingsComponent::resized()
 {
   auto bounds = getLocalBounds().reduced(16);
-  separatorYs.clear();
   tabListBounds = {};
 
   const int sidebarWidth = 140;
@@ -478,10 +456,6 @@ void SettingsComponent::resized()
 
   if (activeTab == SettingsTab::General)
   {
-    generalSectionLabel.setBounds(content.removeFromTop(20));
-    separatorYs.add(generalSectionLabel.getBottom() + 6);
-    content.removeFromTop(10);
-
     layoutRow(languageLabel, languageComboBox);
     layoutRow(deviceLabel, deviceComboBox);
 
@@ -503,10 +477,6 @@ void SettingsComponent::resized()
   if (!pluginMode && deviceManager != nullptr &&
       activeTab == SettingsTab::Audio)
   {
-    audioSectionLabel.setBounds(content.removeFromTop(20));
-    separatorYs.add(audioSectionLabel.getBottom() + 6);
-    content.removeFromTop(10);
-
     layoutRow(audioDeviceTypeLabel, audioDeviceTypeComboBox);
     layoutRow(audioOutputLabel, audioOutputComboBox);
     layoutRow(sampleRateLabel, sampleRateComboBox);
@@ -726,7 +696,6 @@ void SettingsComponent::updateTabVisibility()
        activeTab == SettingsTab::Audio);
   const bool showGpuDeviceList = shouldShowGpuDeviceList();
 
-  generalSectionLabel.setVisible(showGeneral);
   languageLabel.setVisible(showGeneral);
   languageComboBox.setVisible(showGeneral);
   deviceLabel.setVisible(showGeneral);
@@ -745,7 +714,6 @@ void SettingsComponent::updateTabVisibility()
   actualF0DebugToggle.setVisible(showGeneral);
   infoLabel.setVisible(showGeneral);
 
-  audioSectionLabel.setVisible(showAudio);
   audioDeviceTypeLabel.setVisible(showAudio);
   audioDeviceTypeComboBox.setVisible(showAudio);
   audioOutputLabel.setVisible(showAudio);

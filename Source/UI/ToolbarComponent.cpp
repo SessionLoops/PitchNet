@@ -201,13 +201,14 @@ void ToolbarComponent::resized()
     // Transport controls grouped in capsule. In plugin mode these buttons
     // request host transport changes through MainComponent.
     const int transportSlotSize = 30;
-    const int transportPad = 5;
+    const int transportPad = 15;
+    const int transportGap = 6;
     const int numCenteredTransport = 4;
     const int numTransport = recordButton.isVisible() ? 6 : 5;
-    const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * 2 + transportPad * 2;
-    const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * 2 + transportPad * 2;
+    const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * transportGap + transportPad * 2;
+    const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * transportGap + transportPad * 2;
     int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
-    const int capsuleX = cx - (recordButton.isVisible() ? transportSlotSize + 2 : 0);
+    const int capsuleX = cx - (recordButton.isVisible() ? transportSlotSize + transportGap : 0);
     const int transportCapsuleH = 38;
     const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
     transportCapsuleBounds = juce::Rectangle<int>(capsuleX, transportCapsuleY, capsuleW, transportCapsuleH);
@@ -228,16 +229,16 @@ void ToolbarComponent::resized()
     int slotX = capsuleX + transportPad;
     if (recordButton.isVisible()) {
         setButtonInSlot(recordButton, slotX);
-        slotX += transportSlotSize + 2;
+        slotX += transportSlotSize + transportGap;
     }
     setButtonInSlot(stopButton, slotX);
-    slotX += transportSlotSize + 2;
-    setButtonInSlot(playButton, slotX);
-    slotX += transportSlotSize + 2;
+    slotX += transportSlotSize + transportGap;
     setButtonInSlot(goToStartButton, slotX);
-    slotX += transportSlotSize + 2;
+    slotX += transportSlotSize + transportGap;
+    setButtonInSlot(playButton, slotX);
+    slotX += transportSlotSize + transportGap;
     setButtonInSlot(goToEndButton, slotX);
-    slotX += transportSlotSize + 2;
+    slotX += transportSlotSize + transportGap;
     setButtonInSlot(loopButton, slotX);
 }
 

@@ -131,7 +131,6 @@ private:
   SettingsLookAndFeel settingsLookAndFeel;
 
   juce::Label titleLabel;
-  juce::Label generalSectionLabel;
 
   juce::Label languageLabel;
   StyledComboBox languageComboBox;
@@ -155,7 +154,6 @@ private:
   juce::Label infoLabel;
 
   // Audio device settings (standalone mode only)
-  juce::Label audioSectionLabel;
   juce::Label audioDeviceTypeLabel;
   StyledComboBox audioDeviceTypeComboBox;
   juce::Array<juce::AudioIODeviceType *> audioDeviceTypeOrder;
@@ -188,7 +186,6 @@ private:
   juce::Rectangle<int> cardBounds;
   juce::Rectangle<int> sidebarBounds;
   juce::Rectangle<int> tabListBounds;
-  juce::Array<int> separatorYs;
   float cornerRadius = 10.0f;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsComponent)
