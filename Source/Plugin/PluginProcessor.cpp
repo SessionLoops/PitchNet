@@ -395,8 +395,12 @@ void PitchNetAudioProcessor::processNonARAMode(
   const int numChannels = buffer.getNumChannels();
   const bool hostIsPlaying = posInfo.getIsPlaying();
 
-  // Check if we have analyzed project ready for real-time processing
-  bool hasProject = mainComponent && mainComponent->hasAnalyzedProject();
+  // Check if we have analyzed project ready for real-time processing. In
+  // non-ARA hosts, state can be restored before the editor is opened, so the
+  // processor-owned snapshot must be enough for playback.
+  bool hasProject =
+      (mainComponent && mainComponent->hasAnalyzedProject()) ||
+      (araAnalysisReady && araAnalysisProjectSnapshot != nullptr);
 
   // Update UI cursor position from host playback position (only when we have
   // analyzed audio)
@@ -478,7 +482,13 @@ void PitchNetAudioProcessor::processNonARAMode(
     return;
   }
 
-  if (!isCaptureArmed() && hasProject && realtimeProcessor.isReady()) {
+  if (!isCaptureArmed() && hasProject) {
+    if (!mainComponent && araAnalysisProjectSnapshot)
+      bindRealtimeProcessorHeadless();
+
+    if (!realtimeProcessor.isReady())
+      return;
+
     // Save dry copy for dry/wet mixing
     juce::AudioBuffer<float> dryBuffer;
     const float dryWet = dryWetParamValue->load();
@@ -856,6 +866,8 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
             araAnalysisProjectJson = juce::JSON::toString(
                 ProjectSerializer::toJson(*positionedProject), false);
           }
+          if (araAnalysisProjectSnapshot)
+            publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           mainComponent->hideAnalysisProgress();
         } else if (mainComponent) {
@@ -1303,6 +1315,8 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
             araAnalysisProjectJson = juce::JSON::toString(
                 ProjectSerializer::toJson(*positionedProject), false);
           }
+          if (araAnalysisProjectSnapshot)
+            publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           mainComponent->hideAnalysisProgress();
         } else if (mainComponent) {
