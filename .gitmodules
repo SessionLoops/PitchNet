@@ -1,6 +1,6 @@
 [submodule "third_party/JUCE"]
 	path = third_party/JUCE
-	url = https://github.com/juce-framework/JUCE.git
+	url = https://github.com/SessionLoops/JUCE.git
 [submodule "third_party/ARA_SDK"]
 	path = third_party/ARA_SDK
 	url = https://github.com/Celemony/ARA_SDK
