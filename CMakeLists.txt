@@ -595,7 +595,8 @@ endif()
 target_compile_definitions(pitchnet_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_MODAL_LOOPS_PERMITTED=1)
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    PITCHNET_PROJECT_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Resources")
 
 target_compile_definitions(pitchnet_ui PUBLIC
     JUCE_WEB_BROWSER=0
@@ -698,119 +699,7 @@ foreach(GMODEL ${REQUIRED_GAME_MODELS})
     endif()
 endforeach()
 message(STATUS "All required models found")
-
-# Copy all files from models directory to targets
-file(GLOB ALL_MODEL_FILES "${MODELS_DIR}/*.onnx" "${MODELS_DIR}/*.bin")
-foreach(MODEL_PATH ${ALL_MODEL_FILES})
-    get_filename_component(MODEL_NAME "${MODEL_PATH}" NAME)
-    if(APPLE AND MODEL_NAME STREQUAL "pc_nsf_hifigan.onnx")
-        continue()
-    endif()
-    if(APPLE)
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/${MODEL_NAME}")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/${MODEL_NAME}")
-        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/${MODEL_NAME}")
-    else()
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:PitchNet>/models/${MODEL_NAME}")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/${MODEL_NAME}")
-    endif()
-endforeach()
-
-if(APPLE)
-    set(COREML_VOCODER_MODEL "${MODELS_DIR}/pc_nsf_hifigan.mlmodelc")
-    if(EXISTS "${COREML_VOCODER_MODEL}")
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${COREML_VOCODER_MODEL}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/pc_nsf_hifigan.mlmodelc")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${COREML_VOCODER_MODEL}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/pc_nsf_hifigan.mlmodelc")
-        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${COREML_VOCODER_MODEL}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/pc_nsf_hifigan.mlmodelc")
-    endif()
-endif()
-
-# Copy GAME model subdirectory
-file(GLOB GAME_MODEL_FILES "${GAME_DIR}/*")
-foreach(GFILE_PATH ${GAME_MODEL_FILES})
-    get_filename_component(GFILE_NAME "${GFILE_PATH}" NAME)
-    if(APPLE)
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/models/GAME/${GFILE_NAME}")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/models/GAME/${GFILE_NAME}")
-        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/models/GAME/${GFILE_NAME}")
-    else()
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:PitchNet>/models/GAME/${GFILE_NAME}")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/GAME"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/models/GAME/${GFILE_NAME}")
-    endif()
-endforeach()
-
-# Copy language files
-set(LANG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang")
-file(GLOB LANG_FILES "${LANG_DIR}/*.json")
-if(LANG_FILES)
-    message(STATUS "Found language files: ${LANG_FILES}")
-    if(APPLE)
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/lang/")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/lang/")
-        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/lang/")
-    else()
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/lang"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LANG_FILES} "$<TARGET_FILE_DIR:PitchNet>/lang/")
-    endif()
-endif()
-
-# Copy font files
-set(FONTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/fonts")
-file(GLOB FONT_FILES "${FONTS_DIR}/*.otf" "${FONTS_DIR}/*.ttf")
-if(FONT_FILES)
-    message(STATUS "Found font files: ${FONT_FILES}")
-    if(APPLE)
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Resources/fonts/")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Resources/fonts/")
-        add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Resources/fonts/")
-    else()
-        add_custom_command(TARGET PitchNet POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNet>/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_FILE_DIR:PitchNet>/fonts/")
-        add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FONT_FILES} "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>/fonts/")
-    endif()
-endif()
+message(STATUS "Runtime resources will be loaded from ${CMAKE_CURRENT_SOURCE_DIR}/Resources")
 
 # Re-sign bundles on macOS after all resources are copied
 if(APPLE)

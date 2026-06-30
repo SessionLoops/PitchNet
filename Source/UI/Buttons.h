@@ -30,6 +30,7 @@ public:
     ToggleButton();
     ~ToggleButton();
     void paintButton (juce::Graphics &g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+    void setEnabled (bool shouldBeEnabled);
     void setImage(juce::Image img);
 private:
     juce::Image image;

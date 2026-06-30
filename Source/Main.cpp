@@ -141,6 +141,7 @@ public:
                          false) // Don't add to desktop yet
     {
       LOG("MainWindow: constructor start");
+      setName({});
 
       // Ensure window is opaque - this must be set before any
       // transparency-related operations
@@ -205,9 +206,13 @@ public:
         }
       }
 #elif JUCE_MAC
-      // Enable dark mode for macOS window
-      if (auto *peer = getPeer())
-        PlatformUtils::setDarkAppearance(peer->getNativeHandle());
+      // Configure native macOS title bar chrome.
+      configureMacTitleBar();
+      juce::Component::SafePointer<MainWindow> safeThis(this);
+      juce::Timer::callAfterDelay(100, [safeThis]() {
+        if (safeThis != nullptr)
+          safeThis->configureMacTitleBar();
+      });
 #endif
     }
 
@@ -216,6 +221,17 @@ public:
     }
 
   private:
+#if JUCE_MAC
+    void configureMacTitleBar() {
+      setName({});
+
+      if (auto *peer = getPeer()) {
+        PlatformUtils::setDarkAppearance(peer->getNativeHandle());
+        PlatformUtils::configureStandaloneTitleBar(peer->getNativeHandle());
+      }
+    }
+#endif
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
   };
 

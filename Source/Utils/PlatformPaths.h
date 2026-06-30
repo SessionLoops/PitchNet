@@ -22,6 +22,30 @@
  */
 namespace PlatformPaths
 {
+    inline juce::File getProjectResourcesDirectory()
+    {
+#ifdef PITCHNET_PROJECT_RESOURCES_DIR
+        auto configuredResources = juce::File(juce::String(PITCHNET_PROJECT_RESOURCES_DIR));
+        if (configuredResources.isDirectory())
+            return configuredResources;
+#endif
+
+        auto sourceRelativeProbe = juce::File(__FILE__)
+                                       .getParentDirectory()
+                                       .getParentDirectory()
+                                       .getParentDirectory()
+                                       .getChildFile("Resources");
+        if (sourceRelativeProbe.isDirectory())
+            return sourceRelativeProbe;
+
+        auto cwdProbe = juce::File::getCurrentWorkingDirectory()
+                            .getChildFile("Resources");
+        if (cwdProbe.isDirectory())
+            return cwdProbe;
+
+        return {};
+    }
+
     inline juce::File findLocalResourcesModelsDirectory()
     {
         auto isValid = [](const juce::File &candidate)
@@ -29,18 +53,10 @@ namespace PlatformPaths
             return candidate.isDirectory();
         };
 
-        auto sourceRelativeProbe = juce::File(__FILE__)
-                                       .getParentDirectory()
-                                       .getParentDirectory()
-                                       .getParentDirectory()
-                                       .getChildFile("Resources/models");
-        if (isValid(sourceRelativeProbe))
-            return sourceRelativeProbe;
-
-        auto cwdProbe = juce::File::getCurrentWorkingDirectory()
-                            .getChildFile("Resources/models");
-        if (isValid(cwdProbe))
-            return cwdProbe;
+        auto projectResources = getProjectResourcesDirectory();
+        auto projectModels = projectResources.getChildFile("models");
+        if (isValid(projectModels))
+            return projectModels;
 
         auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
                        .getParentDirectory();
@@ -61,13 +77,9 @@ namespace PlatformPaths
 
     inline juce::File getModelsDirectory()
     {
-#if JUCE_DEBUG
-        // Debug builds prefer the local repo Resources folder so model edits do
-        // not require re-copying assets into the app/plugin bundle.
         auto localResourcesModels = findLocalResourcesModelsDirectory();
         if (localResourcesModels.isDirectory())
             return localResourcesModels;
-#endif
 
 #if JUCE_MAC
         // macOS: Use Resources folder inside app bundle

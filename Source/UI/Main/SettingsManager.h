@@ -86,7 +86,7 @@ private:
   int threads = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   int gpuDeviceId = 0;
-  juce::String language = "auto";
+  juce::String language = "en";
 
   // Config
   juce::File lastFilePath;

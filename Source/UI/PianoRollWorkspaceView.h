@@ -6,6 +6,7 @@
 #include "PianoRollComponent.h"
 #include "PianoRoll/OverviewPanel.h"
 #include "Workspace/RoundedCard.h"
+#include <functional>
 
 class PianoRollWorkspaceView : public juce::Component, private juce::Timer {
 public:
@@ -20,6 +21,7 @@ public:
   void refreshOverview();
   void setShowSegmentsDebug(bool show);
   PianoRollComponent &getPianoRoll() { return pianoRoll; }
+  std::function<void()> onAutoZoomRequested;
 
 private:
   class FloatingZoomSliderLookAndFeel final : public juce::LookAndFeel_V4
@@ -52,6 +54,7 @@ private:
   RoundedCard pianoCard;
   RoundedCard overviewCard;
 
+  Button autoZoomButton;
   ToggleButton overviewToggleButton;
   bool overviewVisible = false;
 
@@ -74,13 +77,15 @@ private:
   static constexpr int thumbnailOuterHorizontalPadding = 7;
   static constexpr int thumbnailOuterBottomPadding = 6;
   static constexpr int cardGap = 6;
-  static constexpr int toggleSize = 22;
+  static constexpr int thumbnailButtonSize = 21;
+  static constexpr int autoZoomButtonSize = 23;
   static constexpr int floatingControlInset = 15;
   static constexpr int floatingSliderThickness = 16;
   static constexpr int zoomSliderWidth = floatingSliderThickness;
   static constexpr int zoomSliderHeight = 88;
   static constexpr int zoomSliderLength = 110;
-  static constexpr int zoomGap = 6;
+  static constexpr int overlayControlGap = 12;
+  static constexpr int overlayVerticalGap = overlayControlGap - 4;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollWorkspaceView)
 };

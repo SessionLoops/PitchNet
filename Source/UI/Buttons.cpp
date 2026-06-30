@@ -64,6 +64,12 @@ ToggleButton::~ToggleButton()
     
 }
 
+void ToggleButton::setEnabled (bool shouldBeEnabled)
+{
+    juce::ToggleButton::setEnabled(shouldBeEnabled);
+    setMouseCursor(shouldBeEnabled ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
 void ToggleButton::setImage(juce::Image img)
 {
     image = img;

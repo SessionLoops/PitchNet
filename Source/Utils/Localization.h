@@ -89,7 +89,7 @@ public:
     if (settingsFile.existsAsFile()) {
       auto xml = juce::XmlDocument::parse(settingsFile);
       if (xml != nullptr) {
-        juce::String langCode = xml->getStringAttribute("language", "auto");
+        juce::String langCode = xml->getStringAttribute("language", "en");
         if (langCode == "auto")
           detectSystemLanguage();
         else
@@ -98,7 +98,7 @@ public:
       }
     }
 
-    detectSystemLanguage();
+    getInstance().setLanguage("en");
   }
 
   void scanAvailableLanguages() {
@@ -195,6 +195,11 @@ private:
   juce::File findLanguageFile(const juce::String &langCode) {
     auto fileName = langCode + ".json";
 
+    auto projectResources = PlatformPaths::getProjectResourcesDirectory();
+    auto projectFile = projectResources.getChildFile("lang").getChildFile(fileName);
+    if (projectFile.existsAsFile())
+      return projectFile;
+
 #if JUCE_MAC
     auto bundleDir =
         juce::File::getSpecialLocation(juce::File::currentApplicationFile);
@@ -230,4 +235,3 @@ private:
 };
 
 #define TR(key) Localization::getInstance().get(key)
-

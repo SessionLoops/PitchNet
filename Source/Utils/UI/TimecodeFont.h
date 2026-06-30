@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
+#include "../PlatformPaths.h"
 #include "DPIScaleManager.h"
 
 /**
@@ -21,8 +22,11 @@ public:
 
         instance.initialized = true;
 
+        auto projectFont = PlatformPaths::getProjectResourcesDirectory()
+                               .getChildFile("fonts/Sarasa-UI-Music-Regular.ttf");
         juce::File appDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
         juce::StringArray fontPaths = {
+            projectFont.getFullPathName(),
             appDir.getChildFile("Resources/fonts/Sarasa-UI-Music-Regular.ttf").getFullPathName(),
             appDir.getChildFile("../Resources/fonts/Sarasa-UI-Music-Regular.ttf").getFullPathName(),
             appDir.getChildFile("fonts/Sarasa-UI-Music-Regular.ttf").getFullPathName(),

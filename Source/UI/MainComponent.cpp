@@ -109,6 +109,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
       settingsManager->getShowActualF0Debug());
   pianoRollView.setShowSegmentsDebug(
       settingsManager->getShowSegmentsDebug());
+  pianoRollView.onAutoZoomRequested = [this]()
+  {
+    if (auto *project = getProject())
+      fitAnalyzedPitchRangeToView(*project);
+  };
 
   // Add child components - standalone uses menus; plugin instances do not.
 #if JUCE_MAC

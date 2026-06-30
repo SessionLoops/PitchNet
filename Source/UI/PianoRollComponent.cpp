@@ -1878,6 +1878,48 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
   repaint();
 }
 
+bool PianoRollComponent::centerOnCurrentPitchRange()
+{
+  if (project == nullptr)
+    return false;
+
+  float minMidi = std::numeric_limits<float>::max();
+  float maxMidi = std::numeric_limits<float>::lowest();
+  bool hasNotePitch = false;
+
+  for (const auto &note : project->getNotes())
+  {
+    if (note.isRest())
+      continue;
+
+    const float midi = note.getAdjustedMidiNote();
+    minMidi = std::min(minMidi, midi);
+    maxMidi = std::max(maxMidi, midi);
+    hasNotePitch = true;
+
+    for (const float delta : note.getDeltaPitch())
+    {
+      minMidi = std::min(minMidi, midi + delta);
+      maxMidi = std::max(maxMidi, midi + delta);
+    }
+  }
+
+  if (!hasNotePitch)
+    return false;
+
+  minMidi -= 1.0f;
+  maxMidi += 1.0f;
+  if (maxMidi - minMidi < 2.0f)
+  {
+    const float centerMidi = (minMidi + maxMidi) * 0.5f;
+    minMidi = centerMidi - 1.0f;
+    maxMidi = centerMidi + 1.0f;
+  }
+
+  centerOnPitchRange(minMidi, maxMidi);
+  return true;
+}
+
 void PianoRollComponent::fitPitchRangeToView(float minMidi, float maxMidi)
 {
   if (!std::isfinite(minMidi) || !std::isfinite(maxMidi))

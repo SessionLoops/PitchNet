@@ -136,6 +136,14 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
                                        0.5f);
   };
 
+  autoZoomButton.setImage(juce::ImageFileFormat::loadFrom(
+      BinaryData::autozoom_png, static_cast<size_t>(BinaryData::autozoom_pngSize)));
+  autoZoomButton.onClick = [this]()
+  {
+    if (onAutoZoomRequested)
+      onAutoZoomRequested();
+  };
+
   overviewToggleButton.setImage(juce::ImageFileFormat::loadFrom(
       BinaryData::thumbnail_png, static_cast<size_t>(BinaryData::thumbnail_pngSize)));
   overviewToggleButton.setClickingTogglesState(true);
@@ -151,6 +159,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   addAndMakeVisible(overviewCard);
   addAndMakeVisible(zoomXBackground);
   addAndMakeVisible(zoomYBackground);
+  addAndMakeVisible(autoZoomButton);
   addAndMakeVisible(overviewToggleButton);
   addAndMakeVisible(zoomXSlider);
   addAndMakeVisible(zoomYSlider);
@@ -208,24 +217,31 @@ void PianoRollWorkspaceView::resized()
   const int sliderRight = overlay.getRight() - floatingControlInset;
   const int zoomXHeight = floatingSliderThickness;
   const int zoomXTop = sliderBottom - zoomXHeight;
-  const int zoomYBottom = zoomXTop - zoomGap;
-  const int zoomCornerGap = 6;
+  const int zoomYLeft = sliderRight - zoomSliderWidth - 5;
+  const int controlColumnCentreX = zoomYLeft + zoomSliderWidth / 2;
+  const int thumbnailButtonX = controlColumnCentreX - thumbnailButtonSize / 2;
 
   auto zoomXRect = juce::Rectangle<int>(
-      sliderRight - zoomSliderLength - toggleSize - zoomCornerGap, zoomXTop,
-      zoomSliderLength, zoomXHeight)
-      .translated(-8, 0);
+      thumbnailButtonX - overlayControlGap - zoomSliderLength, zoomXTop,
+      zoomSliderLength, zoomXHeight);
+
+  overviewToggleButton.setBounds(
+      thumbnailButtonX,
+      zoomXRect.getY() + (zoomXHeight - thumbnailButtonSize) / 2,
+      thumbnailButtonSize, thumbnailButtonSize);
+
+  autoZoomButton.setBounds(
+      controlColumnCentreX - autoZoomButtonSize / 2,
+      overviewToggleButton.getY() - autoZoomButtonSize - overlayVerticalGap,
+      autoZoomButtonSize, autoZoomButtonSize);
+
   auto zoomYRect = juce::Rectangle<int>(
-      sliderRight - zoomSliderWidth, zoomYBottom - zoomSliderHeight,
-      zoomSliderWidth, zoomSliderHeight)
-      .translated(-5, -8);
+      zoomYLeft,
+      autoZoomButton.getY() - overlayVerticalGap - zoomSliderHeight,
+      zoomSliderWidth, zoomSliderHeight);
 
   zoomXSlider.setBounds(zoomXRect);
   zoomYSlider.setBounds(zoomYRect);
-
-  overviewToggleButton.setBounds(
-      zoomXRect.getRight() + zoomCornerGap + 6,
-      zoomXRect.getY() + (zoomXHeight - toggleSize) / 2, toggleSize, toggleSize);
 
   zoomXBg = zoomXRect.toFloat();
   zoomYBg = zoomYRect.toFloat();

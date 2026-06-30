@@ -131,6 +131,7 @@ public:
   void setScrollY(double y);
   double getScrollY() const { return scrollY; }
   void centerOnPitchRange(float minMidi, float maxMidi);
+  bool centerOnCurrentPitchRange();
   void fitPitchRangeToView(float minMidi, float maxMidi);
   int getVisibleContentWidth() const;
   int getVisibleContentHeight() const;
