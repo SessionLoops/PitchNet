@@ -140,6 +140,8 @@ juce_add_gui_app(PitchNet
     COMPANY_WEBSITE "https://sessionloops.com"
     BUNDLE_ID "com.sessionloops.pitchnet"
     COMPANY_COPYRIGHT "Copyright 2026"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
     FILE_SHARING_ENABLED TRUE
     DOCUMENT_EXTENSIONS "wav;mp3;flac;ogg")
@@ -699,7 +701,8 @@ foreach(GMODEL ${REQUIRED_GAME_MODELS})
     endif()
 endforeach()
 message(STATUS "All required models found")
-message(STATUS "Runtime resources will be loaded from ${CMAKE_CURRENT_SOURCE_DIR}/Resources")
+message(STATUS "Debug runtime resources will be loaded from ${CMAKE_CURRENT_SOURCE_DIR}/Resources")
+message(STATUS "Release runtime resources will be loaded from the platform common application data directory")
 
 # Re-sign bundles on macOS after all resources are copied
 if(APPLE)
