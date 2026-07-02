@@ -2209,12 +2209,13 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     }
 
     if (it != araRegionProjects.end() && it->second) {
-      it->second->getAudioData().timelineOffsetSeconds =
-          activeRegionStartSeconds;
-      it->second->getAudioData().playbackRegionRanges = {
-          {activeRegionStartSeconds, activeRegionEndSeconds}};
       mainComponent->restoreProjectSnapshot(*it->second);
       mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+      if (auto *project = mainComponent->getProject()) {
+        project->getAudioData().playbackRegionRanges = {
+            {activeRegionStartSeconds, activeRegionEndSeconds}};
+        araRegionProjects[key] = std::make_unique<Project>(*project);
+      }
       canvasShowsActiveAraRegion = true;
     } else if (araDocumentController != nullptr) {
       if (auto *current = mainComponent->getProject();
@@ -2237,6 +2238,46 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       canvasShowsActiveAraRegion = false;
       araDocumentController->requestRegionCanvasAnalysis(region);
     }
+  }
+}
+
+void PitchNetAudioProcessor::updateActiveAraRegionProperties(
+    juce::ARAPlaybackRegion *region) {
+  if (region == nullptr)
+    return;
+
+  const auto key = pitchnetRegionKey(*region);
+  if (key.isEmpty() || key != activeRegionKey)
+    return;
+
+  activeModification = region->getAudioModification<PitchNetAudioModification>();
+  activeRegionStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
+  activeRegionEndSeconds =
+      std::max(activeRegionStartSeconds, region->getEndInPlaybackTime());
+  activeStartSampleInModification =
+      region->getStartInAudioModificationSamples();
+
+  if (mainComponent != nullptr && canvasShowsActiveAraRegion) {
+    mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+
+    if (auto *project = mainComponent->getProject()) {
+      auto &audioData = project->getAudioData();
+      audioData.timelineOffsetSeconds = activeRegionStartSeconds;
+      audioData.playbackRegionRanges = {
+          {activeRegionStartSeconds, activeRegionEndSeconds}};
+
+      araRegionProjects[key] = std::make_unique<Project>(*project);
+      publishPersistentProjectSnapshot(*project);
+
+      if (araAnalysisReady)
+        mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    }
+  } else if (auto it = araRegionProjects.find(key);
+             it != araRegionProjects.end() && it->second) {
+    auto &audioData = it->second->getAudioData();
+    audioData.timelineOffsetSeconds = activeRegionStartSeconds;
+    audioData.playbackRegionRanges = {
+        {activeRegionStartSeconds, activeRegionEndSeconds}};
   }
 }
 

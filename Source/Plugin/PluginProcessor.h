@@ -131,7 +131,7 @@ public:
   double getHostSampleRate() const { return hostSampleRate; }
 
 #if JucePlugin_Enable_ARA
-  juce::AudioProcessorARAExtension *getARAClientExtensions() override;
+  juce::AudioProcessorARAExtension *getARAClientExtensions();
 
   // Bind the realtime processor to the ARA document controller. Ownership of
   // the binding lives with the processor (not the editor) so ARA playback keeps
@@ -150,6 +150,7 @@ public:
   // editor when the host selection changes (and, later, from the in-plugin
   // timeline). Safe to call with a region that has no analysis yet.
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
+  void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
 
   // Analyse a single region's audio into its own persistent Project (keyed by

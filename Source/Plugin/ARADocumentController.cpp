@@ -1753,6 +1753,9 @@ void PitchNetDocumentController::didUpdatePlaybackRegionProperties(
     currentPlaybackRegion = playbackRegion;
     currentRegionSequence = playbackRegion->getRegionSequence();
   }
+
+  if (owningProcessor != nullptr)
+    owningProcessor->updateActiveAraRegionProperties(playbackRegion);
 }
 
 void PitchNetDocumentController::willDestroyPlaybackRegion(
