@@ -28,6 +28,7 @@ struct AraResamplingState {
 class IMainView;
 class PitchNetAudioProcessor;
 class PitchNetDocumentController;
+class PitchNetEditorRenderer;
 
 // Persistent identity for an ARA playback region: the audio-modification
 // persistent ID plus the region's current index within that modification. Host
@@ -43,6 +44,7 @@ struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};
   std::atomic<double> previewEndTime{0.0};
   std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
+  std::atomic<PitchNetEditorRenderer *> previewOwnerRenderer{nullptr};
 };
 
 /**
@@ -238,7 +240,8 @@ public:
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
       double projectSampleRate);
-  void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
+  void startPreviewRange(double previewStartSeconds, double previewEndSeconds,
+                         PitchNetEditorRenderer *ownerRenderer);
   void stopPreview();
   const AraPreviewState &getPreviewState() const { return previewState; }
 

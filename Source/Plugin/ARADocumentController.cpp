@@ -581,8 +581,23 @@ bool PitchNetEditorRenderer::readPlaybackRangeIntoBuffer(
 void PitchNetEditorRenderer::renderPreviewBuffer(
     juce::ARAPlaybackRegion *region, double previewStartTime,
     double previewEndTime) {
-  if (!previewBuffer)
-    return;
+  if (!previewBuffer) {
+    if (region == nullptr || region->getAudioModification() == nullptr)
+      return;
+
+    if (auto *source = region->getAudioModification()->getAudioSource()) {
+      if (source->getSampleRate() > 0.0)
+        sampleRate = source->getSampleRate();
+      if (source->getChannelCount() > 0)
+        numChannels = source->getChannelCount();
+    }
+
+    previewBuffer = std::make_unique<juce::AudioBuffer<float>>(
+        std::max(1, numChannels),
+        static_cast<int>(std::ceil(std::max(1.0, sampleRate))));
+    previewLoopRange = {};
+    previewLoopPosition = 0;
+  }
 
   const juce::Range<double> regionRange(region->getStartInPlaybackTime(),
                                         region->getEndInPlaybackTime());
@@ -714,7 +729,15 @@ bool PitchNetEditorRenderer::processBlock(
       if (previewRegion == nullptr)
         return false;
 
-      for (auto *region : getPlaybackRegions())
+      if (auto *ownerRenderer = previewState.previewOwnerRenderer.load();
+          ownerRenderer != nullptr && ownerRenderer != this)
+        return false;
+
+      const auto &assignedRegions = getPlaybackRegions();
+      if (assignedRegions.empty())
+        return previewState.previewOwnerRenderer.load() == this;
+
+      for (auto *region : assignedRegions)
         if (region == previewRegion)
           return true;
 
@@ -1774,8 +1797,9 @@ void PitchNetDocumentController::reanalyze() {
     processDocument(currentDocument);
 }
 
-void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
-                                                   double previewEndSeconds) {
+void PitchNetDocumentController::startPreviewRange(
+    double previewStartSeconds, double previewEndSeconds,
+    PitchNetEditorRenderer *ownerRenderer) {
   if (!currentDocument)
     return;
 
@@ -1818,6 +1842,7 @@ void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
 
   previewState.previewStartTime.store(start);
   previewState.previewEndTime.store(end);
+  previewState.previewOwnerRenderer.store(ownerRenderer);
   previewState.previewedRegion.store(previewRegion);
 }
 
@@ -1825,6 +1850,7 @@ void PitchNetDocumentController::stopPreview() {
   previewState.previewStartTime.store(0.0);
   previewState.previewEndTime.store(0.0);
   previewState.previewedRegion.store(nullptr);
+  previewState.previewOwnerRenderer.store(nullptr);
 }
 
 juce::ARAPlaybackRenderer *

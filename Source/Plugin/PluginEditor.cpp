@@ -132,7 +132,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     audioProcessor.requestPluginProjectRender(project);
   });
   mainView->setOnRequestBackendPreview(
-      [pitchDocController](const Project &project, int startFrame,
+      [this, pitchDocController](const Project &project, int startFrame,
                            int endFrame) {
         const auto &audioData = project.getAudioData();
         const double sampleRate =
@@ -140,7 +140,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
                                      : static_cast<double>(SAMPLE_RATE);
         pitchDocController->startPreviewRange(
             static_cast<double>(startFrame) * HOP_SIZE / sampleRate,
-            static_cast<double>(endFrame) * HOP_SIZE / sampleRate);
+            static_cast<double>(endFrame) * HOP_SIZE / sampleRate,
+            audioProcessor.getEditorRenderer<PitchNetEditorRenderer>());
       });
   mainView->setOnStopBackendPreview(
       [pitchDocController]() { pitchDocController->stopPreview(); });
