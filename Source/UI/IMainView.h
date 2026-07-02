@@ -65,6 +65,7 @@ public:
                             double timelineOffsetSeconds = 0.0) = 0;
   virtual void updateHostAudioTimelineOffset(double timelineOffsetSeconds) = 0;
   virtual void clearHostAudio() = 0;
+  virtual void focusTimelineRange(double startSeconds, double endSeconds) = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
   virtual void updateHostPlaybackState(bool isPlaying) = 0;
   virtual void updateHostTimelineState(double bpm, int numerator,

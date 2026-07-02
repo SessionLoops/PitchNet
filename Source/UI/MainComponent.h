@@ -190,6 +190,7 @@ public:
                     double timelineOffsetSeconds = 0.0) override;
   void updateHostAudioTimelineOffset(double timelineOffsetSeconds) override;
   void clearHostAudio() override;
+  void focusTimelineRange(double startSeconds, double endSeconds) override;
   void renderProcessedAudio();
 
   // Plugin mode callbacks
@@ -331,6 +332,7 @@ private:
   double cachedHostLoopEndSeconds = 0.0;
   bool cachedHostLoopEnabled = false;
   bool cachedHostLoopHasRange = false;
+  double suppressPlaybackFollowUntilMs = 0.0;
   juce::int64 lastCursorUpdateTime = 0;
 
 #if JUCE_MAC

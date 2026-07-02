@@ -7,12 +7,14 @@
 #include "HostCompatibility.h"
 #include "NonAraCaptureController.h"
 #include <atomic>
+#include <map>
 #include <memory>
 
 class EditorController;
 class Project;
 class PitchUndoManager;
 class PitchNetDocumentController;
+class PitchNetAudioModification;
 
 /**
  * PitchNet Audio Processor
@@ -129,6 +131,8 @@ public:
   double getHostSampleRate() const { return hostSampleRate; }
 
 #if JucePlugin_Enable_ARA
+  juce::AudioProcessorARAExtension *getARAClientExtensions() override;
+
   // Bind the realtime processor to the ARA document controller. Ownership of
   // the binding lives with the processor (not the editor) so ARA playback keeps
   // working headlessly after the editor closes; the processor clears it in its
@@ -139,6 +143,48 @@ public:
   // when a saved project is loaded with the UI closed. Establishes the
   // document-controller binding and the headless realtime playback state.
   void didBindToARA() noexcept override;
+
+  // Make the given ARA playback region the one shown/edited on the canvas.
+  // Each region keeps its own persistent Project; switching saves the outgoing
+  // region's edits and loads the incoming region's project. Called from the
+  // editor when the host selection changes (and, later, from the in-plugin
+  // timeline). Safe to call with a region that has no analysis yet.
+  void setActiveAraRegion(juce::ARAPlaybackRegion *region);
+  juce::String getActiveAraRegionKey() const { return activeRegionKey; }
+
+  // Analyse a single region's audio into its own persistent Project (keyed by
+  // regionKey) and, if that region is the active one, show it on the canvas.
+  // Also stores the region's processed audio on its modification so the timeline
+  // clip + per-region playback can read it headlessly (Stage B). Called by the
+  // document controller after extracting one region's audio. Uses a dedicated
+  // controller so it never disturbs the composite analysis / playback pipeline.
+  // True when the project contains actual user edits (per-note synthesis or
+  // global pitch/formant offsets) — only such projects publish per-region
+  // processed audio; unedited regions play their original source.
+  static bool projectHasRegionEdits(const Project &project);
+  void analyzeAraRegionForCanvas(const juce::String &regionKey,
+                                 PitchNetAudioModification *modification,
+                                 juce::int64 startSampleInModification,
+                                 double timelineOffsetSeconds,
+                                 const juce::AudioBuffer<float> &buffer,
+                                 double sampleRate);
+
+  // Called by the document controller when a modification is about to be
+  // removed, so the active-region pointer never dangles.
+  void clearActiveAraRegionIfModification(
+      PitchNetAudioModification *modification);
+
+  // Per-region project persistence. serialize returns false if no project is
+  // cached for regionKey; restore installs a project so a saved region is not
+  // re-analysed on reload.
+  bool serializeAraRegionProject(const juce::String &regionKey,
+                                 juce::MemoryBlock &out) const;
+  bool hasAraRegionProject(const juce::String &regionKey) const;
+  bool araRegionProjectAppearsToCover(const juce::String &regionKey,
+                                      double regionStart,
+                                      double regionEnd) const;
+  void restoreAraRegionProject(const juce::String &regionKey, const void *data,
+                               size_t sizeInBytes);
 #endif
 
   // Non-ARA mode: edit preview. Auditions a frame range of the synthesized
@@ -264,6 +310,32 @@ private:
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
   juce::String araAnalysisProjectJson;
   std::atomic<bool> araRenderPendingRerun{false};
+
+  // Per-region persistent Projects. Each ARA playback region/track is analysed
+  // and edited independently; the canvas shows whichever region is active.
+  // Keyed by pitchnetRegionKey(). Stage 2 populates these from per-region
+  // analysis; Stage 1 only wires the identity + selection-driven switch.
+  std::map<juce::String, std::unique_ptr<Project>> araRegionProjects;
+  juce::String activeRegionKey;
+  // True only while the canvas is showing the ACTIVE REGION's own (region-local)
+  // project. onProjectDataChanged fires for every project change — including
+  // completion of the composite/document analysis, whose waveform is anchored to
+  // the whole timeline. Publishing that composite as the region's processed
+  // audio made the renderer play the composite's leading silence at the region
+  // position. The flag lets updateProjectStateFromEditor publish per-region
+  // audio only when the canvas project is actually the region's own.
+  bool canvasShowsActiveAraRegion = false;
+  // The active region's modification + its start in the modification, tracked so
+  // edits can be re-published onto the modification (resynth-on-edit) and stay
+  // in sync for headless/persisted per-region playback.
+  PitchNetAudioModification *activeModification = nullptr;
+  juce::int64 activeStartSampleInModification = 0;
+  double activeRegionStartSeconds = 0.0;
+  double activeRegionEndSeconds = 0.0;
+  // Dedicated controller for per-region canvas analysis, kept separate from the
+  // composite araAnalysisController so the two never interfere.
+  std::unique_ptr<EditorController> regionCanvasController;
+  std::atomic<bool> regionCanvasRenderPendingRerun{false};
 
   // Non-ARA capture (Stage 2A): decoupled controller
   std::shared_ptr<NonAraCaptureController> captureController =

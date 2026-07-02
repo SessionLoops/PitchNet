@@ -389,7 +389,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   LOG("MainComponent: starting timer...");
   // Start timer for UI updates
-  startTimerHz(30);
+  startTimerHz(60);
   LOG("MainComponent: constructor complete");
 }
 
@@ -639,7 +639,10 @@ void MainComponent::timerCallback()
       toolbar.setCurrentTime(position);
 
       // Follow playback: scroll to keep cursor visible
-      if (isPlaying && toolbar.isFollowPlayback())
+      const bool suppressPlaybackFollow =
+          juce::Time::getMillisecondCounterHiRes() <
+          suppressPlaybackFollowUntilMs;
+      if (isPlaying && toolbar.isFollowPlayback() && !suppressPlaybackFollow)
       {
         float cursorX =
             static_cast<float>(position * pianoRoll.getPixelsPerSecond());
@@ -2178,6 +2181,32 @@ void MainComponent::clearHostAudio()
   hideAnalysisProgress();
   toolbar.hideProgress();
   notifyProjectDataChanged();
+}
+
+void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
+{
+  const double start = std::max(0.0, startSeconds);
+  const double end = std::max(start, endSeconds);
+  const double pixelsPerSecond = pianoRoll.getPixelsPerSecond();
+  const int visibleWidth = pianoRoll.getVisibleContentWidth();
+  if (pixelsPerSecond <= 0.0 || visibleWidth <= 0)
+    return;
+
+  const double rangeWidth = (end - start) * pixelsPerSecond;
+  double newScrollX = start * pixelsPerSecond;
+
+  if (rangeWidth > 0.0 && rangeWidth < static_cast<double>(visibleWidth) * 0.75)
+    newScrollX += rangeWidth * 0.5 - static_cast<double>(visibleWidth) * 0.5;
+  else
+    newScrollX -= static_cast<double>(visibleWidth) * 0.12;
+
+  pianoRoll.setScrollX(std::max(0.0, newScrollX));
+  pianoRollView.refreshOverview();
+
+  // Let a host selection visually win over the playback follow cursor for a
+  // short moment, even if the transport is running elsewhere.
+  suppressPlaybackFollowUntilMs =
+      juce::Time::getMillisecondCounterHiRes() + 1200.0;
 }
 
 void MainComponent::updatePlaybackPosition(double timeSeconds)

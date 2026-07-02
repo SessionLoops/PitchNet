@@ -7,13 +7,37 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 #if JucePlugin_Enable_ARA
+
+// Persistent per-region resampler state so the interpolator survives across
+// audio blocks (avoids block-boundary clicks when a region's rate differs from
+// the host rate). Mirrors VocalNet's ResamplingState.
+struct AraResamplingState {
+  std::vector<juce::LagrangeInterpolator> interpolators;
+  juce::int64 nextSourceSample = 0;
+  juce::int64 lastRenderedOutputEnd = std::numeric_limits<juce::int64>::lowest();
+  double ratio = 1.0;
+  bool initialised = false;
+};
 
 class IMainView;
 class PitchNetAudioProcessor;
 class PitchNetDocumentController;
+
+// Persistent identity for an ARA playback region: the audio-modification
+// persistent ID plus the region's current index within that modification. Host
+// refs are reassigned every session, so they cannot be used for saved DAW
+// projects. Used to key per-region Projects and per-region processed audio so
+// each region/track is analysed, edited, and played back independently.
+juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
+juce::String pitchnetRegionKeyForIndex(const juce::String &modificationID,
+                                       int regionIndex);
+void pitchnetReleaseRegionKey(const juce::ARAPlaybackRegion &region);
 
 struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};
@@ -44,13 +68,11 @@ public:
 
 private:
   struct HostUiSyncState {
-    std::atomic<double> latestSeconds{0.0};
     std::atomic<bool> latestPlaying{false};
     std::atomic<double> latestLoopStartSeconds{0.0};
     std::atomic<double> latestLoopEndSeconds{0.0};
     std::atomic<bool> latestLoopEnabled{false};
     std::atomic<bool> latestLoopHasRange{false};
-    std::atomic<bool> posPending{false};
     std::atomic<bool> playStatePending{false};
     std::atomic<bool> stoppedPending{false};
     std::atomic<bool> loopPending{false};
@@ -74,14 +96,24 @@ private:
     }
   };
 
-  bool readFromARARegions(juce::AudioBuffer<float> &buffer,
-                          juce::int64 timeInSamples, int numSamples);
+  // Per-region playback: mix each region's processed audio (from its ARA
+  // modification), falling back to its raw source. Returns true if any region
+  // rendered. Output buffer must be pre-cleared. This is the ONLY source of
+  // ARA transport playback — no realtime-engine fallback.
+  bool renderProcessedRegions(juce::AudioBuffer<float> &buffer,
+                              juce::int64 timeInSamples, int numSamples);
   void syncHostLoopState(PitchNetDocumentController *docCtrl,
                          const juce::AudioPlayHead::PositionInfo &posInfo,
                          bool shouldSyncUi);
 
   std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
       readers;
+  // Persistent resampler state per region, split by source so a failed processed
+  // render cannot poison the raw-source fallback state.
+  std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
+      rawResamplingStates;
+  std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
+      processedResamplingStates;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
@@ -143,6 +175,17 @@ public:
                                    juce::ARAAudioSource *audioSource) override;
   void willRemoveAudioSourceFromDocument(
       juce::ARADocument *doc, juce::ARAAudioSource *audioSource) override;
+  // On unload/reload the host restores audio sources with sample access
+  // disabled and enables it afterwards; re-run analysis once samples become
+  // readable so regions are recognised and analysed.
+  void didEnableAudioSourceSamplesAccess(juce::ARAAudioSource *audioSource,
+                                         bool enable) override;
+  void willDestroyAudioSource(juce::ARAAudioSource *audioSource) override;
+  void didAddPlaybackRegionToRegionSequence(
+      juce::ARARegionSequence *regionSequence,
+      juce::ARAPlaybackRegion *playbackRegion) override;
+  void willDestroyRegionSequence(juce::ARARegionSequence *regionSequence)
+      override;
   void didAddPlaybackRegionToAudioModification(
       juce::ARAAudioModification *audioModification,
       juce::ARAPlaybackRegion *playbackRegion) override;
@@ -151,7 +194,15 @@ public:
       juce::ARAPlaybackRegion *playbackRegion) override;
   void didUpdatePlaybackRegionProperties(
       juce::ARAPlaybackRegion *playbackRegion) override;
+  void willDestroyPlaybackRegion(juce::ARAPlaybackRegion *playbackRegion)
+      override;
   void reanalyze();
+
+  // Extract a single region's audio and hand it to the processor for per-region
+  // analysis (populates that region's persistent Project and, if it is the
+  // active region, switches the canvas to it). Used for selection-driven
+  // per-region editing without disturbing the composite pipeline.
+  void requestRegionCanvasAnalysis(juce::ARAPlaybackRegion *region);
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
@@ -176,6 +227,13 @@ public:
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,
                                   bool notifyHost = true);
+  // Publish the edited parts of a COMPOSITE (timeline-anchored) project onto
+  // the per-region modifications: every playback region overlapping an edited
+  // note gets its slice of the composite waveform stored as processed audio,
+  // so ARA playback (strictly modification-or-original) reflects edits made
+  // without selecting a region. Regions not touching any edit stay unpublished
+  // and keep playing their original source. Message thread only.
+  void publishCompositeEditsToRegions(const Project &project);
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
@@ -187,6 +245,13 @@ public:
 protected:
   juce::ARAPlaybackRenderer *doCreatePlaybackRenderer() noexcept override;
   juce::ARAEditorRenderer *doCreateEditorRenderer() override;
+  // Create our custom modification so each region can carry its own processed
+  // audio + thumbnail (per-region data model; foundation for the timeline and
+  // per-region playback).
+  juce::ARAAudioModification *doCreateAudioModification(
+      juce::ARAAudioSource *audioSource,
+      ARA::ARAAudioModificationHostRef hostRef,
+      const juce::ARAAudioModification *optionalModificationToClone) override;
   bool doRestoreObjectsFromStream(
       juce::ARAInputStream &input,
       const juce::ARARestoreObjectsFilter *filter) noexcept override;
@@ -198,6 +263,8 @@ private:
   void processDocument(juce::ARADocument *document,
                        juce::ARAPlaybackRegion *excludedRegion = nullptr,
                        juce::ARAAudioSource *excludedSource = nullptr);
+  void clearStaleRegionSequenceFilter(juce::ARADocument *document);
+  bool shouldProcessPlaybackRegion(juce::ARAPlaybackRegion *region) const;
   void clearMainComponentHostAudio();
   void notifyAudioModificationContentChanged(bool notifyHost);
   bool restoreProjectStateToDocument(const void *data, size_t sizeInBytes);
@@ -215,6 +282,7 @@ private:
   juce::ARADocument *currentDocument = nullptr;
   juce::ARARegionSequence *currentRegionSequence = nullptr;
   juce::ARAPlaybackRegion *currentPlaybackRegion = nullptr;
+  std::vector<juce::ARAPlaybackRegion *> currentPlaybackRegions;
   double analysisTimelineSampleRate = 0.0;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
   std::unique_ptr<Project> documentProjectSnapshot;

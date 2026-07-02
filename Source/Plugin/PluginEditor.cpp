@@ -49,8 +49,11 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
 }
 
 PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
+  stopTimer();
+
 #if JucePlugin_Enable_ARA
   if (auto *araEditorView = getARAEditorView()) {
+    araEditorView->removeListener(this);
     if (auto *araDocController = araEditorView->getDocumentController()) {
       if (auto *pitchDocController = juce::ARADocumentControllerSpecialisation::
               getSpecialisedDocumentController<PitchNetDocumentController>(
@@ -97,6 +100,10 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 
   mainView->setRecordControlVisible(false);
   mainView->setOnRecordArmChanged(nullptr);
+
+  // Listen for host selection changes to switch the canvas to the clicked
+  // region (per-region Projects).
+  editorView->addListener(this);
 
   // Connect ARA controller to UI
   pitchDocController->setMainComponent(mainView.get());
@@ -205,6 +212,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       });
 
   setupHostTransportUiSync(true);
+  if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_AAX)
+    startTimerHz(60);
 
   // The playback renderer contains the regions assigned to this plugin
   // instance. Use that set to select the correct track/region sequence rather
@@ -222,6 +231,141 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     return;
 #endif
 }
+
+void PitchNetAudioProcessorEditor::timerCallback() {
+  syncAAXARAPlayheadStateFromHost();
+}
+
+void PitchNetAudioProcessorEditor::syncAAXARAPlayheadStateFromHost() {
+#if JucePlugin_Enable_ARA
+  if (audioProcessor.wrapperType != juce::AudioProcessor::wrapperType_AAX)
+    return;
+
+  if (!getARAEditorView() || !mainView)
+    return;
+
+  auto *playHead = audioProcessor.getPlayHead();
+  if (!playHead)
+    return;
+
+  const auto positionInfo = playHead->getPosition();
+  if (!positionInfo.hasValue()) {
+    if (lastSyncedHostPlayState) {
+      lastSyncedHostPlayState = false;
+      mainView->updateHostPlaybackState(false);
+    }
+    return;
+  }
+
+  double timeInSeconds = 0.0;
+  if (auto time = positionInfo->getTimeInSeconds())
+    timeInSeconds = *time;
+  else if (auto samples = positionInfo->getTimeInSamples()) {
+    const double sampleRate = audioProcessor.getHostSampleRate();
+    if (sampleRate > 0.0)
+      timeInSeconds = static_cast<double>(*samples) / sampleRate;
+  }
+
+  const bool isPlaying = positionInfo->getIsPlaying();
+  const bool positionChanged = !hasSyncedHostPlayhead ||
+                               !juce::approximatelyEqual(
+                                   lastSyncedHostPlayheadSeconds,
+                                   timeInSeconds);
+  const bool playStateChanged =
+      !hasSyncedHostPlayhead || lastSyncedHostPlayState != isPlaying;
+
+  if (positionChanged) {
+    lastSyncedHostPlayheadSeconds = timeInSeconds;
+    mainView->updatePlaybackPosition(timeInSeconds);
+  }
+
+  if (playStateChanged) {
+    lastSyncedHostPlayState = isPlaying;
+    mainView->updateHostPlaybackState(isPlaying);
+  }
+
+  hasSyncedHostPlayhead = true;
+#endif
+}
+
+#if JucePlugin_Enable_ARA
+void PitchNetAudioProcessorEditor::onNewSelection(
+    const juce::ARAViewSelection &viewSelection) {
+  // Switch the canvas to whichever region the user selected in the host. Each
+  // region/track carries its own persistent Project, so this swaps what is
+  // shown and edited without disturbing the others. Prefer an explicitly
+  // selected playback region; fall back to the effective selection (e.g. a
+  // time-range/marquee selection that implies a set of regions).
+  auto regions = viewSelection.getPlaybackRegions<juce::ARAPlaybackRegion>();
+  const auto effective =
+      viewSelection.getEffectivePlaybackRegions<juce::ARAPlaybackRegion>();
+  const auto sequences =
+      viewSelection.getRegionSequences<juce::ARARegionSequence>();
+
+  std::vector<juce::ARAPlaybackRegion *> rendererRegions;
+  if (auto *renderer = audioProcessor.getPlaybackRenderer())
+    rendererRegions = renderer->getPlaybackRegions<juce::ARAPlaybackRegion>();
+
+  const auto isAssignedToThisInstance =
+      [&rendererRegions](juce::ARAPlaybackRegion *region) {
+        return rendererRegions.empty() ||
+               std::find(rendererRegions.begin(), rendererRegions.end(),
+                         region) != rendererRegions.end();
+      };
+
+  const auto pickAssignedRegion =
+      [&isAssignedToThisInstance](
+          const std::vector<juce::ARAPlaybackRegion *> &candidates)
+      -> juce::ARAPlaybackRegion * {
+    for (auto *candidate : candidates)
+      if (candidate != nullptr && isAssignedToThisInstance(candidate))
+        return candidate;
+
+    return nullptr;
+  };
+
+  juce::ARAPlaybackRegion *target = nullptr;
+  if (!regions.empty())
+    target = pickAssignedRegion(regions);
+  if (target == nullptr && !effective.empty())
+    target = pickAssignedRegion(effective);
+  if (target == nullptr && !sequences.empty()) {
+    // Only a track/region-sequence was selected: focus its first region that
+    // belongs to this plugin instance. AAX can report selections from the
+    // shared ARA document, where blindly taking the first region sticks to the
+    // first track/audio source.
+    for (auto *sequence : sequences) {
+      if (sequence == nullptr)
+        continue;
+
+      const auto &seqRegions =
+          sequence->getPlaybackRegions<juce::ARAPlaybackRegion>();
+      target = pickAssignedRegion(seqRegions);
+      if (target != nullptr)
+        break;
+    }
+  }
+
+  if (target == nullptr) {
+    if (!regions.empty())
+      target = regions.front();
+    else if (!effective.empty())
+      target = effective.front();
+    else if (!sequences.empty()) {
+      const auto &seqRegions =
+          sequences.front()->getPlaybackRegions<juce::ARAPlaybackRegion>();
+      if (!seqRegions.empty())
+        target = seqRegions.front();
+    }
+  }
+
+  if (target != nullptr) {
+    audioProcessor.setActiveAraRegion(target);
+    mainView->focusTimelineRange(target->getStartInPlaybackTime(),
+                                 target->getEndInPlaybackTime());
+  }
+}
+#endif
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setRecordControlVisible(true);

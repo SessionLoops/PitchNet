@@ -24,6 +24,7 @@ namespace PlatformPaths
 {
     inline juce::File getProjectResourcesDirectory()
     {
+#if JUCE_DEBUG
 #ifdef PITCHNET_PROJECT_RESOURCES_DIR
         auto configuredResources = juce::File(juce::String(PITCHNET_PROJECT_RESOURCES_DIR));
         if (configuredResources.isDirectory())
@@ -44,6 +45,14 @@ namespace PlatformPaths
             return cwdProbe;
 
         return {};
+#else
+        return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
+#if JUCE_MAC
+            .getChildFile("Application Support")
+#endif
+            .getChildFile("Session Loops")
+            .getChildFile("PitchNet");
+#endif
     }
 
     inline juce::File findLocalResourcesModelsDirectory()

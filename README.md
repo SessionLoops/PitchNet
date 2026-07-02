@@ -78,7 +78,7 @@ cmake --build build --config Release
 - `-DUSE_ASIO=ON` Enable ASIO support (Windows)
 - `-DUSE_BUNDLED_CUDA_RUNTIME=ON` Bundle CUDA redistributables (Windows)
 - `-DUSE_BUNDLED_DIRECTML_RUNTIME=ON` Bundle DirectML runtime (Windows)
-- `-DONNXRUNTIME_VERSION=1.24.3` Override ONNX Runtime version
+- `-DONNXRUNTIME_VERSION=1.19.2` Override ONNX Runtime version
 
 Notes:
 - CUDA and DirectML cannot be enabled at the same time.

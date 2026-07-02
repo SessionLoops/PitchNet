@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
 project(PitchNet VERSION 1.0.0)
 
 include(FetchContent)
@@ -16,7 +17,7 @@ option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)"
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
-set(ONNXRUNTIME_VERSION "1.24.3" CACHE STRING "ONNX Runtime version")
+set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
 set(GAME_MODELS_VERSION "v1.0.3" CACHE STRING "GAME release tag used to download model assets")
 set(GAME_MODELS_URL "" CACHE STRING "Optional URL to download GAME model zip")
 
@@ -56,7 +57,7 @@ if(PITCHNET_ASIO_ENABLED)
 endif()
 
 # Check if ONNX Runtime already exists in build directory
-set(ONNXRUNTIME_CACHE_DIR "${CMAKE_BINARY_DIR}/_deps/onnxruntime-src")
+set(ONNXRUNTIME_CACHE_DIR "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-src")
 if(EXISTS "${ONNXRUNTIME_CACHE_DIR}/include/onnxruntime_cxx_api.h")
     message(STATUS "ONNX Runtime already downloaded, skipping download")
     set(ONNXRUNTIME_ROOT ${ONNXRUNTIME_CACHE_DIR})
@@ -93,6 +94,7 @@ else()
     FetchContent_Declare(
         onnxruntime
         URL ${ONNXRUNTIME_URL}
+        SOURCE_DIR ${ONNXRUNTIME_CACHE_DIR}
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(onnxruntime)
@@ -111,6 +113,7 @@ else()
         set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
         set(ONNXRUNTIME_DLL_DIR ${ONNXRUNTIME_ROOT}/lib)
     else()
+        unset(ONNXRUNTIME_LIBRARY CACHE)
         find_library(ONNXRUNTIME_LIBRARY onnxruntime PATHS ${ONNXRUNTIME_ROOT}/lib NO_DEFAULT_PATH)
     endif()
 endif()
@@ -146,14 +149,32 @@ juce_add_gui_app(PitchNet
     FILE_SHARING_ENABLED TRUE
     DOCUMENT_EXTENSIONS "wav;mp3;flac;ogg")
 
-# AAX SDK configuration (user must set AAX_SDK_PATH environment variable)
-if(DEFINED ENV{AAX_SDK_PATH} AND EXISTS "$ENV{AAX_SDK_PATH}")
-    juce_set_aax_sdk_path($ENV{AAX_SDK_PATH})
+# AAX SDK configuration (bundled in third_party/, with env/cache override support)
+set(PITCHNET_BUNDLED_AAX_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/AAX_SDK")
+set(AAX_SDK_PATH "" CACHE PATH "Path to the Avid AAX SDK")
+if(AAX_SDK_PATH AND EXISTS "${AAX_SDK_PATH}/Interfaces/AAX.h")
+    juce_set_aax_sdk_path(${AAX_SDK_PATH})
     set(AAX_AVAILABLE TRUE)
-    message(STATUS "AAX SDK found at: $ENV{AAX_SDK_PATH}")
+    message(STATUS "AAX SDK found at: ${AAX_SDK_PATH}")
+elseif(EXISTS "${PITCHNET_BUNDLED_AAX_SDK_PATH}/Interfaces/AAX.h")
+    set(AAX_SDK_PATH "${PITCHNET_BUNDLED_AAX_SDK_PATH}" CACHE PATH "Path to the Avid AAX SDK" FORCE)
+    juce_set_aax_sdk_path(${AAX_SDK_PATH})
+    set(AAX_AVAILABLE TRUE)
+    message(STATUS "AAX SDK found at: ${AAX_SDK_PATH}")
+elseif(DEFINED ENV{AAX_SDK_PATH} AND EXISTS "$ENV{AAX_SDK_PATH}/Interfaces/AAX.h")
+    set(AAX_SDK_PATH "$ENV{AAX_SDK_PATH}" CACHE PATH "Path to the Avid AAX SDK" FORCE)
+    juce_set_aax_sdk_path(${AAX_SDK_PATH})
+    set(AAX_AVAILABLE TRUE)
+    message(STATUS "AAX SDK found at: ${AAX_SDK_PATH}")
 else()
     set(AAX_AVAILABLE FALSE)
     message(STATUS "AAX SDK not found - AAX format will not be built")
+endif()
+
+# Plugin formats
+set(PITCHNET_PLUGIN_FORMATS VST3 AU)
+if(AAX_AVAILABLE)
+    list(APPEND PITCHNET_PLUGIN_FORMATS AAX)
 endif()
 
 # ARA SDK configuration (bundled as submodule)
@@ -175,11 +196,12 @@ juce_add_plugin(PitchNetPlugin
     BUNDLE_ID "com.sessionloops.pitchnet"
     PLUGIN_MANUFACTURER_CODE SLPS
     PLUGIN_CODE PTE1
-    FORMATS VST3 AU $<$<BOOL:${AAX_AVAILABLE}>:AAX>
+    FORMATS ${PITCHNET_PLUGIN_FORMATS}
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_ARA_EFFECT $<BOOL:${ARA_AVAILABLE}>
+    ARA_ANALYSIS_TYPES kARAContentTypeNotes
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
     FILE_SHARING_ENABLED TRUE)
@@ -188,6 +210,12 @@ juce_add_plugin(PitchNetPlugin
 if(ARA_AVAILABLE)
     target_compile_definitions(PitchNetPlugin PRIVATE
         JucePlugin_Enable_ARA=1)
+endif()
+if(AAX_AVAILABLE)
+    target_include_directories(PitchNetPlugin PRIVATE
+        ${AAX_SDK_PATH}
+        ${AAX_SDK_PATH}/Interfaces
+        ${AAX_SDK_PATH}/Interfaces/ACF)
 endif()
 
 # Add source files using GLOB_RECURSE
@@ -218,6 +246,7 @@ list(APPEND PITCHNET_UI_SOURCES
 file(GLOB PLUGIN_SOURCES
     "Source/Plugin/PluginProcessor.cpp" "Source/Plugin/PluginProcessor.h"
     "Source/Plugin/PluginEditor.cpp" "Source/Plugin/PluginEditor.h"
+    "Source/Plugin/AAX_VARABinding.cpp"
     "Source/Plugin/ARADocumentController.cpp" "Source/Plugin/ARADocumentController.h"
     "Source/Plugin/NonAraCaptureController.cpp" "Source/Plugin/NonAraCaptureController.h"
     "Source/Plugin/HostCompatibility.cpp" "Source/Plugin/HostCompatibility.h")
@@ -351,6 +380,12 @@ if(ONNXRUNTIME_FOUND)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DLL}"
                     "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>")
+                if(TARGET PitchNetPlugin_AAX)
+                    add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${DLL}"
+                        "$<TARGET_FILE_DIR:PitchNetPlugin_AAX>")
+                endif()
             endforeach()
         else()
             message(WARNING "No ONNX Runtime DLLs found to copy")
@@ -445,6 +480,12 @@ if(ONNXRUNTIME_FOUND)
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${CUDA_DLL_PATH}"
                             "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>")
+                        if(TARGET PitchNetPlugin_AAX)
+                            add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${CUDA_DLL_PATH}"
+                                "$<TARGET_FILE_DIR:PitchNetPlugin_AAX>")
+                        endif()
                     endif()
                 endforeach()
             else()
@@ -518,6 +559,12 @@ if(ONNXRUNTIME_FOUND)
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${DML_DLL_PATH}"
                             "$<TARGET_FILE_DIR:PitchNetPlugin_VST3>")
+                        if(TARGET PitchNetPlugin_AAX)
+                            add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${DML_DLL_PATH}"
+                                "$<TARGET_FILE_DIR:PitchNetPlugin_AAX>")
+                        endif()
                     endif()
                 endforeach()
             else()
@@ -532,26 +579,44 @@ if(ONNXRUNTIME_FOUND)
         get_filename_component(ONNXRUNTIME_LIB_DIR ${ONNXRUNTIME_LIBRARY} DIRECTORY)
         file(GLOB ONNXRUNTIME_DYLIBS "${ONNXRUNTIME_LIB_DIR}/*.dylib")
         if(ONNXRUNTIME_DYLIBS)
+            add_custom_command(TARGET PitchNet POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks"
+                COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CleanOnnxRuntimeFrameworks.cmake")
+            add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks"
+                COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CleanOnnxRuntimeFrameworks.cmake")
+            add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks"
+                COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CleanOnnxRuntimeFrameworks.cmake")
+            if(TARGET PitchNetPlugin_AAX)
+                add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks"
+                    COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CleanOnnxRuntimeFrameworks.cmake")
+            endif()
             foreach(DYLIB ${ONNXRUNTIME_DYLIBS})
                 message(STATUS "Will embed ONNX Runtime dylib: ${DYLIB}")
                 # Standalone app
                 add_custom_command(TARGET PitchNet POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DYLIB}"
                     "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks/")
                 # VST3 plugin
                 add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DYLIB}"
                     "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks/")
                 # AU plugin
                 add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${DYLIB}"
                     "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks/")
+                # AAX plugin
+                if(TARGET PitchNetPlugin_AAX)
+                    add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${DYLIB}"
+                        "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/")
+                endif()
             endforeach()
             # Fix rpath for all targets using install_name_tool
             add_custom_command(TARGET PitchNet POST_BUILD
@@ -560,6 +625,10 @@ if(ONNXRUNTIME_FOUND)
                 COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/MacOS/PitchNet" 2>/dev/null || true)
             add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
                 COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/MacOS/PitchNet" 2>/dev/null || true)
+            if(TARGET PitchNetPlugin_AAX)
+                add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                    COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/MacOS/PitchNet" 2>/dev/null || true)
+            endif()
         endif()
     endif()
 endif()
@@ -715,4 +784,9 @@ if(APPLE)
     add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
         COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>" 2>/dev/null || true
         COMMENT "Re-signing AU bundle")
+    if(TARGET PitchNetPlugin_AAX)
+        add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+            COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>" 2>/dev/null || true
+            COMMENT "Re-signing AAX bundle")
+    endif()
 endif()
