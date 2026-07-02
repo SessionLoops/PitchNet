@@ -109,6 +109,22 @@ public:
     return false;
   }
 
+  bool copyProcessedAudioForRegion(const juce::String &regionID,
+                                   juce::AudioBuffer<float> &buffer,
+                                   double &sampleRateOut,
+                                   juce::int64 &startSampleOut) const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const auto it = processedRegions.find(regionID);
+    if (it == processedRegions.end() || it->second == nullptr ||
+        !it->second->hasAudio())
+      return false;
+
+    buffer.makeCopyOf(it->second->audio);
+    sampleRateOut = it->second->sampleRate;
+    startSampleOut = it->second->startSampleInModification;
+    return true;
+  }
+
   bool hasProcessedAudio() const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
     for (const auto &[_, data] : processedRegions)

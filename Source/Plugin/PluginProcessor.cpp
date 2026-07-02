@@ -63,6 +63,8 @@ juce::AudioBuffer<float> copyTimelineSlice(const juce::AudioBuffer<float> &src,
 }
 
 #if JucePlugin_Enable_ARA
+using SampleRange = juce::Range<int>;
+
 juce::String archivedRegionKeyForLiveRegion(
     const juce::ARAPlaybackRegion &region) {
   const auto *modification = region.getAudioModification();
@@ -95,6 +97,98 @@ bool projectAppearsToCoverRegion(const Project &project, double regionStart,
       return true;
 
   return false;
+}
+
+std::vector<SampleRange> collectDirtyRegionSampleRanges(
+    const Project &project, double sampleRate, double regionStartSeconds) {
+  std::vector<SampleRange> ranges;
+  if (sampleRate <= 0.0)
+    return ranges;
+
+  const auto toRegionSample = [sampleRate, regionStartSeconds](int frame) {
+    const double absoluteSeconds =
+        static_cast<double>(frame) * static_cast<double>(HOP_SIZE) / sampleRate;
+    double regionSeconds = absoluteSeconds - regionStartSeconds;
+    if (regionSeconds < 0.0)
+      regionSeconds = absoluteSeconds;
+    return static_cast<int>(std::llround(std::max(0.0, regionSeconds) *
+                                         sampleRate));
+  };
+
+  for (const auto &note : project.getNotes()) {
+    if (!note.isDirty())
+      continue;
+    const int start = toRegionSample(note.getStartFrame());
+    const int end = toRegionSample(note.getEndFrame());
+    if (end > start)
+      ranges.emplace_back(start, end);
+  }
+
+  if (project.hasF0DirtyRange()) {
+    const auto [startFrame, endFrame] = project.getF0DirtyRange();
+    const int start = toRegionSample(startFrame);
+    const int end = toRegionSample(endFrame);
+    if (end > start)
+      ranges.emplace_back(start, end);
+  }
+
+  std::sort(ranges.begin(), ranges.end(),
+            [](const auto &a, const auto &b) {
+              return a.getStart() < b.getStart();
+            });
+
+  std::vector<SampleRange> merged;
+  for (const auto &range : ranges) {
+    if (merged.empty() || range.getStart() > merged.back().getEnd()) {
+      merged.push_back(range);
+      continue;
+    }
+    merged.back() = merged.back().getUnionWith(range);
+  }
+
+  return merged;
+}
+
+void preserveProcessedAudioOutsideRanges(
+    juce::AudioBuffer<float> &replacement, double replacementRate,
+    juce::int64 replacementStartInModification,
+    const juce::AudioBuffer<float> &previous, double previousRate,
+    juce::int64 previousStartInModification,
+    const std::vector<SampleRange> &changedRanges) {
+  if (replacement.getNumSamples() <= 0 || previous.getNumSamples() <= 0 ||
+      replacementRate <= 0.0 || previousRate <= 0.0 || changedRanges.empty())
+    return;
+
+  const int channels =
+      std::min(replacement.getNumChannels(), previous.getNumChannels());
+  if (channels <= 0)
+    return;
+
+  const auto isChanged = [&changedRanges](int replacementSample) {
+    for (const auto &range : changedRanges)
+      if (range.contains(replacementSample))
+        return true;
+    return false;
+  };
+
+  const double rateRatio = previousRate / replacementRate;
+  for (int dst = 0; dst < replacement.getNumSamples(); ++dst) {
+    if (isChanged(dst))
+      continue;
+
+    const auto modificationSample =
+        replacementStartInModification + static_cast<juce::int64>(dst);
+    const double previousSamplePosition =
+        static_cast<double>(modificationSample - previousStartInModification) *
+        rateRatio;
+    const int previousSample =
+        static_cast<int>(std::llround(previousSamplePosition));
+    if (previousSample < 0 || previousSample >= previous.getNumSamples())
+      continue;
+
+    for (int ch = 0; ch < channels; ++ch)
+      replacement.setSample(ch, dst, previous.getSample(ch, previousSample));
+  }
 }
 #endif
 } // namespace
@@ -1440,6 +1534,17 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   const auto renderStartSampleInModification = activeStartSampleInModification;
   const double renderRegionStartSeconds = activeRegionStartSeconds;
   const double renderRegionEndSeconds = activeRegionEndSeconds;
+  std::vector<juce::Range<int>> renderChangedSampleRanges;
+#if JucePlugin_Enable_ARA
+  if (renderActiveAraRegion) {
+    const auto &audioData = projectToRender.getAudioData();
+    const double renderRate =
+        audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
+                                 : hostSampleRate;
+    renderChangedSampleRanges = collectDirtyRegionSampleRanges(
+        projectToRender, renderRate, renderRegionStartSeconds);
+  }
+#endif
   auto &pendingRerun =
       renderActiveAraRegion ? regionCanvasRenderPendingRerun
                             : araRenderPendingRerun;
@@ -1454,7 +1559,8 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       },
       [this, controller, renderActiveAraRegion, renderRegionKey,
        renderModification, renderStartSampleInModification,
-       renderRegionStartSeconds, renderRegionEndSeconds](bool success) {
+       renderRegionStartSeconds, renderRegionEndSeconds,
+       renderChangedSampleRanges](bool success) {
         auto *renderedProject = controller != nullptr ? controller->getProject()
                                                      : nullptr;
 
@@ -1483,6 +1589,18 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                   renderRegionEndSeconds);
               if (processedSlice.getNumSamples() <= 0)
                 processedSlice.makeCopyOf(audioData.waveform);
+              if (!renderChangedSampleRanges.empty()) {
+                juce::AudioBuffer<float> previousProcessed;
+                double previousRate = 0.0;
+                juce::int64 previousStart = 0;
+                if (renderModification->copyProcessedAudioForRegion(
+                        renderRegionKey, previousProcessed, previousRate,
+                        previousStart))
+                  preserveProcessedAudioOutsideRanges(
+                      processedSlice, processedRate,
+                      renderStartSampleInModification, previousProcessed,
+                      previousRate, previousStart, renderChangedSampleRanges);
+              }
               renderModification->setProcessedAudioForRegion(
                   renderRegionKey, processedSlice, processedRate,
                   renderStartSampleInModification);
@@ -2238,8 +2356,10 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     return;
 
   auto project = std::make_unique<Project>();
-  if (ProjectSerializer::fromJson(*project, parsed))
+  if (ProjectSerializer::fromJson(*project, parsed)) {
+    project->recomposeFromSynthIfPresent();
     araRegionProjects[regionKey] = std::move(project);
+  }
 }
 
 void PitchNetAudioProcessor::setAraDocumentController(
