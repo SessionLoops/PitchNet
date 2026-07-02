@@ -132,7 +132,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     audioProcessor.requestPluginProjectRender(project);
   });
   mainView->setOnRequestBackendPreview(
-      [this, pitchDocController](const Project &project, int startFrame,
+      [pitchDocController](const Project &project, int startFrame,
                            int endFrame) {
         const auto &audioData = project.getAudioData();
         const double sampleRate =
@@ -140,8 +140,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
                                      : static_cast<double>(SAMPLE_RATE);
         pitchDocController->startPreviewRange(
             static_cast<double>(startFrame) * HOP_SIZE / sampleRate,
-            static_cast<double>(endFrame) * HOP_SIZE / sampleRate,
-            audioProcessor.getEditorRenderer<PitchNetEditorRenderer>());
+            static_cast<double>(endFrame) * HOP_SIZE / sampleRate);
       });
   mainView->setOnStopBackendPreview(
       [pitchDocController]() { pitchDocController->stopPreview(); });
@@ -361,6 +360,15 @@ void PitchNetAudioProcessorEditor::onNewSelection(
   }
 
   if (target != nullptr) {
+    if (auto *araEditorView = getARAEditorView()) {
+      if (auto *araDocController = araEditorView->getDocumentController()) {
+        if (auto *pitchDocController =
+                juce::ARADocumentControllerSpecialisation::
+                    getSpecialisedDocumentController<
+                        PitchNetDocumentController>(araDocController))
+          pitchDocController->setCurrentPlaybackRegion(target);
+      }
+    }
     audioProcessor.setActiveAraRegion(target);
     mainView->focusTimelineRange(target->getStartInPlaybackTime(),
                                  target->getEndInPlaybackTime());

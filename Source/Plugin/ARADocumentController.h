@@ -44,7 +44,7 @@ struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};
   std::atomic<double> previewEndTime{0.0};
   std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
-  std::atomic<PitchNetEditorRenderer *> previewOwnerRenderer{nullptr};
+  std::atomic<PitchNetEditorRenderer *> previewClaimedRenderer{nullptr};
 };
 
 /**
@@ -205,6 +205,7 @@ public:
   // active region, switches the canvas to it). Used for selection-driven
   // per-region editing without disturbing the composite pipeline.
   void requestRegionCanvasAnalysis(juce::ARAPlaybackRegion *region);
+  void setCurrentPlaybackRegion(juce::ARAPlaybackRegion *region);
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
@@ -240,9 +241,9 @@ public:
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
       double projectSampleRate);
-  void startPreviewRange(double previewStartSeconds, double previewEndSeconds,
-                         PitchNetEditorRenderer *ownerRenderer);
+  void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
   void stopPreview();
+  AraPreviewState &getPreviewState() { return previewState; }
   const AraPreviewState &getPreviewState() const { return previewState; }
 
 protected:
