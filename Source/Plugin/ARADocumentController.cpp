@@ -42,9 +42,9 @@ void pitchnetReleaseRegionKey(const juce::ARAPlaybackRegion &region) {
 namespace {
 constexpr juce::int64 kPitchNetAraModificationArchiveMagic =
     -0x504E41524D4F444LL; // -PNARMOD
-// v2 adds a per-region project section after each modification's composite
-// archive, so each region's analysis/edits survive reload (v1 is still read).
-constexpr int kPitchNetAraModificationArchiveVersion = 2;
+// Alpha archive layout: one document-level project archive, followed by
+// per-modification region projects and processed audio.
+constexpr int kPitchNetAraModificationArchiveVersion = 3;
 
 bool readPlaybackRegionIntoBlock(
     juce::ARAPlaybackRegion *region, juce::ARAAudioSourceReader &reader,
@@ -906,6 +906,40 @@ void PitchNetDocumentController::setPersistenceCallbacks(
   }
 }
 
+void PitchNetDocumentController::restoreAraRegionProjectOrPend(
+    const juce::String &regionKey, const void *data, size_t sizeInBytes) {
+  if (regionKey.isEmpty() || data == nullptr || sizeInBytes == 0)
+    return;
+
+  if (owningProcessor != nullptr) {
+    owningProcessor->restoreAraRegionProject(regionKey, data, sizeInBytes);
+    return;
+  }
+
+  for (auto &pending : pendingRestoredRegionProjects) {
+    if (pending.regionKey == regionKey) {
+      pending.data.replaceAll(data, sizeInBytes);
+      return;
+    }
+  }
+
+  juce::MemoryBlock copy(data, sizeInBytes);
+  pendingRestoredRegionProjects.push_back({regionKey, std::move(copy)});
+}
+
+void PitchNetDocumentController::flushPendingAraRegionProjects() {
+  if (owningProcessor == nullptr || pendingRestoredRegionProjects.empty())
+    return;
+
+  for (const auto &pending : pendingRestoredRegionProjects) {
+    owningProcessor->restoreAraRegionProject(pending.regionKey,
+                                             pending.data.getData(),
+                                             pending.data.getSize());
+  }
+
+  pendingRestoredRegionProjects.clear();
+}
+
 RealtimePitchProcessor *PitchNetDocumentController::getRealtimeProcessor() {
   // Prefer the live (editor/processor) realtime processor, but ONLY when it is
   // actually ready. Headless — before any editor has bound its project — the
@@ -926,6 +960,7 @@ void PitchNetDocumentController::setOwningProcessor(
     PitchNetAudioProcessor *processor) {
   owningProcessor = processor;
   ensureHeadlessPlaybackBinding();
+  flushPendingAraRegionProjects();
 }
 
 void PitchNetDocumentController::ensureHeadlessPlaybackBinding() {
@@ -1588,11 +1623,22 @@ void PitchNetDocumentController::didEnableAudioSourceSamplesAccess(
     if (auto *modification = currentPlaybackRegion->getAudioModification();
         modification != nullptr &&
         modification->getAudioSource() == audioSource) {
-      if (owningProcessor != nullptr &&
-          owningProcessor->hasAraRegionProject(
-              pitchnetRegionKey(*currentPlaybackRegion)))
-        return;
       if (owningProcessor != nullptr) {
+        const auto liveKey = pitchnetRegionKey(*currentPlaybackRegion);
+        if (owningProcessor->hasAraRegionProject(liveKey))
+          return;
+
+        if (auto *pitchModification =
+                dynamic_cast<PitchNetAudioModification *>(modification)) {
+          juce::MemoryBlock archive;
+          if (pitchModification->copyProjectArchiveForRegion(liveKey,
+                                                             archive)) {
+            owningProcessor->restoreAraRegionProject(
+                liveKey, archive.getData(), archive.getSize());
+            return;
+          }
+        }
+
         const auto &regions =
             modification->getPlaybackRegions<juce::ARAPlaybackRegion>();
         for (size_t i = 0; i < regions.size(); ++i) {
@@ -1601,6 +1647,16 @@ void PitchNetDocumentController::didEnableAudioSourceSamplesAccess(
 
           const auto archiveKey = pitchnetRegionKeyForIndex(
               modification->getPersistentID(), static_cast<int>(i));
+          if (auto *pitchModification =
+                  dynamic_cast<PitchNetAudioModification *>(modification)) {
+            juce::MemoryBlock archive;
+            if (pitchModification->copyProjectArchiveForRegion(archiveKey,
+                                                               archive)) {
+              owningProcessor->restoreAraRegionProject(
+                  archiveKey, archive.getData(), archive.getSize());
+              return;
+            }
+          }
           if (owningProcessor->araRegionProjectAppearsToCover(
                   archiveKey, currentPlaybackRegion->getStartInPlaybackTime(),
                   currentPlaybackRegion->getEndInPlaybackTime()))
@@ -1627,6 +1683,15 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
   const auto liveKey = pitchnetRegionKey(*region);
   if (owningProcessor->hasAraRegionProject(liveKey))
     return;
+  if (auto *pitchModification =
+          region->getAudioModification<PitchNetAudioModification>()) {
+    juce::MemoryBlock archive;
+    if (pitchModification->copyProjectArchiveForRegion(liveKey, archive)) {
+      owningProcessor->restoreAraRegionProject(liveKey, archive.getData(),
+                                               archive.getSize());
+      return;
+    }
+  }
 
   const auto &regions =
       modification->getPlaybackRegions<juce::ARAPlaybackRegion>();
@@ -1636,10 +1701,22 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
 
     const auto archiveKey = pitchnetRegionKeyForIndex(
         modification->getPersistentID(), static_cast<int>(i));
+    if (auto *pitchModification =
+            region->getAudioModification<PitchNetAudioModification>()) {
+      juce::MemoryBlock archive;
+      if (pitchModification->copyProjectArchiveForRegion(archiveKey, archive)) {
+        owningProcessor->restoreAraRegionProject(
+            archiveKey, archive.getData(), archive.getSize());
+        return;
+      }
+    }
     if (archiveKey != liveKey &&
         owningProcessor->araRegionProjectAppearsToCover(
             archiveKey, region->getStartInPlaybackTime(),
             region->getEndInPlaybackTime()))
+      return;
+    if (owningProcessor->restoredAraProjectAppearsToCover(
+            region->getStartInPlaybackTime(), region->getEndInPlaybackTime()))
       return;
     break;
   }
@@ -1900,71 +1977,12 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
   auto dataSize = input.readInt64();
   if (dataSize == kPitchNetAraModificationArchiveMagic) {
     const auto version = input.readInt();
-    if (version != 1 && version != 2)
+    if (version != kPitchNetAraModificationArchiveVersion)
       return !input.failed();
 
-    const auto numAudioModifications = input.readInt64();
-    for (juce::int64 i = 0; i < numAudioModifications; ++i) {
-      const auto persistentID = input.readString();
-      const auto archiveSize = input.readInt64();
-      if (archiveSize < 0 ||
-          archiveSize > std::numeric_limits<int>::max())
-        return false;
-
-      juce::MemoryBlock data(static_cast<size_t>(archiveSize));
-      if (archiveSize > 0 &&
-          input.read(data.getData(), static_cast<int>(archiveSize)) !=
-              archiveSize)
-        return false;
-
-      // Match the modification first so per-region audio (which has no size
-      // prefix) can be read or skipped inline, keeping the stream aligned.
-      auto *audioModification =
-          filter ? filter->getAudioModificationToRestoreStateWithID<
-                       juce::ARAAudioModification>(
-                       persistentID.getCharPointer())
-                 : nullptr;
-      auto *pitchModification =
-          dynamic_cast<PitchNetAudioModification *>(audioModification);
-
-      // Per-region section (v2): per region a project JSON and, optionally, its
-      // rendered processed audio. Read in stream order; restore when the region
-      // is matched, otherwise consume the bytes so the stream stays aligned.
-      if (version >= 2) {
-        const int numRegions = input.readInt();
-        for (int r = 0; r < numRegions; ++r) {
-          const int regionIndex = input.readInt();
-          const auto jsonSize = input.readInt64();
-          if (jsonSize < 0 || jsonSize > std::numeric_limits<int>::max())
-            return false;
-          juce::MemoryBlock json(static_cast<size_t>(jsonSize));
-          if (jsonSize > 0 &&
-              input.read(json.getData(), static_cast<int>(jsonSize)) != jsonSize)
-            return false;
-          const int hasAudio = input.readInt();
-
-          const auto regionKey =
-              pitchnetRegionKeyForIndex(persistentID, regionIndex);
-
-          if (owningProcessor != nullptr && regionKey.isNotEmpty())
-            owningProcessor->restoreAraRegionProject(regionKey, json.getData(),
-                                                     json.getSize());
-
-          if (hasAudio != 0) {
-            if (pitchModification != nullptr && regionKey.isNotEmpty()) {
-              if (!pitchModification->readProcessedAudioForRegionFromStream(
-                      regionKey, input))
-                return false;
-            } else if (!PitchNetAudioModification::skipProcessedAudioFromStream(
-                           input)) {
-              return false;
-            }
-          }
-        }
-      }
-
-      if (!audioModification)
-        continue;
+    auto restoreProjectArchive = [this](const juce::MemoryBlock &data) {
+      if (data.getSize() == 0)
+        return;
 
       restoreProjectStateToDocument(data.getData(), data.getSize());
 
@@ -1978,6 +1996,75 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
       } else {
         pendingRestoredProjectData = data;
       }
+    };
+
+    const auto documentArchiveSize = input.readInt64();
+    if (documentArchiveSize < 0 ||
+        documentArchiveSize > std::numeric_limits<int>::max())
+      return false;
+
+    juce::MemoryBlock documentData(static_cast<size_t>(documentArchiveSize));
+    if (documentArchiveSize > 0 &&
+        input.read(documentData.getData(),
+                   static_cast<int>(documentArchiveSize)) !=
+            documentArchiveSize)
+      return false;
+
+    restoreProjectArchive(documentData);
+
+    const auto numAudioModifications = input.readInt64();
+    for (juce::int64 i = 0; i < numAudioModifications; ++i) {
+      const auto persistentID = input.readString();
+
+      // Match the modification first so per-region audio (which has no size
+      // prefix) can be read or skipped inline, keeping the stream aligned.
+      auto *audioModification =
+          filter ? filter->getAudioModificationToRestoreStateWithID<
+                       juce::ARAAudioModification>(
+                       persistentID.getCharPointer())
+                 : nullptr;
+      auto *pitchModification =
+          dynamic_cast<PitchNetAudioModification *>(audioModification);
+
+      // Per region: a project JSON and, optionally, rendered processed audio.
+      // Read in stream order; restore when the region is matched, otherwise
+      // consume the bytes so the stream stays aligned.
+      const int numRegions = input.readInt();
+      for (int r = 0; r < numRegions; ++r) {
+        const int regionIndex = input.readInt();
+        const auto jsonSize = input.readInt64();
+        if (jsonSize < 0 || jsonSize > std::numeric_limits<int>::max())
+          return false;
+        juce::MemoryBlock json(static_cast<size_t>(jsonSize));
+        if (jsonSize > 0 &&
+            input.read(json.getData(), static_cast<int>(jsonSize)) != jsonSize)
+          return false;
+        const int hasAudio = input.readInt();
+
+        const auto regionKey =
+            pitchnetRegionKeyForIndex(persistentID, regionIndex);
+
+        restoreAraRegionProjectOrPend(regionKey, json.getData(),
+                                      json.getSize());
+        if (pitchModification != nullptr && regionKey.isNotEmpty() &&
+            json.getSize() > 0)
+          pitchModification->setProjectArchiveForRegion(
+              regionKey, json.getData(), json.getSize());
+
+        if (hasAudio != 0) {
+          if (pitchModification != nullptr && regionKey.isNotEmpty()) {
+            if (!pitchModification->readProcessedAudioForRegionFromStream(
+                    regionKey, input))
+              return false;
+          } else if (!PitchNetAudioModification::skipProcessedAudioFromStream(
+                         input)) {
+            return false;
+          }
+        }
+      }
+
+      if (!audioModification)
+        continue;
 
       audioModification->notifyContentChanged(
           juce::ARAContentUpdateScopes::samplesAreAffected(), false);
@@ -2045,6 +2132,11 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
         return false;
       if (!output.writeInt(kPitchNetAraModificationArchiveVersion))
         return false;
+      if (!output.writeInt64(static_cast<juce::int64>(archiveData.getSize())))
+        return false;
+      if (archiveData.getSize() > 0 &&
+          !output.write(archiveData.getData(), archiveData.getSize()))
+        return false;
       if (!output.writeInt64(
               static_cast<juce::int64>(audioModificationsToPersist.size())))
         return false;
@@ -2054,16 +2146,11 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
           continue;
         if (!output.writeString(audioModification->getPersistentID()))
           return false;
-        if (!output.writeInt64(static_cast<juce::int64>(archiveData.getSize())))
-          return false;
-        if (!output.write(archiveData.getData(), archiveData.getSize()))
-          return false;
 
-        // Per-region section (v2): one entry per region that has its own
-        // analysed/edited project, keyed by its index in this modification.
-        // Each entry carries the region's project JSON and, when present, its
-        // rendered processed audio so reload playback is pitch-corrected without
-        // re-analysing/re-rendering.
+        // One entry per region that has its own analysed/edited project, keyed
+        // by its index in this modification. Each entry carries the region's
+        // project JSON and, when present, its rendered processed audio so reload
+        // playback is pitch-corrected without re-analysing/re-rendering.
         const auto *pitchModification =
             dynamic_cast<const PitchNetAudioModification *>(audioModification);
         struct RegionEntry {
@@ -2076,15 +2163,22 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
         const auto &regions =
             audioModification->getPlaybackRegions<juce::ARAPlaybackRegion>();
         for (size_t r = 0; r < regions.size(); ++r) {
-          if (regions[r] == nullptr || owningProcessor == nullptr)
+          if (regions[r] == nullptr)
             continue;
           const auto key = pitchnetRegionKeyForIndex(
               audioModification->getPersistentID(), static_cast<int>(r));
           const auto liveKey = pitchnetRegionKey(*regions[r]);
           juce::MemoryBlock json;
-          if (!owningProcessor->serializeAraRegionProject(key, json) &&
-              liveKey != key)
-            owningProcessor->serializeAraRegionProject(liveKey, json);
+          if (pitchModification == nullptr ||
+              !pitchModification->copyProjectArchiveForRegion(key, json)) {
+            if (owningProcessor != nullptr &&
+                !owningProcessor->serializeAraRegionProject(key, json) &&
+                liveKey != key)
+              owningProcessor->serializeAraRegionProject(liveKey, json);
+            if (pitchModification != nullptr && json.getSize() > 0)
+              pitchModification->setProjectArchiveForRegion(
+                  key, json.getData(), json.getSize());
+          }
           if (json.getSize() > 0)
             regionEntries.push_back(
                 {static_cast<int>(r), key, liveKey, std::move(json)});

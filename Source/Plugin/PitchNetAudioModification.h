@@ -73,6 +73,7 @@ public:
                        sourceData->startSampleInModification);
         processedRegions[regionID] = std::move(copy);
       }
+      regionProjectArchives = sourceModification->regionProjectArchives;
     }
   }
 
@@ -97,6 +98,32 @@ public:
   void clearProcessedAudio() {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
     processedRegions.clear();
+  }
+
+  void setProjectArchiveForRegion(const juce::String &regionID,
+                                  const void *data, size_t sizeInBytes) const {
+    if (regionID.isEmpty() || data == nullptr || sizeInBytes == 0)
+      return;
+
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    regionProjectArchives[regionID] = juce::MemoryBlock(data, sizeInBytes);
+  }
+
+  bool copyProjectArchiveForRegion(const juce::String &regionID,
+                                   juce::MemoryBlock &dest) const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const auto it = regionProjectArchives.find(regionID);
+    if (it == regionProjectArchives.end() || it->second.getSize() == 0)
+      return false;
+
+    dest = it->second;
+    return true;
+  }
+
+  bool hasProjectArchiveForRegion(const juce::String &regionID) const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const auto it = regionProjectArchives.find(regionID);
+    return it != regionProjectArchives.end() && it->second.getSize() > 0;
   }
 
   //============================================================================
@@ -233,6 +260,7 @@ public:
 private:
   mutable juce::SpinLock processedAudioLock;
   std::map<juce::String, std::unique_ptr<ProcessedRegionData>> processedRegions;
+  mutable std::map<juce::String, juce::MemoryBlock> regionProjectArchives;
 };
 
 #endif // JucePlugin_Enable_ARA

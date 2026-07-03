@@ -184,6 +184,8 @@ public:
   bool araRegionProjectAppearsToCover(const juce::String &regionKey,
                                       double regionStart,
                                       double regionEnd) const;
+  bool restoredAraProjectAppearsToCover(double regionStart,
+                                        double regionEnd) const;
   void restoreAraRegionProject(const juce::String &regionKey, const void *data,
                                size_t sizeInBytes);
 #endif

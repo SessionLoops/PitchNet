@@ -273,6 +273,9 @@ private:
   void notifyAudioModificationContentChanged(bool notifyHost);
   bool restoreProjectStateToDocument(const void *data, size_t sizeInBytes);
   bool serializeDocumentProjectState(juce::MemoryBlock &destData) const;
+  void restoreAraRegionProjectOrPend(const juce::String &regionKey,
+                                     const void *data, size_t sizeInBytes);
+  void flushPendingAraRegionProjects();
 
   void stopAnalysisThread();
 
@@ -303,6 +306,11 @@ private:
   std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
   std::function<bool(const void *, size_t)> restoreProjectStateCallback;
   juce::MemoryBlock pendingRestoredProjectData;
+  struct PendingAraRegionProject {
+    juce::String regionKey;
+    juce::MemoryBlock data;
+  };
+  std::vector<PendingAraRegionProject> pendingRestoredRegionProjects;
   std::shared_ptr<AnalysisState> analysisState =
       std::make_shared<AnalysisState>();
   std::thread analysisThread;
