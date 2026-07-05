@@ -707,7 +707,6 @@ target_compile_definitions(PitchNetPlugin PRIVATE
 set(MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/models")
 set(REQUIRED_MODELS
     fcpe.onnx
-    rmvpe.onnx
     cent_table.bin
     mel_filterbank.bin
 )
