@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
-project(PitchNet VERSION 1.0.0)
+project(PitchNet VERSION 0.1.0)
 
 include(FetchContent)
 include(cmake/Asio.cmake)
@@ -577,8 +577,10 @@ if(ONNXRUNTIME_FOUND)
     elseif(APPLE)
         # macOS: Embed dylib in app bundle and plugin bundles
         get_filename_component(ONNXRUNTIME_LIB_DIR ${ONNXRUNTIME_LIBRARY} DIRECTORY)
-        file(GLOB ONNXRUNTIME_DYLIBS "${ONNXRUNTIME_LIB_DIR}/*.dylib")
+        file(GLOB ONNXRUNTIME_DYLIBS "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.*.dylib")
         if(ONNXRUNTIME_DYLIBS)
+            list(GET ONNXRUNTIME_DYLIBS 0 ONNXRUNTIME_VERSIONED_DYLIB)
+            get_filename_component(ONNXRUNTIME_VERSIONED_DYLIB_NAME "${ONNXRUNTIME_VERSIONED_DYLIB}" NAME)
             add_custom_command(TARGET PitchNet POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks"
                 COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CleanOnnxRuntimeFrameworks.cmake")
@@ -618,6 +620,24 @@ if(ONNXRUNTIME_FOUND)
                         "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/")
                 endif()
             endforeach()
+            add_custom_command(TARGET PitchNet POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks/libonnxruntime.dylib")
+            add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks/libonnxruntime.dylib")
+            add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks/libonnxruntime.dylib")
+            if(TARGET PitchNetPlugin_AAX)
+                add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                    "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/libonnxruntime.dylib")
+            endif()
             # Fix rpath for all targets using install_name_tool
             add_custom_command(TARGET PitchNet POST_BUILD
                 COMMAND install_name_tool -add_rpath "@executable_path/../Frameworks" "$<TARGET_FILE:PitchNet>" 2>/dev/null || true)

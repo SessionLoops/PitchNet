@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
+#include "Components/DarkLookAndFeel.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
@@ -12,12 +13,311 @@
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/UI/WindowSizing.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <thread>
+
+namespace
+{
+constexpr float updateSubtitleFontSize = 14.0f;
+const juce::Colour updateLogScrollbarTrack(0xFF0D0B0Bu);
+const juce::Colour updateLogScrollbarThumb(0xFF565656u);
+
+struct UpdateInfo
+{
+  juce::String version;
+  juce::String releaseNotes;
+};
+
+juce::String normalizeVersionString(juce::String version)
+{
+  version = version.trim();
+  if (version.startsWithIgnoreCase("v"))
+    version = version.substring(1);
+  return version;
+}
+
+juce::String getCurrentApplicationVersion()
+{
+#if defined(JUCE_APPLICATION_VERSION_STRING)
+  return JUCE_APPLICATION_VERSION_STRING;
+#elif defined(JucePlugin_VersionString)
+  return JucePlugin_VersionString;
+#else
+  return "0.1.0";
+#endif
+}
+
+std::array<int, 4> parseVersionParts(const juce::String &version)
+{
+  std::array<int, 4> parts{};
+  juce::StringArray tokens;
+  tokens.addTokens(normalizeVersionString(version), ".", "");
+
+  for (int i = 0; i < juce::jmin(tokens.size(), static_cast<int>(parts.size())); ++i)
+    parts[static_cast<size_t>(i)] = tokens[i].getIntValue();
+
+  return parts;
+}
+
+int compareVersions(const juce::String &lhs, const juce::String &rhs)
+{
+  const auto left = parseVersionParts(lhs);
+  const auto right = parseVersionParts(rhs);
+
+  for (size_t i = 0; i < left.size(); ++i)
+  {
+    if (left[i] < right[i])
+      return -1;
+    if (left[i] > right[i])
+      return 1;
+  }
+
+  return 0;
+}
+
+std::optional<UpdateInfo> fetchLatestUpdateInfo()
+{
+  juce::WebInputStream request(
+      juce::URL("https://sessionloops.com/api/app/getApps"), false);
+  request.withConnectionTimeout(3000);
+
+  if (!request.connect(nullptr))
+    return std::nullopt;
+
+  const auto response = request.readEntireStreamAsString();
+  auto parsed = juce::JSON::parse(response);
+  auto data = parsed.getProperty("data", {});
+
+  if (!data.isArray())
+    return std::nullopt;
+
+  for (const auto &product : *data.getArray())
+  {
+    if (product.getProperty("appId", "").toString() != "PitchNet")
+      continue;
+
+    const auto latestVersion =
+        normalizeVersionString(product.getProperty("version", "").toString());
+
+    if (latestVersion.isEmpty() ||
+        compareVersions(latestVersion, getCurrentApplicationVersion()) <= 0)
+      return std::nullopt;
+
+    UpdateInfo info;
+    info.version = latestVersion;
+    info.releaseNotes = product.getProperty("log", "").toString();
+    return info;
+  }
+
+  return std::nullopt;
+}
+
+void styleUpdateButton(juce::TextButton &button)
+{
+  button.setLookAndFeel(&DarkLookAndFeel::getInstance());
+  button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF5B5B5Bu));
+  button.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF3E3E3Eu));
+  button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFEFEFEFu));
+  button.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFEFEFEFu));
+  button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+}
+
+void styleUpdateLogScrollBars(juce::Component &component)
+{
+  if (auto *scrollBar = dynamic_cast<juce::ScrollBar *>(&component))
+  {
+    scrollBar->setLookAndFeel(&DarkLookAndFeel::getInstance());
+    scrollBar->setColour(juce::ScrollBar::backgroundColourId, updateLogScrollbarTrack);
+    scrollBar->setColour(juce::ScrollBar::trackColourId, updateLogScrollbarTrack);
+    scrollBar->setColour(juce::ScrollBar::thumbColourId, updateLogScrollbarThumb);
+  }
+
+  for (int i = 0; i < component.getNumChildComponents(); ++i)
+    if (auto *child = component.getChildComponent(i))
+      styleUpdateLogScrollBars(*child);
+}
+
+class UpdateAvailableContent : public juce::Component
+{
+public:
+  UpdateAvailableContent(const juce::String &latestVersion,
+                         const juce::String &currentVersion,
+                         const juce::String &releaseNotes)
+      : latest(latestVersion),
+        current(currentVersion),
+        cancelButton("Ask Me Later"),
+        skipButton("Skip This Version"),
+        downloadButton("Download Now")
+  {
+    releaseNotesEditor.setMultiLine(true);
+    releaseNotesEditor.setReadOnly(true);
+    releaseNotesEditor.setScrollbarsShown(true);
+    releaseNotesEditor.setScrollBarThickness(8);
+    releaseNotesEditor.setCaretVisible(false);
+    releaseNotesEditor.setPopupMenuEnabled(false);
+    releaseNotesEditor.setText(releaseNotes, juce::dontSendNotification);
+    releaseNotesEditor.applyFontToAllText(AppFont::getFont(updateSubtitleFontSize));
+    releaseNotesEditor.setColour(juce::TextEditor::backgroundColourId,
+                                 juce::Colour(0xFF191717u));
+    releaseNotesEditor.setColour(juce::TextEditor::textColourId,
+                                 APP_COLOR_TEXT_PRIMARY);
+    releaseNotesEditor.setColour(juce::TextEditor::outlineColourId,
+                                 juce::Colours::transparentBlack);
+    releaseNotesEditor.setColour(juce::TextEditor::focusedOutlineColourId,
+                                 juce::Colours::transparentBlack);
+    releaseNotesEditor.setColour(juce::TextEditor::shadowColourId,
+                                 juce::Colours::transparentBlack);
+    releaseNotesEditor.setColour(juce::ScrollBar::backgroundColourId,
+                                 updateLogScrollbarTrack);
+    releaseNotesEditor.setColour(juce::ScrollBar::trackColourId,
+                                 updateLogScrollbarTrack);
+    releaseNotesEditor.setColour(juce::ScrollBar::thumbColourId,
+                                 updateLogScrollbarThumb);
+    releaseNotesEditor.setLookAndFeel(&DarkLookAndFeel::getInstance());
+    styleUpdateLogScrollBars(releaseNotesEditor);
+    addAndMakeVisible(releaseNotesEditor);
+
+    for (auto *button : {&cancelButton, &skipButton, &downloadButton})
+    {
+      styleUpdateButton(*button);
+      addAndMakeVisible(*button);
+    }
+
+    setSize(550, 386);
+  }
+
+  ~UpdateAvailableContent() override
+  {
+    releaseNotesEditor.setLookAndFeel(nullptr);
+    cancelButton.setLookAndFeel(nullptr);
+    skipButton.setLookAndFeel(nullptr);
+    downloadButton.setLookAndFeel(nullptr);
+  }
+
+  void resized() override
+  {
+    auto bounds = getLocalBounds().reduced(24, 20);
+    bounds.removeFromTop(36);
+    bounds.removeFromTop(40);
+    releaseNotesEditor.setBounds(bounds.removeFromTop(231));
+    styleUpdateLogScrollBars(releaseNotesEditor);
+
+    auto buttonRow = getLocalBounds().removeFromBottom(46);
+    const int buttonY = buttonRow.getY() + 5;
+    const int buttonH = 26;
+    const int gap = 12;
+    const int cancelW = 150;
+    const int skipW = 150;
+    const int downloadW = 150;
+    const int totalW = cancelW + skipW + downloadW + gap * 2;
+    int x = (getWidth() - totalW) / 2;
+
+    downloadButton.setBounds(x, buttonY, downloadW, buttonH);
+    x += downloadW + gap;
+    cancelButton.setBounds(x, buttonY, cancelW, buttonH);
+    x += cancelW + gap;
+    skipButton.setBounds(x, buttonY, skipW, buttonH);
+  }
+
+  void paint(juce::Graphics &g) override
+  {
+    auto bounds = getLocalBounds().toFloat();
+    g.setColour(juce::Colour(0xFF333333u));
+    g.fillRoundedRectangle(bounds, 7.0f);
+
+    g.setColour(juce::Colour(0xFFEFEFEFu));
+    g.setFont(AppFont::getFont(16.0f));
+    g.drawText("Update Available", 24, 24, getWidth() - 48, 24,
+               juce::Justification::centred, false);
+
+    g.setFont(juce::Font(juce::FontOptions(updateSubtitleFontSize)).boldened());
+    juce::ignoreUnused(latest, current);
+    g.drawFittedText("A new version of PitchNet is available. Would you like to download it?",
+                     24, 54, getWidth() - 48, 34,
+                     juce::Justification::centred, 2);
+  }
+
+  std::function<void()> onCancel;
+  std::function<void()> onSkip;
+  std::function<void()> onDownload;
+
+  juce::TextButton cancelButton;
+  juce::TextButton skipButton;
+  juce::TextButton downloadButton;
+
+private:
+  juce::String latest;
+  juce::String current;
+  juce::TextEditor releaseNotesEditor;
+};
+
+class UpdateAvailableDialog : public juce::DialogWindow
+{
+public:
+  UpdateAvailableDialog(juce::Component *parent,
+                        const juce::String &latestVersion,
+                        const juce::String &releaseNotes,
+                        std::function<void()> onSkipVersion,
+                        std::function<void()> onDownloadUpdate)
+      : juce::DialogWindow("", APP_COLOR_BACKGROUND, true),
+        skipCallback(std::move(onSkipVersion)),
+        downloadCallback(std::move(onDownloadUpdate))
+  {
+    setOpaque(false);
+    setUsingNativeTitleBar(false);
+    setTitleBarHeight(0);
+    setResizable(false, false);
+    setTitleBarButtonsRequired(0, false);
+
+    auto *content = new UpdateAvailableContent(latestVersion,
+                                               getCurrentApplicationVersion(),
+                                               releaseNotes);
+    content->onCancel = [this] { closeButtonPressed(); };
+    content->onSkip = [this]
+    {
+      if (skipCallback)
+        skipCallback();
+      closeButtonPressed();
+    };
+    content->onDownload = [this]
+    {
+      if (downloadCallback)
+        downloadCallback();
+      closeButtonPressed();
+    };
+    content->cancelButton.onClick = content->onCancel;
+    content->skipButton.onClick = content->onSkip;
+    content->downloadButton.onClick = content->onDownload;
+
+    setContentOwned(content, true);
+    setSize(550, 386);
+
+    if (parent != nullptr)
+      centreAroundComponent(parent, getWidth(), getHeight());
+    else
+      centreWithSize(getWidth(), getHeight());
+  }
+
+  void closeButtonPressed() override
+  {
+    exitModalState(0);
+  }
+
+  void paint(juce::Graphics &g) override
+  {
+    juce::ignoreUnused(g);
+  }
+
+private:
+  std::function<void()> skipCallback;
+  std::function<void()> downloadCallback;
+};
+} // namespace
 
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
@@ -390,7 +690,73 @@ MainComponent::MainComponent(bool enableAudioDevice)
   LOG("MainComponent: starting timer...");
   // Start timer for UI updates
   startTimerHz(60);
+
+  if (!isPluginMode())
+    juce::Timer::callAfterDelay(800, [safeThis = juce::Component::SafePointer<MainComponent>(this)]
+    {
+      if (safeThis != nullptr)
+        safeThis->checkForUpdatesOnLaunch();
+    });
+
   LOG("MainComponent: constructor complete");
+}
+
+void MainComponent::checkForUpdatesOnLaunch()
+{
+  const auto skippedVersion = settingsManager
+                                  ? settingsManager->getSkippedUpdateVersion()
+                                  : juce::String();
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+
+  std::thread([safeThis, skippedVersion]
+  {
+    auto updateInfo = fetchLatestUpdateInfo();
+    if (!updateInfo.has_value())
+      return;
+
+    if (updateInfo->version == skippedVersion)
+      return;
+
+    juce::MessageManager::callAsync([safeThis,
+                                     latestVersion = updateInfo->version,
+                                     releaseNotes = updateInfo->releaseNotes]
+    {
+      if (safeThis != nullptr)
+        safeThis->showUpdateAvailablePopup(latestVersion, releaseNotes);
+    });
+  }).detach();
+}
+
+void MainComponent::showUpdateAvailablePopup(const juce::String &latestVersion,
+                                             const juce::String &releaseNotes)
+{
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  auto *dialog = new UpdateAvailableDialog(
+      this,
+      latestVersion,
+      releaseNotes,
+      [safeThis, latestVersion]
+      {
+        if (safeThis != nullptr)
+          safeThis->skipUpdateVersion(latestVersion);
+      },
+      []
+      {
+        juce::Process::openDocument("https://sessionloops.com/pitchnet#downloads", "");
+      });
+
+  dialog->setVisible(true);
+  dialog->toFront(true);
+  dialog->enterModalState(true, nullptr, true);
+}
+
+void MainComponent::skipUpdateVersion(const juce::String &version)
+{
+  if (settingsManager == nullptr)
+    return;
+
+  settingsManager->setSkippedUpdateVersion(version);
+  settingsManager->saveConfig();
 }
 
 void MainComponent::bindBackendController(EditorController *controller)

@@ -57,6 +57,11 @@ public:
   {
     preferredAudioOutputDevice = name;
   }
+  juce::String getSkippedUpdateVersion() const { return skippedUpdateVersion; }
+  void setSkippedUpdateVersion(const juce::String &version)
+  {
+    skippedUpdateVersion = version;
+  }
 
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
@@ -101,6 +106,7 @@ private:
   bool showActualF0Debug = false;
   bool followSystemAudioOutput = true;
   juce::String preferredAudioOutputDevice;
+  juce::String skippedUpdateVersion;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };

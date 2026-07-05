@@ -148,6 +148,9 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("preferredAudioOutputDevice"))
           preferredAudioOutputDevice =
               configObj->getProperty("preferredAudioOutputDevice").toString();
+        if (configObj->hasProperty("skippedUpdateVersion"))
+          skippedUpdateVersion =
+              configObj->getProperty("skippedUpdateVersion").toString();
       }
     }
   }
@@ -187,6 +190,7 @@ void SettingsManager::saveConfig()
   config->setProperty("showActualF0Debug", showActualF0Debug);
   config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
   config->setProperty("preferredAudioOutputDevice", preferredAudioOutputDevice);
+  config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
 
   juce::String jsonText = juce::JSON::toString(juce::var(config.get()));
   configFile.replaceWithText(jsonText);

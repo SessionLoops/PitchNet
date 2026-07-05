@@ -251,6 +251,10 @@ private:
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;
   void applyCachedHostLoopRange();
+  void checkForUpdatesOnLaunch();
+  void showUpdateAvailablePopup(const juce::String &latestVersion,
+                                const juce::String &releaseNotes);
+  void skipUpdateVersion(const juce::String &version);
 
   void loadAudioFile(const juce::File &file);
   void clearProjectForNewLoad();

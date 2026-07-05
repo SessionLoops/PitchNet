@@ -18,7 +18,7 @@ public:
     // ── Font overrides ────────────────────────────────────────────
     juce::Font getTextButtonFont(juce::TextButton&, int) override
     {
-        return AppFont::getFont(14.0f);
+        return AppFont::getFont(15.0f);
     }
 
     juce::Font getLabelFont(juce::Label&) override
@@ -61,6 +61,9 @@ public:
                               const juce::Colour& backgroundColour,
                               bool shouldDrawButtonAsHighlighted,
                               bool shouldDrawButtonAsDown) override;
+    void drawButtonText(juce::Graphics& g, juce::TextButton& button,
+                        bool shouldDrawButtonAsHighlighted,
+                        bool shouldDrawButtonAsDown) override;
 
     void drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
                       int buttonX, int buttonY, int buttonW, int buttonH,

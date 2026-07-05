@@ -20,10 +20,10 @@ DarkLookAndFeel::DarkLookAndFeel()
     setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
 
     // ── TextButton ────────────────────────────────────────────────
-    setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
-    setColour(juce::TextButton::buttonOnColourId, APP_COLOR_PRIMARY);
-    setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
-    setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF5B5B5Bu));
+    setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF3E3E3Eu));
+    setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFEFEFEFu));
+    setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFEFEFEFu));
 
     // ── ListBox ───────────────────────────────────────────────────
     setColour(juce::ListBox::backgroundColourId, APP_COLOR_SURFACE);
@@ -271,7 +271,7 @@ void DarkLookAndFeel::drawProgressBar(juce::Graphics& g, juce::ProgressBar& bar,
 }
 
 // =====================================================================
-// TextButton — rounded with subtle hover / press states
+// TextButton — VocalNet-style rounded grey buttons
 // =====================================================================
 
 void DarkLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& button,
@@ -279,21 +279,74 @@ void DarkLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& butt
                                             bool shouldDrawButtonAsHighlighted,
                                             bool shouldDrawButtonAsDown)
 {
-    auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
-    auto corner = 6.0f;
+    auto cornerSize = button.getHeight() < 20 ? 6.0f : 13.0f;
+    auto bounds = button.getLocalBounds().toFloat().reduced(0.5f, 0.5f);
 
-    auto baseColour = backgroundColour;
-    if (shouldDrawButtonAsDown)
-        baseColour = baseColour.brighter(0.08f);
-    else if (shouldDrawButtonAsHighlighted)
-        baseColour = baseColour.brighter(0.04f);
+    auto baseColour = backgroundColour
+                          .withMultipliedSaturation(button.hasKeyboardFocus(true) ? 1.3f : 0.9f)
+                          .withMultipliedAlpha(button.isEnabled() ? 1.0f : 0.5f);
 
-    g.setColour(baseColour);
-    g.fillRoundedRectangle(bounds, corner);
+    if (baseColour.getAlpha() > 0 && (shouldDrawButtonAsDown || shouldDrawButtonAsHighlighted))
+        baseColour = baseColour.contrasting(shouldDrawButtonAsDown ? 0.2f : 0.05f);
 
-    // Subtle border
-    g.setColour(APP_COLOR_BORDER.withAlpha(shouldDrawButtonAsHighlighted ? 0.7f : 0.5f));
-    g.drawRoundedRectangle(bounds, corner, 1.0f);
+    g.setColour(shouldDrawButtonAsDown
+                    ? findColour(juce::TextButton::buttonOnColourId)
+                    : baseColour);
+
+    const auto flatOnLeft = button.isConnectedOnLeft();
+    const auto flatOnRight = button.isConnectedOnRight();
+    const auto flatOnTop = button.isConnectedOnTop();
+    const auto flatOnBottom = button.isConnectedOnBottom();
+
+    if (flatOnLeft || flatOnRight || flatOnTop || flatOnBottom)
+    {
+        juce::Path path;
+        path.addRoundedRectangle(bounds.getX(), bounds.getY(),
+                                 bounds.getWidth(), bounds.getHeight(),
+                                 cornerSize, cornerSize,
+                                 !(flatOnLeft || flatOnTop),
+                                 !(flatOnRight || flatOnTop),
+                                 !(flatOnLeft || flatOnBottom),
+                                 !(flatOnRight || flatOnBottom));
+
+        g.fillPath(path);
+
+        g.setColour(button.findColour(juce::ComboBox::outlineColourId));
+        g.strokePath(path, juce::PathStrokeType(1.0f));
+    }
+    else
+    {
+        g.fillRoundedRectangle(bounds, cornerSize);
+    }
+}
+
+void DarkLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& button,
+                                      bool shouldDrawButtonAsHighlighted,
+                                      bool shouldDrawButtonAsDown)
+{
+    juce::ignoreUnused(shouldDrawButtonAsDown);
+
+    auto font = getTextButtonFont(button, button.getHeight());
+    g.setFont(font);
+    g.setColour(button.findColour(button.getToggleState() || shouldDrawButtonAsHighlighted
+                                      ? juce::TextButton::textColourOnId
+                                      : juce::TextButton::textColourOffId)
+                    .withMultipliedAlpha(button.isEnabled() ? 1.0f : 0.5f));
+
+    const int yIndent = juce::jmin(4, button.proportionOfHeight(0.3f));
+    const int cornerSize = juce::jmin(button.getHeight(), button.getWidth()) / 2;
+    const int fontHeight = juce::roundToInt(font.getHeight() * 0.6f);
+    const int leftIndent =
+        juce::jmin(fontHeight, 2 + cornerSize / (button.isConnectedOnLeft() ? 4 : 2));
+    const int rightIndent =
+        juce::jmin(fontHeight, 2 + cornerSize / (button.isConnectedOnRight() ? 4 : 2));
+    const int textWidth = button.getWidth() - leftIndent - rightIndent;
+
+    if (textWidth > 0)
+        g.drawFittedText(button.getButtonText(),
+                         leftIndent, yIndent,
+                         textWidth, button.getHeight() - yIndent * 2,
+                         juce::Justification::centred, 2);
 }
 
 // =====================================================================

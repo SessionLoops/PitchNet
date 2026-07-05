@@ -16,6 +16,12 @@ namespace
 {
   constexpr int kFollowSystemOutputId = 1;
 
+#if JUCE_DEBUG
+  constexpr bool kShowSettingsTabSelector = true;
+#else
+  constexpr bool kShowSettingsTabSelector = false;
+#endif
+
   juce::String resolveDefaultOutputDeviceName(juce::AudioDeviceManager *deviceManager)
   {
     if (deviceManager == nullptr)
@@ -312,6 +318,8 @@ SettingsComponent::SettingsComponent(
     updateAudioDeviceTypes();
   }
 
+  activeTab = pluginMode ? SettingsTab::General : SettingsTab::Audio;
+
   // Load saved settings
   loadSettings();
   updateDeviceList();
@@ -410,25 +418,36 @@ void SettingsComponent::resized()
   tabListBounds = {};
 
   const int sidebarWidth = 140;
-  sidebarBounds = bounds.removeFromLeft(sidebarWidth);
-
-  auto tabAreaBounds = sidebarBounds.reduced(8, 10);
-  const int tabHeight = 32;
-  const int tabGap = 6;
-  const int tabCount = audioTabButton.isVisible() ? 2 : 1;
-  const int tabContainerHeight = 16 + tabCount * tabHeight + (tabCount - 1) * tabGap;
-  tabListBounds =
-      tabAreaBounds.withHeight(juce::jmin(tabAreaBounds.getHeight(), tabContainerHeight));
-
-  auto tabArea = tabListBounds.reduced(8, 8);
-  generalTabButton.setBounds(tabArea.removeFromTop(tabHeight));
-  if (audioTabButton.isVisible())
+  if (kShowSettingsTabSelector)
   {
-    tabArea.removeFromTop(tabGap);
-    audioTabButton.setBounds(tabArea.removeFromTop(tabHeight));
-  }
+    sidebarBounds = bounds.removeFromLeft(sidebarWidth);
 
-  bounds.removeFromLeft(10);
+    auto tabAreaBounds = sidebarBounds.reduced(8, 10);
+    const int tabHeight = 32;
+    const int tabGap = 6;
+    const int tabCount = audioTabButton.isVisible() ? 2 : 1;
+    const int tabContainerHeight =
+        16 + tabCount * tabHeight + (tabCount - 1) * tabGap;
+    tabListBounds =
+        tabAreaBounds.withHeight(juce::jmin(tabAreaBounds.getHeight(), tabContainerHeight));
+
+    auto tabArea = tabListBounds.reduced(8, 8);
+    generalTabButton.setBounds(tabArea.removeFromTop(tabHeight));
+    if (audioTabButton.isVisible())
+    {
+      tabArea.removeFromTop(tabGap);
+      audioTabButton.setBounds(tabArea.removeFromTop(tabHeight));
+    }
+
+    bounds.removeFromLeft(10);
+  }
+  else
+  {
+    sidebarBounds = {};
+    tabListBounds = {};
+    generalTabButton.setBounds({});
+    audioTabButton.setBounds({});
+  }
 
   auto titleArea = bounds.removeFromTop(34);
   titleLabel.setBounds(titleArea);
@@ -725,7 +744,9 @@ void SettingsComponent::updateTabVisibility()
   outputChannelsLabel.setVisible(showAudio);
   outputChannelsComboBox.setVisible(showAudio);
 
-  audioTabButton.setVisible(!pluginMode && deviceManager != nullptr);
+  generalTabButton.setVisible(kShowSettingsTabSelector);
+  audioTabButton.setVisible(kShowSettingsTabSelector &&
+                            !pluginMode && deviceManager != nullptr);
 
   if (pluginMode || deviceManager == nullptr)
     setActiveTab(SettingsTab::General);
