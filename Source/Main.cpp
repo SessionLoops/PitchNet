@@ -14,6 +14,32 @@
 #if JUCE_WINDOWS
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
+
+namespace {
+void configureWindowsTitleBarColour(HWND hwnd) {
+  if (hwnd == nullptr)
+    return;
+
+  constexpr DWORD useImmersiveDarkMode = 1;
+  DwmSetWindowAttribute(hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/,
+                        &useImmersiveDarkMode, sizeof(useImmersiveDarkMode));
+
+  constexpr DWORD windowCornerPreferenceRound = 2; // DWMWCP_ROUND
+  DwmSetWindowAttribute(hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
+                        &windowCornerPreferenceRound,
+                        sizeof(windowCornerPreferenceRound));
+
+  const COLORREF titleBarColour = RGB(0x23, 0x23, 0x23);
+  DwmSetWindowAttribute(hwnd, 35 /*DWMWA_CAPTION_COLOR*/, &titleBarColour,
+                        sizeof(titleBarColour));
+  DwmSetWindowAttribute(hwnd, 34 /*DWMWA_BORDER_COLOR*/, &titleBarColour,
+                        sizeof(titleBarColour));
+
+  const COLORREF titleTextColour = RGB(0xEC, 0xEF, 0xF5);
+  DwmSetWindowAttribute(hwnd, 36 /*DWMWA_TEXT_COLOR*/, &titleTextColour,
+                        sizeof(titleTextColour));
+}
+} // namespace
 #endif
 
 class SplashComponent : public juce::Component, private juce::Timer {
@@ -191,19 +217,9 @@ public:
       LOG("MainWindow: setVisible(true) done");
 
 #if JUCE_WINDOWS
-      // Enable dark mode for title bar
       if (auto *peer = getPeer()) {
-        if (auto hwnd = (HWND)peer->getNativeHandle()) {
-          // Enable immersive dark mode for title bar
-          constexpr DWORD darkMode = 1;
-          DwmSetWindowAttribute(hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/,
-                                &darkMode, sizeof(darkMode));
-
-          // Enable rounded corners on Windows 11+
-          DWORD preference = 2; // DWMWCP_ROUND
-          DwmSetWindowAttribute(hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
-                                &preference, sizeof(preference));
-        }
+        configureWindowsTitleBarColour(
+            reinterpret_cast<HWND>(peer->getNativeHandle()));
       }
 #elif JUCE_MAC
       // Configure native macOS title bar chrome.

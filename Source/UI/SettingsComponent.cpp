@@ -759,17 +759,21 @@ void SettingsComponent::updateDeviceList()
   auto devices = getAvailableDevices();
   int selectedIndex = 0;
 
-  // Auto-select based on compile-time flags (first run only)
-  if (!hasLoadedSettings && currentDevice == "CPU")
+  const bool shouldUseDefaultDevice =
+      settingsManager == nullptr || !settingsManager->hasStoredDevice();
+
+  // Auto-select based on compile-time flags until the user saves a preference.
+  if (shouldUseDefaultDevice && currentDevice == "CPU")
   {
-#ifdef USE_DIRECTML
-    // If DirectML is compiled in, default to DirectML
+#if defined(_WIN32) && defined(USE_DIRECTML)
+    // On Windows, prefer DirectML when the runtime exposes the provider.
     for (int i = 0; i < devices.size(); ++i)
     {
       if (devices[i] == "DirectML")
       {
         selectedIndex = i;
         currentDevice = devices[i];
+        gpuDeviceId = 0;
         break;
       }
     }

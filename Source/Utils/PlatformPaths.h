@@ -6,12 +6,12 @@
  * Platform-specific path utilities.
  *
  * macOS:
- *   - Models: App.app/Contents/Resources/models/
+ *   - Models: /Library/Application Support/<company>/<app>/models/
  *   - Logs: ~/Library/Logs/PitchNet/
  *   - Config: ~/Library/Application Support/PitchNet/
  *
  * Windows:
- *   - Models: <exe_dir>/models/
+ *   - Models: %PROGRAMDATA%/<company>/<app>/models/
  *   - Logs: %APPDATA%/PitchNet/Logs/
  *   - Config: %APPDATA%/PitchNet/
  *
@@ -55,6 +55,34 @@ namespace PlatformPaths
 #endif
     }
 
+    inline juce::File getApplicationFile()
+    {
+        return juce::File::getSpecialLocation(juce::File::currentApplicationFile);
+    }
+
+    inline juce::File getDefaultLocalResourcesModelsDirectory()
+    {
+#if JUCE_MAC
+        return getApplicationFile().getChildFile("Contents/Resources/models");
+#else
+        auto dir = getApplicationFile().getParentDirectory();
+        const auto initialDir = dir;
+
+        for (int i = 0; i < 8 && dir.exists(); ++i)
+        {
+            if (dir.getFileName().equalsIgnoreCase("Contents"))
+                return dir.getChildFile("Resources/models");
+
+            auto parent = dir.getParentDirectory();
+            if (parent == dir)
+                break;
+            dir = parent;
+        }
+
+        return initialDir.getChildFile("Resources/models");
+#endif
+    }
+
     inline juce::File findLocalResourcesModelsDirectory()
     {
         auto isValid = [](const juce::File &candidate)
@@ -67,8 +95,7 @@ namespace PlatformPaths
         if (isValid(projectModels))
             return projectModels;
 
-        auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                       .getParentDirectory();
+        auto dir = getApplicationFile().getParentDirectory();
         for (int i = 0; i < 8 && dir.exists(); ++i)
         {
             auto resourcesCandidate = dir.getChildFile("Resources/models");
@@ -90,16 +117,7 @@ namespace PlatformPaths
         if (localResourcesModels.isDirectory())
             return localResourcesModels;
 
-#if JUCE_MAC
-        // macOS: Use Resources folder inside app bundle
-        auto appBundle = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
-        return appBundle.getChildFile("Contents/Resources/models");
-#else
-        // Windows/Linux: Use models folder next to executable
-        return juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory()
-            .getChildFile("models");
-#endif
+        return getDefaultLocalResourcesModelsDirectory();
     }
 
     inline juce::File getModelFile(const juce::String &fileName)
@@ -118,8 +136,7 @@ namespace PlatformPaths
         // Walk up from executable directory and probe both:
         //   <dir>/models/<file>
         //   <dir>/Resources/models/<file>
-        auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                       .getParentDirectory();
+        auto dir = getApplicationFile().getParentDirectory();
         for (int i = 0; i < 8 && dir.exists(); ++i)
         {
             auto modelsCandidate = dir.getChildFile("models").getChildFile(fileName);
@@ -173,8 +190,7 @@ namespace PlatformPaths
         if (isValid(cwdProbe))
             return cwdProbe;
 
-        auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                       .getParentDirectory();
+        auto dir = getApplicationFile().getParentDirectory();
         for (int i = 0; i < 8 && dir.exists(); ++i)
         {
             auto modelsCandidate = dir.getChildFile("models").getChildFile(dirName);

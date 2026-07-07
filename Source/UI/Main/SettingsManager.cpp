@@ -34,7 +34,11 @@ void SettingsManager::loadSettings()
   if (xml == nullptr)
     return;
 
-  device = xml->getStringAttribute("device", device);
+  if (xml->hasAttribute("device"))
+  {
+    device = xml->getStringAttribute("device", device);
+    hasStoredDeviceSetting = true;
+  }
   threads = xml->getIntAttribute("threads", threads);
 
   juce::String pitchDetectorStr = xml->getStringAttribute(
@@ -78,7 +82,10 @@ void SettingsManager::loadConfig()
       if (configObj)
       {
         if (configObj->hasProperty("device"))
+        {
           device = configObj->getProperty("device").toString();
+          hasStoredDeviceSetting = true;
+        }
 
         if (configObj->hasProperty("threads"))
           threads = static_cast<int>(configObj->getProperty("threads"));

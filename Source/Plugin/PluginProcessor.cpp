@@ -4,6 +4,7 @@
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
+#include "../Utils/OnnxRuntimeLoader.h"
 #include "ARADocumentController.h"
 #include "PitchNetAudioModification.h"
 #include "PluginEditor.h"
@@ -257,6 +258,8 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
     :
 #endif
       apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
+  OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
+
   // Cache raw parameter pointers for lock-free audio-thread access
   bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);
   outputGainParamValue = apvts.getRawParameterValue(PARAM_OUTPUT_GAIN);
@@ -2493,6 +2496,9 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
 void PitchNetAudioProcessor::setAraDocumentController(
     PitchNetDocumentController *dc) {
+  if (araDocumentController != nullptr && araDocumentController != dc)
+    araDocumentController->releaseOwningProcessor(this);
+
   araDocumentController = dc;
   if (dc) {
     dc->setOwningProcessor(this);
@@ -2543,18 +2549,11 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
-  // Detach only if the document controller still points at *our* realtime
-  // processor (another instance may have rebound it). This keeps headless ARA
-  // playback alive across editor open/close while preventing a dangling pointer
-  // when this instance is removed.
-  if (araDocumentController &&
-      araDocumentController->getRealtimeProcessor() == &realtimeProcessor) {
-    araDocumentController->setRealtimeProcessor(nullptr);
-    araDocumentController->setOwningProcessor(nullptr);
-    // We owned the persistence callbacks (they captured this processor); clear
-    // them so the shared document controller never calls into a dead instance.
-    araDocumentController->setPersistenceCallbacks(nullptr, nullptr);
-  }
+  // The document controller can outlive this processor while the host releases
+  // ARA objects. Drop only the binding that belongs to this processor so later
+  // callbacks cannot use stale raw pointers or processor-capturing lambdas.
+  if (araDocumentController)
+    araDocumentController->releaseOwningProcessor(this);
 }
 #else
 void PitchNetAudioProcessor::publishPersistentProjectSnapshot(

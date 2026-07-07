@@ -958,9 +958,28 @@ RealtimePitchProcessor *PitchNetDocumentController::getRealtimeProcessor() {
 
 void PitchNetDocumentController::setOwningProcessor(
     PitchNetAudioProcessor *processor) {
+  if (processor == nullptr) {
+    owningProcessor = nullptr;
+    setRealtimeProcessor(nullptr);
+    setPersistenceCallbacks(nullptr, nullptr);
+    return;
+  }
+
   owningProcessor = processor;
   ensureHeadlessPlaybackBinding();
   flushPendingAraRegionProjects();
+}
+
+void PitchNetDocumentController::releaseOwningProcessor(
+    PitchNetAudioProcessor *processor) {
+  if (processor == nullptr || owningProcessor != processor)
+    return;
+
+  if (realtimeProcessor == &processor->getRealtimeProcessor())
+    setRealtimeProcessor(nullptr);
+
+  owningProcessor = nullptr;
+  setPersistenceCallbacks(nullptr, nullptr);
 }
 
 void PitchNetDocumentController::ensureHeadlessPlaybackBinding() {

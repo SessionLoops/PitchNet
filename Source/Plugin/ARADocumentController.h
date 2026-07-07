@@ -226,6 +226,7 @@ public:
   }
   RealtimePitchProcessor *getRealtimeProcessor();
   void setOwningProcessor(PitchNetAudioProcessor *processor);
+  void releaseOwningProcessor(PitchNetAudioProcessor *processor);
   void ensureHeadlessPlaybackBinding();
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,

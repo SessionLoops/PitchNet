@@ -7,7 +7,7 @@
 // ── Core backgrounds ──────────────────────────────────────────────
 const juce::Colour APP_COLOR_BACKGROUND          = juce::Colour(0xFF1C1C1Cu);  // Deep charcoal base
 const juce::Colour APP_COLOR_SURFACE             = juce::Colour(0xFF161922u);  // Primary surface
-const juce::Colour APP_COLOR_SURFACE_ALT         = juce::Colour(0xFF181C27u);  // Recessed/inset surface (controls, inputs)
+const juce::Colour APP_COLOR_SURFACE_ALT         = juce::Colour(0xFF0D0B0Bu);  // Recessed/inset surface (controls, inputs)
 const juce::Colour APP_COLOR_SURFACE_RAISED      = juce::Colour(0xFF222737u);  // Elevated cards/popups
 
 // ── Borders ───────────────────────────────────────────────────────

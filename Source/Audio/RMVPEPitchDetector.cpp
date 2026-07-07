@@ -13,6 +13,23 @@ RMVPEPitchDetector::RMVPEPitchDetector()
 
 RMVPEPitchDetector::~RMVPEPitchDetector() = default;
 
+#ifdef HAVE_ONNXRUNTIME
+namespace {
+Ort::SessionOptions createCpuFallbackSessionOptions()
+{
+  Ort::SessionOptions sessionOptions;
+  sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+  sessionOptions.EnableCpuMemArena();
+
+  const int numThreads =
+      std::max(1u, std::thread::hardware_concurrency()) / 2;
+  sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+  sessionOptions.EnableMemPattern();
+  return sessionOptions;
+}
+} // namespace
+#endif
+
 bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
                                    GPUProvider provider, int deviceId)
 {
@@ -101,12 +118,40 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 
 #ifdef _WIN32
     std::wstring modelPathW = modelPath.getFullPathName().toWideCharPointer();
-    onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
-                                                 sessionOptions);
+    try
+    {
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                                   sessionOptions);
+    }
+    catch (const Ort::Exception &e)
+    {
+      if (provider == GPUProvider::CPU)
+        throw;
+
+      LOG("RMVPE session creation failed with requested provider: " +
+          juce::String(e.what()) + "; retrying with CPU");
+      auto cpuOptions = createCpuFallbackSessionOptions();
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                                   cpuOptions);
+    }
 #else
     std::string modelPathStr = modelPath.getFullPathName().toStdString();
-    onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
-                                                 sessionOptions);
+    try
+    {
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
+                                                   sessionOptions);
+    }
+    catch (const Ort::Exception &e)
+    {
+      if (provider == GPUProvider::CPU)
+        throw;
+
+      LOG("RMVPE session creation failed with requested provider: " +
+          juce::String(e.what()) + "; retrying with CPU");
+      auto cpuOptions = createCpuFallbackSessionOptions();
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
+                                                   cpuOptions);
+    }
 #endif
 
     allocator = std::make_unique<Ort::AllocatorWithDefaultOptions>();
