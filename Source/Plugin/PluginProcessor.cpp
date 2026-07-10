@@ -4,11 +4,7 @@
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
-<<<<<<< HEAD
-#include "../Utils/OnnxRuntime.h"
-=======
 #include "../Utils/OnnxRuntimeLoader.h"
->>>>>>> 52705bffccd9c74cfd6682e3021031781150e668
 #include "ARADocumentController.h"
 #include "PitchNetAudioModification.h"
 #include "PluginEditor.h"
@@ -262,16 +258,7 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
     :
 #endif
       apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
-<<<<<<< HEAD
-  juce::String onnxRuntimeError;
-  if (!OnnxRuntime::initialise(&onnxRuntimeError))
-  {
-    DBG("PitchNet: failed to initialise ONNX Runtime: " + onnxRuntimeError);
-    jassertfalse;
-  }
-=======
   OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
->>>>>>> 52705bffccd9c74cfd6682e3021031781150e668
 
   // Cache raw parameter pointers for lock-free audio-thread access
   bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);
