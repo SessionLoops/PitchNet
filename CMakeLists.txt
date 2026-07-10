@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
-project(PitchNet VERSION 0.1.0)
+project(PitchNet VERSION 0.1.1)
 
 include(FetchContent)
 include(cmake/Asio.cmake)
@@ -238,9 +238,6 @@ file(GLOB_RECURSE PITCHNET_CORE_SOURCES
     "Source/JuceHeader.h")
 
 list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
-# This shim uses Windows DPI APIs and is added explicitly to the Windows VST3
-# target below. Keep it out of the cross-platform core-source glob.
-list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/JuceVST3DpiCompat\\.cpp$")
 list(APPEND PITCHNET_CORE_SOURCES
     "Source/Utils/OnnxRuntimeLoader.cpp"
     "Source/Utils/OnnxRuntimeLoader.h"
@@ -274,11 +271,6 @@ target_sources(PitchNet PRIVATE
 target_sources(PitchNetPlugin PRIVATE
     ${PLUGIN_SOURCES}
     )
-
-if(WIN32 AND TARGET PitchNetPlugin_VST3)
-    target_sources(PitchNetPlugin_VST3 PRIVATE
-        Source/Utils/JuceVST3DpiCompat.cpp)
-endif()
 
 # Core/UI libraries (stage 1 modularization)
 add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
