@@ -1,6 +1,6 @@
 <div align="center">
   <h1>PitchNet</h1>
-  <img src="Resources/images/logo.png" alt="PitchNet logo" width="300" />
+  <img src="Resources/images/icon.png" alt="PitchNet icon" width="300" />
   <p>A lightweight pitch editor built with JUCE, featuring neural pitch detection and vocoder resynthesis for real-time preview.</p>
 </div>
 
