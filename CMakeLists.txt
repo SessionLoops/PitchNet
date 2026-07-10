@@ -238,6 +238,9 @@ file(GLOB_RECURSE PITCHNET_CORE_SOURCES
     "Source/JuceHeader.h")
 
 list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
+# This shim uses Windows DPI APIs and is added explicitly to the Windows VST3
+# target below. Keep it out of the cross-platform core-source glob.
+list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/JuceVST3DpiCompat\\.cpp$")
 list(APPEND PITCHNET_CORE_SOURCES
     "Source/Utils/OnnxRuntimeLoader.cpp"
     "Source/Utils/OnnxRuntimeLoader.h"
@@ -270,7 +273,6 @@ target_sources(PitchNet PRIVATE
 
 target_sources(PitchNetPlugin PRIVATE
     ${PLUGIN_SOURCES}
-    Source/Utils/JuceVST3DpiCompat.cpp
     )
 
 if(WIN32 AND TARGET PitchNetPlugin_VST3)

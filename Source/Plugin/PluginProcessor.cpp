@@ -4,6 +4,7 @@
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
+#include "../Utils/OnnxRuntime.h"
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "ARADocumentController.h"
 #include "PitchNetAudioModification.h"
@@ -259,6 +260,13 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
 #endif
       apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
   OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
+
+  juce::String onnxRuntimeError;
+  if (!OnnxRuntime::initialise(&onnxRuntimeError))
+  {
+    DBG("PitchNet: failed to initialise ONNX Runtime: " + onnxRuntimeError);
+    jassertfalse;
+  }
 
   // Cache raw parameter pointers for lock-free audio-thread access
   bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);

@@ -9,6 +9,7 @@
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
+#include "../Utils/OnnxRuntime.h"
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "../Utils/PlatformPaths.h"
 #include "../Utils/SHA256Utils.h"
@@ -324,6 +325,13 @@ MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
 {
   OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
+
+  juce::String onnxRuntimeError;
+  if (!OnnxRuntime::initialise(&onnxRuntimeError))
+  {
+    DBG("PitchNet: failed to initialise ONNX Runtime: " + onnxRuntimeError);
+    jassertfalse;
+  }
 
   LOG("MainComponent: constructor start");
   setSize(WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight);
