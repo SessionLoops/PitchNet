@@ -247,11 +247,14 @@ bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
         onnxEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING,
                                              "GAMEDetector");
         auto heavyOpts = createSessionOptions(provider, deviceId);
+        auto cpuHeavyOpts = createSessionOptions(GPUProvider::CPU, 0);
 
         // Lightweight options for small models (bd2dur, estimator):
         // single thread avoids thread-pool overhead on trivial ops.
         auto lightOpts = createSessionOptions(provider, deviceId);
         lightOpts.SetIntraOpNumThreads(1);
+        auto cpuLightOpts = createSessionOptions(GPUProvider::CPU, 0);
+        cpuLightOpts.SetIntraOpNumThreads(1);
 
         // Load all required models
         struct ModelEntry
@@ -278,8 +281,20 @@ bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
             }
             if (!entry.session->load(*onnxEnv, path, *entry.opts))
             {
-                loaded = false;
-                return false;
+                if (provider == GPUProvider::CPU)
+                {
+                    loaded = false;
+                    return false;
+                }
+
+                LOG("Retrying GAME " + juce::String(entry.filename) +
+                    " with CPU");
+                auto &cpuOpts = entry.opts == &lightOpts ? cpuLightOpts : cpuHeavyOpts;
+                if (!entry.session->load(*onnxEnv, path, cpuOpts))
+                {
+                    loaded = false;
+                    return false;
+                }
             }
             LOG("Loaded GAME " + juce::String(entry.filename) +
                 " (inputs=" +

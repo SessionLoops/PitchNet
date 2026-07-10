@@ -20,7 +20,12 @@ public:
   void loadSettings();
   void applySettings();
   juce::String getDevice() const { return device; }
-  void setDevice(const juce::String &d) { device = d; }
+  void setDevice(const juce::String &d)
+  {
+    device = d;
+    hasStoredDeviceSetting = true;
+  }
+  bool hasStoredDevice() const { return hasStoredDeviceSetting; }
   int getThreads() const { return threads; }
   void setThreads(int t) { threads = t; }
   PitchDetectorType getPitchDetectorType() const { return pitchDetectorType; }
@@ -88,6 +93,7 @@ private:
 
   // Settings
   juce::String device = "CPU";
+  bool hasStoredDeviceSetting = false;
   int threads = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   int gpuDeviceId = 0;

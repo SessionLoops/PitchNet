@@ -9,6 +9,7 @@
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
+#include "../Utils/OnnxRuntimeLoader.h"
 #include "../Utils/PlatformPaths.h"
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/UI/WindowSizing.h"
@@ -322,6 +323,8 @@ private:
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
 {
+  OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
+
   LOG("MainComponent: constructor start");
   setSize(WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight);
   setOpaque(true); // Required for native title bar

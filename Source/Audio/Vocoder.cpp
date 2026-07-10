@@ -11,6 +11,10 @@
 
 namespace
 {
+#ifdef HAVE_ONNXRUNTIME
+  Ort::SessionOptions createCpuFallbackSessionOptions();
+#endif
+
   constexpr float kMelMinClamp = -15.0f;
   constexpr float kMelMaxClamp = 5.0f;
   constexpr float kF0MinValid = 20.0f;
@@ -271,6 +275,7 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     Ort::SessionOptions sessionOptions = createSessionOptions();
 
     // Create session
+    bool usedCpuFallback = false;
 #ifdef _WIN32
     // Safely convert path to wide string
     juce::String pathStr = preferredModelPath.getFullPathName();
@@ -300,9 +305,25 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     log("Loading model from: " + pathStr.toStdString());
     log("Path length: " + std::to_string(modelPathW.length()) + " characters");
 
-    // Create the session - this is where the exception might occur
-    onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
-                                                 sessionOptions);
+    try
+    {
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                                   sessionOptions);
+    }
+    catch (const Ort::Exception &e)
+    {
+      if (executionDevice == "CPU")
+        throw;
+
+      log("Failed to create session with " + executionDevice.toStdString() +
+          ": " + std::string(e.what()));
+      log("Retrying vocoder session with CPU");
+
+      auto cpuOptions = createCpuFallbackSessionOptions();
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                                   cpuOptions);
+      usedCpuFallback = true;
+    }
 #else
     std::string modelPathStr = preferredModelPath.getFullPathName().toStdString();
     if (modelPathStr.empty())
@@ -311,12 +332,29 @@ bool Vocoder::loadModel(const juce::File &modelPath)
       return false;
     }
     log("Loading model from: " + modelPathStr);
-    onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
-                                                 sessionOptions);
+    try
+    {
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
+                                                   sessionOptions);
+    }
+    catch (const Ort::Exception &e)
+    {
+      if (executionDevice == "CPU")
+        throw;
+
+      log("Failed to create session with " + executionDevice.toStdString() +
+          ": " + std::string(e.what()));
+      log("Retrying vocoder session with CPU");
+
+      auto cpuOptions = createCpuFallbackSessionOptions();
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
+                                                   cpuOptions);
+      usedCpuFallback = true;
+    }
 #endif
 
     ioBinding.reset();
-    if (executionDevice != "CPU")
+    if (executionDevice != "CPU" && !usedCpuFallback)
     {
       try
       {
@@ -1048,6 +1086,20 @@ bool Vocoder::reloadModel()
 }
 
 #ifdef HAVE_ONNXRUNTIME
+namespace {
+Ort::SessionOptions createCpuFallbackSessionOptions() {
+  Ort::SessionOptions sessionOptions;
+  sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+  sessionOptions.EnableMemPattern();
+  sessionOptions.EnableCpuMemArena();
+
+  const int numThreads =
+      std::max(1u, std::thread::hardware_concurrency()) / 2;
+  sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+  return sessionOptions;
+}
+} // namespace
+
 Ort::SessionOptions Vocoder::createSessionOptions()
 {
   Ort::SessionOptions sessionOptions;

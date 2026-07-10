@@ -9,9 +9,15 @@ include(cmake/Asio.cmake)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ONNX Runtime configuration
+if(WIN32)
+    set(PITCHNET_DEFAULT_USE_DIRECTML ON)
+else()
+    set(PITCHNET_DEFAULT_USE_DIRECTML OFF)
+endif()
+
 option(USE_GPU "Enable GPU acceleration for ONNX Runtime (not supported on macOS)" OFF)
 option(USE_CUDA "Enable CUDA execution provider" OFF)
-option(USE_DIRECTML "Enable DirectML execution provider (Windows only)" OFF)
+option(USE_DIRECTML "Enable DirectML execution provider (Windows only)" ${PITCHNET_DEFAULT_USE_DIRECTML})
 option(USE_BUNDLED_CUDA_RUNTIME "Bundle minimal CUDA runtime DLLs (Windows only)" OFF)
 option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)" OFF)
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
@@ -58,7 +64,12 @@ endif()
 
 # Check if ONNX Runtime already exists in build directory
 set(ONNXRUNTIME_CACHE_DIR "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-src")
-if(EXISTS "${ONNXRUNTIME_CACHE_DIR}/include/onnxruntime_cxx_api.h")
+if(WIN32 AND USE_DIRECTML)
+    set(ONNXRUNTIME_CACHE_HEADER "${ONNXRUNTIME_CACHE_DIR}/build/native/include/onnxruntime_cxx_api.h")
+else()
+    set(ONNXRUNTIME_CACHE_HEADER "${ONNXRUNTIME_CACHE_DIR}/include/onnxruntime_cxx_api.h")
+endif()
+if(EXISTS "${ONNXRUNTIME_CACHE_HEADER}")
     message(STATUS "ONNX Runtime already downloaded, skipping download")
     set(ONNXRUNTIME_ROOT ${ONNXRUNTIME_CACHE_DIR})
 else()
@@ -228,6 +239,8 @@ file(GLOB_RECURSE PITCHNET_CORE_SOURCES
 
 list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
 list(APPEND PITCHNET_CORE_SOURCES
+    "Source/Utils/OnnxRuntimeLoader.cpp"
+    "Source/Utils/OnnxRuntimeLoader.h"
     "Source/Utils/SHA256Utils.cpp"
     "Source/Utils/SHA256Utils.h")
 if(APPLE)
@@ -257,7 +270,13 @@ target_sources(PitchNet PRIVATE
 
 target_sources(PitchNetPlugin PRIVATE
     ${PLUGIN_SOURCES}
+    Source/Utils/JuceVST3DpiCompat.cpp
     )
+
+if(WIN32 AND TARGET PitchNetPlugin_VST3)
+    target_sources(PitchNetPlugin_VST3 PRIVATE
+        Source/Utils/JuceVST3DpiCompat.cpp)
+endif()
 
 # Core/UI libraries (stage 1 modularization)
 add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
@@ -342,6 +361,18 @@ if(ONNXRUNTIME_FOUND)
     target_include_directories(pitchnet_core PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
     target_link_libraries(pitchnet_core PUBLIC ${ONNXRUNTIME_LIBRARY})
     target_compile_definitions(pitchnet_core PUBLIC HAVE_ONNXRUNTIME=1)
+    if(APPLE)
+        target_compile_definitions(pitchnet_core PUBLIC ORT_API_MANUAL_INIT=1)
+    endif()
+
+    if(WIN32 AND MSVC)
+        foreach(PITCHNET_TARGET PitchNet PitchNetPlugin_VST3 PitchNetPlugin_AAX)
+            if(TARGET ${PITCHNET_TARGET})
+                target_link_options(${PITCHNET_TARGET} PRIVATE "/DELAYLOAD:onnxruntime.dll")
+                target_link_libraries(${PITCHNET_TARGET} PRIVATE delayimp)
+            endif()
+        endforeach()
+    endif()
 
     # Pass GPU option to code (macOS always uses CPU)
     if(USE_GPU AND NOT APPLE)
@@ -790,7 +821,11 @@ foreach(GMODEL ${REQUIRED_GAME_MODELS})
 endforeach()
 message(STATUS "All required models found")
 message(STATUS "Debug runtime resources will be loaded from ${CMAKE_CURRENT_SOURCE_DIR}/Resources")
-message(STATUS "Release runtime resources will be loaded from the platform common application data directory")
+if(WIN32)
+    message(STATUS "Release runtime resources will first be loaded from the platform common application data directory")
+else()
+    message(STATUS "Release runtime resources will be loaded from the platform resource directory")
+endif()
 
 # Re-sign bundles on macOS after all resources are copied
 if(APPLE)

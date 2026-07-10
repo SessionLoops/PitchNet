@@ -54,7 +54,7 @@ public:
             if (isHighlighted && isActive)
             {
                 // Pill-shaped highlight
-                g.setColour(APP_COLOR_PRIMARY.withAlpha(0.22f));
+                g.setColour(juce::Colour(0xFF191818u));
                 g.fillRoundedRectangle(area.toFloat().reduced(4.0f, 1.0f), 6.0f);
                 textColourToUse = APP_COLOR_TEXT_PRIMARY;
             }
@@ -125,7 +125,7 @@ public:
         if (isMenuOpen || isMouseOverItem)
         {
             // Subtle rounded highlight instead of solid primary block
-            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.18f));
+            g.setColour(juce::Colour(0xFF191818u));
             g.fillRoundedRectangle(juce::Rectangle<float>(1.0f, 2.0f,
                 static_cast<float>(width) - 2.0f, static_cast<float>(height) - 4.0f), 5.0f);
         }
