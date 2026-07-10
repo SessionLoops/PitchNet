@@ -4,6 +4,8 @@
   <p>A lightweight pitch editor built with JUCE, featuring neural pitch detection and vocoder resynthesis for real-time preview.</p>
 </div>
 
+![PitchNet editor screenshot](docs/images/pitchnet-editor.png)
+
 ## Origin, attribution, and license
 
 PitchNet is a modified derivative of [HachiTune](https://github.com/KCKT0112/HachiTune), an open-source project developed by the HachiTune contributors. It includes substantial code derived from HachiTune, along with subsequent changes by Session Loops and other contributors. This repository does not claim sole authorship of the derived work.
@@ -28,7 +30,7 @@ PitchNet is a standalone app and audio plugin for editing vocal pitch in a piano
 - Multi-language UI (English, Japanese, Chinese Simplified, Chinese Traditional)
 
 ## Download
-To [Release](https://github.com/KCKT0112/PitchNet/releases)
+To [Download PitchNet](https://sessionloops.com/pitchnet#downloads)
 
 ## Requirements
 
