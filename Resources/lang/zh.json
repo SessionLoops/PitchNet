@@ -7,6 +7,8 @@
   "command.open_audio.desp": "打开音频",
   "command.save_project": "保存项目",
   "command.save_project.desp": "保存当前项目",
+  "command.save_project_as": "项目另存为...",
+  "command.save_project_as.desp": "将当前项目保存到新文件",
   "command.export_audio": "导出音频...",
   "command.export_audio.desp": "导出处理后的音频",
   "command.export_midi": "导出 MIDI...",

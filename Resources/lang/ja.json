@@ -7,6 +7,8 @@
   "command.open_audio.desp": "オーディオを開く",
   "command.save_project": "プロジェクトを保存",
   "command.save_project.desp": "現在のプロジェクトを保存",
+  "command.save_project_as": "プロジェクトに名前を付けて保存...",
+  "command.save_project_as.desp": "現在のプロジェクトを新しいファイルに保存",
   "command.export_audio": "オーディオを書き出し...",
   "command.export_audio.desp": "処理済みオーディオを書き出し",
   "command.export_midi": "MIDIを書き出し...",

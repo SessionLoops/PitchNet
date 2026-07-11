@@ -7,6 +7,8 @@
   "command.open_audio.desp": "Open an audio file",
   "command.save_project": "Save Project",
   "command.save_project.desp": "Save the current project",
+  "command.save_project_as": "Save Project As...",
+  "command.save_project_as.desp": "Save the current project to a new file",
   "command.export_audio": "Export Audio...",
   "command.export_audio.desp": "Export processed audio",
   "command.export_midi": "Export MIDI...",

@@ -137,7 +137,9 @@ bool readMel(juce::InputStream& in, std::vector<std::vector<float>>& mel)
 } // namespace
 
 bool ProjectSerializer::saveToFile(const Project& project, const juce::File& file) {
-    auto json = toJson(project);
+    // A .pitchnet document is self-contained: retain its rendered waveform and
+    // analysis caches so it can reopen without the original source audio.
+    auto json = toJson(project, true, true);
     auto jsonString = juce::JSON::toString(json, true); // Pretty print
 
     return file.replaceWithText(jsonString);

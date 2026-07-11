@@ -1,4 +1,5 @@
 #include "ExportHelper.h"
+#include "../StyledComponents.h"
 #include <climits>
 #include <cmath>
 
@@ -126,13 +127,14 @@ int chooseQualityIndex(const juce::StringArray &options, int targetKbps) {
 
 juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
                                            const juce::String &extension) {
+  const auto normalizedExtension = extension.trimCharactersAtStart(".");
   for (int i = 0; i < manager.getNumKnownFormats(); ++i) {
     auto *fmt = manager.getKnownFormat(i);
     if (!fmt)
       continue;
     auto exts = fmt->getFileExtensions();
     for (const auto &ext : exts) {
-      if (ext.equalsIgnoreCase(extension))
+      if (ext.trimCharactersAtStart(".").equalsIgnoreCase(normalizedExtension))
         return fmt;
     }
   }
@@ -148,11 +150,13 @@ public:
   ExportSettingsContent(int inputSampleRate,
                         std::function<void(std::optional<ExportSettings>)> done)
       : onDone(std::move(done)) {
+    setOpaque(false);
+
     addAndMakeVisible(title);
     title.setText("Export Settings", juce::dontSendNotification);
     title.setJustificationType(juce::Justification::centredLeft);
     title.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
-    title.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+    title.setFont(AppFont::getBoldFont(20.0f));
 
     setupCombo(formatBox, formatLabel, "Format", {"WAV", "FLAC", "AIFF", "OGG"}, 1);
 
@@ -176,6 +180,8 @@ public:
     addAndMakeVisible(exportButton);
     cancelButton.setButtonText("Cancel");
     exportButton.setButtonText("Export");
+    configureButton(cancelButton);
+    configureButton(exportButton);
     cancelButton.addListener(this);
     exportButton.addListener(this);
   }
@@ -183,34 +189,52 @@ public:
   ~ExportSettingsContent() override {
     cancelButton.removeListener(this);
     exportButton.removeListener(this);
+    cancelButton.setLookAndFeel(nullptr);
+    exportButton.setLookAndFeel(nullptr);
   }
 
   void paint(juce::Graphics &g) override {
-    g.fillAll(APP_COLOR_SURFACE);
+    auto bounds = getLocalBounds().toFloat();
+    g.setColour(juce::Colour(0xFF232323u));
+    g.fillRoundedRectangle(bounds, 10.0f);
+
+    auto card = cardBounds.toFloat();
+    g.setColour(juce::Colour(0xFF151515u));
+    g.fillRoundedRectangle(card, 8.0f);
+    g.setColour(APP_COLOR_BORDER.withAlpha(0.55f));
+    g.drawRoundedRectangle(card.reduced(0.5f), 8.0f, 0.75f);
   }
 
   void resized() override {
-    auto area = getLocalBounds().reduced(12);
+    auto area = getLocalBounds().reduced(16);
     title.setBounds(area.removeFromTop(28));
     area.removeFromTop(6);
 
-    const int rowH = 28;
-    layoutRow(area.removeFromTop(rowH), formatLabel, formatBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), sampleRateLabel, sampleRateBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), bitDepthLabel, bitDepthBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), bitrateLabel, bitrateBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), channelsLabel, channelsBox);
+    cardBounds = area;
+    auto content = cardBounds.reduced(16, 12);
+    const int rowHeight = 32;
+    const int rowGap = 8;
+    const int controlWidth = juce::jlimit(150, 190, content.getWidth() / 2);
+    const int labelWidth = content.getWidth() - controlWidth - 24;
 
-    area.removeFromTop(12);
-    auto btnRow = area.removeFromTop(30);
+    auto layoutRow = [&](juce::Label &label, juce::Component &control) {
+      auto row = content.removeFromTop(rowHeight);
+      label.setBounds(row.removeFromLeft(labelWidth));
+      control.setBounds(row.removeFromRight(controlWidth).reduced(0, 2));
+      content.removeFromTop(rowGap);
+    };
+
+    layoutRow(formatLabel, formatBox);
+    layoutRow(sampleRateLabel, sampleRateBox);
+    layoutRow(bitDepthLabel, bitDepthBox);
+    layoutRow(bitrateLabel, bitrateBox);
+    layoutRow(channelsLabel, channelsBox);
+
+    auto btnRow = content.removeFromBottom(32);
     auto right = btnRow.removeFromRight(190);
     cancelButton.setBounds(right.removeFromLeft(90));
     right.removeFromLeft(10);
-    exportButton.setBounds(right.removeFromLeft(90));
+    exportButton.setBounds(right);
   }
 
 private:
@@ -219,14 +243,20 @@ private:
     addAndMakeVisible(label);
     addAndMakeVisible(box);
     label.setText(labelText, juce::dontSendNotification);
-    label.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
+    label.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
+    label.setFont(AppFont::getFont(15.0f));
+    label.setJustificationType(juce::Justification::centredLeft);
     box.addItemList(items, 1);
     box.setSelectedId(selectedId, juce::dontSendNotification);
   }
 
-  static void layoutRow(juce::Rectangle<int> row, juce::Label &label, juce::ComboBox &box) {
-    label.setBounds(row.removeFromLeft(120));
-    box.setBounds(row);
+  static void configureButton(juce::TextButton &button) {
+    button.setLookAndFeel(&DarkLookAndFeel::getInstance());
+    button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF5B5B5Bu));
+    button.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF3E3E3Eu));
+    button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFEFEFEFu));
+    button.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFEFEFEFu));
+    button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
   }
 
   ExportSettings getSettings() const {
@@ -267,9 +297,10 @@ private:
   }
 
   std::function<void(std::optional<ExportSettings>)> onDone;
+  juce::Rectangle<int> cardBounds;
   juce::Label title;
   juce::Label formatLabel, sampleRateLabel, bitDepthLabel, bitrateLabel, channelsLabel;
-  juce::ComboBox formatBox, sampleRateBox, bitDepthBox, bitrateBox, channelsBox;
+  StyledComboBox formatBox, sampleRateBox, bitDepthBox, bitrateBox, channelsBox;
   juce::TextButton cancelButton, exportButton;
 };
 
@@ -277,7 +308,7 @@ void showExportSettingsDialogAsync(
     juce::Component *parent, int inputSampleRate,
     std::function<void(std::optional<ExportSettings>)> onDone) {
   auto *content = new ExportSettingsContent(inputSampleRate, std::move(onDone));
-  content->setSize(420, 270);
+  content->setSize(420, 330);
 
   juce::DialogWindow::LaunchOptions opts;
   opts.content.setOwned(content);
@@ -288,7 +319,8 @@ void showExportSettingsDialogAsync(
   opts.useNativeTitleBar = false;
   opts.resizable = false;
   opts.useBottomRightCornerResizer = false;
-  opts.launchAsync();
+  if (auto *window = opts.launchAsync())
+    window->setTitleBarHeight(0);
 }
 
 } // namespace ExportHelper

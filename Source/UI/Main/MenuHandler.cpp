@@ -56,6 +56,9 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 }
                 menu.addSubMenu("Recent Files", recentMenu);
                 menu.addSeparator();
+                menu.addCommandItem(commandManager, CommandIDs::saveProject);
+                menu.addCommandItem(commandManager, CommandIDs::saveProjectAs);
+                menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::exportAudio);
                 menu.addCommandItem(commandManager, CommandIDs::exportMidi);
 #if !JUCE_MAC

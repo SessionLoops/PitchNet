@@ -27,6 +27,51 @@ void MainComponent::openProjectFile(const juce::File &file) {
   }
   loadedProject->setProjectFilePath(file);
 
+  // .pitchnet files embed the rendered waveform and analysis data. Prefer this
+  // self-contained state so projects reopen exactly as saved, even if the
+  // original audio file has moved or changed.
+  if (loadedProject->getAudioData().waveform.getNumSamples() > 0) {
+    loadedProject->recomposeFromSynthIfPresent();
+
+    if (editorController)
+      editorController->setProject(std::make_unique<Project>(*loadedProject));
+
+    auto *project = getProject();
+    if (!project)
+      return;
+
+    pianoRoll.setProject(project);
+    pianoRollView.setProject(project);
+    parameterPanel.setProject(project);
+    parameterPanel.setSelectedNote(nullptr);
+    toolbar.setTotalTime(project->getAudioData().getDuration());
+    toolbar.setLoopEnabled(project->getLoopRange().enabled);
+    toolbar.setTransportEnabled(true);
+
+    if (!isPluginMode()) {
+      if (auto *engine = editorController ? editorController->getAudioEngine()
+                                           : nullptr) {
+        try {
+          engine->loadWaveform(project->getAudioData().waveform,
+                               project->getAudioData().sampleRate);
+          const auto &loopRange = project->getLoopRange();
+          if (loopRange.enabled)
+            engine->setLoopRange(loopRange.startSeconds, loopRange.endSeconds);
+          engine->setLoopEnabled(loopRange.enabled);
+          engine->setVolumeDb(project->getVolume());
+        } catch (...) {
+        }
+      }
+    }
+
+    if (hasAnalyzedProject())
+      fitAnalyzedPitchRangeToView(*project);
+    repaint();
+    if (isPluginMode())
+      notifyProjectDataChanged();
+    return;
+  }
+
   auto continueOpenWithAudio = [this, loadedProject](const juce::File &audioFile) {
     if (!audioFile.existsAsFile()) {
       StyledMessageBox::show(this, "Open failed",

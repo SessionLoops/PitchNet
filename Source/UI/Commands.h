@@ -15,6 +15,7 @@ namespace CommandIDs
         // File Menu Commands (0x2000-0x200F)
         openFile            = 0x2001,
         saveProject         = 0x2002,
+        saveProjectAs       = 0x2006,
         exportAudio         = 0x2003,
         exportMidi          = 0x2004,
         quit                = 0x2005,

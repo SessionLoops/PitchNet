@@ -1095,15 +1095,15 @@ bool MainComponent::keyPressed(const juce::KeyPress &key,
   return false;
 }
 
-void MainComponent::saveProject()
+void MainComponent::saveProject(bool saveAs)
 {
   if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
   {
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    juce::MessageManager::callAsync([safeThis]()
+    juce::MessageManager::callAsync([safeThis, saveAs]()
                                     {
       if (safeThis != nullptr)
-        safeThis->saveProject(); });
+        safeThis->saveProject(saveAs); });
     return;
   }
 
@@ -1118,7 +1118,7 @@ void MainComponent::saveProject()
       project->setAudioSha256(SHA256Utils::fileSHA256(audioFile));
   };
 
-  auto target = project->getProjectFilePath();
+  auto target = saveAs ? juce::File{} : project->getProjectFilePath();
   if (target == juce::File{})
   {
     // Prevent re-triggering while dialog is open
@@ -1128,14 +1128,14 @@ void MainComponent::saveProject()
     // Default next to audio if possible
     auto audio = project->getFilePath();
     if (audio.existsAsFile())
-      target = audio.withFileExtension("htpx");
+      target = audio.withFileExtension("pitchnet");
     else
       target =
           juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-              .getChildFile("Untitled.htpx");
+              .getChildFile("Untitled.pitchnet");
 
 #if JUCE_WINDOWS && JUCE_MODAL_LOOPS_PERMITTED
-    juce::FileChooser chooser(TR("dialog.save_project"), target, "*.htpx",
+    juce::FileChooser chooser(TR("dialog.save_project"), target, "*.pitchnet",
                               true, false, this);
     if (!chooser.browseForFileToSave(true))
       return;
@@ -1145,7 +1145,7 @@ void MainComponent::saveProject()
       return;
 
     if (file.getFileExtension().isEmpty())
-      file = file.withFileExtension("htpx");
+      file = file.withFileExtension("pitchnet");
 
     toolbar.showProgress(TR("progress.saving"));
     toolbar.setProgress(-1.0f);
@@ -1159,7 +1159,7 @@ void MainComponent::saveProject()
     return;
 #else
     fileChooser = std::make_unique<juce::FileChooser>(
-        TR("dialog.save_project"), target, "*.htpx");
+        TR("dialog.save_project"), target, "*.pitchnet");
 
     auto chooserFlags = juce::FileBrowserComponent::saveMode |
                         juce::FileBrowserComponent::canSelectFiles |
@@ -1180,7 +1180,7 @@ void MainComponent::saveProject()
         return;
 
       if (file.getFileExtension().isEmpty())
-        file = file.withFileExtension("htpx");
+        file = file.withFileExtension("pitchnet");
 
       safeThis->toolbar.showProgress(TR("progress.saving"));
       safeThis->toolbar.setProgress(-1.0f);
@@ -1231,7 +1231,7 @@ void MainComponent::openFile()
 
   fileChooser = std::make_unique<juce::FileChooser>(
       TR("dialog.select_audio"), juce::File{},
-      "*.htpx;*.wav;*.mp3;*.flac;*.aiff");
+      "*.pitchnet;*.wav;*.mp3;*.flac;*.aiff");
 
   auto chooserFlags = juce::FileBrowserComponent::openMode |
                       juce::FileBrowserComponent::canSelectFiles;
@@ -1247,7 +1247,7 @@ void MainComponent::openFile()
         safeThis->fileChooser.reset(); // Allow next dialog to open
         if (file.existsAsFile()) {
           safeThis->addRecentFile(file);
-          if (file.hasFileExtension("htpx") || file.hasFileExtension(".htpx"))
+          if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
             safeThis->openProjectFile(file);
           else
             safeThis->loadAudioFile(file);
@@ -1301,7 +1301,7 @@ void MainComponent::openRecentFile(const juce::File &file)
     return;
   }
 
-  if (file.hasFileExtension("htpx") || file.hasFileExtension(".htpx"))
+  if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
     openProjectFile(file);
   else
     loadAudioFile(file);
@@ -1499,17 +1499,12 @@ void MainComponent::exportFile()
               }
             } while (false);
 
-            juce::MessageManager::callAsync([safeThis, success, error, file]() {
+            juce::MessageManager::callAsync([safeThis, success, error]() {
               if (safeThis == nullptr)
                 return;
               safeThis->toolbar.setEnabled(true);
               safeThis->toolbar.hideProgress();
-              if (success) {
-                StyledMessageBox::show(
-                    safeThis.getComponent(), TR("dialog.export_complete"),
-                    TR("dialog.audio_exported") + "\n" + file.getFullPathName(),
-                    StyledMessageBox::InfoIcon);
-              } else {
+              if (!success) {
                 StyledMessageBox::show(
                     safeThis.getComponent(), TR("dialog.export_failed"), error,
                     StyledMessageBox::WarningIcon);
@@ -1615,14 +1610,7 @@ void MainComponent::exportMidiFile()
   toolbar.setProgress(1.0f);
   toolbar.hideProgress();
 
-  if (success)
-  {
-    StyledMessageBox::show(
-        this, TR("dialog.export_complete"),
-        TR("dialog.midi_exported") + "\n" + file.getFullPathName(),
-        StyledMessageBox::InfoIcon);
-  }
-  else
+  if (!success)
   {
     StyledMessageBox::show(
         this, TR("dialog.export_failed"),
@@ -1679,12 +1667,7 @@ void MainComponent::exportMidiFile()
         safeThis->toolbar.setProgress(1.0f);
         safeThis->toolbar.hideProgress();
 
-        if (success) {
-          StyledMessageBox::show(
-              safeThis.getComponent(), TR("dialog.export_complete"),
-              TR("dialog.midi_exported") + "\n" + file.getFullPathName(),
-              StyledMessageBox::InfoIcon);
-        } else {
+        if (!success) {
           StyledMessageBox::show(
               safeThis.getComponent(), TR("dialog.export_failed"),
               TR("dialog.failed_write_midi") + "\n" + file.getFullPathName(),
@@ -2273,7 +2256,7 @@ bool MainComponent::isInterestedInFileDrag(const juce::StringArray &files)
 
   for (const auto &file : files)
   {
-    if (file.endsWithIgnoreCase(".htpx") || file.endsWithIgnoreCase(".wav") ||
+    if (file.endsWithIgnoreCase(".pitchnet") || file.endsWithIgnoreCase(".wav") ||
         file.endsWithIgnoreCase(".mp3") ||
         file.endsWithIgnoreCase(".flac") || file.endsWithIgnoreCase(".aiff") ||
         file.endsWithIgnoreCase(".ogg") || file.endsWithIgnoreCase(".m4a"))
@@ -2295,7 +2278,8 @@ void MainComponent::filesDropped(const juce::StringArray &files, int /*x*/,
   if (!audioFile.existsAsFile())
     return;
 
-  if (audioFile.hasFileExtension("htpx") || audioFile.hasFileExtension(".htpx"))
+  if (audioFile.hasFileExtension("pitchnet") ||
+      audioFile.hasFileExtension(".pitchnet"))
     openProjectFile(audioFile);
   else
     loadAudioFile(audioFile);
@@ -2841,6 +2825,7 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       // File commands
       CommandIDs::openFile,
       CommandIDs::saveProject,
+      CommandIDs::saveProjectAs,
       CommandIDs::exportAudio,
       CommandIDs::exportMidi,
       CommandIDs::quit,
@@ -2892,15 +2877,23 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setActive(project != nullptr);
     break;
 
+  case CommandIDs::saveProjectAs:
+    result.setInfo(TR("command.save_project_as"), TR("command.save_project_as.desp"),
+                   "File", 0);
+    result.addDefaultKeypress('s', primaryModifier | juce::ModifierKeys::shiftModifier);
+    result.setActive(project != nullptr);
+    break;
+
   case CommandIDs::exportAudio:
     result.setInfo(TR("command.export_audio"), TR("command.export_audio.desp"), "File", 0);
     result.addDefaultKeypress('e', primaryModifier);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr &&
+                     project->getAudioData().waveform.getNumSamples() > 0);
     break;
 
   case CommandIDs::exportMidi:
     result.setInfo(TR("command.export_midi"), TR("command.export_midi.desp"), "File", 0);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr && !project->getNotes().empty());
     break;
 
   case CommandIDs::quit:
@@ -3008,6 +3001,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
 
   case CommandIDs::saveProject:
     this->saveProject();
+    return true;
+
+  case CommandIDs::saveProjectAs:
+    this->saveProject(true);
     return true;
 
   case CommandIDs::exportAudio:
