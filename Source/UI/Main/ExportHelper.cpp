@@ -1,6 +1,5 @@
 #include "ExportHelper.h"
 #include "../StyledComponents.h"
-#include <climits>
 #include <cmath>
 
 namespace ExportHelper {
@@ -90,41 +89,6 @@ juce::AudioBuffer<float> resampleAudio(const juce::AudioBuffer<float> &input,
   return output;
 }
 
-static std::optional<int> parseFirstInt(const juce::String &s) {
-  juce::String digits;
-  bool started = false;
-  for (auto c : s) {
-    if (juce::CharacterFunctions::isDigit(c)) {
-      digits += juce::String::charToString(c);
-      started = true;
-    } else if (started) {
-      break;
-    }
-  }
-  if (digits.isEmpty())
-    return std::nullopt;
-  return digits.getIntValue();
-}
-
-int chooseQualityIndex(const juce::StringArray &options, int targetKbps) {
-  if (options.isEmpty())
-    return 0;
-
-  int bestIdx = 0;
-  int bestDist = INT_MAX;
-  for (int i = 0; i < options.size(); ++i) {
-    auto parsed = parseFirstInt(options[i]);
-    if (!parsed.has_value())
-      continue;
-    const int dist = std::abs(parsed.value() - targetKbps);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
-
 juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
                                            const juce::String &extension) {
   const auto normalizedExtension = extension.trimCharactersAtStart(".");
@@ -172,8 +136,6 @@ public:
     setupCombo(sampleRateBox, sampleRateLabel, "Sample Rate",
                {"22050", "32000", "44100", "48000"}, srId);
     setupCombo(bitDepthBox, bitDepthLabel, "Bit Depth", {"16", "24", "32"}, 1);
-    setupCombo(bitrateBox, bitrateLabel, "Bitrate (kbps)",
-               {"64", "96", "128", "160", "192", "256", "320"}, 5);
     setupCombo(channelsBox, channelsLabel, "Channels", {"Mono", "Stereo"}, 1);
 
     addAndMakeVisible(cancelButton);
@@ -227,7 +189,6 @@ public:
     layoutRow(formatLabel, formatBox);
     layoutRow(sampleRateLabel, sampleRateBox);
     layoutRow(bitDepthLabel, bitDepthBox);
-    layoutRow(bitrateLabel, bitrateBox);
     layoutRow(channelsLabel, channelsBox);
 
     auto btnRow = content.removeFromBottom(32);
@@ -277,7 +238,6 @@ private:
     }
     settings.sampleRate = sampleRateBox.getText().getIntValue();
     settings.bitsPerSample = bitDepthBox.getText().getIntValue();
-    settings.bitrateKbps = bitrateBox.getText().getIntValue();
     settings.channels = channelsBox.getSelectedId() == 2 ? 2 : 1;
     return settings;
   }
@@ -299,8 +259,8 @@ private:
   std::function<void(std::optional<ExportSettings>)> onDone;
   juce::Rectangle<int> cardBounds;
   juce::Label title;
-  juce::Label formatLabel, sampleRateLabel, bitDepthLabel, bitrateLabel, channelsLabel;
-  StyledComboBox formatBox, sampleRateBox, bitDepthBox, bitrateBox, channelsBox;
+  juce::Label formatLabel, sampleRateLabel, bitDepthLabel, channelsLabel;
+  StyledComboBox formatBox, sampleRateBox, bitDepthBox, channelsBox;
   juce::TextButton cancelButton, exportButton;
 };
 
@@ -308,7 +268,7 @@ void showExportSettingsDialogAsync(
     juce::Component *parent, int inputSampleRate,
     std::function<void(std::optional<ExportSettings>)> onDone) {
   auto *content = new ExportSettingsContent(inputSampleRate, std::move(onDone));
-  content->setSize(420, 330);
+  content->setSize(420, 290);
 
   juce::DialogWindow::LaunchOptions opts;
   opts.content.setOwned(content);

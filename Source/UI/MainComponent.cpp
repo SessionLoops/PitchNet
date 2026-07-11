@@ -1476,11 +1476,10 @@ void MainComponent::exportFile()
                                        .withSampleRate(settings.sampleRate)
                                        .withNumChannels(exportBuffer.getNumChannels())
                                        .withBitsPerSample(settings.bitsPerSample);
-              if (format->isCompressed()) {
+              constexpr int ogg192KbpsQualityOption = 6;
+              if (settings.format == ExportHelper::ExportFormat::ogg)
                 writerOptions = writerOptions.withQualityOptionIndex(
-                    ExportHelper::chooseQualityIndex(format->getQualityOptions(),
-                                       settings.bitrateKbps));
-              }
+                    ogg192KbpsQualityOption);
 
               auto writer = format->createWriterFor(outputStream, writerOptions);
               if (!writer) {

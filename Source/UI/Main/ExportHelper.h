@@ -21,7 +21,6 @@ struct ExportSettings {
   int sampleRate = SAMPLE_RATE;
   int channels = 1;
   int bitsPerSample = 16;
-  int bitrateKbps = 192;
 };
 
 juce::String getFormatDisplayName(ExportFormat format);
@@ -35,7 +34,6 @@ juce::AudioBuffer<float> resampleAudio(const juce::AudioBuffer<float> &input,
 
 juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
                                            const juce::String &extension);
-int chooseQualityIndex(const juce::StringArray &options, int targetKbps);
 
 void showExportSettingsDialogAsync(
     juce::Component *parent, int inputSampleRate,
