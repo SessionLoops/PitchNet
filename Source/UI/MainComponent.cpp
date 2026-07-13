@@ -357,6 +357,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
         if (!safeThis || preview.getNumSamples() == 0 ||
             !safeThis->noteDragAuditionActive)
           return;
+        double auditionSampleRate = SAMPLE_RATE;
+        if (auto *project = safeThis->getProject())
+          auditionSampleRate = project->getAudioData().sampleRate > 0
+              ? static_cast<double>(project->getAudioData().sampleRate)
+              : auditionSampleRate;
         if (safeThis->isPluginMode())
         {
           // Start the host/ARA preview using the established transport path.
@@ -370,12 +375,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
                 safeThis->noteDragAuditionEndFrame);
           }
           if (safeThis->onRequestDragAudition)
-            safeThis->onRequestDragAudition(preview, SAMPLE_RATE);
+            safeThis->onRequestDragAudition(preview, auditionSampleRate);
           return;
         }
         if (auto *engine = safeThis->editorController->getAudioEngine())
         {
-          engine->beginAuditionLoop(preview, SAMPLE_RATE);
+          engine->beginAuditionLoop(preview, auditionSampleRate);
         }
       });
   if (!isPluginMode())

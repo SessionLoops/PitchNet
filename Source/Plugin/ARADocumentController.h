@@ -46,6 +46,7 @@ struct AraPreviewState {
   std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
   std::atomic<PitchNetEditorRenderer *> previewClaimedRenderer{nullptr};
   std::shared_ptr<juce::AudioBuffer<float>> auditionBuffer;
+  std::atomic<double> auditionSampleRate{44100.0};
   std::atomic<bool> auditionActive{false};
 };
 
