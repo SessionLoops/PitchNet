@@ -734,6 +734,11 @@ void PitchNetEditorRenderer::writePreviewLoop(
   auto renderLoopSample = [](const juce::AudioBuffer<float> &source,
                              juce::int64 position, int channel) {
     const int length = source.getNumSamples();
+    if (length <= 0 || channel < 0 || channel >= source.getNumChannels())
+      return 0.0f;
+    position %= length;
+    if (position < 0)
+      position += length;
     const int overlap = std::min(8192, std::max(1, length / 2));
     const int overlapStart = length - overlap;
     float value = source.getSample(channel, static_cast<int>(position));
@@ -748,6 +753,13 @@ void PitchNetEditorRenderer::writePreviewLoop(
   auto advanceLoopPosition = [](const juce::AudioBuffer<float> &source,
                                 juce::int64 &position) {
     const int length = source.getNumSamples();
+    if (length <= 0) {
+      position = 0;
+      return;
+    }
+    position %= length;
+    if (position < 0)
+      position += length;
     const int overlap = std::min(8192, std::max(1, length / 2));
     if (++position >= length)
       position -= length - overlap;
@@ -767,7 +779,8 @@ void PitchNetEditorRenderer::writePreviewLoop(
         value = value * tailGain +
                 previewBuffer->getSample(ch, loopStart + position - crossfadeStart) *
                     headGain;
-      if (previewTransitionRemaining > 0 && previousPreviewBuffer) {
+      if (previewTransitionRemaining > 0 && previousPreviewBuffer &&
+          ch < previousPreviewBuffer->getNumChannels()) {
         const float oldValue = renderLoopSample(*previousPreviewBuffer,
                                                 previousPreviewLoopPosition, ch);
         const float handoff = 1.0f - static_cast<float>(previewTransitionRemaining) /
@@ -780,7 +793,8 @@ void PitchNetEditorRenderer::writePreviewLoop(
     ++previewLoopPosition;
     if (previewLoopPosition >= loopEnd)
       previewLoopPosition -= loopLength - crossfade;
-    if (previewTransitionRemaining > 0 && previousPreviewBuffer) {
+    if (previewTransitionRemaining > 0 && previousPreviewBuffer &&
+        previousPreviewBuffer->getNumSamples() > 0) {
       advanceLoopPosition(*previousPreviewBuffer, previousPreviewLoopPosition);
       --previewTransitionRemaining;
     }
@@ -829,8 +843,14 @@ bool PitchNetEditorRenderer::processBlock(
   if (!docCtrl)
     return true;
 
-  if (!posInfo.getIsPlaying()) {
-    auto &previewState = docCtrl->getPreviewState();
+  auto &previewState = docCtrl->getPreviewState();
+  const bool previewRequested = previewState.auditionActive.load() ||
+                                previewState.previewedRegion.load() != nullptr;
+  // Some ARA hosts momentarily report a playing transport while asking the
+  // editor renderer for a stopped-preview block. Honour an explicit preview
+  // request in that case; normal transport playback still takes the path
+  // below when no preview is active.
+  if (!posInfo.getIsPlaying() || previewRequested) {
     auto audition = std::atomic_load(&previewState.auditionBuffer);
     if (previewState.auditionActive.load() && audition) {
       auto *claimedRenderer = previewState.previewClaimedRenderer.load();
@@ -846,7 +866,10 @@ bool PitchNetEditorRenderer::processBlock(
       }
       if (audition != lastAuditionBuffer) {
         previousPreviewBuffer = std::move(previewBuffer);
-        previousPreviewLoopPosition = previewLoopPosition;
+        previousPreviewLoopPosition =
+            previousPreviewBuffer && !previewLoopRange.isEmpty()
+                ? previewLoopPosition
+                : 0;
         previewTransitionTotal = 4096;
         previewTransitionRemaining = previousPreviewBuffer ? previewTransitionTotal : 0;
         previewBuffer = audition;
@@ -868,7 +891,7 @@ bool PitchNetEditorRenderer::processBlock(
 
       const auto &assignedRegions = getPlaybackRegions();
       if (assignedRegions.empty())
-        return true;
+        return false;
 
       for (auto *region : assignedRegions)
         if (region == previewRegion)

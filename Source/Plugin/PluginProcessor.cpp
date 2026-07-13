@@ -67,6 +67,21 @@ juce::AudioBuffer<float> copyTimelineSlice(const juce::AudioBuffer<float> &src,
 #if JucePlugin_Enable_ARA
 using SampleRange = juce::Range<int>;
 
+// Some AAX hosts deactivate an effect as soon as a rendered block contains an
+// invalid or out-of-range sample. Keep this as the final ARA handoff so it
+// covers both normal preview and temporary drag-audition output.
+void sanitiseARAOutput(juce::AudioBuffer<float> &buffer) noexcept {
+  for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+    auto *samples = buffer.getWritePointer(channel);
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+      const float value = samples[sample];
+      samples[sample] = std::isfinite(value)
+                            ? juce::jlimit(-1.0f, 1.0f, value)
+                            : 0.0f;
+    }
+  }
+}
+
 juce::String archivedRegionKeyForLiveRegion(
     const juce::ARAPlaybackRegion &region) {
   const auto *modification = region.getAudioModification();
@@ -547,6 +562,7 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
       const float outputGainDb = outputGainParamValue->load();
       if (std::abs(outputGainDb) > 0.01f)
         buffer.applyGain(std::pow(10.0f, outputGainDb / 20.0f));
+      sanitiseARAOutput(buffer);
       return;
     }
   }
