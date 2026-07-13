@@ -50,7 +50,8 @@ constexpr int kPitchNetAraModificationArchiveVersion = 3;
 juce::AudioBuffer<float> resampleAuditionBuffer(
     const juce::AudioBuffer<float> &source, double sourceRate,
     double destinationRate) {
-  if (source.getNumSamples() <= 0 || sourceRate <= 0.0 ||
+  if (source.getNumSamples() <= 0 || !std::isfinite(sourceRate) ||
+      !std::isfinite(destinationRate) || sourceRate <= 0.0 ||
       destinationRate <= 0.0 ||
       juce::approximatelyEqual(sourceRate, destinationRate)) {
     juce::AudioBuffer<float> copy;
@@ -72,7 +73,10 @@ juce::AudioBuffer<float> resampleAuditionBuffer(
       const int left = static_cast<int>(inputPosition);
       const int right = std::min(source.getNumSamples() - 1, left + 1);
       const float fraction = static_cast<float>(inputPosition - left);
-      destination[sample] = input[left] + fraction * (input[right] - input[left]);
+      const float leftSample = std::isfinite(input[left]) ? input[left] : 0.0f;
+      const float rightSample = std::isfinite(input[right]) ? input[right] : 0.0f;
+      const float value = leftSample + fraction * (rightSample - leftSample);
+      destination[sample] = std::isfinite(value) ? value : 0.0f;
     }
   }
   return output;
@@ -518,8 +522,10 @@ void PitchNetEditorRenderer::prepareToPlay(
     AlwaysNonRealtime alwaysNonRealtime) {
   sampleRate = sampleRateIn;
   numChannels = numChannelsIn;
-  previewBuffer = std::make_unique<juce::AudioBuffer<float>>(
+  previewBuffer = std::make_shared<juce::AudioBuffer<float>>(
       numChannels, static_cast<int>(std::ceil(sampleRate)));
+  if (auto *docCtrl = getDocController())
+    docCtrl->getPreviewState().editorRendererSampleRate.store(sampleRate);
   previewLoopRange = {};
   previewLoopPosition = 0;
 
@@ -624,7 +630,7 @@ void PitchNetEditorRenderer::renderPreviewBuffer(
         numChannels = source->getChannelCount();
     }
 
-    previewBuffer = std::make_unique<juce::AudioBuffer<float>>(
+    previewBuffer = std::make_shared<juce::AudioBuffer<float>>(
         std::max(1, numChannels),
         static_cast<int>(std::ceil(std::max(1.0, sampleRate))));
     previewLoopRange = {};
@@ -769,7 +775,7 @@ void PitchNetEditorRenderer::writePreviewLoop(
         value = oldValue * std::cos(handoff * juce::MathConstants<float>::halfPi) +
                 value * std::sin(handoff * juce::MathConstants<float>::halfPi);
       }
-      buffer.setSample(ch, sample, value);
+      buffer.setSample(ch, sample, std::isfinite(value) ? value : 0.0f);
     }
     ++previewLoopPosition;
     if (previewLoopPosition >= loopEnd)
@@ -843,10 +849,7 @@ bool PitchNetEditorRenderer::processBlock(
         previousPreviewLoopPosition = previewLoopPosition;
         previewTransitionTotal = 4096;
         previewTransitionRemaining = previousPreviewBuffer ? previewTransitionTotal : 0;
-        previewBuffer = std::make_unique<juce::AudioBuffer<float>>(
-            resampleAuditionBuffer(*audition,
-                                   previewState.auditionSampleRate.load(),
-                                   sampleRate));
+        previewBuffer = audition;
         previewLoopRange = juce::Range<juce::int64>::withStartAndLength(
             0, previewBuffer->getNumSamples());
         previewLoopPosition = previewLoopRange.getStart();
@@ -2101,10 +2104,13 @@ void PitchNetDocumentController::startPreviewAudio(
     const juce::AudioBuffer<float> &buffer, double sampleRate) {
   if (buffer.getNumSamples() <= 0)
     return;
-  auto preview = std::make_shared<juce::AudioBuffer<float>>();
-  preview->makeCopyOf(buffer);
-  previewState.auditionSampleRate.store(sampleRate > 0.0 ? sampleRate
-                                                          : 44100.0);
+  const double sourceRate = sampleRate > 0.0 ? sampleRate : 44100.0;
+  const double rendererRate = previewState.editorRendererSampleRate.load();
+  auto preview = std::make_shared<juce::AudioBuffer<float>>(
+      resampleAuditionBuffer(buffer, sourceRate,
+                             rendererRate > 0.0 ? rendererRate : sourceRate));
+  if (preview->getNumSamples() <= 0 || preview->getNumChannels() <= 0)
+    return;
   std::atomic_store(&previewState.auditionBuffer, std::move(preview));
   // startPreviewRange() has already selected a region and caused the host's
   // normal preview signal flow to run. Keep that selection intact while the
