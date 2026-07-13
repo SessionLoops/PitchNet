@@ -21,6 +21,10 @@ public:
     void resized() override;
     void timerCallback() override;
 
+#if JucePlugin_Enable_ARA
+    juce::AudioProcessorEditorARAExtension* getARAClientExtensions() override;
+#endif
+
     // Grab keyboard focus when the editor becomes visible / is clicked, so that
     // MainComponent holds focus and host-forwarded key events are dispatched to
     // its command-key mappings.

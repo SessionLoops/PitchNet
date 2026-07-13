@@ -48,6 +48,13 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
   requestMainViewKeyboardFocusAsync();
 }
 
+#if JucePlugin_Enable_ARA
+juce::AudioProcessorEditorARAExtension *
+PitchNetAudioProcessorEditor::getARAClientExtensions() {
+  return this;
+}
+#endif
+
 PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
   stopTimer();
 
