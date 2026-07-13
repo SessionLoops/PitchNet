@@ -2109,8 +2109,10 @@ void PitchNetDocumentController::startPreviewAudio(
   // startPreviewRange() has already selected a region and caused the host's
   // normal preview signal flow to run. Keep that selection intact while the
   // editor renderer substitutes this temporary resampled audition buffer.
-  previewState.previewClaimedRenderer.store(nullptr);
-  previewState.auditionActive.store(true);
+  // Do not release the selected renderer for each drag update: another ARA
+  // renderer may claim it and leave this editor's output silent.
+  if (!previewState.auditionActive.exchange(true))
+    previewState.previewClaimedRenderer.store(nullptr);
 }
 
 void PitchNetDocumentController::stopPreview() {

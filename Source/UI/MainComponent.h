@@ -301,6 +301,7 @@ private:
   std::unique_ptr<ResampledLoopAudition> resampledLoopAudition;
   bool dragAuditionEnabled = false;
   bool noteDragAuditionActive = false;
+  bool noteDragAuditionBackendPreviewStarted = false;
   bool noteDragAuditionPending = false;
   bool noteDragAuditionWasPlaying = false;
   double noteDragAuditionReturnTime = 0.0;

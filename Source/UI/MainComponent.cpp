@@ -367,12 +367,16 @@ MainComponent::MainComponent(bool enableAudioDevice)
           // Start the host/ARA preview using the established transport path.
           // The callback below then replaces that path's source with the
           // resampled audition buffer.
-          if (auto *project = safeThis->getProject(); project &&
-              safeThis->onRequestBackendPreview)
+          if (!safeThis->noteDragAuditionBackendPreviewStarted)
           {
-            safeThis->onRequestBackendPreview(
-                *project, safeThis->noteDragAuditionStartFrame,
-                safeThis->noteDragAuditionEndFrame);
+            if (auto *project = safeThis->getProject(); project &&
+                safeThis->onRequestBackendPreview)
+            {
+              safeThis->onRequestBackendPreview(
+                  *project, safeThis->noteDragAuditionStartFrame,
+                  safeThis->noteDragAuditionEndFrame);
+            }
+            safeThis->noteDragAuditionBackendPreviewStarted = true;
           }
           if (safeThis->onRequestDragAudition)
             safeThis->onRequestDragAudition(preview, auditionSampleRate);
@@ -1992,6 +1996,7 @@ void MainComponent::auditionDraggedNote(const Note &note)
   if (!noteDragAuditionActive)
   {
     noteDragAuditionActive = true;
+    noteDragAuditionBackendPreviewStarted = false;
     if (!isPluginMode())
     {
       auto *engine = editorController ? editorController->getAudioEngine() : nullptr;
@@ -2046,6 +2051,7 @@ void MainComponent::finishDraggedNoteAudition()
     if (onStopDragAudition)
       onStopDragAudition();
     noteDragAuditionActive = false;
+    noteDragAuditionBackendPreviewStarted = false;
     return;
   }
 
@@ -2059,6 +2065,7 @@ void MainComponent::finishDraggedNoteAudition()
   }
 
   noteDragAuditionActive = false;
+  noteDragAuditionBackendPreviewStarted = false;
   noteDragAuditionWasPlaying = false;
 }
 
