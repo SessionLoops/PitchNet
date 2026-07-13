@@ -1,0 +1,119 @@
+PitchNet 0.1.2
+Copyright (c) 2026 Session Loops and contributors.
+
+PitchNet is a modified derivative of HachiTune by the HachiTune contributors.
+PitchNet is distributed under the GNU Affero General Public License, version 3.
+The complete AGPLv3 text is provided in the installer License page.
+
+Corresponding source for this release is available at:
+https://github.com/SessionLoops/PitchNet
+
+Third-party components
+========================
+
+JUCE Framework
+Copyright (c) Raw Material Software Limited.
+PitchNet uses JUCE under the GNU Affero General Public License, version 3.
+The applicable AGPLv3 text is provided in the installer License page.
+
+ONNX Runtime 1.19.2
+Copyright (c) Microsoft Corporation
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+GAME model assets
+Source: https://github.com/openvpi/GAME
+Copyright (c) 2026 Team OpenVPI
+
+The GAME source repository is licensed under the MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+PC-NSF-HiFiGAN vocoder model assets
+Source: https://github.com/openvpi/vocoders
+
+The openvpi/vocoders source repository is licensed under the GNU Affero
+General Public License, version 3. The complete AGPLv3 text is provided in the
+installer License page. Corresponding source is available from the repository
+above.
+
+FCPE model assets
+Source: https://github.com/CNChTu/FCPE
+Copyright (c) 2023 CN_ChiTu
+
+The FCPE source repository is licensed under the MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+RMVPE model assets
+Source: https://github.com/yxlllc/RMVPE
+
+The RMVPE repository did not provide a LICENSE file when these notices were
+prepared. No redistribution license is asserted here. Confirm an explicit
+license or permission before distributing rmvpe.onnx.
+
+ARA SDK
+Copyright (c) Celemony Software GmbH and contributors.
+The ARA API and ARA Library are available under the Apache License 2.0. The
+ARA SDK also includes components under zlib, MIT, and 2-clause BSD licenses.
+See the ARA SDK notices in the corresponding source release for the complete
+attribution and license texts.
+
+AAX SDK
+Copyright (c) 2024 Avid Technology Inc.
+The AAX SDK is subject to the Avid AAX SDK License Agreement or, where
+applicable, GPLv3. See https://developer.avid.com/aax for its terms.
+
+Bundled fonts and machine-learning model files retain their respective
+upstream licenses and attribution requirements. Their licenses must be
+reviewed for each release before distributing new or changed assets.
