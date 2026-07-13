@@ -1,6 +1,11 @@
 #include "DarkLookAndFeel.h"
 
 DarkLookAndFeel::DarkLookAndFeel()
+    : oldTooltip([]
+      {
+          const juce::PluginHostType hostType;
+          return hostType.isLogic() || hostType.isGarageBand();
+      }())
 {
     // ── PopupMenu ─────────────────────────────────────────────────
     setColour(juce::PopupMenu::backgroundColourId, juce::Colours::transparentBlack);
@@ -51,9 +56,14 @@ DarkLookAndFeel::DarkLookAndFeel()
     setColour(juce::ProgressBar::foregroundColourId, APP_COLOR_PRIMARY);
 
     // ── TooltipWindow ────────────────────────────────────────────
-    setColour(juce::TooltipWindow::backgroundColourId, juce::Colour(0xFF1C1C1Cu));
-    setColour(juce::TooltipWindow::outlineColourId, juce::Colour(0xFF313131u));
+    setColour(juce::TooltipWindow::backgroundColourId, juce::Colour(0xFF232323u));
+    setColour(juce::TooltipWindow::outlineColourId, juce::Colour(0xFF3C3C3Cu));
     setColour(juce::TooltipWindow::textColourId, juce::Colour(0xFF9B9B9Bu));
+
+    // Keep JUCE's standard tooltip renderer, but give its default text layout
+    // the same Montserrat face used by the rest of the application.
+    setDefaultSansSerifTypeface(
+        juce::Typeface::createSystemTypefaceFor(AppFont::getFont(14.0f)));
 }
 
 juce::Rectangle<int> DarkLookAndFeel::getTooltipBounds(const juce::String& tipText,
@@ -62,13 +72,16 @@ juce::Rectangle<int> DarkLookAndFeel::getTooltipBounds(const juce::String& tipTe
 {
     auto bounds = juce::LookAndFeel_V2::getTooltipBounds(tipText, screenPos, parentArea);
     return bounds.withPosition(screenPos.x - bounds.getWidth() / 2,
-                               screenPos.y - bounds.getHeight() - 12);
+                               screenPos.y - bounds.getHeight() - 16);
 }
 
 void DarkLookAndFeel::drawTooltip(juce::Graphics& g, const juce::String& text,
                                   int width, int height)
 {
-    juce::LookAndFeel_V4::drawTooltip(g, text, width, height);
+    if (oldTooltip)
+        juce::LookAndFeel_V2::drawTooltip(g, text, width, height);
+    else
+        juce::LookAndFeel_V4::drawTooltip(g, text, width, height);
 }
 
 // =====================================================================

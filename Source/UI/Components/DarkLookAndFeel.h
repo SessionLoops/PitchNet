@@ -99,4 +99,8 @@ public:
         static DarkLookAndFeel instance;
         return instance;
     }
+
+private:
+    // Logic and GarageBand require JUCE's legacy tooltip renderer.
+    const bool oldTooltip;
 };

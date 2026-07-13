@@ -72,12 +72,16 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setTooltip(TR("toolbar.select"));
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
-    auditionButton.setTooltip("Audition");
-    loopButton.setTooltip(TR("toolbar.loop"));
+    auditionButton.setTooltip("Live Audition On/Off");
     recordButton.setTooltip("Record");
-    undoButton.setTooltip(TR("command.undo"));
-    redoButton.setTooltip(TR("command.redo"));
-    parametersButton.setTooltip(TR("panel.parameters"));
+#if JUCE_MAC
+    undoButton.setTooltip(TR("command.undo") + " (⌘Z)");
+    redoButton.setTooltip(TR("command.redo") + " (⇧⌘Z)");
+#else
+    undoButton.setTooltip(TR("command.undo") + " (Ctrl+Z)");
+    redoButton.setTooltip(TR("command.redo") + " (Ctrl+Y)");
+#endif
+    //parametersButton.setTooltip(TR("panel.parameters"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
 
     // Set default active states

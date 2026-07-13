@@ -138,6 +138,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
 
   autoZoomButton.setImage(juce::ImageFileFormat::loadFrom(
       BinaryData::autozoom_png, static_cast<size_t>(BinaryData::autozoom_pngSize)));
+  autoZoomButton.setTooltip("Vertical Auto-Zoom");
   autoZoomButton.onClick = [this]()
   {
     if (onAutoZoomRequested)
