@@ -337,6 +337,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   setSize(WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight);
   setOpaque(true); // Required for native title bar
 
+  tooltipWindow = std::make_unique<juce::TooltipWindow>();
+  tooltipWindow->setLookAndFeel(&DarkLookAndFeel::getInstance());
+
   LOG("MainComponent: creating core components...");
   // Initialize components
   if (enableAudioDeviceFlag)
@@ -345,7 +348,36 @@ MainComponent::MainComponent(bool enableAudioDevice)
     editorController = ownedEditorController.get();
     if (auto *project = editorController->getProject())
       project->setTimelineDisplayMode(TimelineDisplayMode::Time);
+
   }
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  resampledLoopAudition = std::make_unique<ResampledLoopAudition>(
+      [safeThis](juce::AudioBuffer<float> preview) mutable
+      {
+        if (!safeThis || preview.getNumSamples() == 0 ||
+            !safeThis->noteDragAuditionActive)
+          return;
+        if (safeThis->isPluginMode())
+        {
+          // Start the host/ARA preview using the established transport path.
+          // The callback below then replaces that path's source with the
+          // resampled audition buffer.
+          if (auto *project = safeThis->getProject(); project &&
+              safeThis->onRequestBackendPreview)
+          {
+            safeThis->onRequestBackendPreview(
+                *project, safeThis->noteDragAuditionStartFrame,
+                safeThis->noteDragAuditionEndFrame);
+          }
+          if (safeThis->onRequestDragAudition)
+            safeThis->onRequestDragAudition(preview, SAMPLE_RATE);
+          return;
+        }
+        if (auto *engine = safeThis->editorController->getAudioEngine())
+        {
+          engine->beginAuditionLoop(preview, SAMPLE_RATE);
+        }
+      });
   if (!isPluginMode())
   {
     ownedUndoManager = std::make_unique<PitchUndoManager>(100);
@@ -512,6 +544,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (onRecordArmChanged)
       onRecordArmChanged(armed);
   };
+  toolbar.onToggleAudition = [this](bool enabled)
+  {
+    dragAuditionEnabled = enabled;
+    if (!dragAuditionEnabled)
+      finishDraggedNoteAudition();
+  };
   toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
                              undoManager && undoManager->canRedo());
 
@@ -535,6 +573,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (isPluginMode() && onPitchEditFinished)
       onPitchEditFinished();
   };
+  pianoRoll.onNoteDragAudition = [this](const Note &note)
+  { auditionDraggedNote(note); };
+  pianoRoll.onNoteDragAuditionFinished = [this]()
+  { finishDraggedNoteAudition(); };
   pianoRoll.onZoomChanged = [this](float pps)
   {
     onZoomChanged(pps);
@@ -889,6 +931,8 @@ bool MainComponent::isInferenceBusy() const
 
 MainComponent::~MainComponent()
 {
+  noteDragAuditionActive = false;
+  resampledLoopAudition.reset();
 #if JUCE_MAC
   if (!isPluginMode() && menuHandler)
     juce::MenuBarModel::setMacMainMenu(nullptr);
@@ -985,6 +1029,8 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent &e)
 
 void MainComponent::timerCallback()
 {
+  dispatchPendingDragAudition();
+
   // Handle throttled cursor updates (30Hz max)
   if (hasPendingCursorUpdate.load())
   {
@@ -1899,6 +1945,116 @@ void MainComponent::finishPreviewRegion(bool restorePosition)
 
   pendingCursorTime.store(returnTime);
   hasPendingCursorUpdate.store(false);
+}
+
+void MainComponent::auditionDraggedNote(const Note &note)
+{
+  if (!dragAuditionEnabled || !resampledLoopAudition || note.isRest())
+    return;
+
+  std::vector<float> source;
+  if (auto *project = getProject())
+  {
+    // Use the same timeline audio that the normal note-preview signal path
+    // reads, rather than depending on optional/stale per-note clip caches.
+    const auto &audioData = project->getAudioData();
+    const auto &waveform = audioData.originalWaveform.getNumSamples() > 0
+                               ? audioData.originalWaveform
+                               : audioData.waveform;
+    const int startFrame = note.getSrcStartFrame() >= 0
+                               ? note.getSrcStartFrame()
+                               : note.getStartFrame();
+    const int endFrame = note.getSrcEndFrame() > startFrame
+                             ? note.getSrcEndFrame()
+                             : note.getEndFrame();
+    const int startSample = juce::jlimit(0, waveform.getNumSamples(),
+                                         startFrame * HOP_SIZE);
+    const int endSample = juce::jlimit(startSample, waveform.getNumSamples(),
+                                       endFrame * HOP_SIZE);
+    if (endSample > startSample)
+    {
+      const auto *samples = waveform.getReadPointer(0);
+      source.assign(samples + startSample, samples + endSample);
+    }
+  }
+
+  if (source.empty())
+    source = note.hasSrcClipWaveform() ? note.getSrcClipWaveform()
+                                        : note.getClipWaveform();
+  if (source.empty())
+    return;
+
+  if (!noteDragAuditionActive)
+  {
+    noteDragAuditionActive = true;
+    if (!isPluginMode())
+    {
+      auto *engine = editorController ? editorController->getAudioEngine() : nullptr;
+      if (!engine)
+      {
+        noteDragAuditionActive = false;
+        return;
+      }
+      noteDragAuditionWasPlaying = engine->isPlaying();
+      noteDragAuditionReturnTime = engine->getPosition();
+    }
+  }
+
+  const float shift = note.getAdjustedMidiNote() - note.getOriginalMidiNote();
+  noteDragAuditionStartFrame = note.getStartFrame();
+  noteDragAuditionEndFrame = note.getEndFrame();
+  pendingNoteDragAuditionSource = std::move(source);
+  pendingNoteDragAuditionShift = shift;
+  pendingNoteDragAuditionMidiNote = note.getAdjustedMidiNote();
+  noteDragAuditionLastInputMs = juce::Time::currentTimeMillis();
+  noteDragAuditionPending = true;
+}
+
+void MainComponent::dispatchPendingDragAudition()
+{
+  if (!noteDragAuditionActive || !noteDragAuditionPending ||
+      !resampledLoopAudition)
+    return;
+
+  const auto now = juce::Time::currentTimeMillis();
+  if (now - noteDragAuditionLastInputMs < noteDragAuditionDebounceMs)
+    return;
+
+  noteDragAuditionPending = false;
+  resampledLoopAudition->request(std::move(pendingNoteDragAuditionSource),
+                                 pendingNoteDragAuditionShift,
+                                 pendingNoteDragAuditionMidiNote);
+}
+
+void MainComponent::finishDraggedNoteAudition()
+{
+  if (!noteDragAuditionActive)
+    return;
+
+  if (resampledLoopAudition)
+    resampledLoopAudition->cancel();
+  noteDragAuditionPending = false;
+  pendingNoteDragAuditionSource.clear();
+
+  if (isPluginMode())
+  {
+    if (onStopDragAudition)
+      onStopDragAudition();
+    noteDragAuditionActive = false;
+    return;
+  }
+
+  if (auto *engine = editorController ? editorController->getAudioEngine() : nullptr)
+  {
+    engine->endAuditionLoop();
+    if (noteDragAuditionWasPlaying)
+      engine->play();
+    else
+      engine->pause();
+  }
+
+  noteDragAuditionActive = false;
+  noteDragAuditionWasPlaying = false;
 }
 
 void MainComponent::jumpTransport(bool forward)

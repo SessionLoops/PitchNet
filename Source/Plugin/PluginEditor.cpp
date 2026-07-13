@@ -144,6 +144,13 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       });
   mainView->setOnStopBackendPreview(
       [pitchDocController]() { pitchDocController->stopPreview(); });
+  mainView->setOnRequestDragAudition(
+      [pitchDocController](const juce::AudioBuffer<float> &buffer,
+                           double sampleRate) {
+        pitchDocController->startPreviewAudio(buffer, sampleRate);
+      });
+  mainView->setOnStopDragAudition(
+      [pitchDocController]() { pitchDocController->stopPreview(); });
 
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {
     if (auto *araEditorView = getARAEditorView()) {
@@ -400,6 +407,12 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
       });
   mainView->setOnStopBackendPreview(
       [this]() { audioProcessor.stopPluginPreview(); });
+  mainView->setOnRequestDragAudition(
+      [this](const juce::AudioBuffer<float> &buffer, double sampleRate) {
+        audioProcessor.startPluginAudition(buffer, sampleRate);
+      });
+  mainView->setOnStopDragAudition(
+      [this]() { audioProcessor.stopPluginAudition(); });
 
   // Setup host transport control callbacks for non-ARA mode
   mainView->setOnRequestHostPlayState([this](bool shouldPlay) {

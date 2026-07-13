@@ -794,9 +794,27 @@ void PitchNetAudioProcessor::stopPluginPreview() {
   pluginPreview.active.store(false);
 }
 
+void PitchNetAudioProcessor::startPluginAudition(
+    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+  if (buffer.getNumSamples() <= 0)
+    return;
+  auto preview = std::make_shared<juce::AudioBuffer<float>>();
+  preview->makeCopyOf(buffer);
+  std::atomic_store(&pluginAuditionBuffer, std::move(preview));
+  pluginAuditionSampleRate.store(sampleRate > 0.0 ? sampleRate : 44100.0);
+  pluginPreview.restart.store(true);
+  pluginPreview.active.store(true);
+}
+
+void PitchNetAudioProcessor::stopPluginAudition() {
+  std::atomic_store(&pluginAuditionBuffer,
+                    std::shared_ptr<juce::AudioBuffer<float>>{});
+  stopPluginPreview();
+}
+
 bool PitchNetAudioProcessor::processPluginPreview(
     juce::AudioBuffer<float> &buffer) {
-  if (!pluginPreview.active.load() || !realtimeProcessor.isReady())
+  if (!pluginPreview.active.load())
     return false;
 
   const int numSamples = buffer.getNumSamples();
@@ -805,6 +823,75 @@ bool PitchNetAudioProcessor::processPluginPreview(
   // A fresh preview request restarts playback from the start of the range.
   if (pluginPreview.restart.exchange(false))
     pluginPreviewCursor = 0;
+
+  if (auto audition = std::atomic_load(&pluginAuditionBuffer)) {
+    buffer.clear();
+    if (audition != activePluginAuditionBuffer) {
+      previousPluginAuditionBuffer = activePluginAuditionBuffer;
+      previousPluginAuditionCursor = pluginAuditionCursor;
+      activePluginAuditionBuffer = audition;
+      pluginAuditionCursor = 0;
+      pluginAuditionTransitionTotal = 4096;
+      pluginAuditionTransitionRemaining =
+          previousPluginAuditionBuffer ? pluginAuditionTransitionTotal : 0;
+    }
+
+    const int sourceSamples = activePluginAuditionBuffer->getNumSamples();
+    const int channels =
+        std::min(numChannels, activePluginAuditionBuffer->getNumChannels());
+    if (sourceSamples <= 0 || channels <= 0)
+      return true;
+
+    auto renderLoopSample = [](const juce::AudioBuffer<float> &source,
+                               juce::int64 cursor, int channel) {
+      const int length = source.getNumSamples();
+      const int overlap = std::min(8192, std::max(1, length / 2));
+      const int overlapStart = length - overlap;
+      const int position = static_cast<int>(cursor);
+      float value = source.getSample(channel, position);
+      if (position >= overlapStart) {
+        const float t = static_cast<float>(position - overlapStart) / overlap;
+        value = value * std::cos(t * juce::MathConstants<float>::halfPi) +
+                source.getSample(channel, position - overlapStart) *
+                    std::sin(t * juce::MathConstants<float>::halfPi);
+      }
+      return value;
+    };
+    auto advanceLoopCursor = [](const juce::AudioBuffer<float> &source,
+                                juce::int64 &cursor) {
+      const int length = source.getNumSamples();
+      const int overlap = std::min(8192, std::max(1, length / 2));
+      if (++cursor >= length)
+        cursor -= length - overlap;
+    };
+
+    for (int sample = 0; sample < numSamples; ++sample) {
+      for (int ch = 0; ch < channels; ++ch) {
+        float value = renderLoopSample(*activePluginAuditionBuffer,
+                                       pluginAuditionCursor, ch);
+        if (pluginAuditionTransitionRemaining > 0 &&
+            previousPluginAuditionBuffer) {
+          const float oldValue = renderLoopSample(*previousPluginAuditionBuffer,
+                                                  previousPluginAuditionCursor, ch);
+          const float t = 1.0f - static_cast<float>(pluginAuditionTransitionRemaining) /
+                                      static_cast<float>(pluginAuditionTransitionTotal);
+          value = oldValue * std::cos(t * juce::MathConstants<float>::halfPi) +
+                  value * std::sin(t * juce::MathConstants<float>::halfPi);
+        }
+        buffer.setSample(ch, sample, value);
+      }
+      advanceLoopCursor(*activePluginAuditionBuffer, pluginAuditionCursor);
+      if (pluginAuditionTransitionRemaining > 0 && previousPluginAuditionBuffer)
+        advanceLoopCursor(*previousPluginAuditionBuffer,
+                          previousPluginAuditionCursor);
+      if (pluginAuditionTransitionRemaining > 0)
+        --pluginAuditionTransitionRemaining;
+    }
+    return true;
+  }
+
+  if (!realtimeProcessor.isReady())
+    return false;
 
   const double sr = hostSampleRate > 0.0 ? hostSampleRate : 44100.0;
   const auto startSample = static_cast<juce::int64>(

@@ -103,6 +103,7 @@ public:
     std::function<void()> onUndo;
     std::function<void()> onRedo;
     std::function<void(bool)> onToggleRecord;
+    std::function<void(bool)> onToggleAudition;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing
@@ -126,6 +127,7 @@ private:
     ToolButton selectModeButton{"Select"};
     ToolButton splitModeButton{"Split"};
     ToolButton followButton{"Follow"};
+    ToggleButton auditionButton;
     Button undoButton;
     Button redoButton;
     ToggleButton parametersButton;

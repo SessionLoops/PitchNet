@@ -196,6 +196,9 @@ public:
   // never runs and the ARA preview path handles auditioning instead.
   void startPluginPreview(double startSeconds, double endSeconds);
   void stopPluginPreview();
+  void startPluginAudition(const juce::AudioBuffer<float> &buffer,
+                           double sampleRate);
+  void stopPluginAudition();
 
   // Non-ARA mode: capture control
   void startCapture();
@@ -367,6 +370,15 @@ private:
   };
   PluginPreviewState pluginPreview;
   juce::int64 pluginPreviewCursor = 0;
+  std::shared_ptr<juce::AudioBuffer<float>> pluginAuditionBuffer;
+  std::atomic<double> pluginAuditionSampleRate{44100.0};
+  // Audio-thread-only handoff state for crossfading new audition renders.
+  std::shared_ptr<juce::AudioBuffer<float>> activePluginAuditionBuffer;
+  std::shared_ptr<juce::AudioBuffer<float>> previousPluginAuditionBuffer;
+  juce::int64 pluginAuditionCursor = 0;
+  juce::int64 previousPluginAuditionCursor = 0;
+  int pluginAuditionTransitionRemaining = 0;
+  int pluginAuditionTransitionTotal = 0;
 
   // Plugin state version for forward/backward compatibility
   static constexpr int PLUGIN_STATE_VERSION = 1;

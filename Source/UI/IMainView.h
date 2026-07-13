@@ -45,6 +45,9 @@ public:
   virtual void setOnRequestBackendPreview(
       std::function<void(const Project &, int, int)> callback) = 0;
   virtual void setOnStopBackendPreview(std::function<void()> callback) = 0;
+  virtual void setOnRequestDragAudition(
+      std::function<void(const juce::AudioBuffer<float> &, double)> callback) = 0;
+  virtual void setOnStopDragAudition(std::function<void()> callback) = 0;
   virtual void setOnRequestHostPlayState(
       std::function<void(bool)> callback) = 0;
   virtual void setOnRequestHostStop(std::function<void()> callback) = 0;

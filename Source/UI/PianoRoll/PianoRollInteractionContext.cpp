@@ -22,6 +22,8 @@ PianoRollInteractionContext::PianoRollInteractionContext(
       onNoteSelected(component.onNoteSelected),
       onPitchEdited(component.onPitchEdited),
       onPitchEditFinished(component.onPitchEditFinished),
+      onNoteDragAudition(component.onNoteDragAudition),
+      onNoteDragAuditionFinished(component.onNoteDragAuditionFinished),
       onLoopRangeChanged(component.onLoopRangeChanged),
       onReinterpolateUV(component.onReinterpolateUV), component(component)
 {

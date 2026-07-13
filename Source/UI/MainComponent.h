@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Audio/EditorController.h"
+#include "../Audio/ResampledLoopAudition.h"
 #include "IMainView.h"
 #include "../Audio/IO/AudioFileManager.h"
 #include "../JuceHeader.h"
@@ -22,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cmath>
+#include <vector>
 
 class AnalysisBackdrop : public juce::Component {
 public:
@@ -151,6 +153,13 @@ public:
   void setOnStopBackendPreview(std::function<void()> callback) override {
     onStopBackendPreview = std::move(callback);
   }
+  void setOnRequestDragAudition(
+      std::function<void(const juce::AudioBuffer<float> &, double)> callback) override {
+    onRequestDragAudition = std::move(callback);
+  }
+  void setOnStopDragAudition(std::function<void()> callback) override {
+    onStopDragAudition = std::move(callback);
+  }
   void setOnRequestHostPlayState(
       std::function<void(bool)> callback) override {
     onRequestHostPlayState = std::move(callback);
@@ -202,6 +211,8 @@ public:
   std::function<void(const Project &)> onRequestBackendRender;
   std::function<void(const Project &, int, int)> onRequestBackendPreview;
   std::function<void()> onStopBackendPreview;
+  std::function<void(const juce::AudioBuffer<float> &, double)> onRequestDragAudition;
+  std::function<void()> onStopDragAudition;
 
   // Plugin mode - request host transport control (optional; only works if host
   // supports it)
@@ -233,6 +244,9 @@ private:
   void seek(double time);
   void previewNoteRegion(int startFrame, int endFrame);
   void finishPreviewRegion(bool restorePosition);
+  void auditionDraggedNote(const Note &note);
+  void finishDraggedNoteAudition();
+  void dispatchPendingDragAudition();
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
   void showSettings();
@@ -284,6 +298,19 @@ private:
   double previewRegionStartTime = 0.0;
   double previewRegionWallClockStartMs = 0.0;
   bool previewRegionWasProjectPlaying = false;
+  std::unique_ptr<ResampledLoopAudition> resampledLoopAudition;
+  bool dragAuditionEnabled = false;
+  bool noteDragAuditionActive = false;
+  bool noteDragAuditionPending = false;
+  bool noteDragAuditionWasPlaying = false;
+  double noteDragAuditionReturnTime = 0.0;
+  int noteDragAuditionStartFrame = 0;
+  int noteDragAuditionEndFrame = 0;
+  juce::int64 noteDragAuditionLastInputMs = 0;
+  float pendingNoteDragAuditionShift = 0.0f;
+  float pendingNoteDragAuditionMidiNote = 60.0f;
+  std::vector<float> pendingNoteDragAuditionSource;
+  static constexpr juce::int64 noteDragAuditionDebounceMs = 50;
 
   // New modular components
   std::unique_ptr<AudioFileManager> fileManager;
@@ -304,6 +331,10 @@ private:
   ParameterPanel parameterPanel;
   AnalysisBackdrop analysisBackdrop;
   AnalysisProgressPopup analysisProgressPopup;
+
+  // A desktop tooltip window lets tooltip clients work in both standalone and
+  // plug-in hosts, whose editor component is owned externally.
+  std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;
 

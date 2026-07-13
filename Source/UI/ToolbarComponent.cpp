@@ -19,6 +19,7 @@ ToolbarComponent::ToolbarComponent()
     goToStartButton.setImage(loadImage(BinaryData::backward_png, BinaryData::backward_pngSize));
     goToEndButton.setImage(loadImage(BinaryData::forward_png, BinaryData::forward_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
+    auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
     undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
@@ -48,6 +49,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
+    addAndMakeVisible(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
     addAndMakeVisible(parametersButton);
@@ -61,6 +63,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
     followButton.addListener(this);
+    auditionButton.addListener(this);
     undoButton.addListener(this);
     redoButton.addListener(this);
     parametersButton.addListener(this);
@@ -69,6 +72,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setTooltip(TR("toolbar.select"));
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
+    auditionButton.setTooltip("Audition");
     loopButton.setTooltip(TR("toolbar.loop"));
     recordButton.setTooltip("Record");
     undoButton.setTooltip(TR("command.undo"));
@@ -79,6 +83,7 @@ ToolbarComponent::ToolbarComponent()
     // Set default active states
     selectModeButton.setActive(true);
     followButton.setActive(true); // Follow is on by default
+    auditionButton.setToggleState(false, juce::dontSendNotification);
     undoButton.setEnabled(false);
     redoButton.setEnabled(false);
     parametersButton.setToggleState(false, juce::dontSendNotification);
@@ -181,6 +186,11 @@ void ToolbarComponent::resized()
     undoButton.setBounds(undoBtnArea.getRight() - rightButtonSize,
                          capsuleY + (capsuleH - rightButtonSize) / 2,
                          rightButtonSize, rightButtonSize);
+
+    auto auditionBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
+    auditionButton.setBounds(auditionBtnArea.getRight() - rightButtonSize - 4,
+                             capsuleY + (capsuleH - rightButtonSize) / 2,
+                             rightButtonSize, rightButtonSize);
 
     // Hide center controls (time/tools removed from toolbar) and zoom controls
     timeLabel.setVisible(false);
@@ -291,6 +301,11 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     {
         followPlayback = !followPlayback;
         followButton.setActive(followPlayback);
+    }
+    else if (button == &auditionButton)
+    {
+        if (onToggleAudition)
+            onToggleAudition(auditionButton.getToggleState());
     }
     else if (button == &undoButton && onUndo)
         onUndo();

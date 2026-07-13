@@ -45,6 +45,8 @@ struct AraPreviewState {
   std::atomic<double> previewEndTime{0.0};
   std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
   std::atomic<PitchNetEditorRenderer *> previewClaimedRenderer{nullptr};
+  std::shared_ptr<juce::AudioBuffer<float>> auditionBuffer;
+  std::atomic<bool> auditionActive{false};
 };
 
 /**
@@ -144,6 +146,7 @@ private:
                                    juce::ARAPlaybackRegion *region,
                                    juce::AudioBuffer<float> &buffer);
   void writePreviewOnce(juce::AudioBuffer<float> &buffer);
+  void writePreviewLoop(juce::AudioBuffer<float> &buffer);
   bool readFromARARegions(juce::AudioBuffer<float> &buffer,
                           juce::int64 timeInSamples, int numSamples);
   PitchNetDocumentController *getDocController() const;
@@ -151,12 +154,17 @@ private:
   std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
       readers;
   std::unique_ptr<juce::AudioBuffer<float>> previewBuffer;
+  std::unique_ptr<juce::AudioBuffer<float>> previousPreviewBuffer;
   juce::Range<juce::int64> previewLoopRange;
   juce::int64 previewLoopPosition = 0;
+  juce::int64 previousPreviewLoopPosition = 0;
+  int previewTransitionRemaining = 0;
+  int previewTransitionTotal = 0;
   double lastPreviewStartTime = -1.0;
   double lastPreviewEndTime = -1.0;
   juce::ARAPlaybackRegion *lastPreviewRegion = nullptr;
   bool wasPreviewing = false;
+  std::shared_ptr<juce::AudioBuffer<float>> lastAuditionBuffer;
   double sampleRate = 44100.0;
   int numChannels = 2;
 };
@@ -243,6 +251,8 @@ public:
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
       double projectSampleRate);
   void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
+  void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
+                         double sampleRate);
   void stopPreview();
   AraPreviewState &getPreviewState() { return previewState; }
   const AraPreviewState &getPreviewState() const { return previewState; }

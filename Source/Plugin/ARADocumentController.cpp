@@ -9,6 +9,7 @@
 #include "../UI/IMainView.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <utility>
 
@@ -680,6 +681,75 @@ void PitchNetEditorRenderer::writePreviewOnce(
   juce::ignoreUnused(written);
 }
 
+void PitchNetEditorRenderer::writePreviewLoop(
+    juce::AudioBuffer<float> &buffer) {
+  buffer.clear();
+  if (!previewBuffer || previewLoopRange.isEmpty())
+    return;
+
+  const int channelsToCopy =
+      std::min(buffer.getNumChannels(), previewBuffer->getNumChannels());
+  const int loopStart = static_cast<int>(previewLoopRange.getStart());
+  const int loopEnd = static_cast<int>(previewLoopRange.getEnd());
+  const int loopLength = loopEnd - loopStart;
+  const int crossfade = std::min(8192, std::max(1, loopLength / 2));
+  const int crossfadeStart = loopEnd - crossfade;
+  auto renderLoopSample = [](const juce::AudioBuffer<float> &source,
+                             juce::int64 position, int channel) {
+    const int length = source.getNumSamples();
+    const int overlap = std::min(8192, std::max(1, length / 2));
+    const int overlapStart = length - overlap;
+    float value = source.getSample(channel, static_cast<int>(position));
+    if (position >= overlapStart) {
+      const float t = static_cast<float>(position - overlapStart) / overlap;
+      value = value * std::cos(t * juce::MathConstants<float>::halfPi) +
+              source.getSample(channel, static_cast<int>(position - overlapStart)) *
+                  std::sin(t * juce::MathConstants<float>::halfPi);
+    }
+    return value;
+  };
+  auto advanceLoopPosition = [](const juce::AudioBuffer<float> &source,
+                                juce::int64 &position) {
+    const int length = source.getNumSamples();
+    const int overlap = std::min(8192, std::max(1, length / 2));
+    if (++position >= length)
+      position -= length - overlap;
+  };
+  for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+    const int position = static_cast<int>(previewLoopPosition);
+    const bool inCrossfade = position >= crossfadeStart;
+    const float t = inCrossfade
+                        ? static_cast<float>(position - crossfadeStart) /
+                              static_cast<float>(crossfade)
+                        : 0.0f;
+    const float tailGain = std::cos(t * juce::MathConstants<float>::halfPi);
+    const float headGain = std::sin(t * juce::MathConstants<float>::halfPi);
+    for (int ch = 0; ch < channelsToCopy; ++ch) {
+      float value = previewBuffer->getSample(ch, position);
+      if (inCrossfade)
+        value = value * tailGain +
+                previewBuffer->getSample(ch, loopStart + position - crossfadeStart) *
+                    headGain;
+      if (previewTransitionRemaining > 0 && previousPreviewBuffer) {
+        const float oldValue = renderLoopSample(*previousPreviewBuffer,
+                                                previousPreviewLoopPosition, ch);
+        const float handoff = 1.0f - static_cast<float>(previewTransitionRemaining) /
+                                           static_cast<float>(previewTransitionTotal);
+        value = oldValue * std::cos(handoff * juce::MathConstants<float>::halfPi) +
+                value * std::sin(handoff * juce::MathConstants<float>::halfPi);
+      }
+      buffer.setSample(ch, sample, value);
+    }
+    ++previewLoopPosition;
+    if (previewLoopPosition >= loopEnd)
+      previewLoopPosition -= loopLength - crossfade;
+    if (previewTransitionRemaining > 0 && previousPreviewBuffer) {
+      advanceLoopPosition(*previousPreviewBuffer, previousPreviewLoopPosition);
+      --previewTransitionRemaining;
+    }
+  }
+}
+
 bool PitchNetEditorRenderer::readFromARARegions(
     juce::AudioBuffer<float> &buffer, juce::int64 timeInSamples,
     int numSamples) {
@@ -724,6 +794,37 @@ bool PitchNetEditorRenderer::processBlock(
 
   if (!posInfo.getIsPlaying()) {
     auto &previewState = docCtrl->getPreviewState();
+    auto audition = std::atomic_load(&previewState.auditionBuffer);
+    if (previewState.auditionActive.load() && audition) {
+      auto *claimedRenderer = previewState.previewClaimedRenderer.load();
+      if (claimedRenderer == nullptr) {
+        PitchNetEditorRenderer *expected = nullptr;
+        previewState.previewClaimedRenderer.compare_exchange_strong(expected,
+                                                                     this);
+        claimedRenderer = previewState.previewClaimedRenderer.load();
+      }
+      if (claimedRenderer != this) {
+        buffer.clear();
+        return true;
+      }
+      if (audition != lastAuditionBuffer) {
+        previousPreviewBuffer = std::move(previewBuffer);
+        previousPreviewLoopPosition = previewLoopPosition;
+        previewTransitionTotal = 4096;
+        previewTransitionRemaining = previousPreviewBuffer ? previewTransitionTotal : 0;
+        previewBuffer = std::make_unique<juce::AudioBuffer<float>>();
+        previewBuffer->makeCopyOf(*audition);
+        previewLoopRange = juce::Range<juce::int64>::withStartAndLength(
+            0, previewBuffer->getNumSamples());
+        previewLoopPosition = previewLoopRange.getStart();
+        lastAuditionBuffer = audition;
+      }
+      writePreviewLoop(buffer);
+      if (!std::exchange(wasPreviewing, true))
+        buffer.applyGainRamp(0, std::min(50, buffer.getNumSamples()), 0.0f,
+                             1.0f);
+      return true;
+    }
     auto *previewRegion = previewState.previewedRegion.load();
     const auto previewRegionIsAssigned = [&]() {
       if (previewRegion == nullptr)
@@ -1963,7 +2064,25 @@ void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
   previewState.previewedRegion.store(previewRegion);
 }
 
+void PitchNetDocumentController::startPreviewAudio(
+    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+  juce::ignoreUnused(sampleRate);
+  if (buffer.getNumSamples() <= 0)
+    return;
+  auto preview = std::make_shared<juce::AudioBuffer<float>>();
+  preview->makeCopyOf(buffer);
+  std::atomic_store(&previewState.auditionBuffer, std::move(preview));
+  // startPreviewRange() has already selected a region and caused the host's
+  // normal preview signal flow to run. Keep that selection intact while the
+  // editor renderer substitutes this temporary resampled audition buffer.
+  previewState.previewClaimedRenderer.store(nullptr);
+  previewState.auditionActive.store(true);
+}
+
 void PitchNetDocumentController::stopPreview() {
+  previewState.auditionActive.store(false);
+  std::atomic_store(&previewState.auditionBuffer,
+                    std::shared_ptr<juce::AudioBuffer<float>>{});
   previewState.previewStartTime.store(0.0);
   previewState.previewEndTime.store(0.0);
   previewState.previewedRegion.store(nullptr);

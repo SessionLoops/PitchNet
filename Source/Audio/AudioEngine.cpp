@@ -40,7 +40,10 @@ void AudioEngine::releaseResources() {}
 
 void AudioEngine::getNextAudioBlock(
     const juce::AudioSourceChannelInfo &bufferToFill) {
-  if (!playing || currentWaveform.getNumSamples() == 0) {
+  const bool auditioning = auditionActive.load();
+  if (!playing ||
+      (auditioning ? auditionWaveform.getNumSamples()
+                   : currentWaveform.getNumSamples()) == 0) {
     bufferToFill.clearActiveBufferRegion();
     return;
   }
@@ -52,16 +55,94 @@ void AudioEngine::getNextAudioBlock(
     return;
   }
 
+  // Audition is a self-contained loop: crossfade its tail into its head and
+  // then continue after the already-crossfaded head section. This eliminates
+  // the click/gap of a hard wrap without affecting the project transport.
+  if (auditioning) {
+    auto *outputBuffer = bufferToFill.buffer;
+    const int numOutputSamples = bufferToFill.numSamples;
+    const int startSample = bufferToFill.startSample;
+    auto renderLoopSample = [this](const juce::AudioBuffer<float> &waveform,
+                                   int sampleRate, double &position) {
+      const int sampleCount = waveform.getNumSamples();
+      const int overlap = std::min(8192, std::max(1, sampleCount / 2));
+      const double overlapStart = static_cast<double>(sampleCount - overlap);
+      const double sampleRatio = currentSampleRate > 0.0
+                                     ? static_cast<double>(sampleRate) / currentSampleRate
+                                     : 1.0;
+      auto sampleAt = [&waveform, sampleCount](double samplePosition) {
+        samplePosition = juce::jlimit(0.0,
+                                      static_cast<double>(sampleCount - 1),
+                                      samplePosition);
+        const int left = static_cast<int>(samplePosition);
+        const int right = std::min(sampleCount - 1, left + 1);
+        const float fraction = static_cast<float>(samplePosition - left);
+        const auto *data = waveform.getReadPointer(0);
+        return data[left] + fraction * (data[right] - data[left]);
+      };
+
+      float value = sampleAt(position);
+      if (position >= overlapStart) {
+        const float t = static_cast<float>((position - overlapStart) / overlap);
+        value = value * std::cos(t * juce::MathConstants<float>::halfPi) +
+                sampleAt(position - overlapStart) *
+                    std::sin(t * juce::MathConstants<float>::halfPi);
+      }
+      position += sampleRatio;
+      while (position >= sampleCount)
+        position -= static_cast<double>(sampleCount - overlap);
+      return value;
+    };
+
+    outputBuffer->clear(startSample, numOutputSamples);
+    auto *output = outputBuffer->getWritePointer(0, startSample);
+    double position = auditionReadPosition.load();
+    double previousPosition = previousAuditionReadPosition.load();
+    int transitionRemaining = auditionTransitionSamplesRemaining.load();
+    const int transitionTotal = auditionTransitionSamplesTotal.load();
+    for (int i = 0; i < numOutputSamples; ++i) {
+      float value = renderLoopSample(auditionWaveform, auditionSampleRate,
+                                     position);
+      if (transitionRemaining > 0 && transitionTotal > 0 &&
+          previousAuditionWaveform.getNumSamples() > 0) {
+        const float t = 1.0f - static_cast<float>(transitionRemaining) /
+                                    static_cast<float>(transitionTotal);
+        const float oldValue = renderLoopSample(previousAuditionWaveform,
+                                                previousAuditionSampleRate,
+                                                previousPosition);
+        value = oldValue * std::cos(t * juce::MathConstants<float>::halfPi) +
+                value * std::sin(t * juce::MathConstants<float>::halfPi);
+        --transitionRemaining;
+      }
+      output[i] = value;
+    }
+
+    const float gain = volumeGain.load();
+    if (std::abs(gain - 1.0f) > 0.0001f)
+      juce::FloatVectorOperations::multiply(output, gain, numOutputSamples);
+    for (int ch = 1; ch < outputBuffer->getNumChannels(); ++ch)
+      outputBuffer->copyFrom(ch, startSample, output, numOutputSamples);
+    auditionReadPosition.store(position);
+    previousAuditionReadPosition.store(previousPosition);
+    auditionTransitionSamplesRemaining.store(transitionRemaining);
+    return;
+  }
+
   auto *outputBuffer = bufferToFill.buffer;
   auto numOutputSamples = bufferToFill.numSamples;
   auto startSample = bufferToFill.startSample;
 
-  int64_t pos = currentPosition.load();
-  int64_t waveformLength = currentWaveform.getNumSamples();
+  int64_t pos = auditioning ? auditionPosition.load() : currentPosition.load();
+  const auto &activeWaveform = auditioning ? auditionWaveform : currentWaveform;
+  const int activeSampleRate = auditioning ? auditionSampleRate : waveformSampleRate;
+  const double activePlaybackRatio =
+      currentSampleRate > 0.0 ? static_cast<double>(activeSampleRate) / currentSampleRate
+                              : 1.0;
+  int64_t waveformLength = activeWaveform.getNumSamples();
 
-  bool loopActive = loopEnabled.load();
-  int64_t loopStart = loopStartSample.load();
-  int64_t loopEnd = loopEndSample.load();
+  bool loopActive = auditioning || loopEnabled.load();
+  int64_t loopStart = auditioning ? 0 : loopStartSample.load();
+  int64_t loopEnd = auditioning ? waveformLength : loopEndSample.load();
 
   if (loopActive) {
     loopStart = juce::jlimit<int64_t>(0, waveformLength, loopStart);
@@ -88,7 +169,7 @@ void AudioEngine::getNextAudioBlock(
   }
 
   // Use interpolator for sample rate conversion
-  const float *inputData = currentWaveform.getReadPointer(0);
+  const float *inputData = activeWaveform.getReadPointer(0);
   float *outputData = outputBuffer->getWritePointer(0, startSample);
 
   outputBuffer->clear(startSample, numOutputSamples);
@@ -109,7 +190,7 @@ void AudioEngine::getNextAudioBlock(
       break;
     }
 
-    int maxOutput = static_cast<int>(inputAvailable / playbackRatio);
+    int maxOutput = static_cast<int>(inputAvailable / activePlaybackRatio);
     if (maxOutput <= 0) {
       if (loopActive) {
         pos = loopStart;
@@ -120,7 +201,7 @@ void AudioEngine::getNextAudioBlock(
     }
 
     int outCount = std::min(samplesRemaining, maxOutput);
-    int samplesUsed = interpolator.process(playbackRatio, inputData + pos,
+    int samplesUsed = interpolator.process(activePlaybackRatio, inputData + pos,
                                            outputData + writeOffset, outCount,
                                            static_cast<int>(inputAvailable),
                                            0 // No wrap
@@ -143,7 +224,10 @@ void AudioEngine::getNextAudioBlock(
     juce::FloatVectorOperations::multiply(outputData, gain, numOutputSamples);
   }
 
-  currentPosition.store(pos);
+  if (auditioning)
+    auditionPosition.store(pos);
+  else
+    currentPosition.store(pos);
 
   // Copy to other channels (if stereo output)
   for (int ch = 1; ch < outputBuffer->getNumChannels(); ++ch) {
@@ -161,7 +245,8 @@ void AudioEngine::getNextAudioBlock(
   }
 
   // Update position callback
-  if (auto cb = std::atomic_load(&positionCallback)) {
+  if (!auditioning)
+    if (auto cb = std::atomic_load(&positionCallback)) {
     auto state = positionUpdateState;
     state->latestSeconds.store(static_cast<double>(currentPosition.load()) /
                                waveformSampleRate);
@@ -174,7 +259,7 @@ void AudioEngine::getNextAudioBlock(
         (*cb)(state->latestSeconds.load());
       });
     }
-  }
+    }
 }
 
 void AudioEngine::changeListenerCallback(juce::ChangeBroadcaster *source) {}
@@ -284,6 +369,45 @@ void AudioEngine::clearLoopRange() {
   loopEnabled.store(false);
   loopStartSample.store(0);
   loopEndSample.store(0);
+}
+
+void AudioEngine::beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
+                                    int sampleRate) {
+  if (buffer.getNumSamples() <= 0)
+    return;
+
+  const juce::SpinLock::ScopedLockType lock(waveformLock);
+  constexpr int kTransitionSamples = 4096;
+  if (auditionActive.load() && auditionWaveform.getNumSamples() > 0) {
+    previousAuditionWaveform.makeCopyOf(auditionWaveform);
+    previousAuditionSampleRate = auditionSampleRate;
+    previousAuditionReadPosition.store(auditionReadPosition.load());
+    auditionTransitionSamplesTotal.store(kTransitionSamples);
+    auditionTransitionSamplesRemaining.store(kTransitionSamples);
+  } else {
+    previousAuditionWaveform.setSize(0, 0);
+    auditionTransitionSamplesTotal.store(0);
+    auditionTransitionSamplesRemaining.store(0);
+  }
+  auditionWaveform.makeCopyOf(buffer);
+  auditionSampleRate = sampleRate > 0 ? sampleRate : waveformSampleRate;
+  auditionPosition.store(0);
+  auditionReadPosition.store(0.0);
+  auditionActive.store(true);
+  interpolator.reset();
+  playing.store(true);
+}
+
+void AudioEngine::endAuditionLoop() {
+  const juce::SpinLock::ScopedLockType lock(waveformLock);
+  auditionActive.store(false);
+  auditionPosition.store(0);
+  auditionReadPosition.store(0.0);
+  previousAuditionWaveform.setSize(0, 0);
+  previousAuditionReadPosition.store(0.0);
+  auditionTransitionSamplesTotal.store(0);
+  auditionTransitionSamplesRemaining.store(0);
+  interpolator.reset();
 }
 
 double AudioEngine::getPosition() const {

@@ -49,6 +49,26 @@ DarkLookAndFeel::DarkLookAndFeel()
     // ── ProgressBar ───────────────────────────────────────────────
     setColour(juce::ProgressBar::backgroundColourId, APP_COLOR_SURFACE);
     setColour(juce::ProgressBar::foregroundColourId, APP_COLOR_PRIMARY);
+
+    // ── TooltipWindow ────────────────────────────────────────────
+    setColour(juce::TooltipWindow::backgroundColourId, juce::Colour(0xFF1C1C1Cu));
+    setColour(juce::TooltipWindow::outlineColourId, juce::Colour(0xFF313131u));
+    setColour(juce::TooltipWindow::textColourId, juce::Colour(0xFF9B9B9Bu));
+}
+
+juce::Rectangle<int> DarkLookAndFeel::getTooltipBounds(const juce::String& tipText,
+                                                        juce::Point<int> screenPos,
+                                                        juce::Rectangle<int> parentArea)
+{
+    auto bounds = juce::LookAndFeel_V2::getTooltipBounds(tipText, screenPos, parentArea);
+    return bounds.withPosition(screenPos.x - bounds.getWidth() / 2,
+                               screenPos.y - bounds.getHeight() - 12);
+}
+
+void DarkLookAndFeel::drawTooltip(juce::Graphics& g, const juce::String& text,
+                                  int width, int height)
+{
+    juce::LookAndFeel_V4::drawTooltip(g, text, width, height);
 }
 
 // =====================================================================

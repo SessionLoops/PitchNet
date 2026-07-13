@@ -39,6 +39,13 @@ public:
   void clearLoopRange();
   bool isLoopEnabled() const { return loopEnabled.load(); }
 
+  // Temporary audition source. It loops independently of the project
+  // transport, so previewing a note never moves the timeline playhead.
+  void beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
+                         int sampleRate);
+  void endAuditionLoop();
+  bool isAuditioning() const { return auditionActive.load(); }
+
   bool isPlaying() const { return playing; }
   double getPosition() const; // Returns position in seconds
   double getDuration() const;
@@ -81,9 +88,19 @@ private:
   Project *project = nullptr;
   juce::AudioBuffer<float> currentWaveform;
   int waveformSampleRate = 44100;
+  juce::AudioBuffer<float> auditionWaveform;
+  int auditionSampleRate = 44100;
+  juce::AudioBuffer<float> previousAuditionWaveform;
+  int previousAuditionSampleRate = 44100;
 
   std::atomic<int64_t> currentPosition{0}; // Position in waveform samples
+  std::atomic<int64_t> auditionPosition{0};
+  std::atomic<double> auditionReadPosition{0.0};
+  std::atomic<double> previousAuditionReadPosition{0.0};
+  std::atomic<int> auditionTransitionSamplesRemaining{0};
+  std::atomic<int> auditionTransitionSamplesTotal{0};
   std::atomic<bool> playing{false};
+  std::atomic<bool> auditionActive{false};
   std::atomic<bool> shouldStop{false};
 
   std::shared_ptr<PositionCallback> positionCallback;

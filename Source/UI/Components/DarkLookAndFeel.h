@@ -36,6 +36,13 @@ public:
         return AppFont::getFont(13.5f);
     }
 
+    // Keep tooltips centred above the pointer, matching the app's compact UI.
+    juce::Rectangle<int> getTooltipBounds(const juce::String& tipText,
+                                          juce::Point<int> screenPos,
+                                          juce::Rectangle<int> parentArea) override;
+    void drawTooltip(juce::Graphics& g, const juce::String& text,
+                     int width, int height) override;
+
     // ── Custom paint overrides ────────────────────────────────────
     void drawPopupMenuBackground(juce::Graphics& g, int width, int height) override;
     void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,

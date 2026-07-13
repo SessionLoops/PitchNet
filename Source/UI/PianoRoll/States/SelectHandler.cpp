@@ -75,6 +75,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     {
       // Start multi-note drag
       owner_.pitchEditor->startMultiNoteDrag(selectedNotes, worldY, note);
+      if (owner_.onNoteDragAudition)
+        owner_.onNoteDragAudition(*note);
     }
     else
     {
@@ -127,6 +129,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
         originalF0Values.push_back(audioData.f0[i]);
 
       prepareDragBasePreview();
+      if (owner_.onNoteDragAudition)
+        owner_.onNoteDragAudition(*draggedNote);
     }
 
     owner_.repaint();
@@ -320,6 +324,13 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   if (owner_.pitchEditor->isDraggingMultiNotes())
   {
     owner_.pitchEditor->updateMultiNoteDrag(worldX, worldY);
+    if (owner_.onNoteDragAudition)
+    {
+      if (auto *note = owner_.pitchEditor->getHoveredMultiDragNote())
+        owner_.onNoteDragAudition(*note);
+      else if (!owner_.pitchEditor->getDraggedNotes().empty())
+        owner_.onNoteDragAudition(*owner_.pitchEditor->getDraggedNotes().front());
+    }
     owner_.updatePitchToolHandlesFromSelection();
     if (shouldRepaint)
     {
@@ -345,6 +356,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
     draggedNote->setPitchOffset(deltaSemitones);
     draggedNote->markDirty();
     applyDragBasePreview(deltaSemitones);
+    if (owner_.onNoteDragAudition)
+      owner_.onNoteDragAudition(*draggedNote);
 
     // Update handle positions to follow notes during drag
     owner_.updatePitchToolHandlesFromSelection();
@@ -567,6 +580,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (owner_.pitchEditor->isDraggingMultiNotes())
   {
     owner_.pitchEditor->endMultiNoteDrag();
+    if (owner_.onNoteDragAuditionFinished)
+      owner_.onNoteDragAuditionFinished();
     owner_.repaint();
     return true;
   }
@@ -693,6 +708,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
 
   isDragging = false;
   draggedNote = nullptr;
+  if (owner_.onNoteDragAuditionFinished)
+    owner_.onNoteDragAuditionFinished();
   dragPreviewStartFrame = -1;
   dragPreviewEndFrame = -1;
   dragPreviewWeights.clear();
@@ -1136,6 +1153,8 @@ void SelectHandler::cancel()
     dragBasePitchSnapshot.clear();
     dragF0Snapshot.clear();
   }
+  if (owner_.onNoteDragAuditionFinished)
+    owner_.onNoteDragAuditionFinished();
   if (isDeltaScaleDragging)
   {
     auto *project = owner_.project;
