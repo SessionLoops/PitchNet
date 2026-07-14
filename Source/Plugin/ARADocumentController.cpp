@@ -890,8 +890,10 @@ bool PitchNetEditorRenderer::processBlock(
         return false;
 
       const auto &assignedRegions = getPlaybackRegions();
+      // REAPER can request an editor preview before assigning this renderer a
+      // region. The document-level preview selection is authoritative there.
       if (assignedRegions.empty())
-        return false;
+        return true;
 
       for (auto *region : assignedRegions)
         if (region == previewRegion)
