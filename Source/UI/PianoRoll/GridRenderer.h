@@ -24,6 +24,9 @@ public:
     double gridSeconds;
     double beatSeconds;
     double barSeconds;
+    // Scrollable canvas duration. In ARA this includes one display bar after
+    // the project's audio end.
+    double timelineDuration;
     // Visible content sizes from the component.
     int componentWidth;
     int visibleContentWidth;

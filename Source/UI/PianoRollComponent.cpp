@@ -403,6 +403,7 @@ void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
   params.gridSeconds = getTimelineGridSeconds();
   params.beatSeconds = getTimelineBeatSeconds();
   params.barSeconds = getTimelineBarSeconds();
+  params.timelineDuration = getTimelineDuration();
   params.componentWidth = getWidth();
   params.visibleContentWidth = getVisibleContentWidth();
   params.visibleContentHeight = getVisibleContentHeight();
@@ -910,7 +911,7 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
     const float zoomFactorX = std::pow(1.0065f, deltaX);
     const double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
     const int visibleWidth = getVisibleContentWidth();
-    const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
+    const double totalTime = getTimelineDuration();
     const float minPpsX =
         (visibleWidth > 0 && totalTime > 0.0)
             ? std::max(MIN_PIXELS_PER_SECOND,
@@ -1138,7 +1139,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
   float scrollMultiplier = wheel.isSmooth ? 200.0f : 80.0f;
   const int visibleHeight = getVisibleContentHeight();
   const int visibleWidth = getVisibleContentWidth();
-  const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
+  const double totalTime = getTimelineDuration();
   const float minPpsForFill =
       visibleHeight > 0
           ? static_cast<float>(visibleHeight) / (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1)
@@ -1278,7 +1279,7 @@ void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
 {
   // Pinch-to-zoom on trackpad - horizontal zoom, center on mouse position
   const int visibleWidth = getVisibleContentWidth();
-  const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
+  const double totalTime = getTimelineDuration();
   const float minPpsX =
       (visibleWidth > 0 && totalTime > 0.0)
           ? std::max(MIN_PIXELS_PER_SECOND,
@@ -1737,7 +1738,7 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
 {
   float oldPps = pixelsPerSecond;
   const int visibleWidth = getVisibleContentWidth();
-  const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
+  const double totalTime = getTimelineDuration();
   const float minPpsX =
       (visibleWidth > 0 && totalTime > 0.0)
           ? std::max(MIN_PIXELS_PER_SECOND,
@@ -2361,7 +2362,16 @@ double PianoRollComponent::getTimelineDuration() const
 {
   const double projectDuration =
       project ? static_cast<double>(project->getAudioData().getDuration()) : 0.0;
-  return std::max(projectDuration, liveTimelineEndSeconds);
+  double timelineDuration = std::max(projectDuration, liveTimelineEndSeconds);
+
+  // ARA region projects contain a playback range; give the editor one full bar
+  // of writable-looking canvas after the real project end without extending
+  // the underlying audio or playback range.
+  if (project != nullptr &&
+      !project->getAudioData().playbackRegionRanges.empty())
+    timelineDuration += getTimelineBarSeconds();
+
+  return timelineDuration;
 }
 
 void PianoRollComponent::reapplyBasePitchForNote(Note *note)

@@ -13,8 +13,10 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   const double scrollX = coordMapper->getScrollX();
   const double scrollY = coordMapper->getScrollY();
 
-  float duration = project ? project->getAudioData().getDuration()
-                           : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  float duration = static_cast<float>(params.timelineDuration);
+  if (duration <= 0.0f)
+    duration = project ? project->getAudioData().getDuration()
+                       : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   if (duration <= 0.0f)
     duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   const float width =
