@@ -4,6 +4,7 @@
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
 #include "Buttons.h"
+#include "ScaleSelectionControl.h"
 
 // Forward declaration - EditMode is defined in PianoRollComponent.h
 enum class EditMode;
@@ -77,6 +78,7 @@ public:
     void setLoopEnabled(bool enabled);
     void setParametersVisible(bool visible);
     void setUndoRedoEnabled(bool undoEnabled, bool redoEnabled);
+    void setProject(Project* project);
     bool isFollowPlayback() const { return followPlayback; }
     bool isLoopEnabled() const { return loopEnabled; }
 
@@ -104,6 +106,8 @@ public:
     std::function<void()> onRedo;
     std::function<void(bool)> onToggleRecord;
     std::function<void(bool)> onToggleAudition;
+    std::function<void(int)> onScaleRootChanged;
+    std::function<void(ScaleMode)> onScaleModeChanged;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing
@@ -127,6 +131,7 @@ private:
     ToolButton selectModeButton{"Select"};
     ToolButton splitModeButton{"Split"};
     ToolButton followButton{"Follow"};
+    ScaleSelectionControl scaleSelectionButton;
     ToggleButton auditionButton;
     Button undoButton;
     Button redoButton;

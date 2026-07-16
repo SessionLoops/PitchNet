@@ -28,15 +28,14 @@ public:
     void setSelectedNote(Note* note);
     void updateFromNote();
     void updateGlobalSliders();
+    std::function<void(Project*)> onProjectBound;
 
     int getPreferredHeight() const { return 470; }
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;
     std::function<void(int)> onScaleRootChanged;
-    std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
-    std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
     std::function<void(bool)> onSnapToSemitonesChanged;
     std::function<void(int)> onPitchReferenceChanged;
     std::function<void(DoubleClickSnapMode)> onDoubleClickSnapModeChanged;
@@ -48,23 +47,16 @@ public:
 
 private:
     void setupTextButton(juce::TextButton& button);
-    void showScaleModeMenu();
-    void showScaleRootMenu();
     void showDoubleClickSnapMenu();
-    void showDetectedScaleMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
 
     void setScaleRootInternal(int rootNote, bool notify);
     void setScaleModeInternal(ScaleMode mode, bool notify);
-    void setConfiguredScaleModeInternal(ScaleMode mode, bool notify);
     void setSnapToSemitonesInternal(bool enabled, bool notify);
     void setPitchReferenceInternal(int hz, bool notify);
     void setDoubleClickSnapModeInternal(DoubleClickSnapMode mode, bool notify);
-    void previewScaleRoot(std::optional<int> rootNote);
-    void previewScaleMode(std::optional<ScaleMode> mode);
     void refreshModeToggles();
-    void refreshScaleControlEnabling();
     void refreshTimelineModeToggles();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
     void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
@@ -86,10 +78,6 @@ private:
 
     juce::Label referenceLabel { {}, "Reference (A4)" };
     SliderBox referenceSlider { "Pitch Reference" };
-
-    juce::TextButton scaleRootButton { "-" };
-    juce::TextButton scaleModeButton { "-" };
-    juce::TextButton showDetectedScalesButton { "Show Detected Scales" };
 
     StyledToggleButton snapToSemitonesToggle { "Snap To Semitones" };
 

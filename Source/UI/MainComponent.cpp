@@ -500,6 +500,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRoll.setUndoManager(undoManager);
   parameterPanel.setUndoManager(undoManager);
   parameterPanel.setPluginMode(isPluginMode());
+  parameterPanel.onProjectBound = [this](Project* project)
+  {
+    toolbar.setProject(project);
+  };
 
   // Setup toolbar callbacks
   toolbar.onPlay = [this]()
@@ -516,6 +520,22 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
+  toolbar.onScaleRootChanged = [this](int rootNote)
+  {
+    pianoRoll.setScaleRootNote(rootNote);
+    parameterPanel.updateGlobalSliders();
+    notifyProjectDataChanged();
+  };
+  toolbar.onScaleModeChanged = [this](ScaleMode mode)
+  {
+    if (auto* project = getProject();
+        project != nullptr &&
+        project->getScaleMode() != ScaleMode::Chromatic &&
+        project->getScaleMode() != ScaleMode::None)
+        pianoRoll.setScaleMode(mode);
+    parameterPanel.updateGlobalSliders();
+    notifyProjectDataChanged();
+  };
   toolbar.onToggleLoop = [this](bool enabled)
   {
     if (auto *project = getProject())
@@ -629,18 +649,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     pianoRoll.setScaleRootNote(rootNote);
   };
-  parameterPanel.onScaleRootPreviewChanged = [this](std::optional<int> rootNote)
-  {
-    pianoRoll.setScaleRootPreview(rootNote);
-  };
   parameterPanel.onScaleModeChanged = [this](ScaleMode mode)
   {
     pianoRoll.setScaleMode(mode);
-  };
-  parameterPanel.onScaleModePreviewChanged =
-      [this](std::optional<ScaleMode> mode)
-  {
-    pianoRoll.setScaleModePreview(mode);
   };
   parameterPanel.onSnapToSemitonesChanged = [this](bool enabled)
   {

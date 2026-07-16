@@ -49,6 +49,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
+    addAndMakeVisible(scaleSelectionButton);
     addAndMakeVisible(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
@@ -67,6 +68,17 @@ ToolbarComponent::ToolbarComponent()
     undoButton.addListener(this);
     redoButton.addListener(this);
     parametersButton.addListener(this);
+
+    scaleSelectionButton.onScaleRootChanged = [this](int rootNote)
+    {
+        if (onScaleRootChanged)
+            onScaleRootChanged(rootNote);
+    };
+    scaleSelectionButton.onScaleModeChanged = [this](ScaleMode mode)
+    {
+        if (onScaleModeChanged)
+            onScaleModeChanged(mode);
+    };
 
     // Set localized text (tooltips for icon buttons)
     selectModeButton.setTooltip(TR("toolbar.select"));
@@ -195,6 +207,10 @@ void ToolbarComponent::resized()
     auditionButton.setBounds(auditionBtnArea.getRight() - rightButtonSize - 4,
                              capsuleY + (capsuleH - rightButtonSize) / 2,
                              rightButtonSize, rightButtonSize);
+
+    auto scaleArea = rightSection.removeFromRight(98);
+    scaleSelectionButton.setBounds(
+        scaleArea.getX() - 7, capsuleY + (capsuleH - 26) / 2, 92, 26);
 
     // Hide center controls (time/tools removed from toolbar) and zoom controls
     timeLabel.setVisible(false);
@@ -343,6 +359,11 @@ void ToolbarComponent::setTransportEnabled(bool enabled)
     goToStartButton.setEnabled(enabled);
     goToEndButton.setEnabled(enabled);
     loopButton.setEnabled(enabled);
+}
+
+void ToolbarComponent::setProject(Project* project)
+{
+    scaleSelectionButton.setProject(project);
 }
 
 void ToolbarComponent::setCurrentTime(double time)

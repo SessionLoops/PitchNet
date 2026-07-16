@@ -248,7 +248,7 @@ if(APPLE)
         "Source/Audio/CoreMLVocoderBackend.mm")
 endif()
 
-file(GLOB_RECURSE PITCHNET_UI_SOURCES
+file(GLOB_RECURSE PITCHNET_UI_SOURCES CONFIGURE_DEPENDS
     "Source/UI/*.cpp" "Source/UI/*.h" "Source/UI/*.mm"
     "Source/Utils/UI/*.cpp" "Source/Utils/UI/*.h")
 list(APPEND PITCHNET_UI_SOURCES
