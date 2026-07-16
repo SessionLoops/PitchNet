@@ -642,10 +642,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     pianoRoll.setScaleModePreview(mode);
   };
-  parameterPanel.onShowScaleColorsChanged = [this](bool enabled)
-  {
-    pianoRoll.setShowScaleColors(enabled);
-  };
   parameterPanel.onSnapToSemitonesChanged = [this](bool enabled)
   {
     pianoRoll.setSnapToSemitoneDrag(enabled);

@@ -10,10 +10,19 @@ public:
     {
         auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
 
-        label->onEditorShow = [label]
+        label->onEditorShow = [label, &slider]
         {
             if (auto* editor = label->getCurrentTextEditor())
             {
+                if (const auto* sliderBox = dynamic_cast<SliderBox*>(&slider);
+                    sliderBox != nullptr && sliderBox->shouldHideSuffixWhileEditing())
+                {
+                    editor->setText(
+                        juce::String(slider.getValue(),
+                                     slider.getNumDecimalPlacesToDisplay()),
+                        false);
+                }
+
                 const auto textColour =
                     editor->findColour(juce::TextEditor::textColourId);
                 editor->setColour(juce::TextEditor::highlightColourId,
@@ -85,4 +94,14 @@ void SliderBox::setEnabled(bool shouldBeEnabled)
     juce::Slider::setEnabled(shouldBeEnabled);
     setMouseCursor(shouldBeEnabled ? juce::MouseCursor::UpDownResizeCursor
                                    : juce::MouseCursor::NormalCursor);
+}
+
+void SliderBox::setHideSuffixWhileEditing(bool shouldHide)
+{
+    hideSuffixWhileEditing = shouldHide;
+}
+
+bool SliderBox::shouldHideSuffixWhileEditing() const
+{
+    return hideSuffixWhileEditing;
 }

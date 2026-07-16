@@ -187,9 +187,10 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("formantShift", project.getFormantShift());
     obj->setProperty("volume", project.getVolume());
     obj->setProperty("scaleMode", static_cast<int>(project.getScaleMode()));
+    obj->setProperty("preferredScaleMode",
+                     static_cast<int>(project.getPreferredScaleMode()));
     obj->setProperty("scaleRootNote", project.getScaleRootNote());
     obj->setProperty("pitchReferenceHz", project.getPitchReferenceHz());
-    obj->setProperty("showScaleColors", project.getShowScaleColors());
     obj->setProperty("snapToSemitones", project.getSnapToSemitones());
     obj->setProperty("doubleClickSnapMode",
                      static_cast<int>(project.getDoubleClickSnapMode()));
@@ -297,17 +298,26 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
     {
         const int scaleModeValue = static_cast<int>(json.getProperty(
-            "scaleMode", static_cast<int>(ScaleMode::None)));
-        if (scaleModeValue >= static_cast<int>(ScaleMode::None) &&
+            "scaleMode", static_cast<int>(ScaleMode::Chromatic)));
+        if (scaleModeValue >= static_cast<int>(ScaleMode::Chromatic) &&
             scaleModeValue <= static_cast<int>(ScaleMode::Locrian))
             project.setScaleMode(static_cast<ScaleMode>(scaleModeValue));
         else
-            project.setScaleMode(ScaleMode::None);
+            project.setScaleMode(ScaleMode::Chromatic);
     }
-    project.setScaleRootNote(static_cast<int>(json.getProperty("scaleRootNote", -1)));
+    {
+        const ScaleMode activeMode = project.getScaleMode();
+        const ScaleMode preferredDefault =
+            activeMode != ScaleMode::Chromatic ? activeMode : ScaleMode::Major;
+        const int preferredModeValue = static_cast<int>(json.getProperty(
+            "preferredScaleMode", static_cast<int>(preferredDefault)));
+        if (preferredModeValue >= static_cast<int>(ScaleMode::Major) &&
+            preferredModeValue <= static_cast<int>(ScaleMode::Locrian))
+            project.setPreferredScaleMode(
+                static_cast<ScaleMode>(preferredModeValue));
+    }
+    project.setScaleRootNote(static_cast<int>(json.getProperty("scaleRootNote", 0)));
     project.setPitchReferenceHz(static_cast<int>(json.getProperty("pitchReferenceHz", 440)));
-    project.setShowScaleColors(static_cast<bool>(
-        json.getProperty("showScaleColors", true)));
     project.setSnapToSemitones(static_cast<bool>(
         json.getProperty("snapToSemitones", false)));
     {

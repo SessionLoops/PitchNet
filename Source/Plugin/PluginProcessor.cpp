@@ -2525,6 +2525,12 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
               std::max(0.0, timelineOffsetSeconds));
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           canvasShowsActiveAraRegion = true;
+
+          // Once the newly analysed project is on the canvas, bring its ARA
+          // region into view instead of leaving the viewport at the prior one.
+          mainComponent->focusTimelineRange(
+              std::max(0.0, timelineOffsetSeconds),
+              project->getAudioData().getDuration());
         }
 
         // No audio is published on analysis: an unedited region plays its raw

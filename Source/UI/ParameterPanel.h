@@ -10,8 +10,7 @@
 #include <optional>
 
 class ParameterPanel : public juce::Component,
-                       public juce::Button::Listener,
-                       public juce::TextEditor::Listener
+                       public juce::Button::Listener
 {
 public:
     ParameterPanel();
@@ -21,8 +20,6 @@ public:
     void resized() override;
 
     void buttonClicked(juce::Button* button) override;
-    void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
-    void textEditorFocusLost(juce::TextEditor& editor) override;
 
     void setProject(Project* proj);
     void setPluginMode(bool pluginMode);
@@ -40,7 +37,6 @@ public:
     std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
     std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
-    std::function<void(bool)> onShowScaleColorsChanged;
     std::function<void(bool)> onSnapToSemitonesChanged;
     std::function<void(int)> onPitchReferenceChanged;
     std::function<void(DoubleClickSnapMode)> onDoubleClickSnapModeChanged;
@@ -55,14 +51,13 @@ private:
     void showScaleModeMenu();
     void showScaleRootMenu();
     void showDoubleClickSnapMenu();
-    void showReferenceMenu();
     void showDetectedScaleMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
 
     void setScaleRootInternal(int rootNote, bool notify);
     void setScaleModeInternal(ScaleMode mode, bool notify);
-    void setShowScaleColorsInternal(bool enabled, bool notify);
+    void setConfiguredScaleModeInternal(ScaleMode mode, bool notify);
     void setSnapToSemitonesInternal(bool enabled, bool notify);
     void setPitchReferenceInternal(int hz, bool notify);
     void setDoubleClickSnapModeInternal(DoubleClickSnapMode mode, bool notify);
@@ -70,7 +65,6 @@ private:
     void previewScaleMode(std::optional<ScaleMode> mode);
     void refreshModeToggles();
     void refreshScaleControlEnabling();
-    void applyReferenceEditorValue(bool notify);
     void refreshTimelineModeToggles();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
     void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
@@ -87,20 +81,16 @@ private:
     juce::Label timeSectionLabel { {}, "Time" };
     juce::Rectangle<int> timeCardBounds;
 
-    StyledToggleButton chromaticToggle { "Chromatic" };
-    StyledToggleButton scaleToggle { "Scale" };
+    RadioButton chromaticToggle { "Chromatic" };
+    RadioButton scaleToggle { "Scale" };
 
     juce::Label referenceLabel { {}, "Reference (A4)" };
-    juce::TextEditor referenceEditor;
-    juce::TextButton referenceMenuButton { "<" };
+    SliderBox referenceSlider { "Pitch Reference" };
 
-    juce::Label scaleRootLabel { {}, "Root" };
     juce::TextButton scaleRootButton { "-" };
-    juce::Label scaleModeLabel { {}, "Mode" };
     juce::TextButton scaleModeButton { "-" };
     juce::TextButton showDetectedScalesButton { "Show Detected Scales" };
 
-    StyledToggleButton showScaleColorsToggle { "Show Scale Colors" };
     StyledToggleButton snapToSemitonesToggle { "Snap To Semitones" };
 
     juce::Label doubleClickSnapLabel { {}, "Double Click Snap" };
@@ -116,10 +106,9 @@ private:
     CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle { "Snap Cycle" };
 
-    int selectedScaleRootNote = -1;
-    ScaleMode selectedScaleMode = ScaleMode::None;
+    int selectedScaleRootNote = 0;
+    ScaleMode selectedScaleMode = ScaleMode::Chromatic;
     ScaleMode lastNonChromaticMode = ScaleMode::Major;
-    bool showScaleColors = true;
     bool snapToSemitones = false;
     int pitchReferenceHz = 440;
     DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;

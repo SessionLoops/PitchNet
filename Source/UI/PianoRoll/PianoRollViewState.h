@@ -31,7 +31,6 @@ struct PianoRollViewState
   bool showGameValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
-  bool showScaleColors = true;
   bool snapToSemitoneDrag = false;
 
   int pitchReferenceHz = 440;
@@ -43,8 +42,8 @@ struct PianoRollViewState
   TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
   bool timelineSnapCycle = false;
 
-  ScaleMode selectedScaleMode = ScaleMode::None;
-  int selectedScaleRootNote = -1;
+  ScaleMode selectedScaleMode = ScaleMode::Chromatic;
+  int selectedScaleRootNote = 0;
   std::optional<int> previewScaleRootNote;
   std::optional<ScaleMode> previewScaleMode;
 

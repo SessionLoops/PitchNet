@@ -6,7 +6,7 @@
 
 /**
  * Draws the main scrollable grid (horizontal pitch lines + vertical beat/time
- * markers) with optional scale-color row overlays.
+ * markers) with scale-aware light and dark row backgrounds.
  *
  * Stateless beyond the CoordinateMapper pointer; the component computes scale
  * state and timeline timing values and passes them in as a Params struct.
@@ -18,7 +18,7 @@ public:
   {
     ScaleMode scaleMode;
     int scaleRootNote;
-    bool showScaleColors;
+    float pitchAxisOffsetSemitones;
     TimelineDisplayMode timelineDisplayMode;
     // Pre-computed timing values from the component (depend on tempo + signature).
     double gridSeconds;

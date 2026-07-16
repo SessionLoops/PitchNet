@@ -8,7 +8,7 @@
 
 namespace
 {
-constexpr bool kShowPitchCard = false;
+constexpr bool kShowPitchCard = true;
 
 struct ScaleModeOption
 {
@@ -42,8 +42,7 @@ struct TimelineGridOption
     const char* label = "1/4";
 };
 
-constexpr std::array<ScaleModeOption, 8> kScaleModeOptions {{
-    { ScaleMode::None, "-" },
+constexpr std::array<ScaleModeOption, 7> kScaleModeOptions {{
     { ScaleMode::Major, "Major" },
     { ScaleMode::Minor, "Minor" },
     { ScaleMode::Dorian, "Dorian" },
@@ -61,10 +60,6 @@ constexpr std::array<DoubleClickSnapOption, 3> kDoubleClickSnapOptions {{
 
 constexpr std::array<const char*, 12> kScaleRootLabels {{
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
-}};
-
-constexpr std::array<int, 5> kReferencePresets {{
-    415, 432, 435, 440, 442
 }};
 
 constexpr std::array<ScaleMode, 7> kDetectedScaleModes {{
@@ -327,36 +322,38 @@ ParameterPanel::ParameterPanel()
     timeSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     timeSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
-    for (auto* toggle : { &chromaticToggle, &scaleToggle, &showScaleColorsToggle,
-                          &snapToSemitonesToggle, &timelineSnapCycleToggle })
+    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
         addAndMakeVisible(toggle);
         toggle->setClickingTogglesState(true);
         toggle->addListener(this);
     }
 
-    for (auto* radio : { &beatsTimelineToggle, &timeTimelineToggle })
+    for (auto* radio : { &chromaticToggle, &scaleToggle,
+                         &beatsTimelineToggle, &timeTimelineToggle })
     {
         addAndMakeVisible(radio);
         radio->setClickingTogglesState(true);
         radio->addListener(this);
     }
 
-    for (auto* label : { &referenceLabel, &scaleRootLabel, &scaleModeLabel, &doubleClickSnapLabel,
+    for (auto* label : { &referenceLabel, &doubleClickSnapLabel,
                          &timelineBeatLabel, &timelineTempoLabel, &timelineGridLabel })
     {
         addAndMakeVisible(label);
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     }
 
-    for (auto* label : { &timelineBeatLabel, &timelineTempoLabel, &timelineGridLabel })
+    for (auto* label : { &referenceLabel, &timelineBeatLabel,
+                         &timelineTempoLabel, &timelineGridLabel })
     {
         label->setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
         label->setFont(AppFont::getFont(16.0f));
     }
+    referenceLabel.setFont(AppFont::getFont(15.0f));
 
-    const std::array<juce::TextButton*, 7> textButtons {{
-        &referenceMenuButton, &scaleRootButton, &scaleModeButton,
+    const std::array<juce::TextButton*, 6> textButtons {{
+        &scaleRootButton, &scaleModeButton,
         &showDetectedScalesButton, &doubleClickSnapButton,
         &timelineBeatButton, &timelineGridButton
     }};
@@ -367,15 +364,29 @@ ParameterPanel::ParameterPanel()
         button->addListener(this);
     }
 
-    referenceEditor.setInputRestrictions(3, "0123456789");
-    referenceEditor.setText(juce::String(pitchReferenceHz), juce::dontSendNotification);
-    referenceEditor.setJustification(juce::Justification::centred);
-    referenceEditor.setColour(juce::TextEditor::backgroundColourId, APP_COLOR_SURFACE_ALT);
-    referenceEditor.setColour(juce::TextEditor::textColourId, APP_COLOR_TEXT_PRIMARY);
-    referenceEditor.setColour(juce::TextEditor::outlineColourId, APP_COLOR_BORDER.withAlpha(0.8f));
-    referenceEditor.setColour(juce::TextEditor::focusedOutlineColourId, APP_COLOR_PRIMARY.withAlpha(0.85f));
-    referenceEditor.addListener(this);
-    addAndMakeVisible(referenceEditor);
+    referenceSlider.setRange(430.0, 450.0, 1.0);
+    referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
+    referenceSlider.setNumDecimalPlacesToDisplay(0);
+    referenceSlider.setTextValueSuffix(" Hz");
+    referenceSlider.setHideSuffixWhileEditing(true);
+    referenceSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 64, 22);
+    referenceSlider.setColour(juce::Slider::backgroundColourId,
+                              juce::Colour(0xFF30302Eu));
+    referenceSlider.setColour(juce::Slider::trackColourId,
+                              juce::Colour(0xFF30302Eu));
+    referenceSlider.setColour(juce::Slider::textBoxBackgroundColourId,
+                              juce::Colours::transparentBlack);
+    referenceSlider.setColour(juce::Slider::textBoxOutlineColourId,
+                              juce::Colours::transparentBlack);
+    referenceSlider.setColour(juce::Slider::textBoxTextColourId,
+                              juce::Colour(0xFFE6E6E6u));
+    referenceSlider.onValueChange = [this]()
+    {
+        if (!isUpdating)
+            setPitchReferenceInternal(
+                static_cast<int>(std::round(referenceSlider.getValue())), true);
+    };
+    addAndMakeVisible(referenceSlider);
 
     timelineTempoSlider.setRange(20.0, 300.0, 0.01);
     timelineTempoSlider.setValue(timelineTempoBpm, juce::dontSendNotification);
@@ -405,12 +416,12 @@ ParameterPanel::ParameterPanel()
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
 
-    const std::array<juce::Component*, 15> pitchComponents {{
+    const std::array<juce::Component*, 11> pitchComponents {{
         &pitchSectionLabel, &chromaticToggle, &scaleToggle,
-        &referenceLabel, &referenceEditor, &referenceMenuButton,
-        &scaleRootLabel, &scaleRootButton, &scaleModeLabel, &scaleModeButton,
-        &showDetectedScalesButton, &showScaleColorsToggle,
-        &snapToSemitonesToggle, &doubleClickSnapLabel, &doubleClickSnapButton
+        &referenceLabel, &referenceSlider,
+        &scaleRootButton, &scaleModeButton,
+        &showDetectedScalesButton, &snapToSemitonesToggle,
+        &doubleClickSnapLabel, &doubleClickSnapButton
     }};
     for (auto* component : pitchComponents)
         component->setVisible(kShowPitchCard);
@@ -468,74 +479,12 @@ void ParameterPanel::resized()
     constexpr int rowGap = 5;
     constexpr int columnGap = 6;
 
-    // =========================================================================
-    // PITCH CARD
-    // =========================================================================
     auto cardArea = outerBounds.reduced(cardPadX, cardPadY);
-    auto pitchCardStart = cardArea.getY();
-    auto bounds = cardArea;
-    bounds = bounds.reduced(innerPadX, innerPadY);
-
-    pitchSectionLabel.setBounds(bounds.removeFromTop(20));
-    bounds.removeFromTop(rowGap + 2);
-
-    // Mode toggles: Chromatic | Scale
-    auto modeRow = bounds.removeFromTop(22);
-    auto chromaticArea = modeRow.removeFromLeft((modeRow.getWidth() - columnGap) / 2);
-    modeRow.removeFromLeft(columnGap);
-    chromaticToggle.setBounds(chromaticArea);
-    scaleToggle.setBounds(modeRow);
-
-    bounds.removeFromTop(rowGap + 1);
-
-    // Reference row
-    auto referenceRow = bounds.removeFromTop(26);
-    referenceLabel.setBounds(referenceRow.removeFromLeft(110));
-    auto refMenuArea = referenceRow.removeFromRight(30);
-    referenceMenuButton.setBounds(refMenuArea);
-    referenceEditor.setBounds(referenceRow.reduced(0, 1));
-
-    bounds.removeFromTop(rowGap);
-
-    // Scale Root / Mode labels
-    auto scaleLabelRow = bounds.removeFromTop(14);
-    auto rootLabelArea = scaleLabelRow.removeFromLeft((scaleLabelRow.getWidth() - columnGap) / 2);
-    scaleLabelRow.removeFromLeft(columnGap);
-    scaleRootLabel.setBounds(rootLabelArea);
-    scaleModeLabel.setBounds(scaleLabelRow);
-
-    // Scale Root / Mode buttons
-    auto scaleValueRow = bounds.removeFromTop(26);
-    auto rootValueArea = scaleValueRow.removeFromLeft((scaleValueRow.getWidth() - columnGap) / 2);
-    scaleValueRow.removeFromLeft(columnGap);
-    scaleRootButton.setBounds(rootValueArea);
-    scaleModeButton.setBounds(scaleValueRow);
-
-    bounds.removeFromTop(rowGap + 1);
-    showDetectedScalesButton.setBounds(bounds.removeFromTop(26));
-
-    bounds.removeFromTop(rowGap + 1);
-    showScaleColorsToggle.setBounds(bounds.removeFromTop(22));
-    bounds.removeFromTop(3);
-    snapToSemitonesToggle.setBounds(bounds.removeFromTop(22));
-
-    bounds.removeFromTop(rowGap + 1);
-    auto doubleClickRow = bounds.removeFromTop(26);
-    doubleClickSnapLabel.setBounds(doubleClickRow.removeFromLeft(120));
-    doubleClickSnapButton.setBounds(doubleClickRow);
-
-    // Pitch card ends here (content bottom + inner padding)
-    int pitchCardBottom = bounds.getY() + innerPadY;
-    pitchCardBounds = kShowPitchCard
-        ? juce::Rectangle<int>(cardArea.getX(), pitchCardStart,
-                               cardArea.getWidth(), pitchCardBottom - pitchCardStart)
-        : juce::Rectangle<int>();
-
     // =========================================================================
     // TIME CARD
     // =========================================================================
-    int timeCardStart = kShowPitchCard ? pitchCardBottom + cardGap : cardArea.getY();
-    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
+    const int timeCardStart = cardArea.getY();
+    auto bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
     timeSectionLabel.setBounds(bounds.removeFromTop(20));
@@ -572,6 +521,57 @@ void ParameterPanel::resized()
     int timeCardBottom = bounds.getY() + innerPadY;
     timeCardBounds = juce::Rectangle<int>(cardArea.getX(), timeCardStart,
                                            cardArea.getWidth(), timeCardBottom - timeCardStart);
+
+    // =========================================================================
+    // PITCH CARD
+    // =========================================================================
+    const int pitchCardStart = timeCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, pitchCardStart + innerPadY,
+                                  cardArea.getWidth() - innerPadX * 2,
+                                  cardArea.getBottom() - pitchCardStart - innerPadY * 2);
+
+    pitchSectionLabel.setBounds(bounds.removeFromTop(20));
+    bounds.removeFromTop(rowGap + 2);
+
+    // Mode toggles: Chromatic | Scale
+    auto modeRow = bounds.removeFromTop(22);
+    auto chromaticArea = modeRow.removeFromLeft((modeRow.getWidth() - columnGap) / 2);
+    modeRow.removeFromLeft(columnGap);
+    chromaticToggle.setBounds(chromaticArea);
+    scaleToggle.setBounds(modeRow);
+
+    bounds.removeFromTop(rowGap + 1);
+
+    // Reference row
+    auto referenceRow = bounds.removeFromTop(26);
+    referenceLabel.setBounds(referenceRow.removeFromLeft(110));
+    referenceSlider.setBounds(referenceRow.removeFromLeft(70).reduced(0, 2));
+
+    bounds.removeFromTop(rowGap);
+
+    // Scale Root / Mode buttons
+    auto scaleValueRow = bounds.removeFromTop(26);
+    auto rootValueArea = scaleValueRow.removeFromLeft((scaleValueRow.getWidth() - columnGap) / 2);
+    scaleValueRow.removeFromLeft(columnGap);
+    scaleRootButton.setBounds(rootValueArea);
+    scaleModeButton.setBounds(scaleValueRow);
+
+    bounds.removeFromTop(rowGap + 1);
+    showDetectedScalesButton.setBounds(bounds.removeFromTop(26));
+
+    bounds.removeFromTop(rowGap + 1);
+    snapToSemitonesToggle.setBounds(bounds.removeFromTop(22));
+
+    bounds.removeFromTop(rowGap + 1);
+    auto doubleClickRow = bounds.removeFromTop(26);
+    doubleClickSnapLabel.setBounds(doubleClickRow.removeFromLeft(120));
+    doubleClickSnapButton.setBounds(doubleClickRow);
+
+    const int pitchCardBottom = bounds.getY() + innerPadY;
+    pitchCardBounds = kShowPitchCard
+        ? juce::Rectangle<int>(cardArea.getX(), pitchCardStart,
+                               cardArea.getWidth(), pitchCardBottom - pitchCardStart)
+        : juce::Rectangle<int>();
 }
 
 void ParameterPanel::buttonClicked(juce::Button* button)
@@ -629,11 +629,6 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         showScaleModeMenu();
         return;
     }
-    if (button == &referenceMenuButton)
-    {
-        showReferenceMenu();
-        return;
-    }
     if (button == &doubleClickSnapButton)
     {
         showDoubleClickSnapMenu();
@@ -642,13 +637,6 @@ void ParameterPanel::buttonClicked(juce::Button* button)
     if (button == &showDetectedScalesButton)
     {
         showDetectedScaleMenu();
-        return;
-    }
-    if (button == &showScaleColorsToggle)
-    {
-        setShowScaleColorsInternal(showScaleColorsToggle.getToggleState(), true);
-        if (onParameterChanged)
-            onParameterChanged();
         return;
     }
     if (button == &snapToSemitonesToggle)
@@ -664,10 +652,8 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         {
             setScaleModeInternal(ScaleMode::Chromatic, true);
         }
-        else if (!scaleToggle.getToggleState())
-        {
-            setScaleModeInternal(ScaleMode::None, true);
-        }
+        else
+            refreshModeToggles();
 
         if (onParameterChanged)
             onParameterChanged();
@@ -683,28 +669,16 @@ void ParameterPanel::buttonClicked(juce::Button* button)
                           lastNonChromaticMode == ScaleMode::Chromatic)
                              ? ScaleMode::Major
                              : lastNonChromaticMode;
+            if (selectedScaleRootNote < 0)
+                setScaleRootInternal(0, true);
             setScaleModeInternal(target, true);
         }
-        else if (!chromaticToggle.getToggleState())
-        {
-            setScaleModeInternal(ScaleMode::None, true);
-        }
+        else
+            refreshModeToggles();
 
         if (onParameterChanged)
             onParameterChanged();
     }
-}
-
-void ParameterPanel::textEditorReturnKeyPressed(juce::TextEditor& editor)
-{
-    if (&editor == &referenceEditor)
-        applyReferenceEditorValue(true);
-}
-
-void ParameterPanel::textEditorFocusLost(juce::TextEditor& editor)
-{
-    if (&editor == &referenceEditor)
-        applyReferenceEditorValue(true);
 }
 
 void ParameterPanel::setProject(Project* proj)
@@ -740,15 +714,23 @@ void ParameterPanel::updateFromNote()
 void ParameterPanel::updateGlobalSliders()
 {
     isUpdating = true;
+    lastNonChromaticMode = ScaleMode::Major;
 
     if (project != nullptr)
     {
         selectedScaleRootNote = project->getScaleRootNote();
+        if (selectedScaleRootNote < 0)
+        {
+            selectedScaleRootNote = 0;
+            project->setScaleRootNote(selectedScaleRootNote);
+        }
         selectedScaleMode = project->getScaleMode();
-        if (selectedScaleMode != ScaleMode::None &&
-            selectedScaleMode != ScaleMode::Chromatic)
-            lastNonChromaticMode = selectedScaleMode;
-        showScaleColors = project->getShowScaleColors();
+        if (selectedScaleMode == ScaleMode::None)
+        {
+            selectedScaleMode = ScaleMode::Chromatic;
+            project->setScaleMode(selectedScaleMode);
+        }
+        lastNonChromaticMode = project->getPreferredScaleMode();
         snapToSemitones = project->getSnapToSemitones();
         pitchReferenceHz = project->getPitchReferenceHz();
         doubleClickSnapMode = project->getDoubleClickSnapMode();
@@ -761,9 +743,8 @@ void ParameterPanel::updateGlobalSliders()
     }
     else
     {
-        selectedScaleRootNote = -1;
-        selectedScaleMode = ScaleMode::None;
-        showScaleColors = true;
+        selectedScaleRootNote = 0;
+        selectedScaleMode = ScaleMode::Chromatic;
         snapToSemitones = false;
         pitchReferenceHz = 440;
         doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
@@ -776,10 +757,8 @@ void ParameterPanel::updateGlobalSliders()
     }
 
     scaleRootButton.setButtonText(getScaleRootLabel(selectedScaleRootNote));
-    scaleModeButton.setButtonText(
-        selectedScaleMode == ScaleMode::Chromatic ? "-" : getScaleModeLabel(selectedScaleMode));
-    referenceEditor.setText(juce::String(pitchReferenceHz), juce::dontSendNotification);
-    showScaleColorsToggle.setToggleState(showScaleColors, juce::dontSendNotification);
+    scaleModeButton.setButtonText(getScaleModeLabel(lastNonChromaticMode));
+    referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
     snapToSemitonesToggle.setToggleState(snapToSemitones, juce::dontSendNotification);
     doubleClickSnapButton.setButtonText(getDoubleClickSnapLabel(doubleClickSnapMode));
     timelineBeatButton.setButtonText(
@@ -806,12 +785,6 @@ void ParameterPanel::refreshModeToggles()
 
 void ParameterPanel::refreshScaleControlEnabling()
 {
-    const bool scaleEnabled = scaleToggle.getToggleState();
-    scaleRootButton.setEnabled(scaleEnabled);
-    scaleModeButton.setEnabled(scaleEnabled);
-    scaleRootLabel.setEnabled(scaleEnabled);
-    scaleModeLabel.setEnabled(scaleEnabled);
-
     bool hasAnyNote = false;
     if (project != nullptr)
     {
@@ -861,8 +834,7 @@ void ParameterPanel::setScaleModeInternal(ScaleMode mode, bool notify)
     if (mode != ScaleMode::None && mode != ScaleMode::Chromatic)
         lastNonChromaticMode = mode;
 
-    scaleModeButton.setButtonText(
-        mode == ScaleMode::Chromatic ? "-" : getScaleModeLabel(mode));
+    scaleModeButton.setButtonText(getScaleModeLabel(lastNonChromaticMode));
     refreshModeToggles();
     refreshScaleControlEnabling();
 
@@ -873,17 +845,20 @@ void ParameterPanel::setScaleModeInternal(ScaleMode mode, bool notify)
         onScaleModeChanged(mode);
 }
 
-void ParameterPanel::setShowScaleColorsInternal(bool enabled, bool notify)
+void ParameterPanel::setConfiguredScaleModeInternal(ScaleMode mode, bool notify)
 {
-    const bool changed = showScaleColors != enabled;
-    showScaleColors = enabled;
-    showScaleColorsToggle.setToggleState(enabled, juce::dontSendNotification);
+    if (mode == ScaleMode::None || mode == ScaleMode::Chromatic)
+        mode = ScaleMode::Major;
 
-    if (project != nullptr && changed)
-        project->setShowScaleColors(enabled);
+    lastNonChromaticMode = mode;
+    scaleModeButton.setButtonText(getScaleModeLabel(lastNonChromaticMode));
 
-    if (notify && changed && onShowScaleColorsChanged)
-        onShowScaleColorsChanged(enabled);
+    if (project != nullptr)
+        project->setPreferredScaleMode(mode);
+
+    if (selectedScaleMode != ScaleMode::None &&
+        selectedScaleMode != ScaleMode::Chromatic)
+        setScaleModeInternal(mode, notify);
 }
 
 void ParameterPanel::setSnapToSemitonesInternal(bool enabled, bool notify)
@@ -901,10 +876,10 @@ void ParameterPanel::setSnapToSemitonesInternal(bool enabled, bool notify)
 
 void ParameterPanel::setPitchReferenceInternal(int hz, bool notify)
 {
-    const int normalized = juce::jlimit(380, 480, hz);
+    const int normalized = juce::jlimit(430, 450, hz);
     const bool changed = pitchReferenceHz != normalized;
     pitchReferenceHz = normalized;
-    referenceEditor.setText(juce::String(normalized), juce::dontSendNotification);
+    referenceSlider.setValue(normalized, juce::dontSendNotification);
 
     if (project != nullptr && changed)
         project->setPitchReferenceHz(normalized);
@@ -1018,27 +993,11 @@ void ParameterPanel::previewScaleMode(std::optional<ScaleMode> mode)
         onScaleModePreviewChanged(mode);
 }
 
-void ParameterPanel::applyReferenceEditorValue(bool notify)
-{
-    const int parsed = referenceEditor.getText().getIntValue();
-    setPitchReferenceInternal(parsed <= 0 ? pitchReferenceHz : parsed, notify);
-}
-
 void ParameterPanel::showScaleRootMenu()
 {
     constexpr int menuBaseId = 7000;
     juce::PopupMenu menu;
     menu.setLookAndFeel(&getPitchPopupLookAndFeel());
-
-    auto hoverNoneCallback = [safeThis = juce::Component::SafePointer<ParameterPanel>(this)]()
-    {
-        if (safeThis != nullptr)
-            safeThis->previewScaleRoot(-1);
-    };
-    menu.addCustomItem(menuBaseId,
-                       std::make_unique<HoverMenuItemComponent>(
-                           "-", selectedScaleRootNote < 0, std::move(hoverNoneCallback)),
-                       nullptr, "-");
 
     for (int i = 0; i < static_cast<int>(kScaleRootLabels.size()); ++i)
     {
@@ -1073,9 +1032,7 @@ void ParameterPanel::showScaleRootMenu()
 
                            constexpr int menuBaseId = 7000;
                            const int idx = result - menuBaseId;
-                           if (idx == 0)
-                               safeThis->setScaleRootInternal(-1, true);
-                           else
+                           if (idx >= 1 && idx <= static_cast<int>(kScaleRootLabels.size()))
                                safeThis->setScaleRootInternal(idx - 1, true);
                        });
 }
@@ -1099,7 +1056,7 @@ void ParameterPanel::showScaleModeMenu()
 
         menu.addCustomItem(menuBaseId + static_cast<int>(i),
                            std::make_unique<HoverMenuItemComponent>(
-                               label, selectedScaleMode == mode, std::move(hoverCallback)),
+                               label, lastNonChromaticMode == mode, std::move(hoverCallback)),
                            nullptr, label);
     }
 
@@ -1121,7 +1078,7 @@ void ParameterPanel::showScaleModeMenu()
                            constexpr int menuBaseId = 7100;
                            const int idx = result - menuBaseId;
                            if (idx >= 0 && idx < static_cast<int>(kScaleModeOptions.size()))
-                               safeThis->setScaleModeInternal(
+                               safeThis->setConfiguredScaleModeInternal(
                                    kScaleModeOptions[static_cast<size_t>(idx)].mode, true);
                        });
 }
@@ -1157,38 +1114,6 @@ void ParameterPanel::showDoubleClickSnapMenu()
                            if (idx >= 0 && idx < static_cast<int>(kDoubleClickSnapOptions.size()))
                                safeThis->setDoubleClickSnapModeInternal(
                                    kDoubleClickSnapOptions[static_cast<size_t>(idx)].mode, true);
-                       });
-}
-
-void ParameterPanel::showReferenceMenu()
-{
-    constexpr int menuBaseId = 7300;
-    juce::PopupMenu menu;
-    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
-
-    for (size_t i = 0; i < kReferencePresets.size(); ++i)
-    {
-        const int preset = kReferencePresets[i];
-        menu.addItem(menuBaseId + static_cast<int>(i), juce::String(preset), true,
-                     preset == pitchReferenceHz);
-    }
-
-    auto options = juce::PopupMenu::Options()
-        .withTargetComponent(&referenceMenuButton)
-        .withParentComponent(this)
-        .withMinimumWidth(120);
-
-    menu.showMenuAsync(options,
-                       [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
-                       {
-                           if (safeThis == nullptr || result == 0)
-                               return;
-
-                           constexpr int menuBaseId = 7300;
-                           const int idx = result - menuBaseId;
-                           if (idx >= 0 && idx < static_cast<int>(kReferencePresets.size()))
-                               safeThis->setPitchReferenceInternal(
-                                   kReferencePresets[static_cast<size_t>(idx)], true);
                        });
 }
 

@@ -316,10 +316,31 @@ void Project::clearLoopRange()
 
 void Project::setScaleMode(ScaleMode mode)
 {
-    if (scaleMode == mode)
+    bool changed = false;
+    if (mode != ScaleMode::None && mode != ScaleMode::Chromatic &&
+        preferredScaleMode != mode)
+    {
+        preferredScaleMode = mode;
+        changed = true;
+    }
+
+    if (scaleMode != mode)
+    {
+        scaleMode = mode;
+        changed = true;
+    }
+
+    if (changed)
+        modified = true;
+}
+
+void Project::setPreferredScaleMode(ScaleMode mode)
+{
+    if (mode == ScaleMode::None || mode == ScaleMode::Chromatic ||
+        preferredScaleMode == mode)
         return;
 
-    scaleMode = mode;
+    preferredScaleMode = mode;
     modified = true;
 }
 
@@ -335,20 +356,11 @@ void Project::setScaleRootNote(int noteInOctave)
 
 void Project::setPitchReferenceHz(int hz)
 {
-    const int normalized = juce::jlimit(380, 480, hz);
+    const int normalized = juce::jlimit(430, 450, hz);
     if (pitchReferenceHz == normalized)
         return;
 
     pitchReferenceHz = normalized;
-    modified = true;
-}
-
-void Project::setShowScaleColors(bool enabled)
-{
-    if (showScaleColors == enabled)
-        return;
-
-    showScaleColors = enabled;
     modified = true;
 }
 

@@ -57,7 +57,7 @@ inline bool isPitchClassInScale(ScaleMode mode, int pitchClass, int rootNote)
 
 inline float getReferenceOffsetSemitones(int referenceHz)
 {
-    const int normalized = juce::jlimit(380, 480, referenceHz);
+    const int normalized = juce::jlimit(430, 450, referenceHz);
     return 12.0f * std::log2(static_cast<float>(normalized) / FREQ_A4);
 }
 

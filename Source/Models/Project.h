@@ -215,12 +215,12 @@ public:
     // Piano-roll scale visualization
     ScaleMode getScaleMode() const { return scaleMode; }
     void setScaleMode(ScaleMode mode);
+    ScaleMode getPreferredScaleMode() const { return preferredScaleMode; }
+    void setPreferredScaleMode(ScaleMode mode);
     int getScaleRootNote() const { return scaleRootNote; }
     void setScaleRootNote(int noteInOctave);
     int getPitchReferenceHz() const { return pitchReferenceHz; }
     void setPitchReferenceHz(int hz);
-    bool getShowScaleColors() const { return showScaleColors; }
-    void setShowScaleColors(bool enabled);
     bool getSnapToSemitones() const { return snapToSemitones; }
     void setSnapToSemitones(bool enabled);
     DoubleClickSnapMode getDoubleClickSnapMode() const { return doubleClickSnapMode; }
@@ -259,10 +259,10 @@ private:
     bool modified = false;
 
     LoopRange loopRange;
-    ScaleMode scaleMode = ScaleMode::None;
-    int scaleRootNote = -1; // -1 = none, 0 = C, 1 = C#, ..., 11 = B
+    ScaleMode scaleMode = ScaleMode::Chromatic;
+    ScaleMode preferredScaleMode = ScaleMode::Major;
+    int scaleRootNote = 0; // 0 = C, 1 = C#, ..., 11 = B
     int pitchReferenceHz = 440;
-    bool showScaleColors = true;
     bool snapToSemitones = false;
     DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
 

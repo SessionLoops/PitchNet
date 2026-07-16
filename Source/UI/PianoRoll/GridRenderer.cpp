@@ -47,12 +47,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
                                    visibleTopMidi + 1);
 
   const bool showScaleOverlay =
-      params.showScaleColors && params.scaleMode != ScaleMode::None &&
-      params.scaleMode != ScaleMode::Chromatic &&
+      params.scaleMode != ScaleMode::None && params.scaleMode != ScaleMode::Chromatic &&
       params.scaleRootNote >= 0;
-  const juce::Colour scaleAccent =
-      pianoRollView::getScaleAccentColour(params.scaleMode);
-
   const auto whiteKeyRowColour = juce::Colour(0xFF1C1C1Bu);
   const auto blackKeyRowColour = juce::Colour(0xFF151515u);
 
@@ -63,7 +59,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
       const int noteInOctave = (midi % 12 + 12) % 12;
       g.setColour(pianoRollView::isBlackKey(noteInOctave) ? blackKeyRowColour
                                                           : whiteKeyRowColour);
-      const float y = coordMapper->midiToY(static_cast<float>(midi));
+      const float y = coordMapper->midiToY(
+          static_cast<float>(midi) + params.pitchAxisOffsetSemitones);
       g.fillRect(visibleStartX, y, visibleEndX - visibleStartX,
                  pixelsPerSemitone);
     }
@@ -71,21 +68,19 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
 
   if (params.drawRowBackgrounds && showScaleOverlay)
   {
-    const auto rootRowColour = scaleAccent.withAlpha(0.24f);
-    const auto inScaleRowColour = scaleAccent.withAlpha(0.08f);
-    const auto outOfScaleRowColour = juce::Colours::black.withAlpha(0.20f);
+    const auto inScaleRowColour = whiteKeyRowColour;
+    const auto outOfScaleRowColour = blackKeyRowColour;
 
     for (int midi = startMidi; midi <= endMidi; ++midi)
     {
       const int noteInOctave = (midi % 12 + 12) % 12;
       const auto toneState = pianoRollView::getScaleToneState(
           params.scaleMode, noteInOctave, params.scaleRootNote);
-      g.setColour(toneState == pianoRollView::ScaleToneState::Root
-                      ? rootRowColour
-                      : (toneState == pianoRollView::ScaleToneState::InScale
-                             ? inScaleRowColour
-                             : outOfScaleRowColour));
-      const float y = coordMapper->midiToY(static_cast<float>(midi));
+      g.setColour(toneState == pianoRollView::ScaleToneState::OutOfScale
+                      ? outOfScaleRowColour
+                      : inScaleRowColour);
+      const float y = coordMapper->midiToY(
+          static_cast<float>(midi) + params.pitchAxisOffsetSemitones);
       g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
     }
   }
@@ -96,7 +91,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   // Horizontal pitch lines.
   for (int midi = startMidi; midi <= endMidi; ++midi)
   {
-    const float y = coordMapper->midiToY(static_cast<float>(midi));
+    const float y = coordMapper->midiToY(
+        static_cast<float>(midi) + params.pitchAxisOffsetSemitones);
     const int noteInOctave = (midi % 12 + 12) % 12;
 
     if (!showScaleOverlay)
@@ -107,13 +103,13 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
                                               params.scaleRootNote) ==
              pianoRollView::ScaleToneState::Root)
     {
-      g.setColour(scaleAccent.withAlpha(0.70f));
+      g.setColour(APP_COLOR_GRID_BAR);
     }
     else if (pianoRollView::getScaleToneState(params.scaleMode, noteInOctave,
                                               params.scaleRootNote) ==
              pianoRollView::ScaleToneState::InScale)
     {
-      g.setColour(APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.40f));
+      g.setColour(APP_COLOR_GRID);
     }
     else
     {
@@ -151,9 +147,7 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
         }
         else if (pianoRollView::isMultipleOf(time, params.beatSeconds))
         {
-          g.setColour(showScaleOverlay
-                          ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
-                          : APP_COLOR_GRID);
+          g.setColour(APP_COLOR_GRID);
         }
         else
         {
@@ -185,9 +179,7 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
     const float pixelsPerLine = secondsPerLine * pixelsPerSecond;
     if (pixelsPerLine > 1.0e-4f)
     {
-      g.setColour(showScaleOverlay
-                      ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
-                      : APP_COLOR_GRID);
+      g.setColour(APP_COLOR_GRID);
       const int firstLine =
           std::max(0, static_cast<int>(std::floor(visibleStartX / pixelsPerLine)));
       for (float x = firstLine * pixelsPerLine; x <= visibleEndX; x += pixelsPerLine)

@@ -8,7 +8,7 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
                              int scrollBarSize,
                              ScaleMode activeScaleMode,
                              int activeScaleRootNote,
-                             bool showScaleColors)
+                             float pitchAxisOffsetSemitones)
 {
   if (!coordMapper)
     return;
@@ -30,11 +30,9 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
   static const char *noteNames[] = {"C", "C#", "D", "D#", "E", "F",
                                     "F#", "G", "G#", "A", "A#", "B"};
   const bool showScaleOverlay =
-      showScaleColors && activeScaleMode != ScaleMode::None &&
+      activeScaleMode != ScaleMode::None &&
       activeScaleMode != ScaleMode::Chromatic &&
       activeScaleRootNote >= 0;
-  const juce::Colour scaleAccent =
-      pianoRollView::getScaleAccentColour(activeScaleMode);
 
   const float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
   // Use truncated scrollY to match grid origin (which uses static_cast<int>(scrollY))
@@ -42,28 +40,19 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
 
   for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi)
   {
-    float y = coordMapper->midiToY(static_cast<float>(midi)) -
+    float y = coordMapper->midiToY(
+                  static_cast<float>(midi) + pitchAxisOffsetSemitones) -
               static_cast<float>(scrollYInt) + headerHeight;
     int noteInOctave = (midi % 12 + 12) % 12;
 
-    bool isBlack = pianoRollView::isBlackKey(noteInOctave);
     const auto toneState = pianoRollView::getScaleToneState(
         activeScaleMode, noteInOctave, activeScaleRootNote);
 
     juce::Colour keyFill = juce::Colour(0xFF232323u);
     if (showScaleOverlay)
-    {
-      if (toneState == pianoRollView::ScaleToneState::OutOfScale)
-      {
-        keyFill = juce::Colour(0xFF232323u);
-      }
-      else
-      {
-        keyFill = keyFill.interpolatedWith(
-            scaleAccent,
-            toneState == pianoRollView::ScaleToneState::Root ? 0.32f : 0.16f);
-      }
-    }
+      keyFill = toneState == pianoRollView::ScaleToneState::OutOfScale
+                    ? juce::Colour(0xFF151515u)
+                    : juce::Colour(0xFF1C1C1Bu);
 
     g.setColour(keyFill);
     g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth),
@@ -72,20 +61,6 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     g.fillRect(0.0f, y + pixelsPerSemitone - 1.0f,
                static_cast<float>(pianoKeysWidth), 1.0f);
 
-    if (showScaleOverlay)
-    {
-      if (toneState == pianoRollView::ScaleToneState::Root)
-      {
-        g.setColour(scaleAccent.withAlpha(0.95f));
-        g.fillRect(0.0f, y, 3.0f, pixelsPerSemitone - 1);
-      }
-      else if (toneState == pianoRollView::ScaleToneState::InScale)
-      {
-        g.setColour(scaleAccent.withAlpha(0.55f));
-        g.fillRect(0.0f, y, 2.0f, pixelsPerSemitone - 1);
-      }
-    }
-
     int octave = midi / 12 - 1;
     juce::String noteName =
         juce::String(noteNames[noteInOctave]) + juce::String(octave);
@@ -93,9 +68,7 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     juce::Colour textColour = juce::Colour(0xFF9A9A9Au);
     if (showScaleOverlay)
     {
-      if (toneState == pianoRollView::ScaleToneState::Root)
-        textColour = APP_COLOR_TEXT_PRIMARY;
-      else if (toneState == pianoRollView::ScaleToneState::OutOfScale)
+      if (toneState == pianoRollView::ScaleToneState::OutOfScale)
         textColour = textColour.withMultipliedAlpha(0.72f);
     }
     g.setColour(textColour);

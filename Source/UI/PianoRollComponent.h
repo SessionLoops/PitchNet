@@ -115,7 +115,6 @@ public:
   void setScaleRootNote(int noteInOctave);
   void setScaleRootPreview(std::optional<int> noteInOctave);
   void setScaleModePreview(std::optional<ScaleMode> mode);
-  void setShowScaleColors(bool enabled);
   void setSnapToSemitoneDrag(bool enabled);
   void setPitchReferenceHz(int hz);
   void setDoubleClickSnapMode(DoubleClickSnapMode mode);
@@ -300,7 +299,6 @@ private:
   bool &showGameValuesDebug = viewState.showGameValuesDebug;
   bool &showUvInterpolationDebug = viewState.showUvInterpolationDebug;
   bool &showActualF0Debug = viewState.showActualF0Debug;
-  bool &showScaleColors = viewState.showScaleColors;
   bool &snapToSemitoneDrag = viewState.snapToSemitoneDrag;
   int &pitchReferenceHz = viewState.pitchReferenceHz;
   DoubleClickSnapMode &doubleClickSnapMode = viewState.doubleClickSnapMode;

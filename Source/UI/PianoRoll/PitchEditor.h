@@ -24,7 +24,7 @@ public:
     void setUndoManager(PitchUndoManager* manager) { undoManager = manager; }
     void setCoordinateMapper(CoordinateMapper* mapper) { coordMapper = mapper; }
     void setSnapToSemitoneDragEnabled(bool enabled) { snapToSemitoneDragEnabled = enabled; }
-    void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(380, 480, hz); }
+    void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(430, 450, hz); }
 
     // Note selection and dragging
     Note* findNoteAt(float x, float y);

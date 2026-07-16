@@ -398,7 +398,8 @@ void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
   GridRenderer::Params params;
   params.scaleMode = previewScaleMode.value_or(selectedScaleMode);
   params.scaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
-  params.showScaleColors = showScaleColors;
+  params.pitchAxisOffsetSemitones =
+      ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
   params.timelineDisplayMode = timelineDisplayMode;
   params.gridSeconds = getTimelineGridSeconds();
   params.beatSeconds = getTimelineBeatSeconds();
@@ -424,25 +425,33 @@ void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
 
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
-  auto drawRange = [&](double startSeconds, double endSeconds) {
-    startSeconds = juce::jlimit(0.0, duration, startSeconds);
-    endSeconds = juce::jlimit(0.0, duration, endSeconds);
+  auto drawRange = [&](double startSeconds, double endSeconds,
+                       bool drawBoundaries) {
+    startSeconds = std::max(0.0, startSeconds);
+    endSeconds = std::max(startSeconds, endSeconds);
     if (endSeconds <= startSeconds)
       return;
     const float startX = timeToX(startSeconds);
     const float endX = timeToX(endSeconds);
     g.setColour(juce::Colours::white.withAlpha(0.04f));
     g.fillRect(startX, 0.0f, endX - startX, height);
-    g.setColour(juce::Colours::white.withAlpha(0.25f));
-    g.fillRect(startX - 0.5f, 0.0f, 1.0f, height);
-    g.fillRect(endX - 0.5f, 0.0f, 1.0f, height);
+    if (drawBoundaries) {
+      g.setColour(juce::Colours::white.withAlpha(0.25f));
+      g.fillRect(startX - 0.5f, 0.0f, 1.0f, height);
+      g.fillRect(endX - 0.5f, 0.0f, 1.0f, height);
+    }
   };
 
   if (!audioData.playbackRegionRanges.empty()) {
     for (const auto &[start, end] : audioData.playbackRegionRanges)
-      drawRange(start, end);
+      drawRange(start, end, true);
   } else {
-    drawRange(audioData.timelineOffsetSeconds, duration);
+    // Standalone is one continuous source: shade all visible bars as its
+    // region and do not show a false audio-end boundary in the canvas.
+    const double visibleEndSeconds =
+        xToTime(static_cast<float>(scrollX + getVisibleContentWidth()));
+    drawRange(audioData.timelineOffsetSeconds,
+              std::max(duration, visibleEndSeconds), false);
   }
 }
 
@@ -814,7 +823,9 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g)
   const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
   const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
   pianoKeysRenderer->draw(g, getHeight(), horizontalScrollBarSize,
-                          activeScaleMode, activeScaleRootNote, showScaleColors);
+                          activeScaleMode, activeScaleRootNote,
+                          ScaleUtils::getReferenceOffsetSemitones(
+                              pitchReferenceHz));
 }
 
 float PianoRollComponent::midiToY(float midiNote) const
@@ -1337,10 +1348,9 @@ void PianoRollComponent::setProject(Project *proj)
   hoveredNote = nullptr;
   setPreviewPlaybackState(false, 0, 0);
   selectedScaleMode =
-      project != nullptr ? project->getScaleMode() : ScaleMode::None;
-  selectedScaleRootNote = project != nullptr ? project->getScaleRootNote() : -1;
+      project != nullptr ? project->getScaleMode() : ScaleMode::Chromatic;
+  selectedScaleRootNote = project != nullptr ? project->getScaleRootNote() : 0;
   pitchReferenceHz = project != nullptr ? project->getPitchReferenceHz() : 440;
-  showScaleColors = project != nullptr ? project->getShowScaleColors() : true;
   snapToSemitoneDrag = project != nullptr ? project->getSnapToSemitones() : false;
   doubleClickSnapMode = project != nullptr
                             ? project->getDoubleClickSnapMode()
@@ -1451,17 +1461,6 @@ void PianoRollComponent::setScaleModePreview(std::optional<ScaleMode> mode)
   repaint();
 }
 
-void PianoRollComponent::setShowScaleColors(bool enabled)
-{
-  if (showScaleColors == enabled)
-    return;
-
-  showScaleColors = enabled;
-  if (project != nullptr)
-    project->setShowScaleColors(enabled);
-  repaint();
-}
-
 void PianoRollComponent::setSnapToSemitoneDrag(bool enabled)
 {
   if (snapToSemitoneDrag == enabled)
@@ -1475,7 +1474,7 @@ void PianoRollComponent::setSnapToSemitoneDrag(bool enabled)
 
 void PianoRollComponent::setPitchReferenceHz(int hz)
 {
-  const int normalized = juce::jlimit(380, 480, hz);
+  const int normalized = juce::jlimit(430, 450, hz);
   if (pitchReferenceHz == normalized)
     return;
 
@@ -1483,6 +1482,7 @@ void PianoRollComponent::setPitchReferenceHz(int hz)
   if (project != nullptr)
     project->setPitchReferenceHz(normalized);
   pitchEditor->setPitchReferenceHz(normalized);
+  repaint();
 }
 
 void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode)

@@ -5,7 +5,7 @@
 #include "CoordinateMapper.h"
 
 /**
- * Draws the left-gutter piano keys panel, including scale color overlays.
+ * Draws the left-gutter piano keys panel with scale-aware neutral shading.
  * Stateless beyond the CoordinateMapper pointer; the component owns the
  * scale-mode state and resolves preview vs selected before passing it in.
  */
@@ -21,7 +21,7 @@ public:
             int scrollBarSize,
             ScaleMode activeScaleMode,
             int activeScaleRootNote,
-            bool showScaleColors);
+            float pitchAxisOffsetSemitones);
 
 private:
   CoordinateMapper *coordMapper = nullptr;
