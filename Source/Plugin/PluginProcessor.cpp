@@ -1975,6 +1975,7 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
   auto restoredProject = std::make_unique<Project>();
   if (!ProjectSerializer::fromJson(*restoredProject, parsed))
     return false;
+  adoptMacroParameters(*restoredProject);
 
   // Rebuild the global waveform from the persisted per-note synthesis so
   // headless playback reflects saved edits (see binary branch above).
@@ -2006,7 +2007,8 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
 
   auto restoredProject = std::make_unique<Project>();
   if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
-                                           sizeInBytes)) {
+                                            sizeInBytes)) {
+    adoptMacroParameters(*restoredProject);
     // The global waveform stored in the archive can lag the authoritative
     // per-note synthesis (it's only refreshed when the editor recomposes).
     // Rebuild it from originalWaveform + the persisted per-note synthWaveforms
@@ -2109,6 +2111,11 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
 
     // Sync current APVTS parameter values to project
     if (auto *project = mc->getProject()) {
+      if (restoredPersistentProject)
+        adoptMacroParameters(*project);
+      else
+        attachMacroParameters(*project);
+
       const float po = pitchOffsetParamValue->load();
       const float fs = formantShiftParamValue->load();
       if (std::abs(po) > 0.001f)
@@ -2369,6 +2376,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     }
 
     if (it != araRegionProjects.end() && it->second) {
+      attachMacroParameters(*it->second);
       mainComponent->restoreProjectSnapshot(*it->second);
       mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
       if (auto *project = mainComponent->getProject()) {
@@ -2399,6 +2407,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
                                       activeRegionEndSeconds)) {
         auto restoredRegionProject =
             std::make_unique<Project>(*araAnalysisProjectSnapshot);
+        attachMacroParameters(*restoredRegionProject);
         auto &audioData = restoredRegionProject->getAudioData();
         audioData.timelineOffsetSeconds = activeRegionStartSeconds;
         audioData.playbackRegionRanges = {
@@ -2508,6 +2517,8 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
               {std::max(0.0, timelineOffsetSeconds),
                project->getAudioData().getDuration()}};
 
+        attachMacroParameters(*project);
+
         // Cache this region's analysis so re-selecting it is instant and its
         // edits persist across switches.
         araRegionProjects[regionKey] = std::make_unique<Project>(*project);
@@ -2593,6 +2604,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
   if (ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
       projectHasEditableAnalysisData(*project)) {
     project->recomposeFromSynthIfPresent();
+    attachMacroParameters(*project);
     araRegionProjects[regionKey] = std::move(project);
     return;
   }
@@ -2607,8 +2619,19 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
   if (ProjectSerializer::fromJson(*project, parsed) &&
       projectHasEditableAnalysisData(*project)) {
     project->recomposeFromSynthIfPresent();
+    attachMacroParameters(*project);
     araRegionProjects[regionKey] = std::move(project);
   }
+}
+
+void PitchNetAudioProcessor::attachMacroParameters(Project &project) {
+  project.setMacroParameters(macroParameters);
+}
+
+void PitchNetAudioProcessor::adoptMacroParameters(Project &project) {
+  if (const auto restored = project.getMacroParameters())
+    *macroParameters = *restored;
+  project.setMacroParameters(macroParameters);
 }
 
 void PitchNetAudioProcessor::setAraDocumentController(

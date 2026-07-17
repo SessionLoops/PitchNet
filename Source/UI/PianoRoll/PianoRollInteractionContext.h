@@ -40,7 +40,6 @@ public:
   int &pitchReferenceHz;
   ScaleMode &selectedScaleMode;
   int &selectedScaleRootNote;
-  DoubleClickSnapMode &doubleClickSnapMode;
 
   juce::int64 &lastDragRepaintTime;
   static constexpr juce::int64 minDragRepaintInterval = 16;

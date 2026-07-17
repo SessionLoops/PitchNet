@@ -192,8 +192,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("scaleRootNote", project.getScaleRootNote());
     obj->setProperty("pitchReferenceHz", project.getPitchReferenceHz());
     obj->setProperty("snapToSemitones", project.getSnapToSemitones());
-    obj->setProperty("doubleClickSnapMode",
-                     static_cast<int>(project.getDoubleClickSnapMode()));
+    obj->setProperty("dragSnapMode",
+                     static_cast<int>(project.getDragSnapMode()));
     obj->setProperty("timelineDisplayMode",
                      static_cast<int>(project.getTimelineDisplayMode()));
     obj->setProperty("timelineBeatNumerator", project.getTimelineBeatNumerator());
@@ -300,7 +300,7 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         const int scaleModeValue = static_cast<int>(json.getProperty(
             "scaleMode", static_cast<int>(ScaleMode::Chromatic)));
         if (scaleModeValue >= static_cast<int>(ScaleMode::Chromatic) &&
-            scaleModeValue <= static_cast<int>(ScaleMode::Locrian))
+            scaleModeValue <= static_cast<int>(ScaleMode::WholeTone))
             project.setScaleMode(static_cast<ScaleMode>(scaleModeValue));
         else
             project.setScaleMode(ScaleMode::Chromatic);
@@ -312,7 +312,7 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         const int preferredModeValue = static_cast<int>(json.getProperty(
             "preferredScaleMode", static_cast<int>(preferredDefault)));
         if (preferredModeValue >= static_cast<int>(ScaleMode::Major) &&
-            preferredModeValue <= static_cast<int>(ScaleMode::Locrian))
+            preferredModeValue <= static_cast<int>(ScaleMode::WholeTone))
             project.setPreferredScaleMode(
                 static_cast<ScaleMode>(preferredModeValue));
     }
@@ -321,13 +321,14 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     project.setSnapToSemitones(static_cast<bool>(
         json.getProperty("snapToSemitones", false)));
     {
-        const int snapModeValue = static_cast<int>(json.getProperty(
-            "doubleClickSnapMode", static_cast<int>(DoubleClickSnapMode::PitchCenter)));
-        if (snapModeValue >= static_cast<int>(DoubleClickSnapMode::PitchCenter) &&
-            snapModeValue <= static_cast<int>(DoubleClickSnapMode::NearestScale))
-            project.setDoubleClickSnapMode(static_cast<DoubleClickSnapMode>(snapModeValue));
+        const int dragSnapModeValue = static_cast<int>(json.getProperty(
+            "dragSnapMode", static_cast<int>(DragSnapMode::Chromatic)));
+        if (dragSnapModeValue >= static_cast<int>(DragSnapMode::Chromatic) &&
+            dragSnapModeValue <= static_cast<int>(DragSnapMode::Scale))
+            project.setDragSnapMode(
+                static_cast<DragSnapMode>(dragSnapModeValue));
         else
-            project.setDoubleClickSnapMode(DoubleClickSnapMode::PitchCenter);
+            project.setDragSnapMode(DragSnapMode::Chromatic);
     }
     {
         const int modeValue = static_cast<int>(json.getProperty(

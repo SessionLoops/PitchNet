@@ -79,6 +79,22 @@ ToolbarComponent::ToolbarComponent()
         if (onScaleModeChanged)
             onScaleModeChanged(mode);
     };
+    scaleSelectionButton.onScaleRootPreviewChanged =
+        [this](std::optional<int> rootNote)
+    {
+        if (onScaleRootPreviewChanged)
+            onScaleRootPreviewChanged(rootNote);
+    };
+    scaleSelectionButton.onScaleModePreviewChanged =
+        [this](std::optional<ScaleMode> mode)
+    {
+        if (onScaleModePreviewChanged)
+            onScaleModePreviewChanged(mode);
+    };
+    scaleSelectionButton.onPreferredWidthChanged = [this]
+    {
+        resized();
+    };
 
     // Set localized text (tooltips for icon buttons)
     selectModeButton.setTooltip(TR("toolbar.select"));
@@ -208,9 +224,12 @@ void ToolbarComponent::resized()
                              capsuleY + (capsuleH - rightButtonSize) / 2,
                              rightButtonSize, rightButtonSize);
 
-    auto scaleArea = rightSection.removeFromRight(98);
+    const int scaleButtonWidth = scaleSelectionButton.getPreferredWidth();
+    constexpr int scaleAuditionGap = 11;
     scaleSelectionButton.setBounds(
-        scaleArea.getX() - 7, capsuleY + (capsuleH - 26) / 2, 92, 26);
+        auditionButton.getX() - scaleAuditionGap - scaleButtonWidth,
+        capsuleY + (capsuleH - 26) / 2,
+        scaleButtonWidth, 26);
 
     // Hide center controls (time/tools removed from toolbar) and zoom controls
     timeLabel.setVisible(false);

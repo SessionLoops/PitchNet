@@ -85,21 +85,24 @@ enum class ScaleMode : int
     Chromatic = 0,
     Major,
     Minor,
+    Blues,
     Dorian,
-    Phrygian,
+    HarmonicMinor,
+    Locrian,
     Lydian,
+    MajorPentatonic,
+    MelodicMinor,
+    MinorPentatonic,
     Mixolydian,
-    Locrian
+    Phrygian,
+    PhrygianDominant,
+    WholeTone
 };
 
-/**
- * How double-click snap resolves target pitch.
- */
-enum class DoubleClickSnapMode : int
+enum class DragSnapMode : int
 {
-    PitchCenter = 0, // Active scale when available, otherwise semitone
-    NearestSemitone, // Always nearest semitone
-    NearestScale     // Only nearest note in active scale
+    Chromatic = 0,
+    Scale
 };
 
 /**
@@ -122,6 +125,20 @@ enum class TimelineGridDivision : int
     Eighth = 8,
     Sixteenth = 16,
     ThirtySecond = 32
+};
+
+struct MacroParameters
+{
+    ScaleMode scaleMode = ScaleMode::Chromatic;
+    int pitchReferenceHz = 440;
+    bool snapToSemitones = false;
+    DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
+    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
+    int timelineBeatNumerator = 4;
+    int timelineBeatDenominator = 4;
+    double timelineTempoBpm = 120.0;
+    TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
+    bool timelineSnapCycle = false;
 };
 
 /**
@@ -213,31 +230,37 @@ public:
     void clearLoopRange();
 
     // Piano-roll scale visualization
-    ScaleMode getScaleMode() const { return scaleMode; }
+    ScaleMode getScaleMode() const { return macroParameters->scaleMode; }
     void setScaleMode(ScaleMode mode);
     ScaleMode getPreferredScaleMode() const { return preferredScaleMode; }
     void setPreferredScaleMode(ScaleMode mode);
     int getScaleRootNote() const { return scaleRootNote; }
     void setScaleRootNote(int noteInOctave);
-    int getPitchReferenceHz() const { return pitchReferenceHz; }
+    int getPitchReferenceHz() const { return macroParameters->pitchReferenceHz; }
     void setPitchReferenceHz(int hz);
-    bool getSnapToSemitones() const { return snapToSemitones; }
+    bool getSnapToSemitones() const { return macroParameters->snapToSemitones; }
     void setSnapToSemitones(bool enabled);
-    DoubleClickSnapMode getDoubleClickSnapMode() const { return doubleClickSnapMode; }
-    void setDoubleClickSnapMode(DoubleClickSnapMode mode);
+    DragSnapMode getDragSnapMode() const { return macroParameters->dragSnapMode; }
+    void setDragSnapMode(DragSnapMode mode);
 
     // Timeline/grid settings
-    TimelineDisplayMode getTimelineDisplayMode() const { return timelineDisplayMode; }
+    TimelineDisplayMode getTimelineDisplayMode() const { return macroParameters->timelineDisplayMode; }
     void setTimelineDisplayMode(TimelineDisplayMode mode);
-    int getTimelineBeatNumerator() const { return timelineBeatNumerator; }
-    int getTimelineBeatDenominator() const { return timelineBeatDenominator; }
+    int getTimelineBeatNumerator() const { return macroParameters->timelineBeatNumerator; }
+    int getTimelineBeatDenominator() const { return macroParameters->timelineBeatDenominator; }
     void setTimelineBeatSignature(int numerator, int denominator);
-    double getTimelineTempoBpm() const { return timelineTempoBpm; }
+    double getTimelineTempoBpm() const { return macroParameters->timelineTempoBpm; }
     void setTimelineTempoBpm(double bpm);
-    TimelineGridDivision getTimelineGridDivision() const { return timelineGridDivision; }
+    TimelineGridDivision getTimelineGridDivision() const { return macroParameters->timelineGridDivision; }
     void setTimelineGridDivision(TimelineGridDivision division);
-    bool getTimelineSnapCycle() const { return timelineSnapCycle; }
+    bool getTimelineSnapCycle() const { return macroParameters->timelineSnapCycle; }
     void setTimelineSnapCycle(bool enabled);
+
+    std::shared_ptr<MacroParameters> getMacroParameters() const
+    {
+        return macroParameters;
+    }
+    void setMacroParameters(std::shared_ptr<MacroParameters> parameters);
 
 private:
     juce::String name = "Untitled";
@@ -259,17 +282,7 @@ private:
     bool modified = false;
 
     LoopRange loopRange;
-    ScaleMode scaleMode = ScaleMode::Chromatic;
     ScaleMode preferredScaleMode = ScaleMode::Major;
     int scaleRootNote = 0; // 0 = C, 1 = C#, ..., 11 = B
-    int pitchReferenceHz = 440;
-    bool snapToSemitones = false;
-    DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
-
-    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
-    int timelineBeatNumerator = 4;
-    int timelineBeatDenominator = 4;
-    double timelineTempoBpm = 120.0;
-    TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
-    bool timelineSnapCycle = false;
+    std::shared_ptr<MacroParameters> macroParameters;
 };

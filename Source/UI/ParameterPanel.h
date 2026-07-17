@@ -37,8 +37,8 @@ public:
     std::function<void(int)> onScaleRootChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
     std::function<void(bool)> onSnapToSemitonesChanged;
+    std::function<void(DragSnapMode)> onDragSnapModeChanged;
     std::function<void(int)> onPitchReferenceChanged;
-    std::function<void(DoubleClickSnapMode)> onDoubleClickSnapModeChanged;
     std::function<void(TimelineDisplayMode)> onTimelineDisplayModeChanged;
     std::function<void(int, int)> onTimelineBeatSignatureChanged;
     std::function<void(double)> onTimelineTempoChanged;
@@ -47,15 +47,15 @@ public:
 
 private:
     void setupTextButton(juce::TextButton& button);
-    void showDoubleClickSnapMenu();
+    void showDragSnapModeMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
 
     void setScaleRootInternal(int rootNote, bool notify);
     void setScaleModeInternal(ScaleMode mode, bool notify);
     void setSnapToSemitonesInternal(bool enabled, bool notify);
+    void setDragSnapModeInternal(DragSnapMode mode, bool notify);
     void setPitchReferenceInternal(int hz, bool notify);
-    void setDoubleClickSnapModeInternal(DoubleClickSnapMode mode, bool notify);
     void refreshModeToggles();
     void refreshTimelineModeToggles();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
@@ -79,10 +79,8 @@ private:
     juce::Label referenceLabel { {}, "Reference (A4)" };
     SliderBox referenceSlider { "Pitch Reference" };
 
-    StyledToggleButton snapToSemitonesToggle { "Snap To Semitones" };
-
-    juce::Label doubleClickSnapLabel { {}, "Double Click Snap" };
-    juce::TextButton doubleClickSnapButton { "Pitch Center" };
+    StyledToggleButton snapToSemitonesToggle { "Drag Snap" };
+    CompactSelectionButton dragSnapModeButton { "Chromatic" };
 
     RadioButton beatsTimelineToggle { "Beats" };
     RadioButton timeTimelineToggle { "Time" };
@@ -98,8 +96,8 @@ private:
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;
     ScaleMode lastNonChromaticMode = ScaleMode::Major;
     bool snapToSemitones = false;
+    DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     int pitchReferenceHz = 440;
-    DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
     TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
     int timelineBeatNumerator = 4;
     int timelineBeatDenominator = 4;

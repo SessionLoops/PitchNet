@@ -1,5 +1,6 @@
 #include "EditorController.h"
 #include "../Utils/SHA256Utils.h"
+#include "../Utils/ScaleUtils.h"
 #include "../Utils/Constants.h"
 #include "../Utils/F0Smoother.h"
 #include "../Utils/Localization.h"
@@ -872,6 +873,7 @@ void EditorController::analyzeAudio(
                                 "Detecting Notes..."); });
 
   PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
+  ScaleUtils::detectAndApplyScale(targetProject);
 
   if (onComplete)
     onComplete();

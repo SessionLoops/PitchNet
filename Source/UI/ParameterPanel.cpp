@@ -7,12 +7,6 @@ namespace
 {
 constexpr bool kShowPitchCard = true;
 
-struct DoubleClickSnapOption
-{
-    DoubleClickSnapMode mode;
-    const char* label;
-};
-
 struct TimelineBeatOption
 {
     int numerator = 4;
@@ -25,12 +19,6 @@ struct TimelineGridOption
     TimelineGridDivision division = TimelineGridDivision::Quarter;
     const char* label = "1/4";
 };
-
-constexpr std::array<DoubleClickSnapOption, 3> kDoubleClickSnapOptions {{
-    { DoubleClickSnapMode::PitchCenter, "Pitch Center" },
-    { DoubleClickSnapMode::NearestSemitone, "Nearest Semitone" },
-    { DoubleClickSnapMode::NearestScale, "Nearest Scale" }
-}};
 
 constexpr std::array<TimelineBeatOption, 6> kTimelineBeatOptions {{
     { 3, 4, "3/4" },
@@ -77,12 +65,9 @@ juce::String getTimelineGridLabel(TimelineGridDivision division)
     return "1/4";
 }
 
-juce::String getDoubleClickSnapLabel(DoubleClickSnapMode mode)
+juce::String getDragSnapModeLabel(DragSnapMode mode)
 {
-    for (const auto& option : kDoubleClickSnapOptions)
-        if (option.mode == mode)
-            return option.label;
-    return kDoubleClickSnapOptions[0].label;
+    return mode == DragSnapMode::Scale ? "Scale" : "Chromatic";
 }
 
 class PitchPopupLookAndFeel final : public juce::LookAndFeel_V4
@@ -211,8 +196,8 @@ ParameterPanel::ParameterPanel()
         radio->addListener(this);
     }
 
-    for (auto* label : { &referenceLabel, &doubleClickSnapLabel,
-                         &timelineBeatLabel, &timelineTempoLabel, &timelineGridLabel })
+    for (auto* label : { &referenceLabel, &timelineBeatLabel,
+                         &timelineTempoLabel, &timelineGridLabel })
     {
         addAndMakeVisible(label);
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
@@ -227,8 +212,7 @@ ParameterPanel::ParameterPanel()
     referenceLabel.setFont(AppFont::getFont(15.0f));
 
     const std::array<juce::TextButton*, 3> textButtons {{
-        &doubleClickSnapButton,
-        &timelineBeatButton, &timelineGridButton
+        &dragSnapModeButton, &timelineBeatButton, &timelineGridButton
     }};
     for (auto* button : textButtons)
     {
@@ -282,16 +266,16 @@ ParameterPanel::ParameterPanel()
     };
     addAndMakeVisible(timelineTempoSlider);
 
-    doubleClickSnapButton.setButtonText(getDoubleClickSnapLabel(doubleClickSnapMode));
     timelineBeatButton.setButtonText(getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
+    dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
+    dragSnapModeButton.setEnabled(snapToSemitones);
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
 
-    const std::array<juce::Component*, 8> pitchComponents {{
+    const std::array<juce::Component*, 7> pitchComponents {{
         &pitchSectionLabel, &chromaticToggle, &scaleToggle,
         &referenceLabel, &referenceSlider,
-        &snapToSemitonesToggle,
-        &doubleClickSnapLabel, &doubleClickSnapButton
+        &snapToSemitonesToggle, &dragSnapModeButton
     }};
     for (auto* component : pitchComponents)
         component->setVisible(kShowPitchCard);
@@ -417,12 +401,10 @@ void ParameterPanel::resized()
     referenceSlider.setBounds(referenceRow.removeFromLeft(70).reduced(0, 2));
 
     bounds.removeFromTop(rowGap + 1);
-    snapToSemitonesToggle.setBounds(bounds.removeFromTop(22));
-
-    bounds.removeFromTop(rowGap + 1);
-    auto doubleClickRow = bounds.removeFromTop(26);
-    doubleClickSnapLabel.setBounds(doubleClickRow.removeFromLeft(120));
-    doubleClickSnapButton.setBounds(doubleClickRow);
+    auto dragSnapRow = bounds.removeFromTop(26);
+    snapToSemitonesToggle.setBounds(dragSnapRow.removeFromLeft(110));
+    dragSnapRow.removeFromLeft(columnGap);
+    dragSnapModeButton.setBounds(dragSnapRow.translated(-4, 0));
 
     const int pitchCardBottom = bounds.getY() + innerPadY;
     pitchCardBounds = kShowPitchCard
@@ -444,6 +426,11 @@ void ParameterPanel::buttonClicked(juce::Button* button)
     if (button == &timelineGridButton)
     {
         showTimelineGridMenu();
+        return;
+    }
+    if (button == &dragSnapModeButton)
+    {
+        showDragSnapModeMenu();
         return;
     }
     if (button == &timelineSnapCycleToggle)
@@ -476,11 +463,6 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         return;
     }
 
-    if (button == &doubleClickSnapButton)
-    {
-        showDoubleClickSnapMenu();
-        return;
-    }
     if (button == &snapToSemitonesToggle)
     {
         setSnapToSemitonesInternal(snapToSemitonesToggle.getToggleState(), true);
@@ -576,8 +558,8 @@ void ParameterPanel::updateGlobalSliders()
         }
         lastNonChromaticMode = project->getPreferredScaleMode();
         snapToSemitones = project->getSnapToSemitones();
+        dragSnapMode = project->getDragSnapMode();
         pitchReferenceHz = project->getPitchReferenceHz();
-        doubleClickSnapMode = project->getDoubleClickSnapMode();
         timelineDisplayMode = project->getTimelineDisplayMode();
         timelineBeatNumerator = project->getTimelineBeatNumerator();
         timelineBeatDenominator = project->getTimelineBeatDenominator();
@@ -590,8 +572,8 @@ void ParameterPanel::updateGlobalSliders()
         selectedScaleRootNote = 0;
         selectedScaleMode = ScaleMode::Chromatic;
         snapToSemitones = false;
+        dragSnapMode = DragSnapMode::Chromatic;
         pitchReferenceHz = 440;
-        doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
         timelineDisplayMode = TimelineDisplayMode::Beats;
         timelineBeatNumerator = 4;
         timelineBeatDenominator = 4;
@@ -602,7 +584,8 @@ void ParameterPanel::updateGlobalSliders()
 
     referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
     snapToSemitonesToggle.setToggleState(snapToSemitones, juce::dontSendNotification);
-    doubleClickSnapButton.setButtonText(getDoubleClickSnapLabel(doubleClickSnapMode));
+    dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
+    dragSnapModeButton.setEnabled(snapToSemitones);
     timelineBeatButton.setButtonText(
         getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineTempoSlider.setValue(timelineTempoBpm, juce::dontSendNotification);
@@ -669,12 +652,26 @@ void ParameterPanel::setSnapToSemitonesInternal(bool enabled, bool notify)
     const bool changed = snapToSemitones != enabled;
     snapToSemitones = enabled;
     snapToSemitonesToggle.setToggleState(enabled, juce::dontSendNotification);
+    dragSnapModeButton.setEnabled(enabled);
 
     if (project != nullptr && changed)
         project->setSnapToSemitones(enabled);
 
     if (notify && changed && onSnapToSemitonesChanged)
         onSnapToSemitonesChanged(enabled);
+}
+
+void ParameterPanel::setDragSnapModeInternal(DragSnapMode mode, bool notify)
+{
+    const bool changed = dragSnapMode != mode;
+    dragSnapMode = mode;
+    dragSnapModeButton.setButtonText(getDragSnapModeLabel(mode));
+
+    if (project != nullptr && changed)
+        project->setDragSnapMode(mode);
+
+    if (notify && changed && onDragSnapModeChanged)
+        onDragSnapModeChanged(mode);
 }
 
 void ParameterPanel::setPitchReferenceInternal(int hz, bool notify)
@@ -689,19 +686,6 @@ void ParameterPanel::setPitchReferenceInternal(int hz, bool notify)
 
     if (notify && changed && onPitchReferenceChanged)
         onPitchReferenceChanged(normalized);
-}
-
-void ParameterPanel::setDoubleClickSnapModeInternal(DoubleClickSnapMode mode, bool notify)
-{
-    const bool changed = doubleClickSnapMode != mode;
-    doubleClickSnapMode = mode;
-    doubleClickSnapButton.setButtonText(getDoubleClickSnapLabel(mode));
-
-    if (project != nullptr && changed)
-        project->setDoubleClickSnapMode(mode);
-
-    if (notify && changed && onDoubleClickSnapModeChanged)
-        onDoubleClickSnapModeChanged(mode);
 }
 
 void ParameterPanel::setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify)
@@ -784,38 +768,38 @@ void ParameterPanel::setTimelineSnapCycleInternal(bool enabled, bool notify)
         onTimelineSnapCycleChanged(enabled);
 }
 
-void ParameterPanel::showDoubleClickSnapMenu()
+void ParameterPanel::showDragSnapModeMenu()
 {
-    constexpr int menuBaseId = 7200;
+    constexpr int chromaticId = 7301;
+    constexpr int scaleId = 7302;
     juce::PopupMenu menu;
     menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+    menu.addCustomItem(
+        chromaticId,
+        std::make_unique<HoverMenuItemComponent>(
+            "Chromatic", dragSnapMode == DragSnapMode::Chromatic),
+        nullptr, "Chromatic");
+    menu.addCustomItem(
+        scaleId,
+        std::make_unique<HoverMenuItemComponent>(
+            "Scale", dragSnapMode == DragSnapMode::Scale),
+        nullptr, "Scale");
 
-    for (size_t i = 0; i < kDoubleClickSnapOptions.size(); ++i)
-    {
-        const auto option = kDoubleClickSnapOptions[i];
-        menu.addCustomItem(menuBaseId + static_cast<int>(i),
-                           std::make_unique<HoverMenuItemComponent>(
-                               option.label, doubleClickSnapMode == option.mode),
-                           nullptr, option.label);
-    }
-
-    auto options = juce::PopupMenu::Options()
-        .withTargetComponent(&doubleClickSnapButton)
-        .withParentComponent(this)
-        .withMinimumWidth(juce::jmax(220, doubleClickSnapButton.getWidth()));
-
-    menu.showMenuAsync(options,
-                       [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
-                       {
-                           if (safeThis == nullptr || result == 0)
-                               return;
-
-                           constexpr int menuBaseId = 7200;
-                           const int idx = result - menuBaseId;
-                           if (idx >= 0 && idx < static_cast<int>(kDoubleClickSnapOptions.size()))
-                               safeThis->setDoubleClickSnapModeInternal(
-                                   kDoubleClickSnapOptions[static_cast<size_t>(idx)].mode, true);
-                       });
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetComponent(&dragSnapModeButton)
+            .withParentComponent(this)
+            .withMinimumWidth(dragSnapModeButton.getWidth()),
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
+        {
+            if (safeThis == nullptr)
+                return;
+            if (result == 7301)
+                safeThis->setDragSnapModeInternal(
+                    DragSnapMode::Chromatic, true);
+            else if (result == 7302)
+                safeThis->setDragSnapModeInternal(DragSnapMode::Scale, true);
+        });
 }
 
 void ParameterPanel::showTimelineBeatMenu()

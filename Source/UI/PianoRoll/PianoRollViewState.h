@@ -32,9 +32,9 @@ struct PianoRollViewState
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
   bool snapToSemitoneDrag = false;
+  DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
 
   int pitchReferenceHz = 440;
-  DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
   TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
   int timelineBeatNumerator = 4;
   int timelineBeatDenominator = 4;

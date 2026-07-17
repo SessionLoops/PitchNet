@@ -346,12 +346,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
     float deltaY = dragStartY - worldY;
     float deltaSemitones = deltaY / owner_.pixelsPerSemitone;
     if (owner_.snapToSemitoneDrag)
-    {
-      const float targetMidi = originalMidiNote + deltaSemitones;
-      const float snappedMidi = ScaleUtils::snapMidiToSemitone(
-          targetMidi, owner_.pitchReferenceHz);
-      deltaSemitones = snappedMidi - originalMidiNote;
-    }
+      deltaSemitones = owner_.pitchEditor->getSnappedDragOffset(
+          deltaSemitones, originalMidiNote);
 
     draggedNote->setPitchOffset(deltaSemitones);
     draggedNote->markDirty();
@@ -590,13 +586,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (isDragging && draggedNote)
   {
     float newOffset = draggedNote->getPitchOffset();
-    if (owner_.snapToSemitoneDrag)
-    {
-      const float snappedMidi = ScaleUtils::snapMidiToSemitone(
-          originalMidiNote + newOffset, owner_.pitchReferenceHz);
-      newOffset = snappedMidi - originalMidiNote;
-      draggedNote->setPitchOffset(newOffset);
-    }
 
     // Check if there was any meaningful change
     constexpr float CHANGE_THRESHOLD = 0.001f;
@@ -1014,33 +1003,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
   {
     auto snapForDoubleClick = [&owner_ = owner_](float midi)
     {
-      const bool hasActiveScale =
-          owner_.selectedScaleMode != ScaleMode::None &&
-          owner_.selectedScaleMode != ScaleMode::Chromatic &&
-          owner_.selectedScaleRootNote >= 0;
-
-      switch (owner_.doubleClickSnapMode)
-      {
-      case DoubleClickSnapMode::NearestSemitone:
-        return ScaleUtils::snapMidiToSemitone(
-            midi, owner_.pitchReferenceHz);
-      case DoubleClickSnapMode::NearestScale:
-        if (hasActiveScale)
-          return ScaleUtils::snapMidiToScale(
-              midi, owner_.selectedScaleMode,
-              owner_.selectedScaleRootNote,
-              owner_.pitchReferenceHz);
-        return midi;
-      case DoubleClickSnapMode::PitchCenter:
-      default:
-        if (hasActiveScale)
-          return ScaleUtils::snapMidiToScale(
-              midi, owner_.selectedScaleMode,
-              owner_.selectedScaleRootNote,
-              owner_.pitchReferenceHz);
-        return ScaleUtils::snapMidiToSemitone(
-            midi, owner_.pitchReferenceHz);
-      }
+      return ScaleUtils::snapMidiToSemitone(
+          midi, owner_.pitchReferenceHz);
     };
 
     if (note->isSelected())

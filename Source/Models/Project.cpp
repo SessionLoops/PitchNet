@@ -43,6 +43,7 @@ namespace
 }
 
 Project::Project()
+    : macroParameters(std::make_shared<MacroParameters>())
 {
 }
 
@@ -324,9 +325,9 @@ void Project::setScaleMode(ScaleMode mode)
         changed = true;
     }
 
-    if (scaleMode != mode)
+    if (macroParameters->scaleMode != mode)
     {
-        scaleMode = mode;
+        macroParameters->scaleMode = mode;
         changed = true;
     }
 
@@ -357,37 +358,37 @@ void Project::setScaleRootNote(int noteInOctave)
 void Project::setPitchReferenceHz(int hz)
 {
     const int normalized = juce::jlimit(430, 450, hz);
-    if (pitchReferenceHz == normalized)
+    if (macroParameters->pitchReferenceHz == normalized)
         return;
 
-    pitchReferenceHz = normalized;
+    macroParameters->pitchReferenceHz = normalized;
     modified = true;
 }
 
 void Project::setSnapToSemitones(bool enabled)
 {
-    if (snapToSemitones == enabled)
+    if (macroParameters->snapToSemitones == enabled)
         return;
 
-    snapToSemitones = enabled;
+    macroParameters->snapToSemitones = enabled;
     modified = true;
 }
 
-void Project::setDoubleClickSnapMode(DoubleClickSnapMode mode)
+void Project::setDragSnapMode(DragSnapMode mode)
 {
-    if (doubleClickSnapMode == mode)
+    if (macroParameters->dragSnapMode == mode)
         return;
 
-    doubleClickSnapMode = mode;
+    macroParameters->dragSnapMode = mode;
     modified = true;
 }
 
 void Project::setTimelineDisplayMode(TimelineDisplayMode mode)
 {
-    if (timelineDisplayMode == mode)
+    if (macroParameters->timelineDisplayMode == mode)
         return;
 
-    timelineDisplayMode = mode;
+    macroParameters->timelineDisplayMode = mode;
     modified = true;
 }
 
@@ -396,42 +397,48 @@ void Project::setTimelineBeatSignature(int numerator, int denominator)
     const int normalizedNumerator = normalizeBeatNumerator(numerator);
     const int normalizedDenominator = normalizeBeatDenominator(denominator);
 
-    if (timelineBeatNumerator == normalizedNumerator &&
-        timelineBeatDenominator == normalizedDenominator)
+    if (macroParameters->timelineBeatNumerator == normalizedNumerator &&
+        macroParameters->timelineBeatDenominator == normalizedDenominator)
         return;
 
-    timelineBeatNumerator = normalizedNumerator;
-    timelineBeatDenominator = normalizedDenominator;
+    macroParameters->timelineBeatNumerator = normalizedNumerator;
+    macroParameters->timelineBeatDenominator = normalizedDenominator;
     modified = true;
 }
 
 void Project::setTimelineTempoBpm(double bpm)
 {
     const double normalized = juce::jlimit(20.0, 300.0, bpm);
-    if (std::abs(timelineTempoBpm - normalized) < 1.0e-6)
+    if (std::abs(macroParameters->timelineTempoBpm - normalized) < 1.0e-6)
         return;
 
-    timelineTempoBpm = normalized;
+    macroParameters->timelineTempoBpm = normalized;
     modified = true;
 }
 
 void Project::setTimelineGridDivision(TimelineGridDivision division)
 {
     const auto normalized = normalizeGridDivision(division);
-    if (timelineGridDivision == normalized)
+    if (macroParameters->timelineGridDivision == normalized)
         return;
 
-    timelineGridDivision = normalized;
+    macroParameters->timelineGridDivision = normalized;
     modified = true;
 }
 
 void Project::setTimelineSnapCycle(bool enabled)
 {
-    if (timelineSnapCycle == enabled)
+    if (macroParameters->timelineSnapCycle == enabled)
         return;
 
-    timelineSnapCycle = enabled;
+    macroParameters->timelineSnapCycle = enabled;
     modified = true;
+}
+
+void Project::setMacroParameters(std::shared_ptr<MacroParameters> parameters)
+{
+    if (parameters)
+        macroParameters = std::move(parameters);
 }
 
 // ---------------------------------------------------------------------------

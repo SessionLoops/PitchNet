@@ -396,7 +396,12 @@ void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
                                   bool drawGridLines)
 {
   GridRenderer::Params params;
-  params.scaleMode = previewScaleMode.value_or(selectedScaleMode);
+  const bool scaleViewActive =
+      selectedScaleMode != ScaleMode::None &&
+      selectedScaleMode != ScaleMode::Chromatic;
+  params.scaleMode = scaleViewActive
+                         ? previewScaleMode.value_or(selectedScaleMode)
+                         : selectedScaleMode;
   params.scaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
   params.pitchAxisOffsetSemitones =
       ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
@@ -819,7 +824,13 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
 
 void PianoRollComponent::drawPianoKeys(juce::Graphics &g)
 {
-  const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
+  ScaleMode activeScaleMode = ScaleMode::Chromatic;
+  if (snapToSemitoneDrag && dragSnapMode == DragSnapMode::Scale)
+  {
+    const ScaleMode preferredMode =
+        project != nullptr ? project->getPreferredScaleMode() : ScaleMode::Major;
+    activeScaleMode = previewScaleMode.value_or(preferredMode);
+  }
   const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
   const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
   pianoKeysRenderer->draw(g, getHeight(), horizontalScrollBarSize,
@@ -1352,9 +1363,9 @@ void PianoRollComponent::setProject(Project *proj)
   selectedScaleRootNote = project != nullptr ? project->getScaleRootNote() : 0;
   pitchReferenceHz = project != nullptr ? project->getPitchReferenceHz() : 440;
   snapToSemitoneDrag = project != nullptr ? project->getSnapToSemitones() : false;
-  doubleClickSnapMode = project != nullptr
-                            ? project->getDoubleClickSnapMode()
-                            : DoubleClickSnapMode::PitchCenter;
+  dragSnapMode = project != nullptr
+                     ? project->getDragSnapMode()
+                     : DragSnapMode::Chromatic;
   timelineDisplayMode = project != nullptr
                             ? project->getTimelineDisplayMode()
                             : TimelineDisplayMode::Beats;
@@ -1378,6 +1389,7 @@ void PianoRollComponent::setProject(Project *proj)
   scrollZoomController->setProject(proj);
   pitchEditor->setProject(proj);
   pitchEditor->setSnapToSemitoneDragEnabled(snapToSemitoneDrag);
+  pitchEditor->setDragSnapMode(dragSnapMode);
   pitchEditor->setPitchReferenceHz(pitchReferenceHz);
   noteSplitter->setProject(proj);
   pitchToolController->setProject(proj);
@@ -1454,6 +1466,12 @@ void PianoRollComponent::setScaleRootPreview(std::optional<int> noteInOctave)
 
 void PianoRollComponent::setScaleModePreview(std::optional<ScaleMode> mode)
 {
+  if (mode.has_value() &&
+      (selectedScaleMode == ScaleMode::Chromatic ||
+       selectedScaleMode == ScaleMode::None) &&
+      !(snapToSemitoneDrag && dragSnapMode == DragSnapMode::Scale))
+    mode.reset();
+
   if (previewScaleMode == mode)
     return;
 
@@ -1470,6 +1488,19 @@ void PianoRollComponent::setSnapToSemitoneDrag(bool enabled)
   if (project != nullptr)
     project->setSnapToSemitones(enabled);
   pitchEditor->setSnapToSemitoneDragEnabled(enabled);
+  repaint();
+}
+
+void PianoRollComponent::setDragSnapMode(DragSnapMode mode)
+{
+  if (dragSnapMode == mode)
+    return;
+
+  dragSnapMode = mode;
+  if (project != nullptr)
+    project->setDragSnapMode(mode);
+  pitchEditor->setDragSnapMode(mode);
+  repaint();
 }
 
 void PianoRollComponent::setPitchReferenceHz(int hz)
@@ -1483,16 +1514,6 @@ void PianoRollComponent::setPitchReferenceHz(int hz)
     project->setPitchReferenceHz(normalized);
   pitchEditor->setPitchReferenceHz(normalized);
   repaint();
-}
-
-void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode)
-{
-  if (doubleClickSnapMode == mode)
-    return;
-
-  doubleClickSnapMode = mode;
-  if (project != nullptr)
-    project->setDoubleClickSnapMode(mode);
 }
 
 void PianoRollComponent::setTimelineDisplayMode(TimelineDisplayMode mode)

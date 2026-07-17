@@ -6,6 +6,49 @@
 
 PitchEditor::PitchEditor() = default;
 
+float PitchEditor::getSnappedDragOffset(float rawOffsetSemitones,
+                                        float anchorMidiNote) const
+{
+  const int roundedOffset = static_cast<int>(std::round(rawOffsetSemitones));
+  if (dragSnapMode != DragSnapMode::Scale || project == nullptr)
+    return static_cast<float>(roundedOffset);
+
+  const ScaleMode scaleMode = project->getPreferredScaleMode();
+  const int rootNote = project->getScaleRootNote();
+  if (scaleMode == ScaleMode::None || scaleMode == ScaleMode::Chromatic ||
+      rootNote < 0)
+    return static_cast<float>(roundedOffset);
+
+  const float referenceOffset =
+      ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
+  const int anchorPitch =
+      static_cast<int>(std::round(anchorMidiNote - referenceOffset));
+  constexpr int searchRadius = 24;
+  constexpr float tieEpsilon = 1.0e-4f;
+  int bestOffset = roundedOffset;
+  float bestDistance = std::numeric_limits<float>::max();
+
+  for (int candidate = roundedOffset - searchRadius;
+       candidate <= roundedOffset + searchRadius; ++candidate)
+  {
+    if (!ScaleUtils::isPitchClassInScale(
+            scaleMode, anchorPitch + candidate, rootNote))
+      continue;
+
+    const float distance =
+        std::abs(static_cast<float>(candidate) - rawOffsetSemitones);
+    if (distance < bestDistance - tieEpsilon ||
+        (std::abs(distance - bestDistance) <= tieEpsilon &&
+         candidate < bestOffset))
+    {
+      bestDistance = distance;
+      bestOffset = candidate;
+    }
+  }
+
+  return static_cast<float>(bestOffset);
+}
+
 Note *PitchEditor::findNoteAt(float x, float y)
 {
   if (!project || !coordMapper)
@@ -85,7 +128,7 @@ void PitchEditor::updateNoteDrag(float y)
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
   if (snapToSemitoneDragEnabled)
-    deltaSemitones = std::round(deltaSemitones);
+    deltaSemitones = getSnappedDragOffset(deltaSemitones, originalMidiNote);
 
   draggedNote->setPitchOffset(deltaSemitones);
   draggedNote->markDirty();
@@ -510,6 +553,9 @@ void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
   originalMidiNotes.clear();
   originalF0ValuesMulti.clear();
   dragStartY = y;
+  multiDragSnapAnchorMidi = hoveredNote != nullptr
+                                ? hoveredNote->getMidiNote()
+                                : notes.front()->getMidiNote();
 
   auto &audioData = project->getAudioData();
   int f0Size = static_cast<int>(audioData.f0.size());
@@ -553,7 +599,8 @@ void PitchEditor::updateMultiNoteDrag(float x, float y)
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
   if (snapToSemitoneDragEnabled)
-    deltaSemitones = std::round(deltaSemitones);
+    deltaSemitones =
+        getSnappedDragOffset(deltaSemitones, multiDragSnapAnchorMidi);
 
   for (auto *note : draggedNotes)
   {

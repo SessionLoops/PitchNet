@@ -526,15 +526,26 @@ MainComponent::MainComponent(bool enableAudioDevice)
     parameterPanel.updateGlobalSliders();
     notifyProjectDataChanged();
   };
+  toolbar.onScaleRootPreviewChanged = [this](std::optional<int> rootNote)
+  {
+    pianoRoll.setScaleRootPreview(rootNote);
+  };
   toolbar.onScaleModeChanged = [this](ScaleMode mode)
   {
     if (auto* project = getProject();
         project != nullptr &&
         project->getScaleMode() != ScaleMode::Chromatic &&
         project->getScaleMode() != ScaleMode::None)
-        pianoRoll.setScaleMode(mode);
+      pianoRoll.setScaleMode(mode);
+    else
+      pianoRoll.repaint();
     parameterPanel.updateGlobalSliders();
     notifyProjectDataChanged();
+  };
+  toolbar.onScaleModePreviewChanged =
+      [this](std::optional<ScaleMode> mode)
+  {
+    pianoRoll.setScaleModePreview(mode);
   };
   toolbar.onToggleLoop = [this](bool enabled)
   {
@@ -636,7 +647,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Setup parameter panel callbacks
   parameterPanel.onParameterChanged = [this]()
-  { onPitchEdited(); };
+  {
+    onPitchEdited();
+    notifyProjectDataChanged();
+  };
   parameterPanel.onParameterEditFinished = [this]()
   {
     resynthesizeIncremental();
@@ -657,37 +671,43 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     pianoRoll.setSnapToSemitoneDrag(enabled);
   };
+  parameterPanel.onDragSnapModeChanged = [this](DragSnapMode mode)
+  {
+    pianoRoll.setDragSnapMode(mode);
+    notifyProjectDataChanged();
+  };
   parameterPanel.onPitchReferenceChanged = [this](int hz)
   {
     pianoRoll.setPitchReferenceHz(hz);
-  };
-  parameterPanel.onDoubleClickSnapModeChanged =
-      [this](DoubleClickSnapMode mode)
-  {
-    pianoRoll.setDoubleClickSnapMode(mode);
+    notifyProjectDataChanged();
   };
   parameterPanel.onTimelineDisplayModeChanged =
       [this](TimelineDisplayMode mode)
   {
     pianoRoll.setTimelineDisplayMode(mode);
+    notifyProjectDataChanged();
   };
   parameterPanel.onTimelineBeatSignatureChanged =
       [this](int numerator, int denominator)
   {
     pianoRoll.setTimelineBeatSignature(numerator, denominator);
+    notifyProjectDataChanged();
   };
   parameterPanel.onTimelineTempoChanged = [this](double bpm)
   {
     pianoRoll.setTimelineTempoBpm(bpm);
+    notifyProjectDataChanged();
   };
   parameterPanel.onTimelineGridDivisionChanged =
       [this](TimelineGridDivision division)
   {
     pianoRoll.setTimelineGridDivision(division);
+    notifyProjectDataChanged();
   };
   parameterPanel.onTimelineSnapCycleChanged = [this](bool enabled)
   {
     pianoRoll.setTimelineSnapCycle(enabled);
+    notifyProjectDataChanged();
   };
   parameterPanel.setProject(getProject());
 
@@ -2887,7 +2907,11 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
   liveRecordingActive = false;
   if (auto *project = getProject())
   {
+    const auto macroParameters =
+        isPluginMode() ? project->getMacroParameters() : nullptr;
     *project = snapshot;
+    if (macroParameters)
+      project->setMacroParameters(macroParameters);
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
     parameterPanel.setProject(project);

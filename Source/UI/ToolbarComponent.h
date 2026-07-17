@@ -5,6 +5,7 @@
 #include "../Utils/UI/Theme.h"
 #include "Buttons.h"
 #include "ScaleSelectionControl.h"
+#include <optional>
 
 // Forward declaration - EditMode is defined in PianoRollComponent.h
 enum class EditMode;
@@ -108,6 +109,8 @@ public:
     std::function<void(bool)> onToggleAudition;
     std::function<void(int)> onScaleRootChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
+    std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
+    std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing

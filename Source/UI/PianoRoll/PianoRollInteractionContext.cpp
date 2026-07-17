@@ -17,7 +17,6 @@ PianoRollInteractionContext::PianoRollInteractionContext(
       pitchReferenceHz(component.pitchReferenceHz),
       selectedScaleMode(component.selectedScaleMode),
       selectedScaleRootNote(component.selectedScaleRootNote),
-      doubleClickSnapMode(component.doubleClickSnapMode),
       lastDragRepaintTime(component.lastDragRepaintTime),
       onNoteSelected(component.onNoteSelected),
       onPitchEdited(component.onPitchEdited),

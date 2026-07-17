@@ -1,10 +1,6 @@
 #include "ScaleSelectionControl.h"
-#include "../Utils/ScaleUtils.h"
 #include "Components/AppFont.h"
-#include <algorithm>
 #include <array>
-#include <cmath>
-#include <vector>
 
 namespace
 {
@@ -14,25 +10,25 @@ struct ScaleModeOption
     const char* label;
 };
 
-struct DetectedScaleCandidate
-{
-    int root = 0;
-    ScaleMode mode = ScaleMode::Major;
-    float score = 0.0f;
-};
-
 constexpr std::array<const char*, 12> kRootLabels {{
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 }};
 
-constexpr std::array<ScaleModeOption, 7> kModeOptions {{
+constexpr std::array<ScaleModeOption, 14> kModeOptions {{
     { ScaleMode::Major, "Major" },
     { ScaleMode::Minor, "Minor" },
+    { ScaleMode::Blues, "Blues" },
     { ScaleMode::Dorian, "Dorian" },
-    { ScaleMode::Phrygian, "Phrygian" },
+    { ScaleMode::HarmonicMinor, "Harmonic Minor" },
+    { ScaleMode::Locrian, "Locrian" },
     { ScaleMode::Lydian, "Lydian" },
+    { ScaleMode::MajorPentatonic, "Major Pentatonic" },
+    { ScaleMode::MelodicMinor, "Melodic Minor" },
+    { ScaleMode::MinorPentatonic, "Minor Pentatonic" },
     { ScaleMode::Mixolydian, "Mixolydian" },
-    { ScaleMode::Locrian, "Locrian" }
+    { ScaleMode::Phrygian, "Phrygian" },
+    { ScaleMode::PhrygianDominant, "Phrygian Dominant" },
+    { ScaleMode::WholeTone, "Whole Tone" }
 }};
 
 juce::String rootLabel(int root)
@@ -50,215 +46,113 @@ juce::String modeLabel(ScaleMode mode)
     return "Major";
 }
 
-std::vector<DetectedScaleCandidate> detectScales(const Project* project)
-{
-    std::vector<DetectedScaleCandidate> result;
-    if (project == nullptr)
-        return result;
-
-    std::array<double, 12> pitchClassWeights {};
-    double totalWeight = 0.0;
-    for (const auto& note : project->getNotes())
-    {
-        if (note.isRest())
-            continue;
-
-        const int pitchClass =
-            (static_cast<int>(std::lround(note.getAdjustedMidiNote())) % 12 + 12) % 12;
-        const double weight = static_cast<double>(juce::jmax(1, note.getDurationFrames()));
-        pitchClassWeights[static_cast<size_t>(pitchClass)] += weight;
-        totalWeight += weight;
-    }
-
-    if (totalWeight <= 0.0)
-        return result;
-
-    for (int root = 0; root < 12; ++root)
-    {
-        for (const auto& option : kModeOptions)
-        {
-            double inScaleWeight = 0.0;
-            for (int pitchClass = 0; pitchClass < 12; ++pitchClass)
-                if (ScaleUtils::isPitchClassInScale(option.mode, pitchClass, root))
-                    inScaleWeight += pitchClassWeights[static_cast<size_t>(pitchClass)];
-
-            const double rootBoost = pitchClassWeights[static_cast<size_t>(root)] * 0.10;
-            result.push_back({
-                root, option.mode,
-                static_cast<float>((inScaleWeight + rootBoost) / totalWeight)
-            });
-        }
-    }
-
-    std::sort(result.begin(), result.end(),
-              [](const auto& a, const auto& b)
-              {
-                  if (std::abs(a.score - b.score) > 1.0e-6f)
-                      return a.score > b.score;
-                  if (a.root != b.root)
-                      return a.root < b.root;
-                  return static_cast<int>(a.mode) < static_cast<int>(b.mode);
-              });
-    if (result.size() > 8)
-        result.resize(8);
-    return result;
-}
-
-class PopupChoiceButton final : public juce::TextButton
+class PitchPopupLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    explicit PopupChoiceButton(const juce::String& text)
-        : juce::TextButton(text)
+    PitchPopupLookAndFeel()
     {
-        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setColour(juce::PopupMenu::backgroundColourId,
+                  juce::Colours::transparentBlack);
+        setColour(juce::PopupMenu::textColourId, APP_COLOR_TEXT_PRIMARY);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId,
+                  juce::Colour(0xFF171717u));
+        setColour(juce::PopupMenu::highlightedTextColourId,
+                  APP_COLOR_TEXT_PRIMARY);
     }
 
-    void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+    void drawPopupMenuBackground(juce::Graphics& g, int width,
+                                 int height) override
     {
-        auto bounds = getLocalBounds().toFloat().reduced(0.5f);
-        auto fill = juce::Colour(0xFF111111u);
-        if (down)
-            fill = fill.brighter(0.12f);
-        else if (highlighted)
-            fill = fill.brighter(0.07f);
+        const auto bounds = juce::Rectangle<float>(
+            0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height));
+        juce::Path shape;
+        shape.addRoundedRectangle(bounds.reduced(0.5f), 9.0f);
 
-        g.setColour(fill);
-        g.fillRoundedRectangle(bounds, 5.0f);
-        g.setColour(juce::Colour(0xFF8A8A8Au)
-                        .withMultipliedAlpha(isEnabled() ? 1.0f : 0.45f));
-        g.drawRoundedRectangle(bounds, 5.0f, 1.0f);
-        g.setColour(juce::Colour(0xFFE6E6E6u)
-                        .withMultipliedAlpha(isEnabled() ? 1.0f : 0.45f));
-        g.setFont(AppFont::getFont(13.0f));
-        g.drawFittedText(getButtonText(), getLocalBounds().reduced(4, 0),
-                         juce::Justification::centred, 1);
+        g.setColour(juce::Colour(0xFF30302Eu));
+        g.fillPath(shape);
+        g.setColour(juce::Colour(0xFF3E3E3Eu));
+        g.strokePath(shape, juce::PathStrokeType(1.0f));
+    }
+
+    void drawResizableFrame(juce::Graphics&, int, int,
+                            const juce::BorderSize<int>&) override
+    {
     }
 };
 
-class ScalePopupContent final : public juce::Component
+PitchPopupLookAndFeel& getPitchPopupLookAndFeel()
+{
+    static PitchPopupLookAndFeel lookAndFeel;
+    return lookAndFeel;
+}
+
+class HoverMenuItemComponent final : public juce::PopupMenu::CustomComponent
 {
 public:
-    explicit ScalePopupContent(ScaleSelectionControl& ownerToUse)
-        : owner(ownerToUse),
-          rootButton(owner.getButtonText().upToFirstOccurrenceOf(" ", false, false)),
-          modeButton(owner.getButtonText().fromFirstOccurrenceOf(" ", false, false)),
-          detectedButton("Show Detected Scales")
+    HoverMenuItemComponent(juce::String text, bool selected,
+                           std::function<void()> hoverCallback)
+        : juce::PopupMenu::CustomComponent(true),
+          itemText(std::move(text)),
+          isSelected(selected),
+          onHover(std::move(hoverCallback))
     {
-        for (auto* button : { &rootButton, &modeButton, &detectedButton })
-            addAndMakeVisible(button);
+        setOpaque(false);
+    }
 
-        rootButton.onClick = [this] { showRootMenu(); };
-        modeButton.onClick = [this] { showModeMenu(); };
-        detectedButton.onClick = [this] { showDetectedMenu(); };
-        bool hasPitchedNote = false;
-        if (const auto* project = owner.getProject())
-            for (const auto& note : project->getNotes())
-                if (!note.isRest())
-                {
-                    hasPitchedNote = true;
-                    break;
-                }
-        detectedButton.setEnabled(hasPitchedNote);
-        setSize(208, 68);
+    void getIdealSize(int& idealWidth, int& idealHeight) override
+    {
+        const int textWidth = juce::GlyphArrangement::getStringWidthInt(
+            AppFont::getFont(14.0f), itemText);
+        idealWidth = textWidth + 44;
+        idealHeight = 26;
     }
 
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colour(0xFF0D0B0Bu));
+        const auto area = getLocalBounds().toFloat();
+        if (isItemHighlighted())
+        {
+            g.setColour(juce::Colour(0xFF171717u));
+            g.fillRoundedRectangle(area.reduced(2.0f, 1.0f), 5.0f);
+        }
+
+        if (isSelected)
+        {
+            g.setColour(juce::Colour(0xFFEFEFEFu));
+            g.fillEllipse(8.0f, area.getCentreY() - 3.5f, 7.0f, 7.0f);
+        }
+
+        g.setColour(APP_COLOR_TEXT_PRIMARY);
+        g.setFont(AppFont::getFont(14.0f));
+        g.drawText(itemText, getLocalBounds().withTrimmedLeft(22),
+                   juce::Justification::centredLeft, true);
     }
 
-    void resized() override
+    void mouseEnter(const juce::MouseEvent& event) override
     {
-        auto bounds = getLocalBounds().reduced(4, 4);
-        auto top = bounds.removeFromTop(26);
-        rootButton.setBounds(top.removeFromLeft(97));
-        top.removeFromLeft(5);
-        modeButton.setBounds(top);
-        bounds.removeFromTop(4);
-        detectedButton.setBounds(bounds.removeFromTop(26));
+        juce::PopupMenu::CustomComponent::mouseEnter(event);
+        if (onHover)
+            onHover();
+    }
+
+    void mouseMove(const juce::MouseEvent& event) override
+    {
+        juce::PopupMenu::CustomComponent::mouseMove(event);
+        if (onHover)
+            onHover();
     }
 
 private:
-    void showRootMenu()
-    {
-        juce::PopupMenu menu;
-        for (int i = 0; i < static_cast<int>(kRootLabels.size()); ++i)
-            menu.addItem(i + 1, kRootLabels[static_cast<size_t>(i)]);
-        menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetComponent(&rootButton)
-                                      .withMinimumWidth(rootButton.getWidth()),
-            [safeThis = juce::Component::SafePointer<ScalePopupContent>(this)](int result)
-            {
-                if (safeThis != nullptr && result > 0)
-                {
-                    safeThis->owner.setScaleRoot(result - 1);
-                    safeThis->rootButton.setButtonText(rootLabel(result - 1));
-                }
-            });
-    }
-
-    void showModeMenu()
-    {
-        juce::PopupMenu menu;
-        for (size_t i = 0; i < kModeOptions.size(); ++i)
-            menu.addItem(static_cast<int>(i) + 1, kModeOptions[i].label);
-        menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetComponent(&modeButton)
-                                      .withMinimumWidth(modeButton.getWidth()),
-            [safeThis = juce::Component::SafePointer<ScalePopupContent>(this)](int result)
-            {
-                if (safeThis != nullptr && result > 0 &&
-                    result <= static_cast<int>(kModeOptions.size()))
-                {
-                    const auto mode = kModeOptions[static_cast<size_t>(result - 1)].mode;
-                    safeThis->owner.setScaleMode(mode);
-                    safeThis->modeButton.setButtonText(modeLabel(mode));
-                }
-            });
-    }
-
-    void showDetectedMenu()
-    {
-        const auto candidates = detectScales(owner.getProject());
-        juce::PopupMenu menu;
-        if (candidates.empty())
-            menu.addItem(1, "No scale detected", false, false);
-        else
-            for (size_t i = 0; i < candidates.size(); ++i)
-                menu.addItem(
-                    static_cast<int>(i) + 1,
-                    rootLabel(candidates[i].root) + " " +
-                        modeLabel(candidates[i].mode) + "  (" +
-                        juce::String(juce::roundToInt(candidates[i].score * 100.0f)) +
-                        "%)");
-
-        menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetComponent(&detectedButton)
-                                      .withMinimumWidth(240),
-            [safeThis = juce::Component::SafePointer<ScalePopupContent>(this),
-             candidates](int result)
-            {
-                if (safeThis == nullptr || result <= 0 ||
-                    result > static_cast<int>(candidates.size()))
-                    return;
-                const auto& candidate = candidates[static_cast<size_t>(result - 1)];
-                safeThis->owner.setDetectedScale(candidate.root, candidate.mode);
-                safeThis->rootButton.setButtonText(rootLabel(candidate.root));
-                safeThis->modeButton.setButtonText(modeLabel(candidate.mode));
-            });
-    }
-
-    ScaleSelectionControl& owner;
-    PopupChoiceButton rootButton;
-    PopupChoiceButton modeButton;
-    PopupChoiceButton detectedButton;
+    juce::String itemText;
+    bool isSelected = false;
+    std::function<void()> onHover;
 };
+
 }
 
 ScaleSelectionControl::ScaleSelectionControl()
     : CompactSelectionButton("C Major")
 {
-    setTooltip("Scale Root and Mode");
     onClick = [this] { showPopup(); };
 }
 
@@ -275,9 +169,84 @@ void ScaleSelectionControl::showPopup()
         return;
 
     refreshLabel();
-    juce::CallOutBox::launchAsynchronously(
-        std::make_unique<ScalePopupContent>(*this),
-        getScreenBounds(), nullptr);
+    constexpr int rootMenuBaseId = 7000;
+    constexpr int modeMenuBaseId = 7100;
+
+    juce::PopupMenu rootMenu;
+    juce::PopupMenu modeMenu;
+    juce::PopupMenu menu;
+    auto* lookAndFeel = &getPitchPopupLookAndFeel();
+    rootMenu.setLookAndFeel(lookAndFeel);
+    modeMenu.setLookAndFeel(lookAndFeel);
+    menu.setLookAndFeel(lookAndFeel);
+
+    const int selectedRoot = project->getScaleRootNote();
+    for (int i = 0; i < static_cast<int>(kRootLabels.size()); ++i)
+    {
+        const juce::String label = kRootLabels[static_cast<size_t>(i)];
+        auto hoverCallback =
+            [safeThis = juce::Component::SafePointer<ScaleSelectionControl>(this), i]()
+            {
+                if (safeThis != nullptr)
+                    safeThis->previewScaleRoot(i);
+            };
+        rootMenu.addCustomItem(
+            rootMenuBaseId + i + 1,
+            std::make_unique<HoverMenuItemComponent>(
+                label, selectedRoot == i, std::move(hoverCallback)),
+            nullptr, label);
+    }
+
+    ScaleMode selectedMode = project->getPreferredScaleMode();
+    if (selectedMode == ScaleMode::None || selectedMode == ScaleMode::Chromatic)
+        selectedMode = ScaleMode::Major;
+    for (size_t i = 0; i < kModeOptions.size(); ++i)
+    {
+        const auto mode = kModeOptions[i].mode;
+        const juce::String label = kModeOptions[i].label;
+        auto hoverCallback =
+            [safeThis = juce::Component::SafePointer<ScaleSelectionControl>(this), mode]()
+            {
+                if (safeThis != nullptr)
+                    safeThis->previewScaleMode(mode);
+            };
+        modeMenu.addCustomItem(
+            modeMenuBaseId + static_cast<int>(i),
+            std::make_unique<HoverMenuItemComponent>(
+                label, selectedMode == mode, std::move(hoverCallback)),
+            nullptr, label);
+    }
+
+    menu.addSubMenu("Root", rootMenu);
+    menu.addSubMenu("Mode", modeMenu);
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetComponent(this)
+            .withMinimumWidth(getWidth()),
+        [safeThis = juce::Component::SafePointer<ScaleSelectionControl>(this)](int result)
+        {
+            if (safeThis == nullptr)
+                return;
+
+            safeThis->previewScaleRoot(std::nullopt);
+            safeThis->previewScaleMode(std::nullopt);
+
+            constexpr int rootMenuBaseId = 7000;
+            constexpr int modeMenuBaseId = 7100;
+            const int rootIndex = result - rootMenuBaseId;
+            if (rootIndex >= 1 &&
+                rootIndex <= static_cast<int>(kRootLabels.size()))
+            {
+                safeThis->setScaleRoot(rootIndex - 1);
+                return;
+            }
+
+            const int modeIndex = result - modeMenuBaseId;
+            if (modeIndex >= 0 &&
+                modeIndex < static_cast<int>(kModeOptions.size()))
+                safeThis->setScaleMode(
+                    kModeOptions[static_cast<size_t>(modeIndex)].mode);
+        });
 }
 
 void ScaleSelectionControl::refreshLabel()
@@ -287,7 +256,22 @@ void ScaleSelectionControl::refreshLabel()
         project != nullptr ? project->getPreferredScaleMode() : ScaleMode::Major;
     if (mode == ScaleMode::None || mode == ScaleMode::Chromatic)
         mode = ScaleMode::Major;
-    setButtonText(rootLabel(root) + " " + modeLabel(mode));
+    const auto text = rootLabel(root) + " " + modeLabel(mode);
+    if (getButtonText() == text)
+        return;
+
+    setButtonText(text);
+    if (onPreferredWidthChanged)
+        onPreferredWidthChanged();
+}
+
+int ScaleSelectionControl::getPreferredWidth() const
+{
+    constexpr int minimumWidth = 92;
+    constexpr int horizontalPadding = 20;
+    const int textWidth = juce::GlyphArrangement::getStringWidthInt(
+        AppFont::getFont(13.0f), getButtonText());
+    return juce::jmax(minimumWidth, textWidth + horizontalPadding);
 }
 
 void ScaleSelectionControl::setScaleRoot(int rootNote)
@@ -317,16 +301,14 @@ void ScaleSelectionControl::setScaleMode(ScaleMode mode)
     refreshLabel();
 }
 
-void ScaleSelectionControl::setDetectedScale(int rootNote, ScaleMode mode)
+void ScaleSelectionControl::previewScaleRoot(std::optional<int> rootNote)
 {
-    if (project == nullptr)
-        return;
-    project->setScaleRootNote(juce::jlimit(0, 11, rootNote));
-    project->setPreferredScaleMode(mode);
-    project->setScaleMode(mode);
-    refreshLabel();
-    if (onScaleRootChanged)
-        onScaleRootChanged(project->getScaleRootNote());
-    if (onScaleModeChanged)
-        onScaleModeChanged(mode);
+    if (onScaleRootPreviewChanged)
+        onScaleRootPreviewChanged(rootNote);
+}
+
+void ScaleSelectionControl::previewScaleMode(std::optional<ScaleMode> mode)
+{
+    if (onScaleModePreviewChanged)
+        onScaleModePreviewChanged(mode);
 }

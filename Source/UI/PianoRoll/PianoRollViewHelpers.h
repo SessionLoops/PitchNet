@@ -27,6 +27,20 @@ inline juce::Colour getScaleAccentColour(ScaleMode mode)
     return juce::Colour(0xFF75D0FFu);
   case ScaleMode::Locrian:
     return juce::Colour(0xFF9FA9BFu);
+  case ScaleMode::Blues:
+    return juce::Colour(0xFF4F86C6u);
+  case ScaleMode::HarmonicMinor:
+    return juce::Colour(0xFFC27BA0u);
+  case ScaleMode::MajorPentatonic:
+    return juce::Colour(0xFFF2C14Eu);
+  case ScaleMode::MelodicMinor:
+    return juce::Colour(0xFFA78BFAu);
+  case ScaleMode::MinorPentatonic:
+    return juce::Colour(0xFF8F7CC3u);
+  case ScaleMode::PhrygianDominant:
+    return juce::Colour(0xFFE07A5Fu);
+  case ScaleMode::WholeTone:
+    return juce::Colour(0xFF81B29Au);
   case ScaleMode::Chromatic:
     return APP_COLOR_PRIMARY;
   }

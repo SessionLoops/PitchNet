@@ -24,7 +24,10 @@ public:
     void setUndoManager(PitchUndoManager* manager) { undoManager = manager; }
     void setCoordinateMapper(CoordinateMapper* mapper) { coordMapper = mapper; }
     void setSnapToSemitoneDragEnabled(bool enabled) { snapToSemitoneDragEnabled = enabled; }
+    void setDragSnapMode(DragSnapMode mode) { dragSnapMode = mode; }
     void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(430, 450, hz); }
+    float getSnappedDragOffset(float rawOffsetSemitones,
+                               float anchorMidiNote) const;
 
     // Note selection and dragging
     Note* findNoteAt(float x, float y);
@@ -90,9 +93,11 @@ private:
     bool isMultiDragging = false;
     std::vector<Note*> draggedNotes;
     Note* hoveredMultiDragNote = nullptr;
+    float multiDragSnapAnchorMidi = 60.0f;
     std::vector<float> originalMidiNotes;
     std::vector<std::vector<float>> originalF0ValuesMulti;
     bool snapToSemitoneDragEnabled = false;
+    DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     int pitchReferenceHz = 440;
 
     // Draw state

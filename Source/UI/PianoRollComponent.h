@@ -116,8 +116,8 @@ public:
   void setScaleRootPreview(std::optional<int> noteInOctave);
   void setScaleModePreview(std::optional<ScaleMode> mode);
   void setSnapToSemitoneDrag(bool enabled);
+  void setDragSnapMode(DragSnapMode mode);
   void setPitchReferenceHz(int hz);
-  void setDoubleClickSnapMode(DoubleClickSnapMode mode);
   void setTimelineDisplayMode(TimelineDisplayMode mode);
   void setTimelineBeatSignature(int numerator, int denominator);
   void setTimelineTempoBpm(double bpm);
@@ -300,8 +300,8 @@ private:
   bool &showUvInterpolationDebug = viewState.showUvInterpolationDebug;
   bool &showActualF0Debug = viewState.showActualF0Debug;
   bool &snapToSemitoneDrag = viewState.snapToSemitoneDrag;
+  DragSnapMode &dragSnapMode = viewState.dragSnapMode;
   int &pitchReferenceHz = viewState.pitchReferenceHz;
-  DoubleClickSnapMode &doubleClickSnapMode = viewState.doubleClickSnapMode;
   TimelineDisplayMode &timelineDisplayMode = viewState.timelineDisplayMode;
   int &timelineBeatNumerator = viewState.timelineBeatNumerator;
   int &timelineBeatDenominator = viewState.timelineBeatDenominator;

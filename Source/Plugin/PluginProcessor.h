@@ -265,6 +265,8 @@ private:
   void checkParameterChanges();
   bool restoreProjectJsonToProcessorState(const juce::String &projectJson);
   void publishPersistentProjectSnapshot(const Project &project);
+  void attachMacroParameters(Project &project);
+  void adoptMacroParameters(Project &project);
 
   static juce::AudioProcessorValueTreeState::ParameterLayout
   createParameterLayout();
@@ -282,6 +284,8 @@ private:
   // Cached parameter values for change detection (audio thread only)
   float cachedPitchOffset = 0.0f;
   float cachedFormantShift = 0.0f;
+  std::shared_ptr<MacroParameters> macroParameters =
+      std::make_shared<MacroParameters>();
 
   // Debounced parameter sync: audio thread -> message thread -> project
   struct ParamSyncState {
