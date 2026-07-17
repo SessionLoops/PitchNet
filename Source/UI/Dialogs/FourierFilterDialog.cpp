@@ -192,7 +192,8 @@ void FourierFilterDialog::onCancelClicked() {
 
 bool FourierFilterDialog::showDialog(const std::vector<Note*>& selectedNotes,
                                      float frameRateHz,
-                                     ApplyCallback onApply) {
+                                     ApplyCallback onApply,
+                                     juce::Component* parent) {
   auto* dialog = new FourierFilterDialog(selectedNotes, frameRateHz, onApply);
 
   juce::DialogWindow::LaunchOptions options;
@@ -200,7 +201,7 @@ bool FourierFilterDialog::showDialog(const std::vector<Note*>& selectedNotes,
   options.dialogTitle = "Fourier Pitch Filter";
   options.resizable = false;
   options.useNativeTitleBar = true;
-  options.componentToCentreAround = nullptr; // Centre on screen
+  options.componentToCentreAround = parent;
 
   int result = options.runModal();
   return result == 1;  // true if OK clicked

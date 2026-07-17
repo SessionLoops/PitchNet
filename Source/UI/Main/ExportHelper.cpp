@@ -120,7 +120,7 @@ public:
     title.setText("Export Settings", juce::dontSendNotification);
     title.setJustificationType(juce::Justification::centredLeft);
     title.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
-    title.setFont(AppFont::getBoldFont(20.0f));
+    title.setFont(AppFont::getBoldFont(17.0f));
 
     setupCombo(formatBox, formatLabel, "Format", {"WAV", "FLAC", "AIFF", "OGG"}, 1);
 
@@ -172,10 +172,16 @@ public:
     title.setBounds(area.removeFromTop(28));
     area.removeFromTop(6);
 
-    cardBounds = area;
-    auto content = cardBounds.reduced(16, 12);
+    // Keep the export options grouped in the card, with the dialog actions
+    // deliberately placed below it.
     const int rowHeight = 32;
-    const int rowGap = 8;
+    const int rowGap = 6;
+    constexpr int cardVerticalPadding = 12;
+    const int cardHeight = 4 * rowHeight + 3 * rowGap + 2 * cardVerticalPadding;
+    cardBounds = area.removeFromTop(cardHeight);
+    area.removeFromTop(16);
+    auto buttonRow = area.removeFromTop(32);
+    auto content = cardBounds.reduced(16, cardVerticalPadding);
     const int controlWidth = juce::jlimit(150, 190, content.getWidth() / 2);
     const int labelWidth = content.getWidth() - controlWidth - 24;
 
@@ -183,7 +189,8 @@ public:
       auto row = content.removeFromTop(rowHeight);
       label.setBounds(row.removeFromLeft(labelWidth));
       control.setBounds(row.removeFromRight(controlWidth).reduced(0, 2));
-      content.removeFromTop(rowGap);
+      if (&label != &channelsLabel)
+        content.removeFromTop(rowGap);
     };
 
     layoutRow(formatLabel, formatBox);
@@ -191,8 +198,7 @@ public:
     layoutRow(bitDepthLabel, bitDepthBox);
     layoutRow(channelsLabel, channelsBox);
 
-    auto btnRow = content.removeFromBottom(32);
-    auto right = btnRow.removeFromRight(190);
+    auto right = buttonRow.removeFromRight(190);
     cancelButton.setBounds(right.removeFromLeft(90));
     right.removeFromLeft(10);
     exportButton.setBounds(right);
@@ -267,8 +273,10 @@ private:
 void showExportSettingsDialogAsync(
     juce::Component *parent, int inputSampleRate,
     std::function<void(std::optional<ExportSettings>)> onDone) {
+  constexpr int dialogWidth = 420;
+  constexpr int dialogHeight = 284;
   auto *content = new ExportSettingsContent(inputSampleRate, std::move(onDone));
-  content->setSize(420, 290);
+  content->setSize(dialogWidth, dialogHeight);
 
   juce::DialogWindow::LaunchOptions opts;
   opts.content.setOwned(content);
@@ -279,8 +287,13 @@ void showExportSettingsDialogAsync(
   opts.useNativeTitleBar = false;
   opts.resizable = false;
   opts.useBottomRightCornerResizer = false;
-  if (auto *window = opts.launchAsync())
+  if (auto *window = opts.launchAsync()) {
     window->setTitleBarHeight(0);
+    if (parent != nullptr)
+      window->centreAroundComponent(parent, dialogWidth, dialogHeight);
+    else
+      window->centreWithSize(dialogWidth, dialogHeight);
+  }
 }
 
 } // namespace ExportHelper

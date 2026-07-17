@@ -33,7 +33,8 @@ public:
    */
   static bool showDialog(const std::vector<Note*>& selectedNotes,
                          float frameRateHz,
-                         ApplyCallback onApply);
+                         ApplyCallback onApply,
+                         juce::Component* parent = nullptr);
 
 private:
   std::vector<Note*> notes;
