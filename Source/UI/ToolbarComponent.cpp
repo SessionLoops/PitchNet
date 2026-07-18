@@ -19,6 +19,7 @@ ToolbarComponent::ToolbarComponent()
     goToStartButton.setImage(loadImage(BinaryData::backward_png, BinaryData::backward_pngSize));
     goToEndButton.setImage(loadImage(BinaryData::forward_png, BinaryData::forward_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
+    quantizeButton.setImage(loadImage(BinaryData::quantize_png, BinaryData::quantize_pngSize));
     auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
     undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
@@ -50,6 +51,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(scaleSelectionButton);
+    addAndMakeVisible(quantizeButton);
     addAndMakeVisible(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
@@ -64,6 +66,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
     followButton.addListener(this);
+    quantizeButton.addListener(this);
     auditionButton.addListener(this);
     undoButton.addListener(this);
     redoButton.addListener(this);
@@ -100,6 +103,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setTooltip(TR("toolbar.select"));
     splitModeButton.setTooltip(TR("toolbar.split"));
     followButton.setTooltip(TR("toolbar.follow"));
+    quantizeButton.setTooltip("Correct Pitch Macro");
     auditionButton.setTooltip("Live Audition On/Off");
     recordButton.setTooltip("Record");
 #if JUCE_MAC
@@ -224,10 +228,15 @@ void ToolbarComponent::resized()
                              capsuleY + (capsuleH - rightButtonSize) / 2,
                              rightButtonSize, rightButtonSize);
 
+    auto quantizeBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
+    quantizeButton.setBounds(quantizeBtnArea.getRight() - rightButtonSize - 8,
+                             capsuleY + (capsuleH - rightButtonSize) / 2,
+                             rightButtonSize, rightButtonSize);
+
     const int scaleButtonWidth = scaleSelectionButton.getPreferredWidth();
-    constexpr int scaleAuditionGap = 11;
+    constexpr int scaleQuantizeGap = 11;
     scaleSelectionButton.setBounds(
-        auditionButton.getX() - scaleAuditionGap - scaleButtonWidth,
+        quantizeButton.getX() - scaleQuantizeGap - scaleButtonWidth,
         capsuleY + (capsuleH - 26) / 2,
         scaleButtonWidth, 26);
 
@@ -345,6 +354,11 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     {
         if (onToggleAudition)
             onToggleAudition(auditionButton.getToggleState());
+    }
+    else if (button == &quantizeButton)
+    {
+        if (onCorrectPitchCenter)
+            onCorrectPitchCenter();
     }
     else if (button == &undoButton && onUndo)
         onUndo();

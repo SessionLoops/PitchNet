@@ -189,6 +189,19 @@ public:
     float getVolume() const { return volume; }
     void setVolume(float vol) { volume = vol; }
 
+    // Per-project pitch-center correction strength (0-100%).  ARA regions
+    // carry their own Project, so this remains independent per region.
+    float getPitchCenter() const { return pitchCenter; }
+    void setPitchCenter(float amount)
+    {
+        const float normalized = juce::jlimit(0.0f, 100.0f, amount);
+        if (std::abs(pitchCenter - normalized) > 0.0001f)
+        {
+            pitchCenter = normalized;
+            modified = true;
+        }
+    }
+
     // Get adjusted F0 with all modifications applied
     std::vector<float> getAdjustedF0() const;
 
@@ -274,6 +287,7 @@ private:
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
     float volume = 0.0f; // dB
+    float pitchCenter = 0.0f;
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;

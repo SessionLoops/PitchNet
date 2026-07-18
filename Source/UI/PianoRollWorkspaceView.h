@@ -18,6 +18,8 @@ public:
   void timerCallback() override;
 
   void setProject(Project *project);
+  void dismissPitchCenterPopup();
+  void showPitchCenterPopup();
   void refreshOverview();
   void setShowSegmentsDebug(bool show);
   PianoRollComponent &getPianoRoll() { return pianoRoll; }
@@ -47,7 +49,6 @@ private:
 
   void updateOverviewVisibility();
   void updateOverviewAnimation();
-
   PianoRollComponent &pianoRoll;
   OverviewPanel overviewPanel;
 

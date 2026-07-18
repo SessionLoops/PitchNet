@@ -2,7 +2,14 @@
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Constants.h"
 #include "BinaryData.h"
+#include "Dialogs/QuantizePitchDialog.h"
+#include "../Utils/PitchCurveProcessor.h"
+#include "../Utils/ScaleUtils.h"
+#include "../Undo/UndoActions.h"
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <memory>
 
 void PianoRollWorkspaceView::FloatingZoomSliderLookAndFeel::drawLinearSlider(
     juce::Graphics &g,
@@ -254,7 +261,163 @@ void PianoRollWorkspaceView::resized()
 
 void PianoRollWorkspaceView::setProject(Project *project)
 {
+  dismissPitchCenterPopup();
   overviewPanel.setProject(project);
+}
+
+void PianoRollWorkspaceView::dismissPitchCenterPopup()
+{
+  QuantizePitchDialog::dismissPopup();
+}
+
+void PianoRollWorkspaceView::showPitchCenterPopup()
+{
+  auto *project = pianoRoll.getProject();
+  if (project == nullptr)
+    return;
+
+  struct NoteCenter
+  {
+    Note *note;
+    float midiNote;
+    float originalMidiNote;
+  };
+  auto centers = std::make_shared<std::vector<NoteCenter>>();
+  centers->reserve(project->getNotes().size());
+  for (auto &note : project->getNotes())
+    if (!note.isRest())
+      centers->push_back({ &note, note.getMidiNote(), note.getOriginalMidiNote() });
+
+  const float originalPitchCenter = project->getPitchCenter();
+  auto previewPitchCenter = std::make_shared<float>(originalPitchCenter);
+
+  const auto popupAnchor = juce::Rectangle<int>(pianoCard.getRight(), pianoCard.getY(), 0, 0);
+  QuantizePitchDialog::showPopup(this, popupAnchor, originalPitchCenter,
+      [this, project, centers, originalPitchCenter, previewPitchCenter](float amount,
+                                                                          bool snapToScale)
+      {
+        *previewPitchCenter = amount;
+        const auto selectedScaleMode = project->getScaleMode();
+        const auto correctionScaleMode =
+            (selectedScaleMode == ScaleMode::None ||
+             selectedScaleMode == ScaleMode::Chromatic)
+                ? project->getPreferredScaleMode()
+                : selectedScaleMode;
+        // Pitch Center is a correction strength: 0% allows the maximum
+        // possible deviation (0.5 semitones), while 100% allows none. Notes
+        // already inside the remaining allowance are untouched; larger ones
+        // are brought down to it while retaining their direction.
+        const float maximumDeviation = (100.0f - amount) * 0.005f;
+        for (const auto &center : *centers)
+        {
+          if (center.note == nullptr) continue;
+          // Always calculate from the analyzed pitch, rather than the current
+          // corrected position. This allows a later lower correction amount to
+          // restore a note's original deviation.
+          const float sourceMidi = originalPitchCenter > 0.0001f
+              ? center.originalMidiNote
+              : center.midiNote;
+          const float corrected = snapToScale
+              ? ScaleUtils::snapMidiToScale(sourceMidi, correctionScaleMode,
+                                             project->getScaleRootNote(),
+                                             project->getPitchReferenceHz())
+              : std::round(sourceMidi);
+          const float signedDeviation = sourceMidi - corrected;
+          if (snapToScale)
+          {
+            // Scale mode interpolates every note toward its closest scale tone:
+            // 100% reaches it, while lower values retain that fraction of the
+            // note's original scale-distance.
+            center.note->setMidiNote(corrected + signedDeviation *
+                ((100.0f - amount) / 100.0f));
+          }
+          else if (std::abs(signedDeviation) > maximumDeviation)
+            center.note->setMidiNote(corrected + std::copysign(maximumDeviation,
+                                                               signedDeviation));
+          else
+            center.note->setMidiNote(sourceMidi);
+        }
+        pianoRoll.repaint();
+        refreshOverview();
+      },
+      [this, project, centers, originalPitchCenter, previewPitchCenter](bool accepted)
+      {
+        bool changed = false;
+        int dirtyStart = std::numeric_limits<int>::max();
+        int dirtyEnd = std::numeric_limits<int>::min();
+        std::vector<Note *> changedNotes;
+        std::vector<float> oldMidis;
+        std::vector<float> newMidis;
+        for (const auto &center : *centers)
+        {
+          if (center.note == nullptr) continue;
+          if (accepted && std::abs(center.note->getMidiNote() - center.midiNote) > 0.0001f)
+          {
+            center.note->markDirty();
+            center.note->markSynthDirty();
+            dirtyStart = std::min(dirtyStart, center.note->getStartFrame());
+            dirtyEnd = std::max(dirtyEnd, center.note->getEndFrame());
+            changedNotes.push_back(center.note);
+            oldMidis.push_back(center.midiNote);
+            newMidis.push_back(center.note->getMidiNote());
+            changed = true;
+          }
+          else
+            center.note->setMidiNote(center.midiNote);
+        }
+        const bool pitchCenterChanged = accepted &&
+            std::abs(*previewPitchCenter - originalPitchCenter) > 0.0001f;
+        if (accepted)
+          project->setPitchCenter(*previewPitchCenter);
+        if (changed)
+        {
+          PitchCurveProcessor::rebuildBaseFromNotes(*project);
+          pianoRoll.invalidateBasePitchCache();
+          const int frameCount = static_cast<int>(project->getAudioData().f0.size());
+          project->setF0DirtyRange(std::max(0, dirtyStart - 60),
+                                   std::min(frameCount, dirtyEnd + 60));
+          project->setModified(true);
+        }
+
+        if (changed || pitchCenterChanged)
+        {
+          if (auto *undoManager = pianoRoll.getUndoManager())
+          {
+            auto *projectPtr = project;
+            undoManager->addAction(std::make_unique<PitchCenterCorrectionAction>(
+                changedNotes, oldMidis, newMidis, originalPitchCenter,
+                *previewPitchCenter,
+                [this, projectPtr, dirtyStart, dirtyEnd](float pitchCenter,
+                                                          const std::vector<Note *> &notes)
+                {
+                  if (projectPtr == nullptr)
+                    return;
+                  projectPtr->setPitchCenter(pitchCenter);
+                  if (!notes.empty())
+                  {
+                    PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
+                    pianoRoll.invalidateBasePitchCache();
+                    const int f0Size = static_cast<int>(projectPtr->getAudioData().f0.size());
+                    projectPtr->setF0DirtyRange(std::max(0, dirtyStart - 60),
+                                                 std::min(f0Size, dirtyEnd + 60));
+                  }
+                  projectPtr->setModified(true);
+                  if (pianoRoll.onPitchEdited)
+                    pianoRoll.onPitchEdited();
+                  if (!notes.empty() && pianoRoll.onPitchEditFinished)
+                    pianoRoll.onPitchEditFinished();
+                  pianoRoll.repaint();
+                  refreshOverview();
+                }));
+          }
+        }
+        pianoRoll.repaint();
+        refreshOverview();
+        if ((changed || pitchCenterChanged) && pianoRoll.onPitchEdited)
+          pianoRoll.onPitchEdited();
+        if (changed && pianoRoll.onPitchEditFinished)
+          pianoRoll.onPitchEditFinished();
+      });
 }
 
 void PianoRollWorkspaceView::refreshOverview()

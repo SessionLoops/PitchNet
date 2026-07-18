@@ -195,3 +195,45 @@ private:
     std::vector<float> newMidis;
     std::function<void(const std::vector<Note *> &)> onNotesChanged;
 };
+
+/**
+ * Undoable pitch-center correction.  Besides the affected note centres, this
+ * preserves the per-project Pitch Center setting shown by the dialog.
+ */
+class PitchCenterCorrectionAction : public UndoableAction
+{
+public:
+    using ChangeCallback = std::function<void(float, const std::vector<Note *> &)>;
+
+    PitchCenterCorrectionAction(std::vector<Note *> notes,
+                                std::vector<float> oldMidis,
+                                std::vector<float> newMidis,
+                                float oldPitchCenter,
+                                float newPitchCenter,
+                                ChangeCallback onChanged = nullptr)
+        : notes(std::move(notes)), oldMidis(std::move(oldMidis)),
+          newMidis(std::move(newMidis)), oldPitchCenter(oldPitchCenter),
+          newPitchCenter(newPitchCenter), onChanged(std::move(onChanged)) {}
+
+    void undo() override { apply(oldMidis, oldPitchCenter); }
+    void redo() override { apply(newMidis, newPitchCenter); }
+    juce::String getName() const override { return "Correct Pitch Center"; }
+
+private:
+    void apply(const std::vector<float> &midis, float pitchCenter)
+    {
+        for (size_t i = 0; i < notes.size() && i < midis.size(); ++i)
+        {
+            if (!notes[i]) continue;
+            notes[i]->setMidiNote(midis[i]);
+            notes[i]->markDirty();
+            notes[i]->markSynthDirty();
+        }
+        if (onChanged) onChanged(pitchCenter, notes);
+    }
+
+    std::vector<Note *> notes;
+    std::vector<float> oldMidis, newMidis;
+    float oldPitchCenter = 0.0f, newPitchCenter = 0.0f;
+    ChangeCallback onChanged;
+};

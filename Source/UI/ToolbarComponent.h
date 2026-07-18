@@ -107,6 +107,7 @@ public:
     std::function<void()> onRedo;
     std::function<void(bool)> onToggleRecord;
     std::function<void(bool)> onToggleAudition;
+    std::function<void()> onCorrectPitchCenter;
     std::function<void(int)> onScaleRootChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
     std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
@@ -135,6 +136,7 @@ private:
     ToolButton splitModeButton{"Split"};
     ToolButton followButton{"Follow"};
     ScaleSelectionControl scaleSelectionButton;
+    Button quantizeButton;
     ToggleButton auditionButton;
     Button undoButton;
     Button redoButton;

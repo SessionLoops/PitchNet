@@ -590,6 +590,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (!dragAuditionEnabled)
       finishDraggedNoteAudition();
   };
+  toolbar.onCorrectPitchCenter = [this]
+  {
+    pianoRollView.showPitchCenterPopup();
+  };
   toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
                              undoManager && undoManager->canRedo());
 
@@ -2324,6 +2328,7 @@ void MainComponent::segmentIntoNotes(Project &targetProject)
 
 void MainComponent::showAnalysisProgress(double progress)
 {
+  pianoRollView.dismissPitchCenterPopup();
   analysisProgressPopup.setProgress(progress);
   if (!analysisBackdrop.isVisible())
     analysisBackdrop.setVisible(true);
