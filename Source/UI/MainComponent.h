@@ -118,6 +118,8 @@ public:
   Project *getProject() const override {
     return editorController ? editorController->getProject() : nullptr;
   }
+  std::unique_ptr<Project>
+  exchangeProject(std::unique_ptr<Project> project) override;
   Vocoder *getVocoder() const override {
     return editorController ? editorController->getVocoder() : nullptr;
   }

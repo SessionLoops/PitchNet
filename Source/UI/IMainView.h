@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include <functional>
+#include <memory>
 
 class Project;
 class Vocoder;
@@ -24,6 +25,8 @@ public:
 
   virtual juce::Component *getComponent() = 0;
   virtual Project *getProject() const = 0;
+  virtual std::unique_ptr<Project>
+  exchangeProject(std::unique_ptr<Project> project) = 0;
   virtual Vocoder *getVocoder() const = 0;
   virtual void bindBackendController(EditorController *controller) = 0;
   virtual void bindUndoManager(PitchUndoManager *manager) = 0;

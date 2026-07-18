@@ -2031,13 +2031,10 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
                                currentPlaybackRegions.end());
 
   // With persistent-ID/index keys, compute the key before the host removes the
-  // region from its modification. Only drop the processor's active-region state
-  // when the region being removed is the active one.
-  if (owningProcessor != nullptr &&
-      pitchnetRegionKey(*playbackRegion) ==
-          owningProcessor->getActiveAraRegionKey())
-    owningProcessor->clearActiveAraRegionIfModification(
-        dynamic_cast<PitchNetAudioModification *>(audioModification));
+  // The processor keeps each region's Project and undo manager together, so
+  // both must be released when the host destroys the playback region.
+  if (owningProcessor != nullptr)
+    owningProcessor->removeAraRegion(pitchnetRegionKey(*playbackRegion));
 
   currentDocument = audioSource->getDocument();
 }

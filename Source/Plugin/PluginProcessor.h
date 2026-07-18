@@ -4,6 +4,7 @@
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
 #include "../UI/IMainView.h"
+#include "../Undo/PitchUndoManager.h"
 #include "HostCompatibility.h"
 #include "NonAraCaptureController.h"
 #include <atomic>
@@ -12,7 +13,6 @@
 
 class EditorController;
 class Project;
-class PitchUndoManager;
 class PitchNetDocumentController;
 class PitchNetAudioModification;
 
@@ -170,10 +170,9 @@ public:
                                  const juce::AudioBuffer<float> &buffer,
                                  double sampleRate);
 
-  // Called by the document controller when a modification is about to be
-  // removed, so the active-region pointer never dangles.
-  void clearActiveAraRegionIfModification(
-      PitchNetAudioModification *modification);
+  // Called when a playback region is removed. Its Project and undo history
+  // have the same lifetime and are destroyed together.
+  void removeAraRegion(const juce::String &regionKey);
 
   // Per-region project persistence. serialize returns false if no project is
   // cached for regionKey; restore installs a project so a saved region is not
@@ -321,11 +320,21 @@ private:
   juce::String araAnalysisProjectJson;
   std::atomic<bool> araRenderPendingRerun{false};
 
-  // Per-region persistent Projects. Each ARA playback region/track is analysed
-  // and edited independently; the canvas shows whichever region is active.
-  // Keyed by pitchnetRegionKey(). Stage 2 populates these from per-region
-  // analysis; Stage 1 only wires the identity + selection-driven switch.
-  std::map<juce::String, std::unique_ptr<Project>> araRegionProjects;
+  struct AraRegionState {
+    std::unique_ptr<Project> project;
+    std::unique_ptr<PitchUndoManager> undoManager;
+
+    PitchUndoManager *ensureUndoManager() {
+      if (!undoManager)
+        undoManager = std::make_unique<PitchUndoManager>(100);
+      return undoManager.get();
+    }
+  };
+
+  // The active Project temporarily moves into the editor controller; inactive
+  // Projects remain here. Moving ownership preserves the object identity and
+  // raw pointers retained by that region's undo actions.
+  std::map<juce::String, AraRegionState> araRegions;
   juce::String activeRegionKey;
   // True only while the canvas is showing the ACTIVE REGION's own (region-local)
   // project. onProjectDataChanged fires for every project change — including

@@ -26,6 +26,7 @@ public:
   ~EditorController();
 
   Project *getProject() const { return project.get(); }
+  std::unique_ptr<Project> takeProject() { return std::move(project); }
   void setProject(std::unique_ptr<Project> newProject);
 
   AudioEngine *getAudioEngine() const { return audioEngine.get(); }

@@ -921,6 +921,33 @@ void MainComponent::bindUndoManager(PitchUndoManager *manager)
                              undoManager && undoManager->canRedo());
 }
 
+std::unique_ptr<Project>
+MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
+{
+  if (!isPluginMode() || editorController == nullptr)
+    return newProject;
+
+  auto previousProject = editorController->takeProject();
+  editorController->setProject(std::move(newProject));
+
+  auto *project = getProject();
+  pianoRoll.setProject(project);
+  pianoRollView.setProject(project);
+  parameterPanel.setProject(project);
+  toolbar.setProject(project);
+  if (project)
+  {
+    toolbar.setTotalTime(project->getAudioData().getDuration());
+    toolbar.setTransportEnabled(true);
+    toolbar.setLoopEnabled(project->getLoopRange().enabled);
+    applyCachedHostLoopRange();
+    if (hasAnalyzedProject())
+      fitAnalyzedPitchRangeToView(*project);
+  }
+  repaint();
+  return previousProject;
+}
+
 MainViewViewportState MainComponent::getViewportState() const
 {
   MainViewViewportState state;
