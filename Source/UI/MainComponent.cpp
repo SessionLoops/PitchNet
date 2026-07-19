@@ -2801,17 +2801,13 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   if (!isPluginMode())
     return;
 
-  auto *project = getProject();
   double displayTime = std::max(0.0, timeSeconds);
 
-  // Clamp only when project audio exists. Empty ARA tracks still need to follow
-  // the host playhead position.
-  if (!liveRecordingActive && project &&
-      project->getAudioData().waveform.getNumSamples() > 0)
-  {
-    double duration = project->getAudioData().getDuration();
-    displayTime = std::min(displayTime, static_cast<double>(duration));
-  }
+  // The host playhead can continue past the active ARA region. Retain that
+  // furthest position as part of the timeline so follow-playback can scroll
+  // there instead of stopping at the region's audio end.
+  if (pianoRoll.extendTimelineTo(displayTime))
+    pianoRollView.refreshOverview();
 
   // Update cursor position using the same mechanism as AudioEngine
   pendingCursorTime.store(displayTime);

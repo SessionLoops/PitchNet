@@ -96,8 +96,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   overviewPanel.getViewState = [this]()
   {
     OverviewPanel::ViewState state;
-    auto *project = pianoRoll.getProject();
-    state.totalTime = project ? project->getAudioData().getDuration() : 0.0;
+    state.totalTime = pianoRoll.getTimelineDuration();
     state.cursorTime = pianoRoll.getCursorTime();
     state.scrollX = pianoRoll.getScrollX();
     state.pixelsPerSecond = pianoRoll.getPixelsPerSecond();

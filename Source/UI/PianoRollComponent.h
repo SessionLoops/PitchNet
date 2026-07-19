@@ -89,6 +89,8 @@ public:
   void beginLiveRecordingWaveform(double sampleRate,
                                   double timelineOffsetSeconds);
   void appendLiveRecordingWaveform(const juce::AudioBuffer<float> &buffer);
+  // Extends the plugin canvas to include the furthest host playhead position.
+  bool extendTimelineTo(double endSeconds);
   Project *getProject() const { return project; }
   std::vector<Note *> getSelectedNotes() const;
   PianoRollInteractionContext &getInteractionContext()
@@ -129,6 +131,7 @@ public:
   double getScrollX() const { return scrollX; }
   void setScrollY(double y);
   double getScrollY() const { return scrollY; }
+  double getTimelineDuration() const;
   void centerOnPitchRange(float minMidi, float maxMidi);
   bool centerOnCurrentPitchRange();
   void fitPitchRangeToView(float minMidi, float maxMidi);
@@ -247,7 +250,6 @@ private:
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   void reapplyBasePitchForNote(
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
-  double getTimelineDuration() const;
 
   Project *project = nullptr;
   PitchUndoManager *undoManager = nullptr;
@@ -259,6 +261,7 @@ private:
   std::unique_ptr<TimelineRenderer> timelineRenderer;
   std::unique_ptr<WaveformBackgroundRenderer> waveformBackgroundRenderer;
   double liveTimelineEndSeconds = 0.0;
+  double hostTimelineEndSeconds = 0.0;
   double liveRecordingSampleRate = 0.0;
   std::unique_ptr<NoteRenderer> noteRenderer;
   std::unique_ptr<PitchCurveRenderer> pitchCurveRenderer;

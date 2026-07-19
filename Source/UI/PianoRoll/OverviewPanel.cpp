@@ -122,14 +122,23 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
   if (width <= 0 || height <= 0)
     return;
 
-  const double totalTime = static_cast<double>(numSamples) / audioData.sampleRate;
+  const double audioDuration =
+      static_cast<double>(numSamples) / audioData.sampleRate;
+  const auto state = getViewState ? getViewState() : ViewState{};
+  const double timelineDuration = std::max(audioDuration, state.totalTime);
+  if (timelineDuration <= 0.0)
+    return;
 
   const float centerY = content.getY() + content.getHeight() * 0.5f;
   const float waveformHeight = content.getHeight() * 0.8f;
   const float overviewPixelsPerSecond =
-      static_cast<float>(content.getWidth() / totalTime);
+      static_cast<float>(content.getWidth() / timelineDuration);
+  const int waveformWidth = std::max(
+      1, static_cast<int>(std::ceil(content.getWidth() * audioDuration /
+                                    timelineDuration)));
   auto displayEnvelope = VisualWaveformEnvelope::build(
-      samples, numSamples, 0, numSamples, width, content.getWidth(),
+      samples, numSamples, 0, numSamples, waveformWidth,
+      static_cast<float>(waveformWidth),
       audioData.sampleRate, overviewPixelsPerSecond, false);
   const auto peakIt =
       std::max_element(displayEnvelope.begin(), displayEnvelope.end());
@@ -143,14 +152,14 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
   juce::Path waveformPath;
   waveformPath.startNewSubPath(content.getX(), centerY);
 
-  for (int px = 0; px < width; ++px) {
+  for (int px = 0; px < waveformWidth; ++px) {
     const float envelope = displayEnvelope[static_cast<size_t>(px)];
     const float x = content.getX() + static_cast<float>(px);
     const float y = centerY - envelope * waveformHeight * 0.5f;
     waveformPath.lineTo(x, y);
   }
 
-  for (int px = width - 1; px >= 0; --px) {
+  for (int px = waveformWidth - 1; px >= 0; --px) {
     const float envelope = displayEnvelope[static_cast<size_t>(px)];
     const float x = content.getX() + static_cast<float>(px);
     const float y = centerY + envelope * waveformHeight * 0.5f;
@@ -160,7 +169,7 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
   waveformPath.closeSubPath();
   g.fillPath(waveformPath);
 
-  if (showSegmentsDebug && totalTime > 0.0) {
+  if (showSegmentsDebug && timelineDuration > 0.0) {
     g.setColour(juce::Colours::orange.withAlpha(0.16f));
     for (const auto &range : audioData.segmentChunkRanges) {
       const int startFrame = std::max(0, range.first);
@@ -173,10 +182,10 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       const double endTime =
           static_cast<double>(endFrame) * HOP_SIZE / SAMPLE_RATE;
       const float x1 = content.getX() +
-                       static_cast<float>((startTime / totalTime) *
+                       static_cast<float>((startTime / timelineDuration) *
                                           content.getWidth());
       const float x2 = content.getX() +
-                       static_cast<float>((endTime / totalTime) *
+                       static_cast<float>((endTime / timelineDuration) *
                                           content.getWidth());
       g.fillRect(juce::Rectangle<float>(x1, content.getY(),
                                         std::max(1.0f, x2 - x1),
@@ -192,13 +201,13 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       const double startTime =
           static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
       const float x = content.getX() +
-                      static_cast<float>((startTime / totalTime) *
+                      static_cast<float>((startTime / timelineDuration) *
                                          content.getWidth());
       g.drawLine(x, content.getY(), x, content.getBottom(), 1.0f);
     }
   }
 
-  if (totalTime > 0.0) {
+  if (timelineDuration > 0.0) {
     float minPitch = std::numeric_limits<float>::max();
     float maxPitch = std::numeric_limits<float>::lowest();
     bool hasNotePitch = false;
@@ -256,10 +265,10 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
             getNoteGradientColours(midi, pitchReferenceHz).side;
 
         const float x1 = content.getX() +
-                         static_cast<float>((startTime / totalTime) *
+                         static_cast<float>((startTime / timelineDuration) *
                                             content.getWidth());
         const float x2 = content.getX() +
-                         static_cast<float>((endTime / totalTime) *
+                         static_cast<float>((endTime / timelineDuration) *
                                             content.getWidth());
         const float y = noteRangeY(midi, minPitch, maxPitch, content);
         g.setColour(noteColour.withAlpha(0.9f));
@@ -302,14 +311,17 @@ void OverviewPanel::paintPlayhead(juce::Graphics &g) {
   if (numSamples <= 0 || audioData.sampleRate <= 0)
     return;
 
-  const double totalTime = static_cast<double>(numSamples) / audioData.sampleRate;
   auto state = getViewState ? getViewState() : ViewState{};
-  if (totalTime > 0.0 && state.cursorTime >= 0.0 &&
-      state.cursorTime <= totalTime) {
+  const double audioDuration =
+      static_cast<double>(numSamples) / audioData.sampleRate;
+  const double timelineDuration = std::max(audioDuration, state.totalTime);
+  if (timelineDuration > 0.0 && state.cursorTime >= 0.0 &&
+      state.cursorTime <= timelineDuration) {
     auto content = getContentBounds();
     const float playheadX =
         content.getX() +
-        static_cast<float>((state.cursorTime / totalTime) * content.getWidth());
+        static_cast<float>((state.cursorTime / timelineDuration) *
+                           content.getWidth());
 
     g.setColour(juce::Colour(0xFFC8C7C7u));
     g.fillRect(playheadX - 0.5f, content.getY(), 1.0f, content.getHeight());
@@ -536,8 +548,11 @@ juce::Rectangle<int> OverviewPanel::getPlayheadRepaintBounds(double time) const 
   if (numSamples <= 0 || audioData.sampleRate <= 0)
     return {};
 
-  const double totalTime = static_cast<double>(numSamples) / audioData.sampleRate;
-  if (totalTime <= 0.0 || time < 0.0 || time > totalTime)
+  const double audioDuration =
+      static_cast<double>(numSamples) / audioData.sampleRate;
+  const auto state = getViewState ? getViewState() : ViewState{};
+  const double timelineDuration = std::max(audioDuration, state.totalTime);
+  if (timelineDuration <= 0.0 || time < 0.0 || time > timelineDuration)
     return {};
 
   const auto content = getContentBounds();
@@ -545,7 +560,8 @@ juce::Rectangle<int> OverviewPanel::getPlayheadRepaintBounds(double time) const 
     return {};
 
   const float x =
-      content.getX() + static_cast<float>((time / totalTime) * content.getWidth());
+      content.getX() +
+      static_cast<float>((time / timelineDuration) * content.getWidth());
   return juce::Rectangle<float>(x - 2.0f, content.getY(), 4.0f,
                                 content.getHeight())
       .getSmallestIntegerContainer()

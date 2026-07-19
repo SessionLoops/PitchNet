@@ -1425,6 +1425,18 @@ void PianoRollComponent::appendLiveRecordingWaveform(
   repaint();
 }
 
+bool PianoRollComponent::extendTimelineTo(double endSeconds)
+{
+  const double newEndSeconds = std::max(0.0, endSeconds);
+  if (newEndSeconds <= hostTimelineEndSeconds)
+    return false;
+
+  hostTimelineEndSeconds = newEndSeconds;
+  updateScrollBars();
+  repaint();
+  return true;
+}
+
 void PianoRollComponent::setScaleMode(ScaleMode mode)
 {
   if (selectedScaleMode == mode && !previewScaleMode.has_value())
@@ -2383,7 +2395,8 @@ double PianoRollComponent::getTimelineDuration() const
 {
   const double projectDuration =
       project ? static_cast<double>(project->getAudioData().getDuration()) : 0.0;
-  double timelineDuration = std::max(projectDuration, liveTimelineEndSeconds);
+  double timelineDuration =
+      std::max({projectDuration, liveTimelineEndSeconds, hostTimelineEndSeconds});
 
   // ARA region projects contain a playback range; give the editor one full bar
   // of writable-looking canvas after the real project end without extending
