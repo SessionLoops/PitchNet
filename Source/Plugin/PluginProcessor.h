@@ -152,6 +152,9 @@ public:
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
   void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
+  bool isAraRegionCanvasAnalysisPending() const {
+    return regionCanvasAnalysisPending.load();
+  }
 
   // Analyse a single region's audio into its own persistent Project (keyed by
   // regionKey) and, if that region is the active one, show it on the canvas.
@@ -187,6 +190,9 @@ public:
                                         double regionEnd) const;
   void restoreAraRegionProject(const juce::String &regionKey, const void *data,
                                size_t sizeInBytes);
+  // Finish a pending active-region switch when analysis data was found in an
+  // archive/cache instead of being produced by a new analysis job.
+  bool showAraRegionProjectIfActive(const juce::String &regionKey);
 #endif
 
   // Non-ARA mode: edit preview. Auditions a frame range of the synthesized
@@ -354,6 +360,11 @@ private:
   // Dedicated controller for per-region canvas analysis, kept separate from the
   // composite araAnalysisController so the two never interfere.
   std::unique_ptr<EditorController> regionCanvasController;
+  // While a region-local Project is being built, document/composite analysis
+  // must not take over the canvas or hide the region's progress popup.
+  std::atomic<bool> regionCanvasAnalysisPending{false};
+  std::atomic<std::uint64_t> regionCanvasAnalysisGeneration{0};
+  juce::String pendingRegionCanvasAnalysisKey;
   std::atomic<bool> regionCanvasRenderPendingRerun{false};
 
   // Non-ARA capture (Stage 2A): decoupled controller

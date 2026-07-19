@@ -58,6 +58,12 @@ PitchNetAudioProcessorEditor::getARAClientExtensions() {
 PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
   stopTimer();
 
+  // Some ARA hosts briefly overlap editor instances while rebuilding the plug-
+  // in view.  Only the editor that still owns the processor binding may tear
+  // down shared callbacks; an older editor's destructor must not detach the
+  // newer visible editor.
+  const bool ownsProcessorMainView =
+      audioProcessor.getMainComponent() == mainView.get();
 #if JucePlugin_Enable_ARA
   if (auto *araEditorView = getARAEditorView()) {
     araEditorView->removeListener(this);
@@ -69,16 +75,21 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
         // here: both are owned by the processor and must stay live so ARA
         // playback and project restore keep working headlessly after the editor
         // closes. The processor detaches them in its destructor.
-        pitchDocController->setAnalysisCallbacks(nullptr, nullptr);
-        pitchDocController->setMainComponent(nullptr);
+        if (pitchDocController->getMainComponent() == mainView.get()) {
+          pitchDocController->releaseEditorProcessor(&audioProcessor);
+          pitchDocController->setAnalysisCallbacks(nullptr, nullptr);
+          pitchDocController->setMainComponent(nullptr);
+        }
       }
     }
   }
 #endif
 
   removeMouseListener(this);
-  audioProcessor.getTransportController().clearCallbacks();
-  audioProcessor.setMainComponent(nullptr);
+  if (ownsProcessorMainView) {
+    audioProcessor.getTransportController().clearCallbacks();
+    audioProcessor.setMainComponent(nullptr);
+  }
   shutdownUiResources();
 }
 
@@ -117,6 +128,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   // Bind via the processor so the realtime-processor link outlives the editor:
   // ARA playback/bounce must keep working after the UI is closed.
   audioProcessor.setAraDocumentController(pitchDocController);
+  pitchDocController->setEditorProcessor(&audioProcessor);
   pitchDocController->setAnalysisCallbacks(
       [this](std::uintptr_t sourceKey, double timelineOffsetSeconds,
              const std::vector<std::pair<double, double>> &regionRanges) {

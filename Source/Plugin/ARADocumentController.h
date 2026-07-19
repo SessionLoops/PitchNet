@@ -236,6 +236,12 @@ public:
   RealtimePitchProcessor *getRealtimeProcessor();
   void setOwningProcessor(PitchNetAudioProcessor *processor);
   void releaseOwningProcessor(PitchNetAudioProcessor *processor);
+  // ARA hosts may bind several processor instances to one document controller.
+  // Keep the processor that owns the visible editor separate from the
+  // headless/playback owner so canvas work cannot be dispatched to a processor
+  // with no UI.
+  void setEditorProcessor(PitchNetAudioProcessor *processor);
+  void releaseEditorProcessor(PitchNetAudioProcessor *processor);
   void ensureHeadlessPlaybackBinding();
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,
@@ -288,6 +294,7 @@ private:
   void restoreAraRegionProjectOrPend(const juce::String &regionKey,
                                      const void *data, size_t sizeInBytes);
   void flushPendingAraRegionProjects();
+  PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
   void stopAnalysisThread();
 
@@ -307,6 +314,7 @@ private:
   std::unique_ptr<Project> documentProjectSnapshot;
   RealtimePitchProcessor documentRealtimeProcessor;
   PitchNetAudioProcessor *owningProcessor = nullptr;
+  PitchNetAudioProcessor *editorProcessor = nullptr;
   AraPreviewState previewState;
   std::function<bool(std::uintptr_t, double,
                      const std::vector<std::pair<double, double>> &)>

@@ -1045,8 +1045,13 @@ bool PitchNetAudioProcessor::attachCachedAraAnalysis(
   // Composite/document analysis may finish after the user has selected a
   // region. Never overwrite the active region Project: its undo history owns
   // pointers into that exact object.
-  if (mainComponent && canvasShowsActiveAraRegion) {
-    mainComponent->hideAnalysisProgress();
+  if (mainComponent &&
+      (canvasShowsActiveAraRegion || regionCanvasAnalysisPending.load())) {
+    // A region-local analysis owns the empty canvas and its popup until its
+    // Project is ready. Composite analysis may continue for playback/cache,
+    // but must not replace that UI state or hide its progress.
+    if (!regionCanvasAnalysisPending.load())
+      mainComponent->hideAnalysisProgress();
     return true;
   }
 
@@ -1151,7 +1156,7 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
   araAnalysisProjectSnapshot.reset();
   araAnalysisProjectJson.clear();
 
-  if (mainComponent)
+  if (mainComponent && !regionCanvasAnalysisPending.load())
   {
     mainComponent->setStatusMessage(TR("progress.analyzing"));
     mainComponent->showAnalysisProgress(0.0);
@@ -1160,6 +1165,8 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
   araAnalysisController->setHostAudioAsync(
       buffer, sampleRate,
       [this](double progress, const juce::String &msg) {
+        if (regionCanvasAnalysisPending.load())
+          return;
         juce::Component::SafePointer<juce::Component> safeMain(
             mainComponent ? mainComponent->getComponent() : nullptr);
         juce::MessageManager::callAsync([safeMain, progress, msg]() {
@@ -1187,7 +1194,8 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
         araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
 
         if (mainComponent && araAnalysisReady &&
-            !canvasShowsActiveAraRegion) {
+            !canvasShowsActiveAraRegion &&
+            !regionCanvasAnalysisPending.load()) {
           mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
           canvasShowsActiveAraRegion = false; // canvas now holds the composite
           mainComponent->updateHostAudioTimelineOffset(
@@ -1202,7 +1210,7 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
             publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           mainComponent->hideAnalysisProgress();
-        } else if (mainComponent) {
+        } else if (mainComponent && !regionCanvasAnalysisPending.load()) {
           mainComponent->hideAnalysisProgress();
         }
       });
@@ -1331,11 +1339,15 @@ void PitchNetAudioProcessor::analyzeAndMergeAraRegion(
 
   araIncrementalAnalysisController = std::make_unique<EditorController>(false);
   auto *controller = araIncrementalAnalysisController.get();
-  mainComponent->setStatusMessage(TR("progress.analyzing"));
-  mainComponent->showAnalysisProgress(0.0);
+  if (!regionCanvasAnalysisPending.load()) {
+    mainComponent->setStatusMessage(TR("progress.analyzing"));
+    mainComponent->showAnalysisProgress(0.0);
+  }
   controller->setHostAudioAsync(
       region, sampleRate,
       [this](double progress, const juce::String &message) {
+        if (regionCanvasAnalysisPending.load())
+          return;
         juce::Component::SafePointer<juce::Component> safeMain(
             mainComponent ? mainComponent->getComponent() : nullptr);
         juce::MessageManager::callAsync(
@@ -1446,8 +1458,10 @@ void PitchNetAudioProcessor::analyzeAndMergeAraRegion(
           mainComponent->restoreProjectSnapshot(*merged);
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
         }
-        mainComponent->hideAnalysisProgress();
-        mainComponent->setStatusMessage({});
+        if (!regionCanvasAnalysisPending.load()) {
+          mainComponent->hideAnalysisProgress();
+          mainComponent->setStatusMessage({});
+        }
       });
 }
 
@@ -2149,7 +2163,16 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
 
     bool restoredPersistentProject = false;
 #if JucePlugin_Enable_ARA
-    if (activeRegionKey.isNotEmpty()) {
+    if (regionCanvasAnalysisPending.load()) {
+      // An ARA host may replace the editor while region analysis is running.
+      // Recreate the same empty/modal state in the replacement editor and let
+      // subsequent progress callbacks target this current binding.
+      auto displaced = mc->exchangeProject(nullptr);
+      juce::ignoreUnused(displaced);
+      mc->setStatusMessage(TR("progress.analyzing"));
+      mc->showAnalysisProgress(0.0);
+      restoredPersistentProject = true;
+    } else if (activeRegionKey.isNotEmpty()) {
       auto activeIt = araRegions.find(activeRegionKey);
       if (activeIt != araRegions.end() && activeIt->second.project) {
         auto displaced =
@@ -2391,7 +2414,10 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     return;
 
   const auto key = pitchnetRegionKey(*region);
-  if (key.isEmpty() || key == activeRegionKey)
+  if (key.isEmpty())
+    return;
+
+  if (key == activeRegionKey)
     return;
 
   // Return the outgoing region's actual Project to its store. Undo actions
@@ -2463,6 +2489,11 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     }
 
     if (it != araRegions.end() && it->second.project) {
+      regionCanvasAnalysisGeneration.fetch_add(1);
+      if (regionCanvasController)
+        regionCanvasController->requestCancelLoading();
+      pendingRegionCanvasAnalysisKey.clear();
+      regionCanvasAnalysisPending.store(false);
       attachMacroParameters(*it->second.project);
       auto displaced =
           mainComponent->exchangeProject(std::move(it->second.project));
@@ -2474,44 +2505,25 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       }
       mainComponent->bindRealtimeProcessor(realtimeProcessor);
       canvasShowsActiveAraRegion = true;
+      mainComponent->hideAnalysisProgress();
     } else if (araDocumentController != nullptr) {
-      if (auto *current = mainComponent->getProject();
-          current != nullptr &&
-          projectAppearsToCoverRegion(*current, activeRegionStartSeconds,
-                                      activeRegionEndSeconds)) {
-        auto &audioData = current->getAudioData();
-        audioData.timelineOffsetSeconds = activeRegionStartSeconds;
-        audioData.playbackRegionRanges = {
-            {activeRegionStartSeconds, activeRegionEndSeconds}};
-        mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
-        mainComponent->bindRealtimeProcessor(realtimeProcessor);
-        canvasShowsActiveAraRegion = true;
-        return;
-      }
-
-      if (araAnalysisProjectSnapshot != nullptr &&
-          projectAppearsToCoverRegion(*araAnalysisProjectSnapshot,
-                                      activeRegionStartSeconds,
-                                      activeRegionEndSeconds)) {
-        auto restoredRegionProject =
-            std::make_unique<Project>(*araAnalysisProjectSnapshot);
-        attachMacroParameters(*restoredRegionProject);
-        auto &audioData = restoredRegionProject->getAudioData();
-        audioData.timelineOffsetSeconds = activeRegionStartSeconds;
-        audioData.playbackRegionRanges = {
-            {activeRegionStartSeconds, activeRegionEndSeconds}};
-        auto displaced =
-            mainComponent->exchangeProject(std::move(restoredRegionProject));
+      // The host has selected a region for which no project exists yet.  Do
+      // not leave the outgoing/composite project visible under the new
+      // region's boundary: detach it just as closing the editor detaches its
+      // project, then show the analysis state until this region's own project
+      // is ready.
+      if (mainComponent->getProject() != nullptr) {
+        auto displaced = mainComponent->exchangeProject(nullptr);
         juce::ignoreUnused(displaced);
-        mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
-        mainComponent->bindRealtimeProcessor(realtimeProcessor);
-        canvasShowsActiveAraRegion = true;
-        return;
       }
-
-      // Canvas keeps its previous (possibly composite) content until the
-      // region's analysis completes and repaints it.
       canvasShowsActiveAraRegion = false;
+      pendingRegionCanvasAnalysisKey = key;
+      regionCanvasAnalysisPending.store(true);
+      mainComponent->setStatusMessage(TR("progress.analyzing"));
+      mainComponent->showAnalysisProgress(0.0);
+      // requestRegionCanvasAnalysis() may have to wait for ARA sample access;
+      // keep the popup visible during that wait, then let the region-local
+      // analyzer drive it as soon as samples become readable.
       araDocumentController->requestRegionCanvasAnalysis(region);
     }
   }
@@ -2523,11 +2535,12 @@ void PitchNetAudioProcessor::updateActiveAraRegionProperties(
     return;
 
   const auto key = pitchnetRegionKey(*region);
+  const auto newStart = std::max(0.0, region->getStartInPlaybackTime());
   if (key.isEmpty() || key != activeRegionKey)
     return;
 
   activeModification = region->getAudioModification<PitchNetAudioModification>();
-  activeRegionStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
+  activeRegionStartSeconds = newStart;
   activeRegionEndSeconds =
       std::max(activeRegionStartSeconds, region->getEndInPlaybackTime());
   activeStartSampleInModification =
@@ -2567,10 +2580,13 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
   // source), but the editable analysis project is cached on the ARA
   // modification so Cubase can archive it using the same object-level model as
   // JUCE's ARAPluginDemo/VocalNet.
-  juce::ignoreUnused(startSampleInModification);
-
   if (!regionCanvasController)
     regionCanvasController = std::make_unique<EditorController>(false);
+
+  const auto analysisGeneration =
+      regionCanvasAnalysisGeneration.fetch_add(1) + 1;
+  pendingRegionCanvasAnalysisKey = regionKey;
+  regionCanvasAnalysisPending.store(true);
 
   if (mainComponent) {
     mainComponent->setStatusMessage(TR("progress.analyzing"));
@@ -2579,19 +2595,30 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
 
   regionCanvasController->setHostAudioAsync(
       buffer, sampleRate,
-      [this](double progress, const juce::String &msg) {
-        juce::Component::SafePointer<juce::Component> safeMain(
-            mainComponent ? mainComponent->getComponent() : nullptr);
-        juce::MessageManager::callAsync([safeMain, progress, msg]() {
-          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
-            view->setStatusMessage(msg);
-            view->showAnalysisProgress(progress);
-          }
-        });
+      [this, analysisGeneration](double progress, const juce::String &msg) {
+        if (regionCanvasAnalysisGeneration.load() != analysisGeneration)
+          return;
+        juce::MessageManager::callAsync(
+            [this, analysisGeneration, progress, msg]() {
+              if (regionCanvasAnalysisGeneration.load() !=
+                      analysisGeneration ||
+                  !regionCanvasAnalysisPending.load() ||
+                  mainComponent == nullptr)
+                return;
+
+              // Resolve the current editor only after reaching the message
+              // thread. The editor that launched this job may have been
+              // replaced by the host, but mainComponent now points at the live
+              // replacement and cannot be destroyed concurrently here.
+              mainComponent->setStatusMessage(msg);
+              mainComponent->showAnalysisProgress(progress);
+            });
       },
-      [this, regionKey, modification,
+      [this, regionKey, modification, startSampleInModification,
+       analysisGeneration,
        timelineOffsetSeconds](const juce::AudioBuffer<float> &) {
-        if (!regionCanvasController)
+        if (!regionCanvasController ||
+            regionCanvasAnalysisGeneration.load() != analysisGeneration)
           return;
         auto *project = regionCanvasController->getProject();
         if (!project)
@@ -2613,6 +2640,45 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
         regionState.project = std::make_unique<Project>(*project);
         auto *regionUndoManager = regionState.ensureUndoManager();
         regionUndoManager->clear();
+        const bool completedPendingRegion =
+            pendingRegionCanvasAnalysisKey == regionKey;
+
+        // State/editor reconstruction can clear activeRegionKey while leaving
+        // this exact region analysis pending.  In that case the pending key is
+        // still the authoritative selection, so restore its active placement
+        // before deciding whether to attach the completed Project.
+        if (completedPendingRegion && activeRegionKey.isEmpty()) {
+          activeRegionKey = regionKey;
+          activeModification = modification;
+          activeRegionStartSeconds = std::max(0.0, timelineOffsetSeconds);
+          activeRegionEndSeconds = project->getAudioData().getDuration();
+          activeStartSampleInModification = startSampleInModification;
+        }
+
+        // Paint it onto the canvas if it is still the active region.
+        if (regionKey == activeRegionKey && mainComponent) {
+          const double latestStart = activeRegionStartSeconds;
+          const double latestEnd = activeRegionEndSeconds;
+          auto displaced = mainComponent->exchangeProject(
+              std::move(araRegions[regionKey].project));
+          juce::ignoreUnused(displaced);
+          mainComponent->bindUndoManager(regionUndoManager);
+          // The host may move the region while analysis is running. The
+          // analyzed Project is anchored at the position captured at launch;
+          // repad every waveform/F0/note array to the latest host position
+          // before exposing it, so content and boundary move together.
+          mainComponent->updateHostAudioTimelineOffset(latestStart);
+          if (auto *positionedProject = mainComponent->getProject())
+            positionedProject->getAudioData().playbackRegionRanges = {
+                {latestStart, latestEnd}};
+          mainComponent->bindRealtimeProcessor(realtimeProcessor);
+          canvasShowsActiveAraRegion = true;
+
+          // Once the newly analysed project is on the canvas, bring its ARA
+          // region into view instead of leaving the viewport at the prior one.
+          mainComponent->focusTimelineRange(latestStart, latestEnd);
+        }
+
         if (modification != nullptr) {
           juce::MemoryBlock projectArchive;
           if (serializeAraRegionProject(regionKey, projectArchive))
@@ -2620,29 +2686,16 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
                 regionKey, projectArchive.getData(), projectArchive.getSize());
         }
 
-        // Paint it onto the canvas if it is still the active region.
-        if (regionKey == activeRegionKey && mainComponent) {
-          auto displaced = mainComponent->exchangeProject(
-              std::move(araRegions[regionKey].project));
-          juce::ignoreUnused(displaced);
-          mainComponent->bindUndoManager(regionUndoManager);
-          mainComponent->updateHostAudioTimelineOffset(
-              std::max(0.0, timelineOffsetSeconds));
-          mainComponent->bindRealtimeProcessor(realtimeProcessor);
-          canvasShowsActiveAraRegion = true;
-
-          // Once the newly analysed project is on the canvas, bring its ARA
-          // region into view instead of leaving the viewport at the prior one.
-          mainComponent->focusTimelineRange(
-              std::max(0.0, timelineOffsetSeconds),
-              project->getAudioData().getDuration());
-        }
-
         // No audio is published on analysis: an unedited region plays its raw
         // ARA source (VocalNet's model). resynth-on-edit publishes processed
         // audio only for regions the user actually edits — no full re-synthesis
         // of unchanged audio.
-        if (mainComponent)
+        if (completedPendingRegion) {
+          pendingRegionCanvasAnalysisKey.clear();
+          regionCanvasAnalysisPending.store(false);
+        }
+        if (mainComponent &&
+            (regionKey == activeRegionKey || completedPendingRegion))
           mainComponent->hideAnalysisProgress();
       });
 }
@@ -2716,6 +2769,43 @@ bool PitchNetAudioProcessor::restoredAraProjectAppearsToCover(
   return araAnalysisProjectSnapshot != nullptr &&
          projectAppearsToCoverRegion(*araAnalysisProjectSnapshot, regionStart,
                                      regionEnd);
+}
+
+bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
+    const juce::String &regionKey) {
+  if (regionKey.isEmpty() || regionKey != activeRegionKey ||
+      mainComponent == nullptr)
+    return false;
+
+  if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr)
+    return true;
+
+  auto it = araRegions.find(regionKey);
+  if (it == araRegions.end() || !it->second.project)
+    return false;
+
+  regionCanvasAnalysisGeneration.fetch_add(1);
+  if (regionCanvasController)
+    regionCanvasController->requestCancelLoading();
+  if (pendingRegionCanvasAnalysisKey == regionKey)
+    pendingRegionCanvasAnalysisKey.clear();
+  regionCanvasAnalysisPending.store(false);
+  auto *regionUndoManager = it->second.ensureUndoManager();
+  attachMacroParameters(*it->second.project);
+  auto displaced =
+      mainComponent->exchangeProject(std::move(it->second.project));
+  juce::ignoreUnused(displaced);
+  mainComponent->bindUndoManager(regionUndoManager);
+  mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+  if (auto *project = mainComponent->getProject())
+    project->getAudioData().playbackRegionRanges = {
+        {activeRegionStartSeconds, activeRegionEndSeconds}};
+  mainComponent->bindRealtimeProcessor(realtimeProcessor);
+  canvasShowsActiveAraRegion = true;
+  mainComponent->hideAnalysisProgress();
+  mainComponent->focusTimelineRange(activeRegionStartSeconds,
+                                    activeRegionEndSeconds);
+  return true;
 }
 
 void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionKey,
@@ -2820,8 +2910,10 @@ PitchNetAudioProcessor::~PitchNetAudioProcessor() {
   // The document controller can outlive this processor while the host releases
   // ARA objects. Drop only the binding that belongs to this processor so later
   // callbacks cannot use stale raw pointers or processor-capturing lambdas.
-  if (araDocumentController)
+  if (araDocumentController) {
+    araDocumentController->releaseEditorProcessor(this);
     araDocumentController->releaseOwningProcessor(this);
+  }
 }
 #else
 void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
