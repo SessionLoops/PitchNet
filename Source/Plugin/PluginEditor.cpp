@@ -238,38 +238,23 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       });
 
   setupHostTransportUiSync(true);
-  // VocalNet's working Studio One Event FX path reads the editor view's
-  // current selection directly instead of waiting for a future listener
-  // callback. Studio One can open the editor with a region already selected
-  // without subsequently announcing a selection change.
   if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_AAX)
     startTimerHz(60);
-  if (syncInitialARASelectionFromHost())
-    return;
 
   // The playback renderer contains the regions assigned to this plugin
   // instance. Use that set to select the correct track/region sequence rather
   // than guessing from the first source in the shared ARA document.
   if (auto *renderer = audioProcessor.getPlaybackRenderer()) {
     if (pitchDocController->processPlaybackRegions(
-            renderer->getPlaybackRegions(), audioProcessor.getSampleRate())) {
-      // Hosts are not required to send a selection-change notification when
-      // an ARA editor first opens. Activate the region discovered from this
-      // instance's renderer immediately instead of relying on onNewSelection().
-      audioProcessor.setActiveAraRegion(
-          pitchDocController->getCurrentPlaybackRegion());
+            renderer->getPlaybackRegions(), audioProcessor.getSampleRate()))
       return;
-    }
   }
 
   // Check for existing audio sources
   auto *juceDocument = docController->getDocument();
   if (pitchDocController->processExistingAudioSources(
-          static_cast<juce::ARADocument *>(juceDocument))) {
-    audioProcessor.setActiveAraRegion(
-        pitchDocController->getCurrentPlaybackRegion());
+          static_cast<juce::ARADocument *>(juceDocument)))
     return;
-  }
 #endif
 }
 
@@ -330,21 +315,6 @@ void PitchNetAudioProcessorEditor::syncAAXARAPlayheadStateFromHost() {
 }
 
 #if JucePlugin_Enable_ARA
-bool PitchNetAudioProcessorEditor::syncInitialARASelectionFromHost() {
-  auto *editorView = getARAEditorView();
-  if (editorView == nullptr)
-    return false;
-
-  const auto &viewSelection = editorView->getViewSelection();
-  const auto regions =
-      viewSelection.getPlaybackRegions<juce::ARAPlaybackRegion>();
-  if (regions.empty() || regions.front() == nullptr)
-    return false;
-
-  onNewSelection(viewSelection);
-  return true;
-}
-
 void PitchNetAudioProcessorEditor::onNewSelection(
     const juce::ARAViewSelection &viewSelection) {
   // Switch the canvas to whichever region the user selected in the host. Each

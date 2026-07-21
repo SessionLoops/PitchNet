@@ -106,6 +106,22 @@ void sanitiseARAOutput(juce::AudioBuffer<float> &buffer) noexcept {
   }
 }
 
+juce::String archivedRegionKeyForLiveRegion(
+    const juce::ARAPlaybackRegion &region) {
+  const auto *modification = region.getAudioModification();
+  if (modification == nullptr)
+    return {};
+
+  const auto &regions =
+      modification->getPlaybackRegions<juce::ARAPlaybackRegion>();
+  for (size_t i = 0; i < regions.size(); ++i)
+    if (regions[i] == &region)
+      return pitchnetRegionKeyForIndex(modification->getPersistentID(),
+                                       static_cast<int>(i));
+
+  return {};
+}
+
 bool projectAppearsToCoverRegion(const Project &project, double regionStart,
                                  double regionEnd) {
   const auto &audioData = project.getAudioData();
@@ -2401,19 +2417,8 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   if (key.isEmpty())
     return;
 
-  if (key == activeRegionKey) {
-    // Studio One Event FX can bind and select the playback region before the
-    // editor exists. That headless call records activeRegionKey but cannot
-    // attach a Project or request region-canvas analysis. When the editor later
-    // selects the same region, resume the missing UI initialisation instead of
-    // treating the matching key as a completed activation.
-    const bool analysisAlreadyPendingForRegion =
-        regionCanvasAnalysisPending.load() &&
-        pendingRegionCanvasAnalysisKey == key;
-    if (mainComponent == nullptr || canvasShowsActiveAraRegion ||
-        analysisAlreadyPendingForRegion)
-      return;
-  }
+  if (key == activeRegionKey)
+    return;
 
   // Return the outgoing region's actual Project to its store. Undo actions
   // retain pointers into this object, so copying a snapshot here would leave
@@ -2461,7 +2466,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       }
     }
     if (it == araRegions.end() || !it->second.project) {
-      const auto archivedKey = pitchnetArchivedRegionKey(*region);
+      const auto archivedKey = archivedRegionKeyForLiveRegion(*region);
       if (archivedKey.isNotEmpty() && archivedKey != key) {
         if (activeModification != nullptr) {
           juce::MemoryBlock archive;
