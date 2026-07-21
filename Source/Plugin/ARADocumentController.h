@@ -38,7 +38,8 @@ class PitchNetEditorRenderer;
 juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
 juce::String pitchnetRegionKeyForIndex(const juce::String &modificationID,
                                        int regionIndex);
-void pitchnetReleaseRegionKey(const juce::ARAPlaybackRegion &region);
+juce::String
+pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region);
 
 struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};
@@ -257,6 +258,9 @@ public:
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
       double projectSampleRate);
+  juce::ARAPlaybackRegion *getCurrentPlaybackRegion() const {
+    return currentPlaybackRegion;
+  }
   void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
   void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRate);
