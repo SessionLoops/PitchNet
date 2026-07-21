@@ -39,8 +39,20 @@ juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region) {
          juce::String::toHexString(static_cast<juce::int64>(liveRef));
 }
 
-void pitchnetReleaseRegionKey(const juce::ARAPlaybackRegion &region) {
-  juce::ignoreUnused(region);
+juce::String
+pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region) {
+  const auto *modification = region.getAudioModification();
+  if (modification == nullptr)
+    return {};
+
+  const auto &regions =
+      modification->getPlaybackRegions<juce::ARAPlaybackRegion>();
+  for (size_t i = 0; i < regions.size(); ++i)
+    if (regions[i] == &region)
+      return pitchnetRegionKeyForIndex(modification->getPersistentID(),
+                                       static_cast<int>(i));
+
+  return {};
 }
 
 namespace {
@@ -395,7 +407,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         // made every unedited region play the edited region's audio, so only
         // the region currently being edited played back correctly.
         const auto regionKey = pitchnetRegionKey(*region);
+        const auto archivedKey = pitchnetArchivedRegionKey(*region);
         const auto *data = modification->getProcessedRegionData(regionKey);
+        if (data == nullptr && archivedKey.isNotEmpty() &&
+            archivedKey != regionKey)
+          data = modification->getProcessedRegionData(archivedKey);
         if (data != nullptr && data->hasAudio()) {
           auto *source = modification->getAudioSource();
           const double modificationRate =
@@ -663,8 +679,12 @@ void PitchNetEditorRenderer::renderPreviewBuffer(
           region->getAudioModification<PitchNetAudioModification>()) {
     const auto lock = modification->tryLockProcessedAudio();
     if (lock.isLocked()) {
-      const auto *data =
-          modification->getProcessedRegionData(pitchnetRegionKey(*region));
+      const auto regionKey = pitchnetRegionKey(*region);
+      const auto archivedKey = pitchnetArchivedRegionKey(*region);
+      const auto *data = modification->getProcessedRegionData(regionKey);
+      if (data == nullptr && archivedKey.isNotEmpty() &&
+          archivedKey != regionKey)
+        data = modification->getProcessedRegionData(archivedKey);
       if (data != nullptr && data->hasAudio()) {
         auto *source = modification->getAudioSource();
         const double modificationRate =
@@ -1766,7 +1786,10 @@ bool PitchNetDocumentController::processExistingAudioSources(
     }
   }
 
-  return hasSource;
+  // A valid source alone is not enough to initialise a region-based editor.
+  // Some hosts (notably Studio One Event FX) expose the source before a usable
+  // playback region is found and do not send an initial selection callback.
+  return currentPlaybackRegion != nullptr;
 }
 
 bool PitchNetDocumentController::processPlaybackRegions(
@@ -2070,9 +2093,6 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
     previewState.previewedRegion.store(nullptr);
     currentPlaybackRegion = nullptr;
   }
-
-  if (playbackRegion != nullptr)
-    pitchnetReleaseRegionKey(*playbackRegion);
 }
 
 void PitchNetDocumentController::reanalyze() {
@@ -2403,18 +2423,20 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
               !output.write(entry.json.getData(), entry.json.getSize()))
             return false;
 
-          const bool hasAudio =
+          // Prefer the live key because it contains any edits made after this
+          // project was restored. The stable index key is the same region's
+          // persisted fallback and may still contain an older render.
+          const bool hasLiveAudio =
+              pitchModification != nullptr && entry.audioKey != entry.key &&
+              pitchModification->hasProcessedAudioForRegion(entry.audioKey);
+          const bool hasArchivedAudio =
               pitchModification != nullptr &&
-              (pitchModification->hasProcessedAudioForRegion(entry.key) ||
-               (entry.audioKey != entry.key &&
-                pitchModification->hasProcessedAudioForRegion(entry.audioKey)));
+              pitchModification->hasProcessedAudioForRegion(entry.key);
+          const bool hasAudio = hasLiveAudio || hasArchivedAudio;
           if (!output.writeInt(hasAudio ? 1 : 0))
             return false;
           if (hasAudio) {
-            const auto &audioKey =
-                pitchModification->hasProcessedAudioForRegion(entry.key)
-                    ? entry.key
-                    : entry.audioKey;
+            const auto &audioKey = hasLiveAudio ? entry.audioKey : entry.key;
             if (!pitchModification->writeProcessedAudioForRegionToStream(
                     audioKey, output))
               return false;

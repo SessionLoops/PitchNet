@@ -40,6 +40,7 @@ private:
     void syncAAXARAPlayheadStateFromHost();
 
 #if JucePlugin_Enable_ARA
+    bool syncInitialARASelectionFromHost();
     // ARAEditorView::Listener. When the host selection changes, switch the
     // canvas to the selected region's per-region Project (each region/track is
     // analysed and edited independently). Format-agnostic: works in AAX/VST3/AU.
