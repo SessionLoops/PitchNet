@@ -139,6 +139,19 @@ bool projectHasEditableAnalysisData(const Project &project) {
   return true;
 }
 
+juce::String archivedRegionKeyForLiveKey(
+    PitchNetAudioModification *modification, const juce::String &liveKey) {
+  if (modification == nullptr || liveKey.isEmpty())
+    return {};
+
+  for (auto *region :
+       modification->getPlaybackRegions<juce::ARAPlaybackRegion>())
+    if (region != nullptr && pitchnetRegionKey(*region) == liveKey)
+      return pitchnetArchivedRegionKey(*region);
+
+  return {};
+}
+
 std::vector<SampleRange> collectDirtyRegionSampleRanges(
     const Project &project, double sampleRate, double regionStartSeconds) {
   std::vector<SampleRange> ranges;
@@ -1699,6 +1712,10 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
 
   const auto renderRegionKey = activeRegionKey;
   auto *renderModification = activeModification;
+  const auto renderArchivedRegionKey =
+      renderActiveAraRegion
+          ? archivedRegionKeyForLiveKey(renderModification, renderRegionKey)
+          : juce::String{};
   const auto renderStartSampleInModification = activeStartSampleInModification;
   const double renderRegionStartSeconds = activeRegionStartSeconds;
   const double renderRegionEndSeconds = activeRegionEndSeconds;
@@ -1726,7 +1743,8 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         });
       },
       [this, controller, renderActiveAraRegion, renderRegionKey,
-       renderModification, renderStartSampleInModification,
+       renderArchivedRegionKey, renderModification,
+       renderStartSampleInModification,
        renderRegionStartSeconds, renderRegionEndSeconds,
        renderChangedSampleRanges](bool success) {
         auto *renderedProject = controller != nullptr ? controller->getProject()
@@ -1779,9 +1797,17 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                 juce::AudioBuffer<float> previousProcessed;
                 double previousRate = 0.0;
                 juce::int64 previousStart = 0;
-                if (renderModification->copyProcessedAudioForRegion(
+                bool hasPrevious =
+                    renderModification->copyProcessedAudioForRegion(
                         renderRegionKey, previousProcessed, previousRate,
-                        previousStart))
+                        previousStart);
+                if (!hasPrevious && renderArchivedRegionKey.isNotEmpty() &&
+                    renderArchivedRegionKey != renderRegionKey)
+                  hasPrevious =
+                      renderModification->copyProcessedAudioForRegion(
+                          renderArchivedRegionKey, previousProcessed,
+                          previousRate, previousStart);
+                if (hasPrevious)
                   preserveProcessedAudioOutsideRanges(
                       processedSlice, processedRate,
                       renderStartSampleInModification, previousProcessed,

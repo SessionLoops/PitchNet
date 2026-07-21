@@ -2396,17 +2396,23 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
               audioModification->getPersistentID(), static_cast<int>(r));
           const auto liveKey = pitchnetRegionKey(*regions[r]);
           juce::MemoryBlock json;
-          if (pitchModification == nullptr ||
-              !pitchModification->copyProjectArchiveForRegion(key, json)) {
-            auto *processor = getRegionCanvasProcessor();
-            if (processor != nullptr &&
-                !processor->serializeAraRegionProject(key, json) &&
-                liveKey != key)
-              processor->serializeAraRegionProject(liveKey, json);
-            if (pitchModification != nullptr && json.getSize() > 0)
-              pitchModification->setProjectArchiveForRegion(
-                  key, json.getData(), json.getSize());
-          }
+          const bool hasDistinctLiveKey =
+              liveKey.isNotEmpty() && liveKey != key;
+          bool hasProject =
+              pitchModification != nullptr && hasDistinctLiveKey &&
+              pitchModification->copyProjectArchiveForRegion(liveKey, json);
+          auto *processor = getRegionCanvasProcessor();
+          if (!hasProject && processor != nullptr && hasDistinctLiveKey)
+            hasProject =
+                processor->serializeAraRegionProject(liveKey, json);
+          if (!hasProject && pitchModification != nullptr)
+            hasProject =
+                pitchModification->copyProjectArchiveForRegion(key, json);
+          if (!hasProject && processor != nullptr)
+            hasProject = processor->serializeAraRegionProject(key, json);
+          if (pitchModification != nullptr && hasProject && json.getSize() > 0)
+            pitchModification->setProjectArchiveForRegion(
+                key, json.getData(), json.getSize());
           if (json.getSize() > 0)
             regionEntries.push_back(
                 {static_cast<int>(r), key, liveKey, std::move(json)});
