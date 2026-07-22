@@ -85,8 +85,7 @@ LoopPoints findPeriodicLoop(const float *samples, int numSamples,
                             float targetMidiNote)
 {
   LoopPoints best;
-  float bestCorrelation = -1.0f;
-  double bestMismatch = std::numeric_limits<double>::max();
+  double bestScore = -std::numeric_limits<double>::max();
 
   // Short windows favour a compact, stable tone; longer ones reject a brief
   // coincidental match.  Select the most periodic voiced region, rather than
@@ -132,30 +131,36 @@ LoopPoints findPeriodicLoop(const float *samples, int numSamples,
         if (start < 0)
           continue;
 
-        for (int cycles = minCycles;
-             cycles <= maxCycles && start + cycles * period + compareLength <
-                                      windowStart + windowLength;
-             ++cycles)
+        // Keep the audition loop compact and stationary. Longer loops can
+        // retain a note's slow vibrato or amplitude drift, making sustained
+        // notes sound less pure than short notes.
+        const int cycles = minCycles;
+        if (start + cycles * period + compareLength >=
+            windowStart + windowLength)
+          continue;
+
+        const int end = start + cycles * period;
+        double mismatch = 0.0;
+        double energy = 0.0;
+        for (int i = 0; i < compareLength; ++i)
         {
-          const int end = start + cycles * period;
-          double mismatch = 0.0;
-          double energy = 0.0;
-          for (int i = 0; i < compareLength; ++i)
-          {
-            const double delta = samples[start + i] - samples[end + i];
-            mismatch += delta * delta;
-            energy += samples[start + i] * samples[start + i] +
-                      samples[end + i] * samples[end + i];
-          }
-          const double normalizedMismatch = mismatch / std::max(energy, 1.0e-12);
-          if (estimate.correlation > bestCorrelation + 1.0e-4f ||
-              (std::abs(estimate.correlation - bestCorrelation) <= 1.0e-4f &&
-               normalizedMismatch < bestMismatch))
-          {
-            bestCorrelation = estimate.correlation;
-            bestMismatch = normalizedMismatch;
-            best = {start, end};
-          }
+          const double delta = samples[start + i] - samples[end + i];
+          mismatch += delta * delta;
+          energy += samples[start + i] * samples[start + i] +
+                    samples[end + i] * samples[end + i];
+        }
+        const double normalizedMismatch = mismatch / std::max(energy, 1.0e-12);
+        // Correlation establishes that a candidate is voiced and periodic;
+        // after that, prefer continuity at the loop join. This avoids a
+        // nominally periodic segment whose slow envelope change produces a
+        // rough or fluctuating sustained audition.
+        const double continuity =
+            1.0 - std::min(1.0, normalizedMismatch);
+        const double score = 0.25 * estimate.correlation + 0.75 * continuity;
+        if (score > bestScore)
+        {
+          bestScore = score;
+          best = {start, end};
         }
       }
     }
@@ -165,8 +170,12 @@ LoopPoints findPeriodicLoop(const float *samples, int numSamples,
 }
 
 ResampledLoopAudition::ResampledLoopAudition(ReadyCallback callback)
-    : onReady(std::move(callback)), worker(&ResampledLoopAudition::workerLoop, this)
+    : onReady(std::move(callback))
 {
+  // Start the worker only after every member it may access has been
+  // constructed. Starting it from the member-initializer list allowed the
+  // thread to enter workerLoop() before mutex/condition were initialized.
+  worker = std::thread(&ResampledLoopAudition::workerLoop, this);
 }
 
 ResampledLoopAudition::~ResampledLoopAudition()

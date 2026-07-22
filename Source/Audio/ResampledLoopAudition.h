@@ -34,7 +34,6 @@ private:
                                          float targetMidiNote);
 
   ReadyCallback onReady;
-  std::thread worker;
   std::mutex mutex;
   std::condition_variable condition;
   std::vector<float> pendingSource;
@@ -43,4 +42,7 @@ private:
   std::uint64_t requestId = 0;
   bool hasPendingRequest = false;
   bool shuttingDown = false;
+  // Keep the thread last: it is started after full object initialization and
+  // is joined explicitly before any shared state is destroyed.
+  std::thread worker;
 };

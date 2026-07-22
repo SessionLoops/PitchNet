@@ -313,7 +313,7 @@ private:
   float pendingNoteDragAuditionShift = 0.0f;
   float pendingNoteDragAuditionMidiNote = 60.0f;
   std::vector<float> pendingNoteDragAuditionSource;
-  static constexpr juce::int64 noteDragAuditionDebounceMs = 50;
+  static constexpr juce::int64 noteDragAuditionDebounceMs = 20;
 
   // New modular components
   std::unique_ptr<AudioFileManager> fileManager;

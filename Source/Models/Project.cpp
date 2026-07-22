@@ -47,6 +47,21 @@ Project::Project()
 {
 }
 
+void Project::addNote(Note note)
+{
+    // Timeline consumers (including note preview context) expect neighboring
+    // notes to also be neighboring elements. A split creates its tail after
+    // all existing notes, so appending it would break that invariant.
+    const int startFrame = note.getStartFrame();
+    const auto insertAt = std::upper_bound(
+        notes.begin(), notes.end(), startFrame,
+        [](int start, const Note &existing)
+        {
+            return start < existing.getStartFrame();
+        });
+    notes.insert(insertAt, std::move(note));
+}
+
 Note *Project::getNoteAtFrame(int frame)
 {
     for (auto &note : notes)
