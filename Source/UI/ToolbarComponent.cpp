@@ -240,10 +240,26 @@ void ToolbarComponent::resized()
         capsuleY + (capsuleH - 26) / 2,
         scaleButtonWidth, 26);
 
-    // Hide center controls (time/tools removed from toolbar) and zoom controls
+    // Keep the edit tools next to the logo so they remain easy to reach without
+    // disturbing the centered transport controls.
+    const int editToolSize = 30;
+    const int editToolGap = 4;
+    const int logoRight = 17 + (logoImage.isValid()
+                                    ? (logoImage.getWidth() + 1) / 2
+                                    : 0);
+    int editToolX = logoRight + 12;
+    const int editToolY = capsuleY + (capsuleH - editToolSize) / 2;
+
+    selectModeButton.setVisible(true);
+    selectModeButton.setBounds(editToolX, editToolY,
+                               editToolSize, editToolSize);
+    editToolX += editToolSize + editToolGap;
+    splitModeButton.setVisible(true);
+    splitModeButton.setBounds(editToolX, editToolY,
+                              editToolSize, editToolSize);
+
+    // Hide the remaining controls that have been removed from the toolbar.
     timeLabel.setVisible(false);
-    selectModeButton.setVisible(false);
-    splitModeButton.setVisible(false);
     followButton.setVisible(false);
     zoomLabel.setVisible(false);
     zoomSlider.setVisible(false);

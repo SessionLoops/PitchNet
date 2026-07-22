@@ -495,6 +495,64 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     }
   }
 
+  // In split mode, show the boundary between each consecutive pair of notes
+  // in the same audio region. Span the full pitch interval so the connector
+  // reaches from the higher note's top to the lower note's bottom.
+  if (drawOverlays && splitModeActive)
+  {
+    std::vector<const Note *> timelineNotes;
+    timelineNotes.reserve(project->getNotes().size());
+    for (const auto &note : project->getNotes())
+    {
+      if (!note.isRest())
+        timelineNotes.push_back(&note);
+    }
+    std::sort(timelineNotes.begin(), timelineNotes.end(),
+              [](const Note *left, const Note *right)
+              {
+                return left->getStartFrame() < right->getStartFrame();
+              });
+
+    const auto &chunkRanges = audioData.segmentChunkRanges;
+    auto getRegionIndex = [&chunkRanges](const Note &note)
+    {
+      if (chunkRanges.empty())
+        return 0;
+
+      const int midpoint = note.getStartFrame() +
+                           std::max(0, note.getDurationFrames()) / 2;
+      for (size_t i = 0; i < chunkRanges.size(); ++i)
+      {
+        if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)
+          return static_cast<int>(i);
+      }
+      return -1;
+    };
+
+    g.setColour(juce::Colour(0xFF9A9A9Au)); // Pitch-grid note-name colour
+    for (size_t i = 0; i + 1 < timelineNotes.size(); ++i)
+    {
+      const auto &left = *timelineNotes[i];
+      const auto &right = *timelineNotes[i + 1];
+      const int leftRegion = getRegionIndex(left);
+      if (leftRegion < 0 || leftRegion != getRegionIndex(right))
+        continue;
+
+      const float boundaryX =
+          0.5f * framesToSeconds(left.getEndFrame() + right.getStartFrame()) *
+          pixelsPerSecond;
+      if (boundaryX < static_cast<float>(scrollX) ||
+          boundaryX > static_cast<float>(scrollX + componentWidth))
+        continue;
+
+      const float leftY = coordMapper->midiToY(left.getAdjustedMidiNote());
+      const float rightY = coordMapper->midiToY(right.getAdjustedMidiNote());
+      const float lineTop = std::min(leftY, rightY);
+      const float lineBottom = std::max(leftY, rightY) + pixelsPerSemitone;
+      g.drawLine(boundaryX, lineTop, boundaryX, lineBottom, 1.5f);
+    }
+  }
+
   // Draw split guide line when in split mode and hovering over a note
   if (drawOverlays && splitModeActive && splitHandler &&
       splitHandler->getSplitGuideNote() &&
@@ -502,12 +560,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   {
     auto *guideNote = splitHandler->getSplitGuideNote();
     const float guideX = splitHandler->getSplitGuideX();
-    const float noteStartTime = framesToSeconds(guideNote->getStartFrame());
-    const float noteEndTime = framesToSeconds(guideNote->getEndFrame());
-    const float noteStartX = static_cast<float>(noteStartTime * pixelsPerSecond);
-    const float noteEndX = static_cast<float>(noteEndTime * pixelsPerSecond);
+    const int guideFrame = secondsToFrames(guideX / pixelsPerSecond);
 
-    if (guideX > noteStartX + 5 && guideX < noteEndX - 5)
+    if (guideFrame > guideNote->getStartFrame() &&
+        guideFrame < guideNote->getEndFrame())
     {
       const float noteY = coordMapper->midiToY(guideNote->getAdjustedMidiNote());
       const float noteH = pixelsPerSemitone;

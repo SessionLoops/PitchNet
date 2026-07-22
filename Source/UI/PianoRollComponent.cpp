@@ -330,7 +330,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     // Only draw if cursor is in visible area
     if (x >= pianoKeysWidth && x < getWidth() - verticalScrollBarSize)
     {
-      g.setColour(juce::Colour(0xFFC8C7C7u));
+      g.setColour(APP_COLOR_PITCH_CURVE);
       g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom - cursorTop);
     }
   }
@@ -1754,14 +1754,17 @@ void PianoRollComponent::setCursorTime(double time)
     return juce::Rectangle<int>(rectX, 0, rectWidth, getHeight());
   };
 
-  // Repaint OLD cursor position (the current cursorTime that's about to change)
-  repaint(getCursorRect(cursorTime));
-
-  // Update cursor time
+  const auto oldCursorRect = getCursorRect(cursorTime);
   cursorTime = time;
+  const auto cursorDirtyArea =
+      oldCursorRect.getUnion(getCursorRect(cursorTime))
+          .getIntersection(getLocalBounds());
 
-  // Repaint NEW cursor position
-  repaint(getCursorRect(cursorTime));
+  // Erase the old playhead and draw the new one in a single paint operation.
+  // Separate invalidations can be presented independently when the positions
+  // no longer overlap at high horizontal zoom, producing a visible blink.
+  if (!cursorDirtyArea.isEmpty())
+    repaint(cursorDirtyArea);
 
   if (onCursorMoved)
     onCursorMoved();

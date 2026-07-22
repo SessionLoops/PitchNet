@@ -1,6 +1,55 @@
 #include "NoteSplitter.h"
 #include "../../Utils/Constants.h"
 #include <algorithm>
+#include <cmath>
+
+namespace
+{
+float calculatePitchCenter(const AudioData& audioData, int startFrame,
+                           int endFrame, float fallback)
+{
+    const int f0Size = static_cast<int>(audioData.f0.size());
+    const int start = std::clamp(startFrame, 0, f0Size);
+    const int end = std::clamp(endFrame, start, f0Size);
+
+    double midiSum = 0.0;
+    int voicedCount = 0;
+    for (int frame = start; frame < end; ++frame) {
+        const bool voiced = audioData.voicedMask.empty() ||
+                            (frame < static_cast<int>(audioData.voicedMask.size()) &&
+                             audioData.voicedMask[static_cast<size_t>(frame)]);
+        const float f0 = audioData.f0[static_cast<size_t>(frame)];
+        if (voiced && f0 > 0.0f && std::isfinite(f0)) {
+            midiSum += freqToMidi(f0);
+            ++voicedCount;
+        }
+    }
+
+    return voicedCount > 0
+               ? static_cast<float>(midiSum / voicedCount)
+               : fallback;
+}
+
+void rebasePitchDeviation(Note& note, float amount)
+{
+    if (std::abs(amount) < 0.0001f)
+        return;
+
+    if (note.hasOriginalDeltaPitch()) {
+        auto delta = note.getOriginalDeltaPitch();
+        for (auto& value : delta)
+            value += amount;
+        note.setOriginalDeltaPitch(std::move(delta));
+    }
+
+    if (note.hasDeltaPitch()) {
+        auto delta = note.getDeltaPitch();
+        for (auto& value : delta)
+            value += amount;
+        note.setDeltaPitch(std::move(delta));
+    }
+}
+}
 
 Note* NoteSplitter::findNoteAt(float x, float y) {
     if (!project || !coordMapper)
@@ -32,9 +81,10 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     int startFrame = note->getStartFrame();
     int endFrame = note->getEndFrame();
+    const float previousPitchCenter = note->getAdjustedMidiNote();
 
-    // Ensure split point is within note bounds (with margin)
-    if (splitFrame <= startFrame + 5 || splitFrame >= endFrame - 5)
+    // Keep at least one analysis frame on each side of the split.
+    if (splitFrame <= startFrame || splitFrame >= endFrame)
         return false;
 
     // Store original note data for undo
@@ -169,6 +219,44 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
             }
         }
     }
+
+    // Keep per-note pitch data aligned with the new frame ranges.
+    if (note->hasDeltaPitch()) {
+        const auto& delta = note->getDeltaPitch();
+        int splitOffset = splitFrame - startFrame;
+        splitOffset = std::clamp(splitOffset, 0, static_cast<int>(delta.size()));
+        std::vector<float> leftDelta(delta.begin(), delta.begin() + splitOffset);
+        std::vector<float> rightDelta(delta.begin() + splitOffset, delta.end());
+        note->setDeltaPitch(std::move(leftDelta));
+        secondNote.setDeltaPitch(std::move(rightDelta));
+    }
+
+    const auto& f0Values = note->getF0Values();
+    if (!f0Values.empty()) {
+        int splitOffset = splitFrame - startFrame;
+        splitOffset = std::clamp(splitOffset, 0, static_cast<int>(f0Values.size()));
+        std::vector<float> leftF0(f0Values.begin(), f0Values.begin() + splitOffset);
+        std::vector<float> rightF0(f0Values.begin() + splitOffset, f0Values.end());
+        note->setF0Values(std::move(leftF0));
+        secondNote.setF0Values(std::move(rightF0));
+    }
+
+    // Recalculate each half's center from its own voiced pitch frames. Rebase
+    // its deviation curve by the opposite amount so splitting is pitch-neutral.
+    const auto& audioData = project->getAudioData();
+    const float leftPitchCenter = calculatePitchCenter(
+        audioData, startFrame, splitFrame, previousPitchCenter);
+    const float rightPitchCenter = calculatePitchCenter(
+        audioData, splitFrame, endFrame, previousPitchCenter);
+
+    rebasePitchDeviation(*note, previousPitchCenter - leftPitchCenter);
+    rebasePitchDeviation(secondNote, previousPitchCenter - rightPitchCenter);
+    note->setMidiNote(leftPitchCenter);
+    note->setOriginalMidiNote(leftPitchCenter);
+    note->setPitchOffset(0.0f);
+    secondNote.setMidiNote(rightPitchCenter);
+    secondNote.setOriginalMidiNote(rightPitchCenter);
+    secondNote.setPitchOffset(0.0f);
 
     // Modify the first note (left part)
     note->setEndFrame(splitFrame);

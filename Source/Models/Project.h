@@ -167,7 +167,7 @@ public:
     // Notes
     std::vector<Note> &getNotes() { return notes; }
     const std::vector<Note> &getNotes() const { return notes; }
-    void addNote(Note note) { notes.push_back(std::move(note)); }
+    void addNote(Note note);
     void clearNotes() { notes.clear(); }
 
     Note *getNoteAtFrame(int frame);
