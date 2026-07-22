@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../JuceHeader.h"
-#include "Analysis/AudioAnalyzer.h"
 #include "AudioEngine.h"
 #include "Engine/PlaybackController.h"
 #include "FCPEPitchDetector.h"
@@ -31,7 +30,6 @@ public:
 
   AudioEngine *getAudioEngine() const { return audioEngine.get(); }
   Vocoder *getVocoder() const { return vocoder.get(); }
-  AudioAnalyzer *getAudioAnalyzer() const { return audioAnalyzer.get(); }
   IncrementalSynthesizer *getIncrementalSynth() const
   {
     return incrementalSynth.get();
@@ -44,8 +42,6 @@ public:
   void setPitchDetectorType(PitchDetectorType type)
   {
     pitchDetectorType = type;
-    if (audioAnalyzer)
-      audioAnalyzer->setPitchDetectorType(type);
   }
 
   void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
@@ -113,7 +109,6 @@ private:
   std::unique_ptr<RMVPEPitchDetector> rmvpePitchDetector;
   std::unique_ptr<GAMEDetector> gameDetector;
   std::unique_ptr<Vocoder> vocoder;
-  std::unique_ptr<AudioAnalyzer> audioAnalyzer;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
   std::unique_ptr<PlaybackController> playbackController;
 

@@ -32,7 +32,6 @@ EditorController::EditorController(bool enableAudioDevice)
   rmvpePitchDetector = std::make_unique<RMVPEPitchDetector>();
   gameDetector = std::make_unique<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
-  audioAnalyzer = std::make_unique<AudioAnalyzer>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
   playbackController = std::make_unique<PlaybackController>();
 
@@ -41,11 +40,6 @@ EditorController::EditorController(bool enableAudioDevice)
   centTablePath = PlatformPaths::getModelFile("cent_table.bin");
   rmvpeModelPath = PlatformPaths::getModelFile("rmvpe.onnx");
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
-
-  audioAnalyzer->setFCPEDetector(fcpePitchDetector.get());
-  audioAnalyzer->setRMVPEDetector(rmvpePitchDetector.get());
-  audioAnalyzer->setGAMEDetector(gameDetector.get());
-  audioAnalyzer->setPitchDetectorType(pitchDetectorType);
 
   incrementalSynth->setVocoder(vocoder.get());
   if (audioEngine)
@@ -271,8 +265,6 @@ void EditorController::reloadInferenceModels(bool async)
 
 bool EditorController::isInferenceBusy() const
 {
-  if (audioAnalyzer && audioAnalyzer->isAnalyzing())
-    return true;
   if (incrementalSynth && incrementalSynth->isSynthesizing())
     return true;
   if (isReloadingModels.load())

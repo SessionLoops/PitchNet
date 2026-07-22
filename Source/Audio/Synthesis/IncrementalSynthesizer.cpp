@@ -497,13 +497,22 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               }
             }
 
-            // For parts of the note body outside the synthesis range, use the
-            // immutable source clip.
-            if (note.hasSrcClipWaveform()) {
-              const auto &srcClip = note.getSrcClipWaveform();
+            // For parts of the note body outside the synthesis range, derive
+            // the immutable source clip directly from originalWaveform.
+            const auto &originalWaveform = audioData.originalWaveform;
+            if (originalWaveform.getNumChannels() > 0 &&
+                originalWaveform.getNumSamples() > 0) {
+              const int originalSamples = originalWaveform.getNumSamples();
+              const int srcStartSample = std::clamp(
+                  note.getSrcStartFrame() * hopSize, 0, originalSamples);
+              const int srcEndSample = std::clamp(
+                  note.getSrcEndFrame() * hopSize, srcStartSample,
+                  originalSamples);
               const int srcFrames = note.getSrcEndFrame() - note.getSrcStartFrame();
               const int dstFrames = note.getEndFrame() - note.getStartFrame();
-              const int srcSamples = static_cast<int>(srcClip.size());
+              const int srcSamples = srcEndSample - srcStartSample;
+              const float *originalSamplesData =
+                  originalWaveform.getReadPointer(0);
 
               for (int i = 0; i < noteSamples; ++i) {
                 const int globalSample = noteStartSample + i;
@@ -523,7 +532,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 int srcIdx = static_cast<int>(srcPos);
                 if (srcIdx >= 0 && srcIdx < srcSamples) {
                   noteSynth[static_cast<size_t>(leftMargin + i)] =
-                      srcClip[static_cast<size_t>(srcIdx)];
+                      originalSamplesData[srcStartSample + srcIdx];
                 }
               }
             }

@@ -2143,15 +2143,7 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   int totalSamples = 0;
   int startSample = 0;
   int endSample = 0;
-  const auto &clipWaveform = note.getClipWaveform();
-
-  if (!clipWaveform.empty())
-  {
-    samples = clipWaveform.data();
-    totalSamples = static_cast<int>(clipWaveform.size());
-    endSample = totalSamples;
-  }
-  else if (audioData.waveform.getNumSamples() > 0)
+  if (audioData.waveform.getNumSamples() > 0)
   {
     samples = audioData.waveform.getReadPointer(0);
     totalSamples = audioData.waveform.getNumSamples();

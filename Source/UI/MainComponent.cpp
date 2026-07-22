@@ -2046,9 +2046,6 @@ void MainComponent::auditionDraggedNote(const Note &note)
   }
 
   if (source.empty())
-    source = note.hasSrcClipWaveform() ? note.getSrcClipWaveform()
-                                        : note.getClipWaveform();
-  if (source.empty())
     return;
 
   if (!noteDragAuditionActive)

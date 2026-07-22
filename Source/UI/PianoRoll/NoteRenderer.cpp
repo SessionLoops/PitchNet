@@ -151,15 +151,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     int totalSamples = globalTotalSamples;
     int startSample = 0;
     int endSample = 0;
-    const auto &clipWaveform = note.getClipWaveform();
-
-    if (!clipWaveform.empty())
-    {
-      samples = clipWaveform.data();
-      totalSamples = static_cast<int>(clipWaveform.size());
-      endSample = totalSamples;
-    }
-    else if (samples && totalSamples > 0)
+    if (samples && totalSamples > 0)
     {
       startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
                                      audioData.sampleRate);
@@ -250,15 +242,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       int totalSamples = globalTotalSamples;
       int startSample = 0;
       int endSample = 0;
-      const auto &clipWaveform = note.getClipWaveform();
-      if (!clipWaveform.empty())
-      {
-        samples = clipWaveform.data();
-        totalSamples = static_cast<int>(clipWaveform.size());
-        startSample = 0;
-        endSample = totalSamples;
-      }
-      else if (samples && totalSamples > 0)
+      if (samples && totalSamples > 0)
       {
         startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
                                        audioData.sampleRate);

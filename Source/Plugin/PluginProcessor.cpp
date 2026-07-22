@@ -4,6 +4,7 @@
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
+#include "../Utils/Constants.h"
 #include "../Utils/OnnxRuntime.h"
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "ARADocumentController.h"

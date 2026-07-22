@@ -90,40 +90,6 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     // Store original note data for undo
     Note originalNote = *note;
 
-    // Ensure clip waveform exists before splitting
-    if (!note->hasClipWaveform()) {
-        auto& audioData = project->getAudioData();
-        if (audioData.waveform.getNumSamples() > 0) {
-            int startSample = startFrame * HOP_SIZE;
-            int endSample = endFrame * HOP_SIZE;
-            startSample = std::max(0, std::min(startSample, audioData.waveform.getNumSamples()));
-            endSample = std::max(startSample, std::min(endSample, audioData.waveform.getNumSamples()));
-            std::vector<float> clip;
-            clip.reserve(static_cast<size_t>(endSample - startSample));
-            const float* src = audioData.waveform.getReadPointer(0);
-            for (int i = startSample; i < endSample; ++i)
-                clip.push_back(src[i]);
-            note->setClipWaveform(std::move(clip));
-        }
-    }
-
-    // Ensure source clip waveform exists before splitting
-    if (!note->hasSrcClipWaveform()) {
-        auto& audioData = project->getAudioData();
-        if (audioData.originalWaveform.getNumSamples() > 0) {
-            int srcStart = note->getSrcStartFrame() * HOP_SIZE;
-            int srcEnd = note->getSrcEndFrame() * HOP_SIZE;
-            srcStart = std::max(0, std::min(srcStart, audioData.originalWaveform.getNumSamples()));
-            srcEnd = std::max(srcStart, std::min(srcEnd, audioData.originalWaveform.getNumSamples()));
-            std::vector<float> srcClip;
-            srcClip.reserve(static_cast<size_t>(srcEnd - srcStart));
-            const float* origSrc = audioData.originalWaveform.getReadPointer(0);
-            for (int i = srcStart; i < srcEnd; ++i)
-                srcClip.push_back(origSrc[i]);
-            note->setSrcClipWaveform(std::move(srcClip));
-        }
-    }
-
     // Ensure clip mel exists before splitting
     if (!note->hasClipMel()) {
         auto& audioData = project->getAudioData();
@@ -144,33 +110,25 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     Note secondNote;
     secondNote.setStartFrame(splitFrame);
     secondNote.setEndFrame(endFrame);
-    secondNote.setSrcStartFrame(splitFrame);
-    secondNote.setSrcEndFrame(endFrame);
+    const int srcStartFrame = note->getSrcStartFrame();
+    const int srcEndFrame = note->getSrcEndFrame();
+    const double splitRatio = static_cast<double>(splitFrame - startFrame) /
+                              static_cast<double>(endFrame - startFrame);
+    const int sourceDuration = srcEndFrame - srcStartFrame;
+    const int sourceSplitCandidate =
+        srcStartFrame + static_cast<int>(
+                            std::lround(splitRatio * sourceDuration));
+    const int srcSplitFrame = sourceDuration >= 2
+                                  ? std::clamp(sourceSplitCandidate,
+                                               srcStartFrame + 1,
+                                               srcEndFrame - 1)
+                                  : std::clamp(sourceSplitCandidate,
+                                               srcStartFrame, srcEndFrame);
+    secondNote.setSrcStartFrame(srcSplitFrame);
+    secondNote.setSrcEndFrame(srcEndFrame);
     secondNote.setMidiNote(note->getMidiNote());
     secondNote.setLyric(note->getLyric());
     secondNote.setPitchOffset(0.0f);
-
-    // Split clip waveform if available
-    if (note->hasClipWaveform()) {
-        const auto& clip = note->getClipWaveform();
-        int splitOffset = (splitFrame - startFrame) * HOP_SIZE;
-        splitOffset = std::max(0, std::min(splitOffset, static_cast<int>(clip.size())));
-        std::vector<float> leftClip(clip.begin(), clip.begin() + splitOffset);
-        std::vector<float> rightClip(clip.begin() + splitOffset, clip.end());
-        note->setClipWaveform(std::move(leftClip));
-        secondNote.setClipWaveform(std::move(rightClip));
-    }
-
-    // Split source clip waveform if available
-    if (note->hasSrcClipWaveform()) {
-        const auto& srcClip = note->getSrcClipWaveform();
-        int splitOffset = (splitFrame - startFrame) * HOP_SIZE;
-        splitOffset = std::max(0, std::min(splitOffset, static_cast<int>(srcClip.size())));
-        std::vector<float> leftSrcClip(srcClip.begin(), srcClip.begin() + splitOffset);
-        std::vector<float> rightSrcClip(srcClip.begin() + splitOffset, srcClip.end());
-        note->setSrcClipWaveform(std::move(leftSrcClip));
-        secondNote.setSrcClipWaveform(std::move(rightSrcClip));
-    }
 
     // Split clip mel if available
     if (note->hasClipMel()) {
@@ -260,7 +218,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     // Modify the first note (left part)
     note->setEndFrame(splitFrame);
-    note->setSrcEndFrame(splitFrame);
+    note->setSrcEndFrame(srcSplitFrame);
 
     // Save first note BEFORE addNote (addNote may invalidate note pointer due to vector reallocation)
     Note firstNote = *note;

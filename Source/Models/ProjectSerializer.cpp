@@ -8,7 +8,7 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 1;
+constexpr int kProjectArchiveVersion = 2;
 
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
@@ -270,6 +270,11 @@ juce::var ProjectSerializer::toJson(const Project& project,
 
 bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     if (!json.isObject())
+        return false;
+
+    const int formatVersion =
+        static_cast<int>(json.getProperty("formatVersion", 1));
+    if (formatVersion != 1 && formatVersion != FORMAT_VERSION)
         return false;
 
     // Metadata
@@ -539,8 +544,6 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
         if (!writeFloatVector(out, note.getOriginalDeltaPitch()) ||
             !writeFloatVector(out, note.getDeltaPitch()) ||
             !writeFloatVector(out, note.getF0Values()) ||
-            !writeFloatVector(out, note.getClipWaveform()) ||
-            !writeFloatVector(out, note.getSrcClipWaveform()) ||
             !out.writeInt(note.getSynthPreroll()) ||
             !writeFloatVector(out, note.getSynthWaveform()) ||
             !writeMel(out, note.getClipMel()))
@@ -559,7 +562,8 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
     juce::MemoryInputStream in(data, sizeInBytes, false);
     if (static_cast<std::uint32_t>(in.readInt()) != kProjectArchiveMagic)
         return false;
-    if (in.readInt() != kProjectArchiveVersion)
+    const int archiveVersion = in.readInt();
+    if (archiveVersion != 1 && archiveVersion != kProjectArchiveVersion)
         return false;
 
     const auto metadataJson = readString(in);
@@ -620,17 +624,24 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         std::vector<float> originalDelta;
         std::vector<float> delta;
         std::vector<float> f0Values;
-        std::vector<float> clipWaveform;
-        std::vector<float> srcClipWaveform;
         std::vector<float> synthWaveform;
         std::vector<std::vector<float>> clipMel;
 
         if (!readFloatVector(in, originalDelta) ||
             !readFloatVector(in, delta) ||
-            !readFloatVector(in, f0Values) ||
-            !readFloatVector(in, clipWaveform) ||
-            !readFloatVector(in, srcClipWaveform))
+            !readFloatVector(in, f0Values))
             return false;
+
+        // Version 1 stored two redundant per-note waveform caches. Consume
+        // them for backward compatibility; version 2 derives both views from
+        // the project-level waveform buffers.
+        if (archiveVersion == 1) {
+            std::vector<float> obsoleteClipWaveform;
+            std::vector<float> obsoleteSrcClipWaveform;
+            if (!readFloatVector(in, obsoleteClipWaveform) ||
+                !readFloatVector(in, obsoleteSrcClipWaveform))
+                return false;
+        }
 
         const int synthPreroll = in.readInt();
         if (!readFloatVector(in, synthWaveform) ||
@@ -643,10 +654,6 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
             note.setDeltaPitch(std::move(delta));
         if (!f0Values.empty())
             note.setF0Values(std::move(f0Values));
-        if (!clipWaveform.empty())
-            note.setClipWaveform(std::move(clipWaveform));
-        if (!srcClipWaveform.empty())
-            note.setSrcClipWaveform(std::move(srcClipWaveform));
         if (!synthWaveform.empty())
             note.setSynthWaveform(std::move(synthWaveform), synthPreroll);
         if (!clipMel.empty())
@@ -705,10 +712,6 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
             obj->setProperty("deltaPitch", floatArrayToString(note.getDeltaPitch(), 4));
         if (!note.getF0Values().empty())
             obj->setProperty("f0Values", floatArrayToString(note.getF0Values(), 2));
-        if (note.hasClipWaveform())
-            obj->setProperty("clipWaveform", floatArrayToString(note.getClipWaveform(), 6));
-        if (note.hasSrcClipWaveform())
-            obj->setProperty("srcClipWaveform", floatArrayToString(note.getSrcClipWaveform(), 6));
         if (note.hasSynthWaveform()) {
             obj->setProperty("synthWaveform", floatArrayToString(note.getSynthWaveform(), 6));
             obj->setProperty("synthPreroll", note.getSynthPreroll());
@@ -782,12 +785,6 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     auto f0ValuesStr = json.getProperty("f0Values", juce::var());
     if (!f0ValuesStr.isVoid() && f0ValuesStr.toString().isNotEmpty())
         note.setF0Values(stringToFloatArray(f0ValuesStr.toString()));
-    auto clipWaveformStr = json.getProperty("clipWaveform", juce::var());
-    if (!clipWaveformStr.isVoid() && clipWaveformStr.toString().isNotEmpty())
-        note.setClipWaveform(stringToFloatArray(clipWaveformStr.toString()));
-    auto srcClipWaveformStr = json.getProperty("srcClipWaveform", juce::var());
-    if (!srcClipWaveformStr.isVoid() && srcClipWaveformStr.toString().isNotEmpty())
-        note.setSrcClipWaveform(stringToFloatArray(srcClipWaveformStr.toString()));
     auto synthWaveformStr = json.getProperty("synthWaveform", juce::var());
     if (!synthWaveformStr.isVoid() && synthWaveformStr.toString().isNotEmpty())
         note.setSynthWaveform(
