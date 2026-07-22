@@ -11,6 +11,16 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <mutex>
+
+namespace
+{
+std::mutex &getDirectMLModelLoadMutex()
+{
+  static std::mutex mutex;
+  return mutex;
+}
+} // namespace
 
 EditorController::EditorController(bool enableAudioDevice)
 {
@@ -96,6 +106,75 @@ void EditorController::reloadInferenceModels(bool async)
   {
     if (!self)
       return;
+
+    // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
+    // multiple sessions for the same device are created concurrently. This is
+    // especially easy to trigger in optimized builds, where model setup
+    // overlaps much more tightly. Keep DirectML session creation on this one
+    // loader thread; CPU and other providers retain parallel startup.
+    if (provider == GPUProvider::DirectML)
+    {
+      const std::lock_guard<std::mutex> directMLLoadLock(
+          getDirectMLModelLoadMutex());
+      LOG("EditorController: serializing DirectML model loading");
+
+      if (self->fcpePitchDetector && fcpePath.existsAsFile())
+      {
+        LOG("EditorController: loading FCPE model (device " + device +
+            ", id " + juce::String(resolvedDeviceId) + ")...");
+        if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
+                                               provider, resolvedDeviceId))
+          LOG("FCPE pitch detector loaded successfully");
+        else
+          LOG("Failed to load FCPE model");
+      }
+      else if (self->fcpePitchDetector)
+      {
+        LOG("FCPE model not found at: " + fcpePath.getFullPathName());
+      }
+
+      if (self->rmvpePitchDetector && rmvpePath.existsAsFile())
+      {
+        LOG("EditorController: loading RMVPE model (device " + device +
+            ", id " + juce::String(resolvedDeviceId) + ")...");
+        if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
+                                                resolvedDeviceId))
+          LOG("RMVPE pitch detector loaded successfully");
+        else
+          LOG("Failed to load RMVPE model");
+      }
+      else if (self->rmvpePitchDetector)
+      {
+        LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
+      }
+
+      if (self->gameDetector && gamePath.isDirectory())
+      {
+        LOG("EditorController: loading GAME models from " +
+            gamePath.getFullPathName() + " (device " + device + ", id " +
+            juce::String(resolvedDeviceId) + ")...");
+        if (self->gameDetector->loadModels(gamePath, provider,
+                                           resolvedDeviceId))
+          LOG("GAME detector loaded successfully, isLoaded=" +
+              juce::String(self->gameDetector->isLoaded() ? "true" :
+                                                               "false"));
+        else
+          LOG("Failed to load GAME models from " +
+              gamePath.getFullPathName());
+      }
+      else if (self->gameDetector)
+      {
+        LOG("GAME model directory not found: " + gamePath.getFullPathName() +
+            " isDirectory=" +
+            juce::String(gamePath.isDirectory() ? "true" : "false"));
+      }
+      else
+      {
+        LOG("GAME detector not created (gameDetector is null)");
+      }
+
+      return;
+    }
 
     // Load all models in parallel — each operates on an independent object
     // with its own Ort::Env, so no shared state.
