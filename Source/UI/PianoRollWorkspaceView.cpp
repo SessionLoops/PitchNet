@@ -283,8 +283,11 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
   };
   auto centers = std::make_shared<std::vector<NoteCenter>>();
   centers->reserve(project->getNotes().size());
+  const bool hasSelectedNotes = std::any_of(
+      project->getNotes().begin(), project->getNotes().end(),
+      [](const Note &note) { return !note.isRest() && note.isSelected(); });
   for (auto &note : project->getNotes())
-    if (!note.isRest())
+    if (!note.isRest() && (!hasSelectedNotes || note.isSelected()))
       centers->push_back({ &note, note.getMidiNote(), note.getOriginalMidiNote() });
 
   const float originalPitchCenter = project->getPitchCenter();
