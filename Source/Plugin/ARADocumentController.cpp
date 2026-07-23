@@ -2398,13 +2398,18 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
           juce::MemoryBlock json;
           const bool hasDistinctLiveKey =
               liveKey.isNotEmpty() && liveKey != key;
-          bool hasProject =
-              pitchModification != nullptr && hasDistinctLiveKey &&
-              pitchModification->copyProjectArchiveForRegion(liveKey, json);
           auto *processor = getRegionCanvasProcessor();
-          if (!hasProject && processor != nullptr && hasDistinctLiveKey)
+          // The processor owns the live Project. Prefer serialising it at the
+          // instant the host asks us to save; the modification cache can lag
+          // behind an edit or an asynchronous resynthesis callback.
+          bool hasProject = false;
+          if (processor != nullptr && hasDistinctLiveKey)
             hasProject =
                 processor->serializeAraRegionProject(liveKey, json);
+          if (!hasProject && pitchModification != nullptr &&
+              hasDistinctLiveKey)
+            hasProject =
+                pitchModification->copyProjectArchiveForRegion(liveKey, json);
           if (!hasProject && pitchModification != nullptr)
             hasProject =
                 pitchModification->copyProjectArchiveForRegion(key, json);

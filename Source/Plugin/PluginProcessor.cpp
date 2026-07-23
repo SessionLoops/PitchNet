@@ -2833,17 +2833,77 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
 void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionKey,
                                                      const void *data,
                                                      size_t sizeInBytes) {
-  if (data == nullptr || sizeInBytes == 0)
+  if (regionKey.isEmpty() || data == nullptr || sizeInBytes == 0)
     return;
+
+  auto installRestoredProject = [this, &regionKey](
+                                    std::unique_ptr<Project> project) {
+    project->recomposeFromSynthIfPresent();
+    attachMacroParameters(*project);
+
+    // ARA restores region archives under their stable modification/index key,
+    // while the live editor uses the host-object key. The active region may
+    // already have started a fresh analysis before its indexed archive arrives.
+    // Migrate a late archive immediately and invalidate that analysis so its
+    // original notes cannot overwrite the restored edits.
+    juce::String liveKey;
+    if (regionKey == activeRegionKey) {
+      liveKey = activeRegionKey;
+    } else if (activeModification != nullptr && activeRegionKey.isNotEmpty() &&
+               archivedRegionKeyForLiveKey(activeModification,
+                                           activeRegionKey) == regionKey &&
+               projectAppearsToCoverRegion(*project,
+                                           activeRegionStartSeconds,
+                                           activeRegionEndSeconds)) {
+      liveKey = activeRegionKey;
+    }
+
+    const bool needsLiveKeyMigration =
+        liveKey.isNotEmpty() && liveKey != regionKey;
+    auto &archivedState = araRegions[regionKey];
+    archivedState.project = needsLiveKeyMigration
+                                ? std::make_unique<Project>(*project)
+                                : std::move(project);
+    archivedState.ensureUndoManager()->clear();
+
+    if (liveKey.isEmpty())
+      return;
+
+    regionCanvasAnalysisGeneration.fetch_add(1);
+    if (regionCanvasController)
+      regionCanvasController->requestCancelLoading();
+    if (pendingRegionCanvasAnalysisKey == liveKey)
+      pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+
+    auto &liveState = araRegions[liveKey];
+    if (needsLiveKeyMigration)
+      liveState.project = std::move(project);
+    auto *liveUndoManager = liveState.ensureUndoManager();
+    liveUndoManager->clear();
+
+    if (mainComponent == nullptr || liveKey != activeRegionKey)
+      return;
+
+    auto displaced =
+        mainComponent->exchangeProject(std::move(liveState.project));
+    juce::ignoreUnused(displaced);
+    mainComponent->bindUndoManager(liveUndoManager);
+    mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+    if (auto *positionedProject = mainComponent->getProject())
+      positionedProject->getAudioData().playbackRegionRanges = {
+          {activeRegionStartSeconds, activeRegionEndSeconds}};
+    mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    canvasShowsActiveAraRegion = true;
+    mainComponent->hideAnalysisProgress();
+    mainComponent->focusTimelineRange(activeRegionStartSeconds,
+                                      activeRegionEndSeconds);
+  };
 
   auto project = std::make_unique<Project>();
   if (ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
       projectHasEditableAnalysisData(*project)) {
-    project->recomposeFromSynthIfPresent();
-    attachMacroParameters(*project);
-    auto &regionState = araRegions[regionKey];
-    regionState.project = std::move(project);
-    regionState.ensureUndoManager()->clear();
+    installRestoredProject(std::move(project));
     return;
   }
 
@@ -2855,13 +2915,8 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
   project = std::make_unique<Project>();
   if (ProjectSerializer::fromJson(*project, parsed) &&
-      projectHasEditableAnalysisData(*project)) {
-    project->recomposeFromSynthIfPresent();
-    attachMacroParameters(*project);
-    auto &regionState = araRegions[regionKey];
-    regionState.project = std::move(project);
-    regionState.ensureUndoManager()->clear();
-  }
+      projectHasEditableAnalysisData(*project))
+    installRestoredProject(std::move(project));
 }
 
 void PitchNetAudioProcessor::attachMacroParameters(Project &project) {
