@@ -36,8 +36,8 @@ std::vector<float> tiltDeltaPitch(const std::vector<float>& deltaPitch,
   return result;
 }
 
-std::vector<float> reduceVariance(const std::vector<float>& deltaPitch,
-                                  float factor) {
+std::vector<float> scaleVibrato(const std::vector<float>& deltaPitch,
+                                float factor) {
   if (deltaPitch.empty()) {
     return {};
   }
@@ -114,7 +114,7 @@ float computeMean(const std::vector<float>& deltaPitch) {
 std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
                                            float tiltLeft,
                                            float tiltRight,
-                                           float varianceScale,
+                                           float vibrato,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
                                            const AdjacentNoteContext& adjacentContext) {
@@ -125,10 +125,9 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
   // Start with the original pristine curve
   std::vector<float> result = originalDelta;
 
-  // 1. Apply variance scaling
-  // Variance first so that tilt ramp is preserved even at variance=0
-  if (std::abs(varianceScale - 1.0f) > 0.001f) {
-    result = reduceVariance(result, varianceScale);
+  // 1. Apply modulation before tilt, preserving the tilt ramp at 0%.
+  if (std::abs(vibrato - 1.0f) > 0.001f) {
+    result = scaleVibrato(result, vibrato);
   }
 
   // 2. Apply tilt transformations (combined left + right)

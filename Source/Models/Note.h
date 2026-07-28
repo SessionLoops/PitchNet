@@ -67,8 +67,11 @@ public:
     void setTiltLeft(float tilt) { tiltLeft = tilt; }
     float getTiltRight() const { return tiltRight; }
     void setTiltRight(float tilt) { tiltRight = tilt; }
-    float getVarianceScale() const { return varianceScale; }
-    void setVarianceScale(float scale) { varianceScale = scale; }
+    // Scales deviations from the note center: 1.0 preserves the recorded
+    // contour, 0.0 flattens it, and negative values invert it. The range is
+    // limited to -10.0 through 10.0 (-1000% through 1000%).
+    float getVibrato() const { return vibrato; }
+    void setVibrato(float scale) { vibrato = juce::jlimit(-10.0f, 10.0f, scale); }
     int getSmoothLeftFrames() const { return smoothLeftFrames; }
     void setSmoothLeftFrames(int frames) { smoothLeftFrames = frames; }
     int getSmoothRightFrames() const { return smoothRightFrames; }
@@ -79,16 +82,6 @@ public:
     void setDeltaScale(float scale) { deltaScale = scale; }
     float getDeltaOffset() const { return deltaOffset; }
     void setDeltaOffset(float offset) { deltaOffset = offset; }
-
-    // Vibrato
-    bool isVibratoEnabled() const { return vibratoEnabled; }
-    void setVibratoEnabled(bool enabled) { vibratoEnabled = enabled; }
-    float getVibratoRateHz() const { return vibratoRateHz; }
-    void setVibratoRateHz(float hz) { vibratoRateHz = hz; }
-    float getVibratoDepthSemitones() const { return vibratoDepthSemitones; }
-    void setVibratoDepthSemitones(float semitones) { vibratoDepthSemitones = semitones; }
-    float getVibratoPhaseRadians() const { return vibratoPhaseRadians; }
-    void setVibratoPhaseRadians(float radians) { vibratoPhaseRadians = radians; }
 
     // F0 values (original detected values)
     const std::vector<float>& getF0Values() const { return f0Values; }
@@ -173,18 +166,13 @@ private:
     // Pitch tool transformation parameters (non-destructive, stored as parameters)
     float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
     float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
-    float varianceScale = 1.0f;      // Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
+    float vibrato = 1.0f;            // 1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
 
     // Post-transformation scale/offset from delta control handles
     float deltaScale = 1.0f;        // Applied after all other transformations (1.0=unchanged)
     float deltaOffset = 0.0f;       // Added after scale (0.0=unchanged)
-
-    bool vibratoEnabled = false;
-    float vibratoRateHz = 5.0f;
-    float vibratoDepthSemitones = 0.0f;
-    float vibratoPhaseRadians = 0.0f;
 
     std::vector<float> f0Values;
     std::vector<float> synthWaveform;    // Vocoder output (regenerated when synthDirty)

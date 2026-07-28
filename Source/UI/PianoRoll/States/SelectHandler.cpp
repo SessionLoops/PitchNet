@@ -57,6 +57,10 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
             adjustedEvent, *owner_.pitchToolHandles,
             owner_.getSelectedNotes(), *owner_.coordMapper))
     {
+      // Match note dragging: hide controls immediately and leave only the
+      // live drag-value tip visible until mouse-up.
+      owner_.updatePitchToolHandlesFromSelection();
+      owner_.repaint();
       return true;
     }
   }
@@ -697,6 +701,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
 
   isDragging = false;
   draggedNote = nullptr;
+  owner_.updatePitchToolHandlesFromSelection();
   if (owner_.onNoteDragAuditionFinished)
     owner_.onNoteDragAuditionFinished();
   dragPreviewStartFrame = -1;
@@ -715,8 +720,7 @@ void SelectHandler::mouseMove(const juce::MouseEvent &e, float worldX,
       e.y >= PianoRollComponent::headerHeight &&
       e.x >= PianoRollComponent::pianoKeysWidth)
   {
-    int hitIndex = owner_.pitchToolHandles->hitTest(e.position.x,
-                                                    e.position.y);
+    int hitIndex = owner_.pitchToolHandles->hitTest(worldX, worldY);
     if (hitIndex != owner_.hoveredPitchToolHandle)
     {
       owner_.hoveredPitchToolHandle = hitIndex;
@@ -842,14 +846,14 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         }
       }
 
-      // ReduceVariance: Toggle variance scale between 0 and 1
+      // Vibrato: toggle between 0% (flat) and 100% (original).
       if (handle.type ==
-          PitchToolHandles::HandleType::ReduceVariance)
+          PitchToolHandles::HandleType::Vibrato)
       {
         auto selectedNotes = project->getSelectedNotes();
 
         float currentScale =
-            selectedNotes[0]->getVarianceScale();
+            selectedNotes[0]->getVibrato();
         float newScale =
             (std::abs(currentScale - 1.0f) < 0.001f) ? 0.0f : 1.0f;
 
@@ -864,14 +868,14 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           {
             if (note)
             {
-              oldScales.push_back(note->getVarianceScale());
+              oldScales.push_back(note->getVibrato());
               newScales.push_back(newScale);
             }
           }
 
           auto action = std::make_unique<MultiNoteFloatPropertyAction>(
               selectedNotes, oldScales, newScales,
-              &Note::setVarianceScale, "Toggle Variance Scale",
+              &Note::setVibrato, "Toggle Vibrato",
               [project, selectedNotes]()
               { rebuildProjectForNotes(project, selectedNotes); });
           owner_.undoManager->addAction(std::move(action));
@@ -881,7 +885,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         {
           if (note)
           {
-            note->setVarianceScale(newScale);
+            note->setVibrato(newScale);
             note->markDirty();
           }
         }

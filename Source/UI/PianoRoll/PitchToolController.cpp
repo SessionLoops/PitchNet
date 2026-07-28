@@ -17,16 +17,16 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
 
 
   const int hitIndex = handles.hitTest(e.position.x, e.position.y);
-  
-  
-  if (hitIndex < 0 || selectedNotes.empty()) {
+  if (hitIndex < 0) {
     return false;
   }
 
   activeHandleType = handles.getHandle(hitIndex).type;
-  
-  
   affectedNotes = selectedNotes;
+  if (affectedNotes.empty() && handles.getHandle(hitIndex).note)
+    affectedNotes.push_back(handles.getHandle(hitIndex).note);
+  if (affectedNotes.empty())
+    return false;
   
   // Capture original transformation parameters (not curves)
   originalParams.clear();
@@ -171,15 +171,15 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         note->setMidiNote(origParams.midiNote + newTiltMean);
         break;
       }
-      case PitchToolHandles::HandleType::ReduceVariance:
+      case PitchToolHandles::HandleType::Vibrato:
       {
         // Additive accumulation from original value (consistent with tilt handles)
-        // Drag UP (negative Y) = increase variance, drag DOWN (positive Y) = decrease
+        // Drag UP increases modulation; drag DOWN decreases it.
         const float dragDelta = -dragDeltaY / 100.0f;
-        const float newScale = origParams.varianceScale + dragDelta;
-        note->setVarianceScale(newScale);
+        const float newScale = origParams.vibrato + dragDelta;
+        note->setVibrato(newScale);
         
-        // Preserve tilt offset when adjusting variance
+        // Preserve tilt offset when adjusting vibrato.
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;

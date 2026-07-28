@@ -23,21 +23,17 @@ ToolbarComponent::ToolbarComponent()
     auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
     undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
+    selectModeButton.setImage(loadImage(BinaryData::select_png, BinaryData::select_pngSize));
+    splitModeButton.setImage(loadImage(BinaryData::split_png, BinaryData::split_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
 
-    // Load remaining SVG icons with white tint
-    auto cursorIcon = SvgUtils::loadSvg(BinaryData::cursor_24_filled_svg, BinaryData::cursor_24_filled_svgSize, juce::Colours::white);
-    auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
+    // Load the remaining SVG icon with white tint.
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
 
-    selectModeButton.setImages(cursorIcon.get());
-    splitModeButton.setImages(scissorsIcon.get());
     followButton.setImages(followIcon.get());
 
-    // Set edge indent for icon padding (makes icons smaller within button bounds)
-    selectModeButton.setEdgeIndent(6);
-    splitModeButton.setEdgeIndent(6);
+    // Set edge indent for icon padding (makes icons smaller within button bounds).
     followButton.setEdgeIndent(6);
 
     // Configure buttons
@@ -105,7 +101,6 @@ ToolbarComponent::ToolbarComponent()
     followButton.setTooltip(TR("toolbar.follow"));
     quantizeButton.setTooltip("Correct Pitch Macro");
     auditionButton.setTooltip("Live Audition On/Off");
-    recordButton.setTooltip("Record");
 #if JUCE_MAC
     undoButton.setTooltip(TR("command.undo") + " (⌘Z)");
     redoButton.setTooltip(TR("command.redo") + " (⇧⌘Z)");
@@ -117,7 +112,7 @@ ToolbarComponent::ToolbarComponent()
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
 
     // Set default active states
-    selectModeButton.setActive(true);
+    selectModeButton.setToggleState(true, juce::dontSendNotification);
     followButton.setActive(true); // Follow is on by default
     auditionButton.setToggleState(false, juce::dontSendNotification);
     undoButton.setEnabled(false);
@@ -189,6 +184,13 @@ void ToolbarComponent::paint(juce::Graphics &g)
         g.setColour(juce::Colour(0xFF191818u));
         g.fillRoundedRectangle(capsule, 8.0f);
     }
+
+    // Edit tools form their own capsule, matching the transport group.
+    if (!toolContainerBounds.isEmpty())
+    {
+        g.setColour(juce::Colour(0xFF191818u));
+        g.fillRoundedRectangle(toolContainerBounds.toFloat(), 8.0f);
+    }
 }
 
 void ToolbarComponent::resized()
@@ -242,28 +244,36 @@ void ToolbarComponent::resized()
 
     // Keep the edit tools next to the logo so they remain easy to reach without
     // disturbing the centered transport controls.
-    const int editToolSize = 30;
-    const int editToolGap = 4;
+    const int editToolGap = 6;
+    const int editToolPad = 15;
+    const int editToolSlotSize = 22;
+    const int editToolGroupHeight = 38;
     const int logoRight = 17 + (logoImage.isValid()
                                     ? (logoImage.getWidth() + 1) / 2
                                     : 0);
-    int editToolX = logoRight + 12;
-    const int editToolY = capsuleY + (capsuleH - editToolSize) / 2;
+    const int editToolGroupX = logoRight + 24;
+    const int editToolGroupWidth = editToolSlotSize * 2 + editToolGap
+                                   + editToolPad * 2;
+    const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
+    toolContainerBounds = {editToolGroupX, editToolGroupY,
+                           editToolGroupWidth, editToolGroupHeight};
+    int editToolX = toolContainerBounds.getX() + editToolPad;
 
     selectModeButton.setVisible(true);
-    selectModeButton.setBounds(editToolX, editToolY,
-                               editToolSize, editToolSize);
-    editToolX += editToolSize + editToolGap;
+    selectModeButton.setBounds(editToolX,
+                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
+                               editToolSlotSize, editToolSlotSize);
+    editToolX += editToolSlotSize + editToolGap;
     splitModeButton.setVisible(true);
-    splitModeButton.setBounds(editToolX, editToolY,
-                              editToolSize, editToolSize);
+    splitModeButton.setBounds(editToolX,
+                              toolContainerBounds.getCentreY() - editToolSlotSize / 2,
+                              editToolSlotSize, editToolSlotSize);
 
     // Hide the remaining controls that have been removed from the toolbar.
     timeLabel.setVisible(false);
     followButton.setVisible(false);
     zoomLabel.setVisible(false);
     zoomSlider.setVisible(false);
-    toolContainerBounds = {};
     timeCapsuleBounds = {};
 
     goToStartButton.setVisible(true);
@@ -430,8 +440,10 @@ void ToolbarComponent::setTotalTime(double time)
 void ToolbarComponent::setEditMode(EditMode mode)
 {
     currentEditModeInt = static_cast<int>(mode);
-    selectModeButton.setActive(mode == EditMode::Select);
-    splitModeButton.setActive(mode == EditMode::Split);
+    selectModeButton.setToggleState(mode == EditMode::Select,
+                                    juce::dontSendNotification);
+    splitModeButton.setToggleState(mode == EditMode::Split,
+                                   juce::dontSendNotification);
     resized();
 }
 

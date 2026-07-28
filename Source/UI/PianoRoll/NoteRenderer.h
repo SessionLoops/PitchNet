@@ -10,6 +10,7 @@ class SelectHandler;
 class SplitHandler;
 class PitchEditor;
 class BoxSelector;
+class PitchToolController;
 
 /**
  * Draws note bodies (with inline waveform), selection outlines, delta-scale
@@ -36,6 +37,7 @@ public:
   void setSelectHandler(SelectHandler *h) { selectHandler = h; }
   void setSplitHandler(SplitHandler *h) { splitHandler = h; }
   void setPitchEditor(PitchEditor *e) { pitchEditor = e; }
+  void setPitchToolController(PitchToolController *c) { pitchToolController = c; }
   void setBoxSelector(BoxSelector *b) { boxSelector = b; }
   void setHoveredNote(Note *note) { hoveredNote = note; }
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
@@ -56,6 +58,7 @@ private:
   SelectHandler *selectHandler = nullptr;
   SplitHandler *splitHandler = nullptr;
   PitchEditor *pitchEditor = nullptr;
+  PitchToolController *pitchToolController = nullptr;
   BoxSelector *boxSelector = nullptr;
   Note *hoveredNote = nullptr;
   bool previewPlaybackActive = false;

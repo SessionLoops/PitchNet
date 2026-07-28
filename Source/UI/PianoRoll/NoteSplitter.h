@@ -35,6 +35,12 @@ public:
      */
     bool splitNoteAtX(Note* note, float x);
 
+    /** Returns the adjacent note pair represented by a split boundary at x/y. */
+    std::pair<Note*, Note*> findMergeableNotesAt(float x, float y);
+
+    /** Merges two adjacent segments that originated from the same note. */
+    bool mergeNotes(Note* first, Note* second);
+
     // Callbacks
     std::function<void()> onNoteSplit;
 

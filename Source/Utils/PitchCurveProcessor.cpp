@@ -314,7 +314,7 @@ namespace PitchCurveProcessor
                 sourceData,
                 note.getTiltLeft(),
                 note.getTiltRight(),
-                note.getVarianceScale(),
+                note.getVibrato(),
                 note.getSmoothLeftFrames(),
                 note.getSmoothRightFrames(),
                 adjacentContext
@@ -410,7 +410,7 @@ namespace PitchCurveProcessor
                 sourceData,
                 note->getTiltLeft(),
                 note->getTiltRight(),
-                note->getVarianceScale(),
+                note->getVibrato(),
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
                 adjacentContext
@@ -492,7 +492,7 @@ namespace PitchCurveProcessor
                 sourceData,
                 note->getTiltLeft(),
                 note->getTiltRight(),
-                note->getVarianceScale(),
+                note->getVibrato(),
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
                 adjacentContext

@@ -13,11 +13,17 @@ public:
   enum class HandleType {
     TiltLeft,
     TiltRight,
-    ReduceVariance,
+    Vibrato,
     SmoothLeft,
     SmoothRight,
     None
   };
+
+  static constexpr float buttonWidth = 30.0f;
+  static constexpr float buttonHeight = 10.0f;
+  static constexpr float buttonGap = 5.0f;
+  static constexpr float buttonGroupWidth =
+      buttonWidth * 3.0f + buttonGap * 2.0f;
 
   struct Handle {
     HandleType type;
@@ -33,7 +39,8 @@ public:
    * Call this when selection changes or viewport moves.
    */
   void updateHandles(const std::vector<Note*>& selectedNotes,
-                     const CoordinateMapper& mapper);
+                     const CoordinateMapper& mapper,
+                     const juce::Rectangle<float>& hoverBounds = {});
 
   /**
    * Draw all handles to graphics context.
@@ -48,6 +55,9 @@ public:
    * @return Index of hit handle, or -1 if no hit
    */
   int hitTest(float worldX, float worldY, float tolerance = 12.0f) const;
+
+  /** Whether a point lies inside the full three-control layout, including gaps. */
+  bool containsLayoutPoint(float worldX, float worldY) const;
 
   /**
    * Get handle at index.
@@ -78,8 +88,6 @@ public:
 private:
   std::vector<Handle> handles;
   int hoveredHandleIndex = -1;
-
-  static constexpr float HANDLE_SIZE = 10.0f;
 
   void addHandle(HandleType type, float worldX, float worldY, Note* note = nullptr);
   juce::Colour getColorForType(HandleType type) const;

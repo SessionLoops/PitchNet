@@ -41,7 +41,8 @@ class SplitHandler;
  */
 class PianoRollComponent : public juce::Component,
                            public juce::ScrollBar::Listener,
-                           public juce::KeyListener
+                           public juce::KeyListener,
+                           public juce::TooltipClient
 {
   friend class PianoRollInteractionContext;
 
@@ -64,6 +65,7 @@ public:
   void mouseUp(const juce::MouseEvent &e) override;
   void mouseMove(const juce::MouseEvent &e) override;
   void mouseExit(const juce::MouseEvent &e) override;
+  juce::String getTooltip() override;
   void mouseDoubleClick(const juce::MouseEvent &e) override;
   void mouseWheelMove(const juce::MouseEvent &e,
                       const juce::MouseWheelDetails &wheel) override;
@@ -241,10 +243,14 @@ private:
   Note *findNoteAt(float x, float y);
   Note *findPreviewButtonNoteAt(float x, float y) const;
   juce::Rectangle<float> getPreviewButtonBounds(const Note &note) const;
+  juce::Rectangle<float> getNoteHoverShadowBounds(const Note &note) const;
+  juce::Rectangle<float> getResetButtonBounds(const Note &note) const;
   juce::Rectangle<float> getPreviewHoverBounds(const Note &note) const;
   juce::Rectangle<int> getPreviewButtonLocalBounds(const Note &note) const;
+  juce::Rectangle<int> getResetButtonLocalBounds(const Note &note) const;
   void updatePreviewButtonBounds();
   void triggerPreviewForNote(Note &note);
+  void resetNoteEdits(Note &note);
   void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
@@ -278,8 +284,11 @@ private:
   int &hoveredPitchToolHandle = viewState.hoveredPitchToolHandle;
   Note *hoveredNote = nullptr;
   Button previewButton;
+  Button resetButton;
   int previewButtonWidth = 28;
   int previewButtonHeight = 28;
+  int resetButtonWidth = 28;
+  int resetButtonHeight = 28;
   bool previewPlaybackActive = false;
   int previewPlaybackStartFrame = 0;
   int previewPlaybackEndFrame = 0;

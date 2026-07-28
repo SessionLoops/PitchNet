@@ -9,6 +9,13 @@ bool SplitHandler::mouseDown(const juce::MouseEvent &e, float worldX,
                              float worldY) {
   juce::ignoreUnused(e);
 
+  if (mergeFirstNote && mergeSecondNote &&
+      owner_.noteSplitter->mergeNotes(mergeFirstNote, mergeSecondNote))
+  {
+    clearGuide();
+    return true;
+  }
+
   Note *note = owner_.noteSplitter->findNoteAt(worldX, worldY);
   if (note) {
     owner_.noteSplitter->splitNoteAtX(note, worldX);
@@ -26,7 +33,11 @@ void SplitHandler::mouseMove(const juce::MouseEvent &e, float worldX,
     return;
   }
 
-  Note *note = owner_.noteSplitter->findNoteAt(worldX, worldY);
+  const auto mergeNotes = owner_.noteSplitter->findMergeableNotesAt(worldX, worldY);
+  mergeFirstNote = mergeNotes.first;
+  mergeSecondNote = mergeNotes.second;
+
+  Note *note = mergeFirstNote ? nullptr : owner_.noteSplitter->findNoteAt(worldX, worldY);
   if (note) {
     splitGuideX = worldX;
     splitGuideNote = note;
@@ -45,4 +56,6 @@ void SplitHandler::clearGuide() {
     splitGuideNote = nullptr;
     owner_.repaint();
   }
+  mergeFirstNote = nullptr;
+  mergeSecondNote = nullptr;
 }

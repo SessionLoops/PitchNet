@@ -21,6 +21,24 @@
 
 namespace
 {
+  juce::Image createSplitCursorImage()
+  {
+    auto image = juce::ImageFileFormat::loadFrom(
+        BinaryData::splitcursor_png,
+        static_cast<size_t>(BinaryData::splitcursor_pngSize));
+    return image.rescaled(image.getWidth() / 2, image.getHeight() / 2,
+                          juce::Graphics::highResamplingQuality);
+  }
+
+  juce::Image createMergeCursorImage()
+  {
+    auto image = juce::ImageFileFormat::loadFrom(
+        BinaryData::mergecursor_png,
+        static_cast<size_t>(BinaryData::mergecursor_pngSize));
+    return image.rescaled(image.getWidth() / 2, (image.getHeight() + 1) / 2,
+                          juce::Graphics::highResamplingQuality);
+  }
+
   using pianoRollView::getScaleAccentColour;
   using pianoRollView::isBlackKey;
   using pianoRollView::ScaleToneState;
@@ -58,6 +76,75 @@ namespace
     }
     return 1.0;
   }
+
+  struct NoteEditState
+  {
+    float midiNote;
+    float pitchOffset;
+    float volumeDb;
+    float tiltLeft;
+    float tiltRight;
+    float vibrato;
+    int smoothLeftFrames;
+    int smoothRightFrames;
+    float deltaScale;
+    float deltaOffset;
+
+    static NoteEditState capture(const Note& note)
+    {
+      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(),
+              note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
+              note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
+              note.getDeltaScale(), note.getDeltaOffset()};
+    }
+
+    static NoteEditState defaultsFor(const Note& note)
+    {
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+              0, 0, 1.0f, 0.0f};
+    }
+
+    void applyTo(Note& note) const
+    {
+      note.setMidiNote(midiNote);
+      note.setPitchOffset(pitchOffset);
+      note.setVolumeDb(volumeDb);
+      note.setTiltLeft(tiltLeft);
+      note.setTiltRight(tiltRight);
+      note.setVibrato(vibrato);
+      note.setSmoothLeftFrames(smoothLeftFrames);
+      note.setSmoothRightFrames(smoothRightFrames);
+      note.setDeltaScale(deltaScale);
+      note.setDeltaOffset(deltaOffset);
+      note.markDirty();
+      note.markSynthDirty();
+    }
+  };
+
+  class ResetNoteEditsAction final : public UndoableAction
+  {
+  public:
+    ResetNoteEditsAction(Project& project, Note& note)
+        : project(project), note(note), before(NoteEditState::capture(note)),
+          after(NoteEditState::defaultsFor(note)) {}
+
+    void undo() override { apply(before); }
+    void redo() override { apply(after); }
+    juce::String getName() const override { return "Reset Note Edits"; }
+
+  private:
+    void apply(const NoteEditState& state)
+    {
+      state.applyTo(note);
+      PitchCurveProcessor::rebuildBaseFromNotes(project);
+      project.setF0DirtyRange(note.getStartFrame(), note.getEndFrame());
+    }
+
+    Project& project;
+    Note& note;
+    NoteEditState before;
+    NoteEditState after;
+  };
 }
 
 PianoRollComponent::PianoRollComponent()
@@ -94,6 +181,7 @@ PianoRollComponent::PianoRollComponent()
   noteRenderer->setSelectHandler(selectHandler_.get());
   noteRenderer->setSplitHandler(splitHandler_.get());
   noteRenderer->setPitchEditor(pitchEditor.get());
+  noteRenderer->setPitchToolController(pitchToolController.get());
   noteRenderer->setBoxSelector(boxSelector.get());
   pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
   pitchCurveRenderer->setSelectHandler(selectHandler_.get());
@@ -196,6 +284,7 @@ PianoRollComponent::PianoRollComponent()
     previewButtonWidth = std::max(1, previewButton.getWidth());
     previewButtonHeight = std::max(1, previewButton.getHeight());
   }
+  previewButton.setTooltip("Context Audition");
   previewButton.setVisible(false);
   previewButton.onClick = [this]()
   {
@@ -203,6 +292,24 @@ PianoRollComponent::PianoRollComponent()
       triggerPreviewForNote(*hoveredNote);
   };
   addAndMakeVisible(previewButton);
+
+  int resetImageSize = 0;
+  if (const auto *resetImageData =
+          BinaryData::getNamedResource("reset_png", resetImageSize))
+  {
+    resetButton.setImage(
+        juce::ImageFileFormat::loadFrom(resetImageData, resetImageSize));
+    resetButtonWidth = std::max(1, resetButton.getWidth());
+    resetButtonHeight = std::max(1, resetButton.getHeight());
+  }
+  resetButton.setTooltip("Restore Original");
+  resetButton.setVisible(false);
+  resetButton.onClick = [this]()
+  {
+    if (hoveredNote)
+      resetNoteEdits(*hoveredNote);
+  };
+  addAndMakeVisible(resetButton);
 }
 
 PianoRollComponent::~PianoRollComponent()
@@ -1078,10 +1185,22 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
   Note *noteUnderMouse = nullptr;
-  if (e.y >= headerHeight && e.x >= pianoKeysWidth)
+  const bool overCurrentPitchToolLayout =
+      hoveredNote && pitchToolHandles && !pitchToolHandles->isEmpty() &&
+      pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
+  if (overCurrentPitchToolLayout)
+    noteUnderMouse = hoveredNote;
+  else if (e.y >= headerHeight && e.x >= pianoKeysWidth)
     noteUnderMouse = findNoteAt(adjustedX, adjustedY);
   if (!noteUnderMouse)
     noteUnderMouse = findPreviewButtonNoteAt(adjustedX, adjustedY);
+  if (!noteUnderMouse && hoveredNote && pitchToolHandles &&
+      !pitchToolHandles->isEmpty() &&
+      pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0)
+  {
+    // Keep the note's hover controls visible while moving onto a handle.
+    noteUnderMouse = hoveredNote;
+  }
   if (!noteUnderMouse && hoveredNote &&
       getPreviewHoverBounds(*hoveredNote).contains(adjustedX, adjustedY))
   {
@@ -1096,11 +1215,17 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (currentHandler_)
     currentHandler_->mouseMove(e, adjustedX, adjustedY);
 
+  // A merge boundary draws its own two-note hover treatment. Suppress the
+  // ordinary single-note hover so the two treatments do not overlap.
+  if (editMode == EditMode::Split && splitHandler_ &&
+      splitHandler_->isHoveringMergeBoundary())
+    setHoveredNote(nullptr);
+
   // Pitch tool handle hover (uses raw event coordinates, not world-adjusted)
   if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty() &&
       e.y >= headerHeight && e.x >= pianoKeysWidth)
   {
-    int hitIndex = pitchToolHandles->hitTest(e.position.x, e.position.y);
+    int hitIndex = pitchToolHandles->hitTest(adjustedX, adjustedY);
     if (hitIndex != hoveredPitchToolHandle)
     {
       hoveredPitchToolHandle = hitIndex;
@@ -1115,14 +1240,49 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       pitchToolHandles->setHoveredHandleIndex(-1);
     repaint();
   }
+
+  // Apply this last so loop-timeline handling cannot replace the Split cursor.
+  if (editMode == EditMode::Split)
+  {
+    static const auto splitCursorImage = createSplitCursorImage();
+    static const auto mergeCursorImage = createMergeCursorImage();
+    const bool hoveringMergeBoundary = splitHandler_ && splitHandler_->isHoveringMergeBoundary();
+    setMouseCursor(hoveringMergeBoundary
+                       ? juce::MouseCursor(mergeCursorImage, 10, 8)
+                       : juce::MouseCursor(splitCursorImage, 10, 8));
+  }
 }
 
 void PianoRollComponent::mouseExit(const juce::MouseEvent &)
 {
-  if (previewButton.isMouseOverOrDragging())
+  if (previewButton.isMouseOverOrDragging() ||
+      resetButton.isMouseOverOrDragging())
     return;
 
   setHoveredNote(nullptr);
+}
+
+juce::String PianoRollComponent::getTooltip()
+{
+  if (!pitchToolHandles || pitchToolHandles->isEmpty())
+    return {};
+
+  const auto mousePosition = getMouseXYRelative();
+  const float adjustedX = mousePosition.x - pianoKeysWidth +
+                          static_cast<float>(scrollX);
+  const float adjustedY = mousePosition.y - headerHeight +
+                          static_cast<float>(scrollY);
+  const int handleIndex = pitchToolHandles->hitTest(adjustedX, adjustedY);
+  if (handleIndex < 0)
+    return {};
+
+  switch (pitchToolHandles->getHandle(handleIndex).type)
+  {
+    case PitchToolHandles::HandleType::TiltLeft: return "Left Slope";
+    case PitchToolHandles::HandleType::Vibrato: return "Pitch Modulation";
+    case PitchToolHandles::HandleType::TiltRight: return "Right Slope";
+    default: return {};
+  }
 }
 
 void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
@@ -2032,6 +2192,11 @@ void PianoRollComponent::setEditMode(EditMode mode)
     // Set hotspot at pen tip (bottom-left corner)
     setMouseCursor(juce::MouseCursor(penImage, 0, 14));
   }
+  else if (mode == EditMode::Split)
+  {
+    static const auto splitCursorImage = createSplitCursorImage();
+    setMouseCursor(juce::MouseCursor(splitCursorImage, 10, 8));
+  }
   else
   {
     setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -2081,6 +2246,15 @@ void PianoRollComponent::updatePitchToolHandlesFromSelection()
   if (!pitchToolHandles || !coordMapper)
     return;
 
+  const bool isChangingPitch =
+      (selectHandler_ && (selectHandler_->isSingleNoteDragging() ||
+                          selectHandler_->getIsDeltaScaleDragging() ||
+                          selectHandler_->getIsDeltaOffsetDragging())) ||
+      (pitchToolController && pitchToolController->isDragging()) ||
+      (pitchEditor && (pitchEditor->isDraggingNote() ||
+                       pitchEditor->isDraggingMultiNotes() ||
+                       pitchEditor->isDrawingPitch()));
+
   if (!project || editMode != EditMode::Select)
   {
     pitchToolHandles->clear();
@@ -2089,7 +2263,22 @@ void PianoRollComponent::updatePitchToolHandlesFromSelection()
     return;
   }
 
-  pitchToolHandles->updateHandles(getSelectedNotes(), *coordMapper);
+  if (isChangingPitch)
+  {
+    pitchToolHandles->clear();
+    hoveredPitchToolHandle = -1;
+    pitchToolHandles->setHoveredHandleIndex(-1);
+    return;
+  }
+
+  // Vibrato is a hover control: no hovered note means no visible handle.
+  std::vector<Note *> targetNotes;
+  if (hoveredNote)
+    targetNotes.push_back(hoveredNote);
+
+  const auto hoverBounds = hoveredNote ? getNoteHoverShadowBounds(*hoveredNote)
+                                       : juce::Rectangle<float>();
+  pitchToolHandles->updateHandles(targetNotes, *coordMapper, hoverBounds);
   if (hoveredPitchToolHandle >=
       static_cast<int>(pitchToolHandles->getHandles().size()))
   {
@@ -2124,7 +2313,7 @@ Note *PianoRollComponent::findNoteAt(float x, float y)
 }
 
 juce::Rectangle<float>
-PianoRollComponent::getPreviewButtonBounds(const Note &note) const
+PianoRollComponent::getNoteHoverShadowBounds(const Note &note) const
 {
   if (!project)
     return {};
@@ -2172,10 +2361,27 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   }
 
   shadowBounds = shadowBounds.expanded(4.0f, 4.0f);
+  if (shadowBounds.getWidth() < PitchToolHandles::buttonGroupWidth)
+  {
+    const float centreX = shadowBounds.getCentreX();
+    shadowBounds.setX(centreX - PitchToolHandles::buttonGroupWidth * 0.5f);
+    shadowBounds.setWidth(PitchToolHandles::buttonGroupWidth);
+  }
 
+  return shadowBounds;
+}
+
+juce::Rectangle<float>
+PianoRollComponent::getPreviewButtonBounds(const Note &note) const
+{
+  const auto shadowBounds = getNoteHoverShadowBounds(note);
+
+  constexpr float buttonGap = 4.0f;
   const float buttonWidth = static_cast<float>(previewButtonWidth);
   const float buttonHeight = static_cast<float>(previewButtonHeight);
-  const float buttonX = shadowBounds.getCentreX() - buttonWidth * 0.5f;
+  const float buttonGroupWidth =
+      buttonWidth + buttonGap + static_cast<float>(resetButtonWidth);
+  const float buttonX = shadowBounds.getCentreX() - buttonGroupWidth * 0.5f;
   const float buttonY = shadowBounds.getBottom() + 7.0f;
   return {buttonX, buttonY, buttonWidth, buttonHeight};
 }
@@ -2194,7 +2400,19 @@ PianoRollComponent::getPreviewHoverBounds(const Note &note) const
   const juce::Rectangle<float> noteBounds(noteX, noteY, noteW,
                                           pixelsPerSemitone);
 
-  return noteBounds.getUnion(getPreviewButtonBounds(note)).expanded(4.0f);
+  return noteBounds.getUnion(getPreviewButtonBounds(note))
+      .getUnion(getResetButtonBounds(note))
+      .expanded(4.0f);
+}
+
+juce::Rectangle<float>
+PianoRollComponent::getResetButtonBounds(const Note &note) const
+{
+  constexpr float buttonGap = 4.0f;
+  auto bounds = getPreviewButtonBounds(note);
+  return {bounds.getRight() + buttonGap, bounds.getY(),
+          static_cast<float>(resetButtonWidth),
+          static_cast<float>(resetButtonHeight)};
 }
 
 juce::Rectangle<int>
@@ -2211,6 +2429,20 @@ PianoRollComponent::getPreviewButtonLocalBounds(const Note &note) const
           previewButtonHeight};
 }
 
+juce::Rectangle<int>
+PianoRollComponent::getResetButtonLocalBounds(const Note &note) const
+{
+  const auto bounds =
+      getResetButtonBounds(note)
+          .translated(static_cast<float>(pianoKeysWidth) -
+                          static_cast<float>(scrollX),
+                      static_cast<float>(headerHeight) -
+                          static_cast<float>(scrollY));
+  return {static_cast<int>(std::round(bounds.getX())),
+          static_cast<int>(std::round(bounds.getY())), resetButtonWidth,
+          resetButtonHeight};
+}
+
 void PianoRollComponent::updatePreviewButtonBounds()
 {
   const bool isChangingPitch =
@@ -2225,10 +2457,12 @@ void PianoRollComponent::updatePreviewButtonBounds()
   if (!hoveredNote || !project || isChangingPitch)
   {
     previewButton.setVisible(false);
+    resetButton.setVisible(false);
     return;
   }
 
-  const auto bounds = getPreviewButtonLocalBounds(*hoveredNote);
+  const auto previewBounds = getPreviewButtonLocalBounds(*hoveredNote);
+  const auto resetBounds = getResetButtonLocalBounds(*hoveredNote);
   const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
   constexpr int verticalScrollBarSize = 8;
   const auto mainArea = getLocalBounds()
@@ -2237,8 +2471,10 @@ void PianoRollComponent::updatePreviewButtonBounds()
                             .withTrimmedBottom(horizontalScrollBarSize)
                             .withTrimmedRight(verticalScrollBarSize);
 
-  previewButton.setBounds(bounds);
-  previewButton.setVisible(bounds.intersects(mainArea));
+  previewButton.setBounds(previewBounds);
+  previewButton.setVisible(previewBounds.intersects(mainArea));
+  resetButton.setBounds(resetBounds);
+  resetButton.setVisible(resetBounds.intersects(mainArea));
 }
 
 Note *PianoRollComponent::findPreviewButtonNoteAt(float x, float y) const
@@ -2246,8 +2482,29 @@ Note *PianoRollComponent::findPreviewButtonNoteAt(float x, float y) const
   if (!hoveredNote || !project)
     return nullptr;
 
-  return getPreviewButtonBounds(*hoveredNote).contains(x, y) ? hoveredNote
-                                                             : nullptr;
+  return (getPreviewButtonBounds(*hoveredNote).contains(x, y) ||
+          getResetButtonBounds(*hoveredNote).contains(x, y))
+             ? hoveredNote
+             : nullptr;
+}
+
+void PianoRollComponent::resetNoteEdits(Note &note)
+{
+  if (!project)
+    return;
+
+  auto action = std::make_unique<ResetNoteEditsAction>(*project, note);
+  action->redo();
+  if (undoManager)
+    undoManager->addAction(std::move(action));
+
+  updatePitchToolHandlesFromSelection();
+  updatePreviewButtonBounds();
+  if (onPitchEdited)
+    onPitchEdited();
+  if (onPitchEditFinished)
+    onPitchEditFinished();
+  repaint();
 }
 
 void PianoRollComponent::triggerPreviewForNote(Note &note)
@@ -2358,6 +2615,7 @@ void PianoRollComponent::setHoveredNote(Note *note)
     return;
 
   hoveredNote = note;
+  updatePitchToolHandlesFromSelection();
   updatePreviewButtonBounds();
   repaint();
 }

@@ -682,14 +682,6 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("volumeDb", note.getVolumeDb());
     obj->setProperty("rest", note.isRest());
 
-    // Vibrato
-    auto* vibrato = new juce::DynamicObject();
-    vibrato->setProperty("enabled", note.isVibratoEnabled());
-    vibrato->setProperty("rateHz", note.getVibratoRateHz());
-    vibrato->setProperty("depthSemitones", note.getVibratoDepthSemitones());
-    vibrato->setProperty("phaseRadians", note.getVibratoPhaseRadians());
-    obj->setProperty("vibrato", juce::var(vibrato));
-
     // Lyric/Phoneme
     if (note.hasLyric())
         obj->setProperty("lyric", note.getLyric());
@@ -699,7 +691,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     // Pitch tool transformation parameters (non-destructive)
     obj->setProperty("tiltLeft", note.getTiltLeft());
     obj->setProperty("tiltRight", note.getTiltRight());
-    obj->setProperty("varianceScale", note.getVarianceScale());
+    obj->setProperty("vibrato", note.getVibrato());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
 
@@ -749,15 +741,6 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
     note.setRest(json.getProperty("rest", false));
 
-    // Vibrato
-    auto vibratoVar = json.getProperty("vibrato", juce::var());
-    if (vibratoVar.isObject()) {
-        note.setVibratoEnabled(vibratoVar.getProperty("enabled", false));
-        note.setVibratoRateHz(static_cast<float>(vibratoVar.getProperty("rateHz", 5.0)));
-        note.setVibratoDepthSemitones(static_cast<float>(vibratoVar.getProperty("depthSemitones", 0.0)));
-        note.setVibratoPhaseRadians(static_cast<float>(vibratoVar.getProperty("phaseRadians", 0.0)));
-    }
-
     // Lyric/Phoneme
     auto lyric = json.getProperty("lyric", juce::var());
     if (!lyric.isVoid())
@@ -770,7 +753,7 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     // Pitch tool transformation parameters (with defaults for backwards compatibility)
     note.setTiltLeft(static_cast<float>(json.getProperty("tiltLeft", 0.0)));
     note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
-    note.setVarianceScale(static_cast<float>(json.getProperty("varianceScale", 1.0)));
+    note.setVibrato(static_cast<float>(json.getProperty("vibrato", 1.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
     note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
 

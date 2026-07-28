@@ -23,9 +23,16 @@ public:
   // Accessors for rendering
   float getSplitGuideX() const { return splitGuideX; }
   Note *getSplitGuideNote() const { return splitGuideNote; }
+  bool isHoveringMergeBoundary() const { return mergeFirstNote != nullptr; }
+  bool isMergeBoundary(const Note *first, const Note *second) const
+  {
+    return mergeFirstNote == first && mergeSecondNote == second;
+  }
   void clearGuide();
 
 private:
   float splitGuideX = -1.0f;
   Note *splitGuideNote = nullptr;
+  Note *mergeFirstNote = nullptr;
+  Note *mergeSecondNote = nullptr;
 };

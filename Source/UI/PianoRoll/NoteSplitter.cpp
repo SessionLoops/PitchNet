@@ -128,6 +128,16 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setSrcEndFrame(srcEndFrame);
     secondNote.setMidiNote(note->getMidiNote());
     secondNote.setLyric(note->getLyric());
+    secondNote.setPhoneme(note->getPhoneme());
+    secondNote.setVolumeDb(note->getVolumeDb());
+    secondNote.setSelected(note->isSelected());
+    secondNote.setTiltLeft(note->getTiltLeft());
+    secondNote.setTiltRight(note->getTiltRight());
+    secondNote.setVibrato(note->getVibrato());
+    secondNote.setSmoothLeftFrames(note->getSmoothLeftFrames());
+    secondNote.setSmoothRightFrames(note->getSmoothRightFrames());
+    secondNote.setDeltaScale(note->getDeltaScale());
+    secondNote.setDeltaOffset(note->getDeltaOffset());
     secondNote.setPitchOffset(0.0f);
 
     // Split clip mel if available
@@ -220,6 +230,15 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     note->setEndFrame(splitFrame);
     note->setSrcEndFrame(srcSplitFrame);
 
+    // Splitting is a structural edit, so both segments inherit the source
+    // note's processing state rather than treating the new tail as clean.
+    const bool sourceIsDirty = originalNote.isDirty();
+    const bool sourceIsSynthDirty = originalNote.isSynthDirty();
+    note->setDirty(sourceIsDirty);
+    note->setSynthDirty(sourceIsSynthDirty);
+    secondNote.setDirty(sourceIsDirty);
+    secondNote.setSynthDirty(sourceIsSynthDirty);
+
     // Save first note BEFORE addNote (addNote may invalidate note pointer due to vector reallocation)
     Note firstNote = *note;
 
@@ -250,4 +269,138 @@ bool NoteSplitter::splitNoteAtX(Note* note, float x) {
     int frame = static_cast<int>(time * SAMPLE_RATE / HOP_SIZE);
 
     return splitNoteAtFrame(note, frame);
+}
+
+std::pair<Note*, Note*> NoteSplitter::findMergeableNotesAt(float x, float y)
+{
+    if (!project || !coordMapper)
+        return {};
+
+    const auto &chunkRanges = project->getAudioData().segmentChunkRanges;
+    const auto getRegionIndex = [&chunkRanges](const Note &note)
+    {
+        if (chunkRanges.empty())
+            return 0;
+
+        const int midpoint = note.getStartFrame() +
+                             std::max(0, note.getDurationFrames()) / 2;
+        for (size_t i = 0; i < chunkRanges.size(); ++i)
+            if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)
+                return static_cast<int>(i);
+        return -1;
+    };
+
+    auto &notes = project->getNotes();
+    const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
+    const float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
+    constexpr float boundaryHitPadding = 5.0f;
+
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+        auto &left = notes[i];
+        if (left.isRest())
+            continue;
+
+        for (size_t j = i + 1; j < notes.size(); ++j)
+        {
+            auto &right = notes[j];
+            if (right.isRest())
+                continue;
+
+            // Only expose merge on a true split: the output and source frame
+            // ranges must remain continuous across the boundary.
+            if (left.getEndFrame() != right.getStartFrame() ||
+                left.getSrcEndFrame() != right.getSrcStartFrame() ||
+                getRegionIndex(left) < 0 || getRegionIndex(left) != getRegionIndex(right))
+                break;
+
+            const float boundaryX = 0.5f * framesToSeconds(
+                left.getEndFrame() + right.getStartFrame()) * pixelsPerSecond;
+            const float lineTop = std::min(
+                coordMapper->midiToY(left.getAdjustedMidiNote()),
+                coordMapper->midiToY(right.getAdjustedMidiNote()));
+            const float lineBottom = std::max(
+                coordMapper->midiToY(left.getAdjustedMidiNote()),
+                coordMapper->midiToY(right.getAdjustedMidiNote())) + pixelsPerSemitone;
+
+            if (std::abs(x - boundaryX) <= boundaryHitPadding &&
+                y >= lineTop && y <= lineBottom)
+                return {&left, &right};
+
+            break;
+        }
+    }
+
+    return {};
+}
+
+bool NoteSplitter::mergeNotes(Note *first, Note *second)
+{
+    if (!project || !first || !second || first->isRest() || second->isRest() ||
+        first->getEndFrame() != second->getStartFrame() ||
+        first->getSrcEndFrame() != second->getSrcStartFrame())
+        return false;
+
+    const Note firstNote = *first;
+    const Note secondNote = *second;
+    Note mergedNote = firstNote;
+    mergedNote.setEndFrame(secondNote.getEndFrame());
+    mergedNote.setSrcEndFrame(secondNote.getSrcEndFrame());
+
+    auto append = [](auto left, const auto &right)
+    {
+        left.insert(left.end(), right.begin(), right.end());
+        return left;
+    };
+    mergedNote.setClipMel(append(firstNote.getClipMel(), secondNote.getClipMel()));
+    mergedNote.setF0Values(append(firstNote.getF0Values(), secondNote.getF0Values()));
+
+    // Restore a single pitch center over the merged duration. Each half may
+    // have been rebased when it was split, so convert its deviations through
+    // the current absolute pitch before expressing them around the new center.
+    const float mergedPitchCenter = calculatePitchCenter(
+        project->getAudioData(), mergedNote.getStartFrame(),
+        mergedNote.getEndFrame(), firstNote.getAdjustedMidiNote());
+    const auto mergeDeviation = [mergedPitchCenter](
+                                  const std::vector<float> &firstValues,
+                                  float firstCenter,
+                                  const std::vector<float> &secondValues,
+                                  float secondCenter)
+    {
+        std::vector<float> values;
+        values.reserve(firstValues.size() + secondValues.size());
+        for (const auto value : firstValues)
+            values.push_back(value + firstCenter - mergedPitchCenter);
+        for (const auto value : secondValues)
+            values.push_back(value + secondCenter - mergedPitchCenter);
+        return values;
+    };
+    mergedNote.setOriginalDeltaPitch(mergeDeviation(
+        firstNote.getOriginalDeltaPitch(), firstNote.getOriginalMidiNote(),
+        secondNote.getOriginalDeltaPitch(), secondNote.getOriginalMidiNote()));
+    mergedNote.setDeltaPitch(mergeDeviation(
+        firstNote.getDeltaPitch(), firstNote.getAdjustedMidiNote(),
+        secondNote.getDeltaPitch(), secondNote.getAdjustedMidiNote()));
+    mergedNote.setMidiNote(mergedPitchCenter);
+    mergedNote.setOriginalMidiNote(mergedPitchCenter);
+    mergedNote.setPitchOffset(0.0f);
+    const bool isDirty = firstNote.isDirty() || secondNote.isDirty();
+    const bool isSynthDirty = firstNote.isSynthDirty() || secondNote.isSynthDirty();
+    mergedNote.setDirty(isDirty);
+    if (isSynthDirty)
+        mergedNote.markSynthDirty();
+    else
+        mergedNote.setSynthDirty(false);
+
+    *first = mergedNote;
+    project->removeNoteByStartFrame(secondNote.getStartFrame());
+
+    if (undoManager)
+        undoManager->addAction(std::make_unique<NoteMergeAction>(
+            project, firstNote, secondNote, mergedNote, nullptr));
+
+    if (onNoteSplit)
+        onNoteSplit();
+
+    return true;
 }

@@ -10,7 +10,7 @@
 #include <limits>
 
 /**
- * Undo action for pitch tool operations (tilt, variance, smooth).
+ * Undo action for pitch tool operations (tilt, modulation, smooth).
  * Stores transformation parameters, not full pitch curves.
  */
 class PitchToolAction : public UndoableAction

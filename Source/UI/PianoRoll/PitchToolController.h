@@ -48,6 +48,21 @@ public:
    * Check if currently dragging a handle.
    */
   bool isDragging() const { return dragging; }
+  bool isDraggingVibrato() const
+  {
+    return dragging && activeHandleType == PitchToolHandles::HandleType::Vibrato;
+  }
+  bool isDraggingTilt() const
+  {
+    return dragging &&
+           (activeHandleType == PitchToolHandles::HandleType::TiltLeft ||
+            activeHandleType == PitchToolHandles::HandleType::TiltRight);
+  }
+  PitchToolHandles::HandleType getActiveHandleType() const
+  {
+    return activeHandleType;
+  }
+  const std::vector<Note*>& getAffectedNotes() const { return affectedNotes; }
 
   /**
    * Cancel current drag operation.

@@ -348,11 +348,68 @@ public:
     }
 
     juce::String getName() const override { return "Split Note"; }
+    bool requiresAudioResynthesis() const override { return false; }
 
 private:
     Project *project;
     Note originalNote;
     Note firstNote;
     Note secondNote;
+    std::function<void()> onChanged;
+};
+
+/**
+ * Action for merging two adjacent note segments.
+ */
+class NoteMergeAction : public UndoableAction
+{
+public:
+    NoteMergeAction(Project *proj, const Note &firstPart, const Note &secondPart,
+                    const Note &merged, std::function<void()> onChanged = nullptr)
+        : project(proj), firstNote(firstPart), secondNote(secondPart),
+          mergedNote(merged), onChanged(onChanged) {}
+
+    void undo() override
+    {
+        if (!project)
+            return;
+        for (auto &note : project->getNotes())
+        {
+            if (note.getStartFrame() == mergedNote.getStartFrame())
+            {
+                note = firstNote;
+                break;
+            }
+        }
+        project->addNote(secondNote);
+        if (onChanged)
+            onChanged();
+    }
+
+    void redo() override
+    {
+        if (!project)
+            return;
+        for (auto &note : project->getNotes())
+        {
+            if (note.getStartFrame() == firstNote.getStartFrame())
+            {
+                note = mergedNote;
+                break;
+            }
+        }
+        project->removeNoteByStartFrame(secondNote.getStartFrame());
+        if (onChanged)
+            onChanged();
+    }
+
+    juce::String getName() const override { return "Merge Notes"; }
+    bool requiresAudioResynthesis() const override { return false; }
+
+private:
+    Project *project;
+    Note firstNote;
+    Note secondNote;
+    Note mergedNote;
     std::function<void()> onChanged;
 };

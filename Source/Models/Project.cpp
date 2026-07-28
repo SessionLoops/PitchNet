@@ -220,30 +220,6 @@ std::vector<float> Project::getAdjustedF0() const
                                                                    /*applyUvMask=*/false,
                                                                    globalPitchOffset);
 
-    // Apply vibrato per note on top of composed curve
-    for (const auto &note : notes)
-    {
-        const bool hasVibrato = note.isVibratoEnabled() &&
-                                note.getVibratoDepthSemitones() > 0.0001f &&
-                                note.getVibratoRateHz() > 0.0001f;
-        if (!hasVibrato)
-            continue;
-
-        const int start = std::max(0, note.getStartFrame());
-        const int end = std::min(note.getEndFrame(), static_cast<int>(adjustedF0.size()));
-
-        for (int i = start; i < end; ++i)
-        {
-            if (i < static_cast<int>(audioData.voicedMask.size()) && !audioData.voicedMask[i])
-                continue;
-
-            float vib = note.getVibratoDepthSemitones() *
-                        std::sin(twoPi * note.getVibratoRateHz() * framesToSeconds(i - start) +
-                                 note.getVibratoPhaseRadians());
-            adjustedF0[static_cast<size_t>(i)] *= std::pow(2.0f, vib / 12.0f);
-        }
-    }
-
     return adjustedF0;
 }
 
@@ -271,30 +247,6 @@ std::vector<float> Project::getAdjustedF0ForRange(int startFrame, int endFrame) 
                                 : 0.0f;
         float midi = base + delta + globalPitchOffset;
         adjustedF0[static_cast<size_t>(i)] = midiToFreq(midi);
-    }
-
-    // Apply vibrato for overlapping notes
-    for (const auto &note : notes)
-    {
-        const bool hasVibrato = note.isVibratoEnabled() &&
-                                note.getVibratoDepthSemitones() > 0.0001f &&
-                                note.getVibratoRateHz() > 0.0001f;
-        if (!hasVibrato)
-            continue;
-
-        const int overlapStart = std::max(note.getStartFrame(), startFrame);
-        const int overlapEnd = std::min(note.getEndFrame(), endFrame);
-        for (int frame = overlapStart; frame < overlapEnd; ++frame)
-        {
-            const int localIdx = frame - startFrame;
-            if (frame < static_cast<int>(audioData.voicedMask.size()) && !audioData.voicedMask[frame])
-                continue;
-
-            float vib = note.getVibratoDepthSemitones() *
-                        std::sin(twoPi * note.getVibratoRateHz() * framesToSeconds(frame - note.getStartFrame()) +
-                                 note.getVibratoPhaseRadians());
-            adjustedF0[static_cast<size_t>(localIdx)] *= std::pow(2.0f, vib / 12.0f);
-        }
     }
 
     return adjustedF0;

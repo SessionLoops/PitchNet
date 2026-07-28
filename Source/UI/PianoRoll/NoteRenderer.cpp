@@ -1,4 +1,6 @@
 #include "NoteRenderer.h"
+#include "PitchToolController.h"
+#include "PitchToolHandles.h"
 #include "BoxSelector.h"
 #include "PitchEditor.h"
 #include "States/SelectHandler.h"
@@ -10,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -134,6 +137,56 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
        (boxSelector->isSelecting() || boxSelector->wasLastSelectionFromBox()));
 
   const auto &audioData = project->getAudioData();
+  const auto getSplitHoverLimits = [&](const Note &note)
+  {
+    int leftLimit = std::numeric_limits<int>::min();
+    int rightLimit = std::numeric_limits<int>::max();
+    if (!splitModeActive)
+      return std::pair {leftLimit, rightLimit};
+
+    std::vector<const Note *> timelineNotes;
+    for (const auto &candidate : project->getNotes())
+      if (!candidate.isRest())
+        timelineNotes.push_back(&candidate);
+    std::sort(timelineNotes.begin(), timelineNotes.end(),
+              [](const Note *left, const Note *right)
+              { return left->getStartFrame() < right->getStartFrame(); });
+
+    const auto &chunkRanges = audioData.segmentChunkRanges;
+    const auto getRegionIndex = [&chunkRanges](const Note &candidate)
+    {
+      if (chunkRanges.empty())
+        return 0;
+      const int midpoint = candidate.getStartFrame() +
+                           std::max(0, candidate.getDurationFrames()) / 2;
+      for (size_t i = 0; i < chunkRanges.size(); ++i)
+        if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)
+          return static_cast<int>(i);
+      return -1;
+    };
+
+    const auto it = std::find(timelineNotes.begin(), timelineNotes.end(), &note);
+    if (it == timelineNotes.end())
+      return std::pair {leftLimit, rightLimit};
+
+    const auto index = static_cast<size_t>(std::distance(timelineNotes.begin(), it));
+    const int noteRegion = getRegionIndex(note);
+    if (index > 0 && noteRegion >= 0 &&
+        getRegionIndex(*timelineNotes[index - 1]) == noteRegion)
+    {
+      leftLimit = static_cast<int>(std::lround(
+          0.5f * framesToSeconds(timelineNotes[index - 1]->getEndFrame() +
+                                  note.getStartFrame()) * pixelsPerSecond)) + 2;
+    }
+    if (index + 1 < timelineNotes.size() && noteRegion >= 0 &&
+        getRegionIndex(*timelineNotes[index + 1]) == noteRegion)
+    {
+      rightLimit = static_cast<int>(std::lround(
+          0.5f * framesToSeconds(note.getEndFrame() +
+                                  timelineNotes[index + 1]->getStartFrame()) * pixelsPerSecond)) - 2;
+    }
+    return std::pair {leftLimit, rightLimit};
+  };
   const float *globalSamples =
       (drawBodies || drawHoverShadow) && audioData.waveform.getNumSamples() > 0
           ? audioData.waveform.getReadPointer(0)
@@ -225,8 +278,18 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       if (isPreviewPlaybackNote)
         return;
 
-      const auto shadowBounds =
+      auto shadowBounds =
           getHighlightedShadowBounds(note, x, y, renderedWidth, w, h);
+      const float minimumHoverWidth = PitchToolHandles::buttonGroupWidth;
+      if (shadowBounds.getWidth() < minimumHoverWidth)
+      {
+        const float centerX = x + renderedWidth * 0.5f;
+        shadowBounds.setX(static_cast<int>(std::floor(centerX - minimumHoverWidth * 0.5f)));
+        shadowBounds.setWidth(static_cast<int>(std::ceil(minimumHoverWidth)));
+      }
+      const auto [leftLimit, rightLimit] = getSplitHoverLimits(note);
+      shadowBounds.setX(std::max(shadowBounds.getX(), leftLimit));
+      shadowBounds.setRight(std::min(shadowBounds.getRight(), rightLimit));
       g.setColour(juce::Colours::white.withAlpha(0.08f));
       g.fillRoundedRectangle(shadowBounds.toFloat(), 3.0f);
       return;
@@ -452,12 +515,39 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             draggedNotes->end();
     const bool shouldShowPitchTip =
         isSingleDragged || (isMultiDragged && hoveredMultiDragNote == &note);
-    if (drawOverlays && shouldShowPitchTip)
+    const bool isVibratoDragged =
+        pitchToolController && pitchToolController->isDraggingVibrato() &&
+        std::find(pitchToolController->getAffectedNotes().begin(),
+                  pitchToolController->getAffectedNotes().end(),
+                  &note) != pitchToolController->getAffectedNotes().end();
+    const bool isTiltDragged =
+        pitchToolController && pitchToolController->isDraggingTilt() &&
+        std::find(pitchToolController->getAffectedNotes().begin(),
+                  pitchToolController->getAffectedNotes().end(),
+                  &note) != pitchToolController->getAffectedNotes().end();
+    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged))
     {
-      const float deltaSemitones = note.getPitchOffset();
-      const juce::String prefix = deltaSemitones > 0.0f ? "+" : "";
-      const juce::String label =
-          prefix + juce::String(deltaSemitones, 1) + " st";
+      juce::String label;
+      if (isVibratoDragged)
+      {
+        label = juce::String(std::round(note.getVibrato() * 100.0f)) + " %";
+      }
+      else if (isTiltDragged)
+      {
+        const float tilt =
+            pitchToolController->getActiveHandleType() ==
+                    PitchToolHandles::HandleType::TiltLeft
+                ? note.getTiltLeft()
+                : note.getTiltRight();
+        const juce::String prefix = tilt > 0.0f ? "+" : "";
+        label = prefix + juce::String(tilt, 1) + " st";
+      }
+      else
+      {
+        const float deltaSemitones = note.getPitchOffset();
+        const juce::String prefix = deltaSemitones > 0.0f ? "+" : "";
+        label = prefix + juce::String(deltaSemitones, 1) + " st";
+      }
 
       constexpr float labelWidth = 60.0f;
       constexpr float labelHeight = 20.0f;
@@ -533,6 +623,64 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       const float rightY = coordMapper->midiToY(right.getAdjustedMidiNote());
       const float lineTop = std::min(leftY, rightY);
       const float lineBottom = std::max(leftY, rightY) + pixelsPerSemitone;
+
+      const bool hoveringMergeBoundary = splitHandler &&
+          splitHandler->isMergeBoundary(&left, &right);
+      if (hoveringMergeBoundary)
+      {
+        const int boundaryPixel = static_cast<int>(std::lround(boundaryX));
+        int firstHighlightLeft = std::numeric_limits<int>::min();
+        int secondHighlightRight = std::numeric_limits<int>::max();
+        if (i > 0 && getRegionIndex(*timelineNotes[i - 1]) == leftRegion)
+        {
+          firstHighlightLeft = static_cast<int>(std::lround(
+              0.5f * framesToSeconds(timelineNotes[i - 1]->getEndFrame() +
+                                      left.getStartFrame()) * pixelsPerSecond)) + 2;
+        }
+        if (i + 2 < timelineNotes.size() &&
+            getRegionIndex(*timelineNotes[i + 2]) == leftRegion)
+        {
+          secondHighlightRight = static_cast<int>(std::lround(
+              0.5f * framesToSeconds(right.getEndFrame() +
+                                      timelineNotes[i + 2]->getStartFrame()) * pixelsPerSecond)) - 2;
+        }
+
+        const auto highlightNote = [&](const Note &note, float noteY,
+                                       int leftLimit, int rightLimit)
+        {
+          const float noteX = framesToSeconds(note.getStartFrame()) * pixelsPerSecond;
+          const float noteWidth = framesToSeconds(note.getDurationFrames()) * pixelsPerSecond;
+          const float renderedWidth = std::max(noteWidth, 4.0f);
+          auto shadowBounds = getHighlightedShadowBounds(
+              note, noteX, noteY, renderedWidth, noteWidth, pixelsPerSemitone);
+          shadowBounds.setX(std::max(shadowBounds.getX(), leftLimit));
+          shadowBounds.setRight(std::min(shadowBounds.getRight(), rightLimit));
+          g.setColour(juce::Colours::white.withAlpha(0.08f));
+          g.fillRoundedRectangle(shadowBounds.toFloat(), 3.0f);
+        };
+
+        highlightNote(left, leftY, firstHighlightLeft, boundaryPixel);
+        highlightNote(right, rightY, boundaryPixel, secondHighlightRight);
+
+        const auto drawAdjacentBoundary = [&](const Note &first, const Note &second)
+        {
+          const float adjacentBoundaryX = 0.5f * framesToSeconds(
+              first.getEndFrame() + second.getStartFrame()) * pixelsPerSecond;
+          const float firstY = coordMapper->midiToY(first.getAdjustedMidiNote());
+          const float secondY = coordMapper->midiToY(second.getAdjustedMidiNote());
+          g.setColour(juce::Colour(0xFF9A9A9Au));
+          g.drawLine(adjacentBoundaryX, std::min(firstY, secondY),
+                     adjacentBoundaryX,
+                     std::max(firstY, secondY) + pixelsPerSemitone, 1.5f);
+        };
+        if (i > 0 && getRegionIndex(*timelineNotes[i - 1]) == leftRegion)
+          drawAdjacentBoundary(*timelineNotes[i - 1], left);
+        if (i + 2 < timelineNotes.size() &&
+            getRegionIndex(*timelineNotes[i + 2]) == leftRegion)
+          drawAdjacentBoundary(right, *timelineNotes[i + 2]);
+        continue;
+      }
+
       g.drawLine(boundaryX, lineTop, boundaryX, lineBottom, 1.5f);
     }
   }
@@ -552,14 +700,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       const float noteY = coordMapper->midiToY(guideNote->getAdjustedMidiNote());
       const float noteH = pixelsPerSemitone;
 
-      g.setColour(APP_COLOR_SECONDARY);
-      constexpr float dashLength = 4.0f;
-      for (float dy = 0; dy < noteH; dy += dashLength * 2)
-      {
-        const float segmentLength = std::min(dashLength, noteH - dy);
-        g.drawLine(guideX, noteY + dy, guideX,
-                   noteY + dy + segmentLength, 2.0f);
-      }
+      g.setColour(juce::Colour(0xFF9A9A9Au));
+      g.drawLine(guideX, noteY, guideX, noteY + noteH, 1.5f);
     }
   }
 }

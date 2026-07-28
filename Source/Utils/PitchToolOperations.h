@@ -16,13 +16,13 @@ std::vector<float> tiltDeltaPitch(const std::vector<float>& deltaPitch,
                                   float amount);
 
 /**
- * Scales deviations from the base MIDI note (zero).
+ * Scales deviations from the note center (zero delta pitch).
  *
  * `factor = 0` flattens to zero (base MIDI note) and `factor = 1` keeps
  * the original contour unchanged.
  */
-std::vector<float> reduceVariance(const std::vector<float>& deltaPitch,
-                                  float factor);
+std::vector<float> scaleVibrato(const std::vector<float>& deltaPitch,
+                                float factor);
 
 /**
  * Smooths one boundary to connect with adjacent pitch context.
@@ -58,14 +58,14 @@ struct AdjacentNoteContext
  * Applies all transformation parameters non-destructively.
  * 
  * This function chains multiple transformations in order:
- * 1. Variance scaling
+ * 1. Vibrato scaling
  * 2. Tilt (left and right combined)
  * 3. Boundary smoothing (left and right)
  * 
  * @param originalDelta The pristine deltaPitch curve from analysis (never modified)
  * @param tiltLeft Tilt amount at left edge in semitones
  * @param tiltRight Tilt amount at right edge in semitones
- * @param varianceScale Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
+ * @param vibrato Vibrato factor (1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert)
  * @param smoothLeftFrames Smoothing transition length at left boundary
  * @param smoothRightFrames Smoothing transition length at right boundary
  * @param adjacentContext Context for adjacent notes (for boundary smoothing)
@@ -74,7 +74,7 @@ struct AdjacentNoteContext
 std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
                                            float tiltLeft,
                                            float tiltRight,
-                                           float varianceScale,
+                                           float vibrato,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
                                            const AdjacentNoteContext& adjacentContext = {});

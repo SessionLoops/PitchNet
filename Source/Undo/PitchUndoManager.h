@@ -34,32 +34,38 @@ public:
     bool canUndo() const { return !undoStack.empty(); }
     bool canRedo() const { return !redoStack.empty(); }
     
-    void undo()
+    bool undo()
     {
-        if (undoStack.empty()) return;
+        if (undoStack.empty()) return false;
         
         auto action = std::move(undoStack.back());
         undoStack.pop_back();
         
+        const bool requiresResynthesis = action->requiresAudioResynthesis();
         action->undo();
         redoStack.push_back(std::move(action));
         
         if (onHistoryChanged)
             onHistoryChanged();
+
+        return requiresResynthesis;
     }
     
-    void redo()
+    bool redo()
     {
-        if (redoStack.empty()) return;
+        if (redoStack.empty()) return false;
         
         auto action = std::move(redoStack.back());
         redoStack.pop_back();
         
+        const bool requiresResynthesis = action->requiresAudioResynthesis();
         action->redo();
         undoStack.push_back(std::move(action));
         
         if (onHistoryChanged)
             onHistoryChanged();
+
+        return requiresResynthesis;
     }
     
     void clear()

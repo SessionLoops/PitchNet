@@ -132,8 +132,8 @@ private:
     // Note: Removed renderButton - Melodyne-style: automatic real-time processing
 
     // Edit mode buttons
-    ToolButton selectModeButton{"Select"};
-    ToolButton splitModeButton{"Split"};
+    ToggleButton selectModeButton;
+    ToggleButton splitModeButton;
     ToolButton followButton{"Follow"};
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;

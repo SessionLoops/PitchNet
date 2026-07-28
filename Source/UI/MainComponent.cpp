@@ -2258,13 +2258,13 @@ void MainComponent::undo()
 
   if (undoManager && undoManager->canUndo())
   {
-    undoManager->undo();
+    const bool requiresResynthesis = undoManager->undo();
     parameterPanel.updateFromNote();
     pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
     pianoRoll.repaint();
     pianoRollView.refreshOverview();
 
-    if (getProject())
+    if (requiresResynthesis && getProject())
     {
       // Don't mark all notes as dirty - let undo action callbacks handle
       // the specific dirty range. This avoids synthesizing the entire project.
@@ -2282,13 +2282,13 @@ void MainComponent::redo()
 {
   if (undoManager && undoManager->canRedo())
   {
-    undoManager->redo();
+    const bool requiresResynthesis = undoManager->redo();
     parameterPanel.updateFromNote();
     pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
     pianoRoll.repaint();
     pianoRollView.refreshOverview();
 
-    if (getProject())
+    if (requiresResynthesis && getProject())
     {
       // Don't mark all notes as dirty - let redo action callbacks handle
       // the specific dirty range. This avoids synthesizing the entire project.
