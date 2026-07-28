@@ -70,6 +70,7 @@ public:
   void mouseWheelMove(const juce::MouseEvent &e,
                       const juce::MouseWheelDetails &wheel) override;
   void mouseMagnify(const juce::MouseEvent &e, float scaleFactor) override;
+  void modifierKeysChanged(const juce::ModifierKeys &modifiers) override;
 
   // Focus handling - re-grab focus when lost (important for plugin mode)
   void focusLost(FocusChangeType cause) override;
@@ -239,6 +240,9 @@ private:
   bool isCanvasPoint(const juce::MouseEvent &e) const;
   bool isModifierZoomDrag(const juce::MouseEvent &e) const;
   void applyModifierZoomDrag(const juce::MouseEvent &e);
+  bool isModifierPanDrag(const juce::MouseEvent &e) const;
+  void applyModifierPanDrag(const juce::MouseEvent &e);
+  void updateMouseCursorForEditMode();
 
   Note *findNoteAt(float x, float y);
   Note *findPreviewButtonNoteAt(float x, float y) const;
@@ -346,6 +350,8 @@ private:
   juce::int64 lastDragRepaintTime = 0;
   bool modifierZoomDragActive = false;
   juce::Point<float> modifierZoomLastPosition;
+  bool modifierPanDragActive = false;
+  juce::Point<float> modifierPanLastPosition;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollComponent)
 };

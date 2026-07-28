@@ -21,10 +21,17 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
     return false;
   }
 
-  activeHandleType = handles.getHandle(hitIndex).type;
-  affectedNotes = selectedNotes;
-  if (affectedNotes.empty() && handles.getHandle(hitIndex).note)
-    affectedNotes.push_back(handles.getHandle(hitIndex).note);
+  const auto& handle = handles.getHandle(hitIndex);
+  activeHandleType = handle.type;
+
+  // The visible top controls belong to the hovered note. Prefer that explicit
+  // ownership over the current selection, which may still refer to a note the
+  // pointer just left while moving quickly between notes.
+  affectedNotes.clear();
+  if (handle.note)
+    affectedNotes.push_back(handle.note);
+  else
+    affectedNotes = selectedNotes;
   if (affectedNotes.empty())
     return false;
   

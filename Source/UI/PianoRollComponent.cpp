@@ -1029,7 +1029,7 @@ bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
 bool PianoRollComponent::isModifierZoomDrag(const juce::MouseEvent &e) const
 {
 #if JUCE_MAC
-  return e.mods.isAltDown();
+  return e.mods.isCommandDown();
 #else
   return e.mods.isCtrlDown();
 #endif
@@ -1082,6 +1082,28 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
     onZoomChanged(pixelsPerSecond);
 }
 
+bool PianoRollComponent::isModifierPanDrag(const juce::MouseEvent &e) const
+{
+  return e.mods.isAltDown();
+}
+
+void PianoRollComponent::applyModifierPanDrag(const juce::MouseEvent &e)
+{
+  const float deltaX = e.position.x - modifierPanLastPosition.x;
+  const float deltaY = e.position.y - modifierPanLastPosition.y;
+  modifierPanLastPosition = e.position;
+
+  if (std::abs(deltaX) < 0.01f && std::abs(deltaY) < 0.01f)
+    return;
+
+  const double previousScrollX = scrollX;
+  setScrollX(scrollX - static_cast<double>(deltaX));
+  setScrollY(scrollY - static_cast<double>(deltaY));
+
+  if (std::abs(scrollX - previousScrollX) >= 0.01 && onScrollChanged)
+    onScrollChanged(scrollX);
+}
+
 void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 {
   if (!project)
@@ -1094,6 +1116,14 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   {
     modifierZoomDragActive = true;
     modifierZoomLastPosition = e.position;
+    return;
+  }
+
+  if (isCanvasPoint(e) && isModifierPanDrag(e))
+  {
+    modifierPanDragActive = true;
+    modifierPanLastPosition = e.position;
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     return;
   }
 
@@ -1140,6 +1170,12 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   }
 
+  if (modifierPanDragActive)
+  {
+    applyModifierPanDrag(e);
+    return;
+  }
+
   // Throttle repaints during drag to ~60fps max
   juce::int64 now = juce::Time::getMillisecondCounter();
   bool shouldRepaint = (now - lastDragRepaintTime) >= minDragRepaintInterval;
@@ -1179,6 +1215,14 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
     return;
   }
 
+  if (modifierPanDragActive)
+  {
+    modifierPanDragActive = false;
+    if (!e.mods.isAltDown())
+      updateMouseCursorForEditMode();
+    return;
+  }
+
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
@@ -1196,6 +1240,12 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 {
+  if (isCanvasPoint(e) && e.mods.isAltDown())
+  {
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    return;
+  }
+
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
@@ -1264,6 +1314,21 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
                        ? getMergeMouseCursor()
                        : getSplitMouseCursor());
   }
+}
+
+void PianoRollComponent::modifierKeysChanged(
+    const juce::ModifierKeys &modifiers)
+{
+  const auto mousePosition = getMouseXYRelative();
+  const bool mouseOverCanvas =
+      mousePosition.x >= pianoKeysWidth && mousePosition.y >= headerHeight &&
+      mousePosition.x < pianoKeysWidth + getVisibleContentWidth() &&
+      mousePosition.y < headerHeight + getVisibleContentHeight();
+
+  if ((modifiers.isAltDown() && mouseOverCanvas) || modifierPanDragActive)
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+  else
+    updateMouseCursorForEditMode();
 }
 
 void PianoRollComponent::mouseExit(const juce::MouseEvent &)
@@ -2185,34 +2250,7 @@ void PianoRollComponent::setEditMode(EditMode mode)
     splitHandler_->clearGuide();
   }
 
-  // Change cursor based on mode
-  if (mode == EditMode::Draw)
-  {
-    // Create a custom pen cursor
-    // Simple pen icon: 16x16 pixels with pen tip at bottom-left
-    juce::Image penImage(juce::Image::ARGB, 16, 16, true);
-    juce::Graphics g(penImage);
-
-    // Draw a simple pen shape
-    g.setColour(juce::Colours::white);
-    // Pen body (diagonal line from top-right to bottom-left)
-    g.drawLine(12.0f, 2.0f, 2.0f, 12.0f, 2.0f);
-    // Pen tip (small triangle at bottom-left)
-    juce::Path tip;
-    tip.addTriangle(0.0f, 14.0f, 4.0f, 10.0f, 2.0f, 12.0f);
-    g.fillPath(tip);
-
-    // Set hotspot at pen tip (bottom-left corner)
-    setMouseCursor(juce::MouseCursor(penImage, 0, 14));
-  }
-  else if (mode == EditMode::Split)
-  {
-    setMouseCursor(getSplitMouseCursor());
-  }
-  else
-  {
-    setMouseCursor(juce::MouseCursor::NormalCursor);
-  }
+  updateMouseCursorForEditMode();
 
   // Update currentHandler_ based on the new mode
   switch (mode)
@@ -2237,6 +2275,37 @@ void PianoRollComponent::setEditMode(EditMode mode)
   updatePitchToolHandlesFromSelection();
 
   repaint();
+}
+
+void PianoRollComponent::updateMouseCursorForEditMode()
+{
+  if (editMode == EditMode::Draw)
+  {
+    // Create a custom pen cursor
+    // Simple pen icon: 16x16 pixels with pen tip at bottom-left
+    juce::Image penImage(juce::Image::ARGB, 16, 16, true);
+    juce::Graphics g(penImage);
+
+    // Draw a simple pen shape
+    g.setColour(juce::Colours::white);
+    // Pen body (diagonal line from top-right to bottom-left)
+    g.drawLine(12.0f, 2.0f, 2.0f, 12.0f, 2.0f);
+    // Pen tip (small triangle at bottom-left)
+    juce::Path tip;
+    tip.addTriangle(0.0f, 14.0f, 4.0f, 10.0f, 2.0f, 12.0f);
+    g.fillPath(tip);
+
+    // Set hotspot at pen tip (bottom-left corner)
+    setMouseCursor(juce::MouseCursor(penImage, 0, 14));
+  }
+  else if (editMode == EditMode::Split)
+  {
+    setMouseCursor(getSplitMouseCursor());
+  }
+  else
+  {
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+  }
 }
 
 std::vector<Note *> PianoRollComponent::getSelectedNotes() const
