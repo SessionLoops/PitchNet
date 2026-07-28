@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
-project(PitchNet VERSION 0.2.0)
+project(PitchNet VERSION 0.3.0)
 
 include(FetchContent)
 include(cmake/Asio.cmake)
