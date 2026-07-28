@@ -39,6 +39,18 @@ namespace
                           juce::Graphics::highResamplingQuality);
   }
 
+  const juce::MouseCursor& getSplitMouseCursor()
+  {
+    static const juce::MouseCursor cursor(createSplitCursorImage(), 10, 8);
+    return cursor;
+  }
+
+  const juce::MouseCursor& getMergeMouseCursor()
+  {
+    static const juce::MouseCursor cursor(createMergeCursorImage(), 10, 8);
+    return cursor;
+  }
+
   using pianoRollView::getScaleAccentColour;
   using pianoRollView::isBlackKey;
   using pianoRollView::ScaleToneState;
@@ -1103,10 +1115,13 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
 
-  if (auto *note = findPreviewButtonNoteAt(adjustedX, adjustedY))
+  if (editMode == EditMode::Select)
   {
-    triggerPreviewForNote(*note);
-    return;
+    if (auto *note = findPreviewButtonNoteAt(adjustedX, adjustedY))
+    {
+      triggerPreviewForNote(*note);
+      return;
+    }
   }
 
   // Delegate to current mode handler
@@ -1244,12 +1259,10 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   // Apply this last so loop-timeline handling cannot replace the Split cursor.
   if (editMode == EditMode::Split)
   {
-    static const auto splitCursorImage = createSplitCursorImage();
-    static const auto mergeCursorImage = createMergeCursorImage();
     const bool hoveringMergeBoundary = splitHandler_ && splitHandler_->isHoveringMergeBoundary();
     setMouseCursor(hoveringMergeBoundary
-                       ? juce::MouseCursor(mergeCursorImage, 10, 8)
-                       : juce::MouseCursor(splitCursorImage, 10, 8));
+                       ? getMergeMouseCursor()
+                       : getSplitMouseCursor());
   }
 }
 
@@ -2194,8 +2207,7 @@ void PianoRollComponent::setEditMode(EditMode mode)
   }
   else if (mode == EditMode::Split)
   {
-    static const auto splitCursorImage = createSplitCursorImage();
-    setMouseCursor(juce::MouseCursor(splitCursorImage, 10, 8));
+    setMouseCursor(getSplitMouseCursor());
   }
   else
   {
@@ -2454,7 +2466,8 @@ void PianoRollComponent::updatePreviewButtonBounds()
                        pitchEditor->isDraggingMultiNotes() ||
                        pitchEditor->isDrawingPitch()));
 
-  if (!hoveredNote || !project || isChangingPitch)
+  if (!hoveredNote || !project || editMode != EditMode::Select ||
+      isChangingPitch)
   {
     previewButton.setVisible(false);
     resetButton.setVisible(false);
