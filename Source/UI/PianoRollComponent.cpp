@@ -1250,13 +1250,46 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
   Note *noteUnderMouse = nullptr;
-  const bool overCurrentPitchToolLayout =
-      hoveredNote && pitchToolHandles && !pitchToolHandles->isEmpty() &&
-      pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
-  if (overCurrentPitchToolLayout)
-    noteUnderMouse = hoveredNote;
-  else if (e.y >= headerHeight && e.x >= pianoKeysWidth)
-    noteUnderMouse = findNoteAt(adjustedX, adjustedY);
+  Note *noteAtPointer = nullptr;
+  if (e.y >= headerHeight && e.x >= pianoKeysWidth)
+    noteAtPointer = findNoteAt(adjustedX, adjustedY);
+
+  bool overCurrentHoverLayout = false;
+  bool overCurrentControl = false;
+  bool withinCurrentNoteEdges = false;
+  if (hoveredNote)
+  {
+    auto hoverLayoutBounds = getPreviewHoverBounds(*hoveredNote);
+    if (pitchToolHandles && !pitchToolHandles->isEmpty())
+    {
+      hoverLayoutBounds = hoverLayoutBounds.getUnion(
+          pitchToolHandles->getLayoutBounds());
+      overCurrentControl =
+          pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
+    }
+
+    const float noteLeft = static_cast<float>(
+        framesToSeconds(hoveredNote->getStartFrame()) * pixelsPerSecond);
+    const float noteRight = noteLeft + static_cast<float>(
+        framesToSeconds(hoveredNote->getDurationFrames()) * pixelsPerSecond);
+    withinCurrentNoteEdges = adjustedX >= noteLeft && adjustedX < noteRight;
+
+    // Keep this note active through the gaps between the top controls, the
+    // note hover background, and the preview/reset controls.
+    overCurrentHoverLayout = hoverLayoutBounds.expanded(4.0f).contains(
+        adjustedX, adjustedY);
+  }
+  if (overCurrentHoverLayout)
+  {
+    // The horizontal padding around a note must not block a neighbouring note
+    // from becoming hovered. Controls themselves remain pinned to their owner.
+    noteUnderMouse = !withinCurrentNoteEdges && !overCurrentControl &&
+            noteAtPointer && noteAtPointer != hoveredNote
+        ? noteAtPointer
+        : hoveredNote;
+  }
+  else
+    noteUnderMouse = noteAtPointer;
   if (!noteUnderMouse)
     noteUnderMouse = findPreviewButtonNoteAt(adjustedX, adjustedY);
   if (!noteUnderMouse && hoveredNote && pitchToolHandles &&

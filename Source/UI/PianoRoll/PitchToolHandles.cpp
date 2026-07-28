@@ -167,14 +167,18 @@ int PitchToolHandles::hitTest(float worldX, float worldY, float tolerance) const
 
 bool PitchToolHandles::containsLayoutPoint(float worldX, float worldY) const
 {
+  return getLayoutBounds().contains(worldX, worldY);
+}
+
+juce::Rectangle<float> PitchToolHandles::getLayoutBounds() const
+{
   if (handles.empty())
-    return false;
+    return {};
 
   auto layoutBounds = handles.front().bounds;
   for (size_t i = 1; i < handles.size(); ++i)
     layoutBounds = layoutBounds.getUnion(handles[i].bounds);
-
-  return layoutBounds.contains(worldX, worldY);
+  return layoutBounds;
 }
 
 void PitchToolHandles::addHandle(HandleType type, float worldX, float worldY, Note* note) {

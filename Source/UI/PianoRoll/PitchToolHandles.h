@@ -59,6 +59,9 @@ public:
   /** Whether a point lies inside the full three-control layout, including gaps. */
   bool containsLayoutPoint(float worldX, float worldY) const;
 
+  /** Bounding box of the full three-control layout. */
+  juce::Rectangle<float> getLayoutBounds() const;
+
   /**
    * Get handle at index.
    */
