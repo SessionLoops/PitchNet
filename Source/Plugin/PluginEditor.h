@@ -20,6 +20,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void timerCallback() override;
+    void parentHierarchyChanged() override;
 
 #if JucePlugin_Enable_ARA
     juce::AudioProcessorEditorARAExtension* getARAClientExtensions() override;
@@ -49,12 +50,14 @@ private:
 
     void requestMainViewKeyboardFocus();
     void requestMainViewKeyboardFocusAsync();
+    void applyLunaSoftwareRenderer();
 
     PitchNetAudioProcessor& audioProcessor;
     std::unique_ptr<IMainView> mainView;
     double lastSyncedHostPlayheadSeconds = 0.0;
     bool lastSyncedHostPlayState = false;
     bool hasSyncedHostPlayhead = false;
+    bool lunaSoftwareRendererApplied = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchNetAudioProcessorEditor)
 };

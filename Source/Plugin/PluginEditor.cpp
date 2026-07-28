@@ -1,11 +1,26 @@
 #include "PluginEditor.h"
 #include "HostCompatibility.h"
 #include "../Models/Project.h"
+#include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
 
 #if JucePlugin_Enable_ARA
 #include "ARADocumentController.h"
 #endif
+
+namespace
+{
+bool isLunaHostProcess()
+{
+#if JUCE_WINDOWS
+  const auto host = juce::File::getSpecialLocation(
+      juce::File::hostApplicationPath);
+  return host.getFileNameWithoutExtension().equalsIgnoreCase("LUNA");
+#else
+  return false;
+#endif
+}
+} // namespace
 
 PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
     PitchNetAudioProcessor &p)
@@ -586,9 +601,16 @@ void PitchNetAudioProcessorEditor::resized() {
   requestMainViewKeyboardFocusAsync();
 }
 
+void PitchNetAudioProcessorEditor::parentHierarchyChanged() {
+  AudioProcessorEditor::parentHierarchyChanged();
+  applyLunaSoftwareRenderer();
+}
+
 void PitchNetAudioProcessorEditor::visibilityChanged() {
-  if (isVisible())
+  if (isVisible()) {
+    applyLunaSoftwareRenderer();
     requestMainViewKeyboardFocusAsync();
+  }
 }
 
 void PitchNetAudioProcessorEditor::mouseDown(const juce::MouseEvent &e) {
@@ -617,7 +639,34 @@ void PitchNetAudioProcessorEditor::requestMainViewKeyboardFocus() {
 void PitchNetAudioProcessorEditor::requestMainViewKeyboardFocusAsync() {
   juce::Component::SafePointer<PitchNetAudioProcessorEditor> safeThis(this);
   juce::MessageManager::callAsync([safeThis]() {
-    if (safeThis != nullptr)
+    if (safeThis != nullptr) {
+      safeThis->applyLunaSoftwareRenderer();
       safeThis->requestMainViewKeyboardFocus();
+    }
   });
+}
+
+void PitchNetAudioProcessorEditor::applyLunaSoftwareRenderer() {
+#if JUCE_WINDOWS
+  if (lunaSoftwareRendererApplied || !isLunaHostProcess())
+    return;
+
+  auto *peer = getPeer();
+  if (!peer)
+    return;
+
+  const auto engines = peer->getAvailableRenderingEngines();
+  const int softwareRenderer = engines.indexOf("Software Renderer");
+  if (softwareRenderer < 0) {
+    lunaSoftwareRendererApplied = true;
+    LOG("LUNA host detected, but JUCE software renderer is unavailable");
+    return;
+  }
+
+  lunaSoftwareRendererApplied = true;
+  if (peer->getCurrentRenderingEngine() != softwareRenderer)
+    peer->setCurrentRenderingEngine(softwareRenderer);
+
+  LOG("LUNA host detected: forcing JUCE software renderer");
+#endif
 }
