@@ -3071,7 +3071,9 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
 
       // Edit mode commands
       CommandIDs::toggleDrawMode,
-      CommandIDs::exitDrawMode};
+      CommandIDs::exitDrawMode,
+      CommandIDs::activateMainTool,
+      CommandIDs::activateSplitTool};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
 }
@@ -3208,6 +3210,21 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setActive(pianoRoll.getEditMode() == EditMode::Draw);
     break;
 
+  case CommandIDs::activateMainTool:
+    result.setInfo("Main Tool", "Activate the main editing tool", "Edit Mode", 0);
+    result.addDefaultKeypress('1', juce::ModifierKeys::noModifiers);
+    result.setActive(project != nullptr);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::Select);
+    break;
+
+  case CommandIDs::activateSplitTool:
+    result.setInfo("Note Separation Tool", "Activate the note separation tool",
+                   "Edit Mode", 0);
+    result.addDefaultKeypress('2', juce::ModifierKeys::noModifiers);
+    result.setActive(project != nullptr);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
+    break;
+
   default:
     break;
   }
@@ -3333,6 +3350,14 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     {
       setEditMode(EditMode::Select);
     }
+    return true;
+
+  case CommandIDs::activateMainTool:
+    setEditMode(EditMode::Select);
+    return true;
+
+  case CommandIDs::activateSplitTool:
+    setEditMode(EditMode::Split);
     return true;
 
   default:

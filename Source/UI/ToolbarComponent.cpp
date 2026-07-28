@@ -96,8 +96,8 @@ ToolbarComponent::ToolbarComponent()
     };
 
     // Set localized text (tooltips for icon buttons)
-    selectModeButton.setTooltip(TR("toolbar.select"));
-    splitModeButton.setTooltip(TR("toolbar.split"));
+    selectModeButton.setTooltip("Main Tool (Shortcut: 1)");
+    splitModeButton.setTooltip("Note Separation Tool (Shortcut: 2)");
     followButton.setTooltip(TR("toolbar.follow"));
     quantizeButton.setTooltip("Correct Pitch Macro");
     auditionButton.setTooltip("Live Audition On/Off");
