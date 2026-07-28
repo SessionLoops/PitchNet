@@ -137,7 +137,7 @@ public:
                      juce::AudioProcessor::ProcessingPrecision,
                      AlwaysNonRealtime alwaysNonRealtime) override;
   void releaseResources() override;
-  bool processBlock(t
+  bool processBlock(
       juce::AudioBuffer<float> &buffer, juce::AudioProcessor::Realtime realtime,
       const juce::AudioPlayHead::PositionInfo &positionInfo) noexcept override;
 
