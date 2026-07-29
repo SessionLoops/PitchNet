@@ -91,7 +91,13 @@ public:
 private:
   std::vector<Handle> handles;
   int hoveredHandleIndex = -1;
+  // Keep decoded icon data scoped to the component instead of function-local
+  // statics, which can outlive the plug-in editor in Windows hosts.
+  juce::Image leftTiltIcon;
+  juce::Image vibratoIcon;
+  juce::Image rightTiltIcon;
 
   void addHandle(HandleType type, float worldX, float worldY, Note* note = nullptr);
   juce::Colour getColorForType(HandleType type) const;
+  const juce::Image& getIconForType(HandleType type) const;
 };

@@ -13,23 +13,12 @@ juce::Image loadIcon(const char* resourceName)
   return data ? juce::ImageFileFormat::loadFrom(data, size) : juce::Image();
 }
 
-const juce::Image& iconFor(PitchToolHandles::HandleType type)
-{
-  static const auto leftTilt = loadIcon("ltilt_png");
-  static const auto vibrato = loadIcon("vibrato_png");
-  static const auto rightTilt = loadIcon("rtilt_png");
-  switch (type)
-  {
-    case PitchToolHandles::HandleType::TiltLeft: return leftTilt;
-    case PitchToolHandles::HandleType::Vibrato: return vibrato;
-    case PitchToolHandles::HandleType::TiltRight: return rightTilt;
-    default: return vibrato;
-  }
-}
-
 } // namespace
 
-PitchToolHandles::PitchToolHandles() {
+PitchToolHandles::PitchToolHandles()
+    : leftTiltIcon(loadIcon("ltilt_png")),
+      vibratoIcon(loadIcon("vibrato_png")),
+      rightTiltIcon(loadIcon("rtilt_png")) {
   // Initialize (currently empty, but reserve space)
   handles.reserve(20);  // Typical max handles for multi-note selection
 }
@@ -143,7 +132,7 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
       g.fillPath(path);
     }
 
-    const auto& icon = iconFor(handle.type);
+    const auto& icon = getIconForType(handle.type);
     if (icon.isValid())
     {
       const float iconWidth = icon.getWidth() * 0.5f;
@@ -153,6 +142,20 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
                   iconWidth, iconHeight, 0, 0, icon.getWidth(),
                   icon.getHeight());
     }
+  }
+}
+
+const juce::Image&
+PitchToolHandles::getIconForType(HandleType type) const {
+  switch (type) {
+    case HandleType::TiltLeft:
+      return leftTiltIcon;
+    case HandleType::Vibrato:
+      return vibratoIcon;
+    case HandleType::TiltRight:
+      return rightTiltIcon;
+    default:
+      return vibratoIcon;
   }
 }
 
