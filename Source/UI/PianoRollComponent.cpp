@@ -39,18 +39,6 @@ namespace
                           juce::Graphics::highResamplingQuality);
   }
 
-  const juce::MouseCursor& getSplitMouseCursor()
-  {
-    static const juce::MouseCursor cursor(createSplitCursorImage(), 10, 8);
-    return cursor;
-  }
-
-  const juce::MouseCursor& getMergeMouseCursor()
-  {
-    static const juce::MouseCursor cursor(createMergeCursorImage(), 10, 8);
-    return cursor;
-  }
-
   using pianoRollView::getScaleAccentColour;
   using pianoRollView::isBlackKey;
   using pianoRollView::ScaleToneState;
@@ -160,6 +148,8 @@ namespace
 }
 
 PianoRollComponent::PianoRollComponent()
+    : splitMouseCursor(createSplitCursorImage(), 10, 8),
+      mergeMouseCursor(createMergeCursorImage(), 10, 8)
 {
   // Initialize modular components
   coordMapper = std::make_unique<CoordinateMapper>();
@@ -1343,9 +1333,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (editMode == EditMode::Split)
   {
     const bool hoveringMergeBoundary = splitHandler_ && splitHandler_->isHoveringMergeBoundary();
-    setMouseCursor(hoveringMergeBoundary
-                       ? getMergeMouseCursor()
-                       : getSplitMouseCursor());
+    setMouseCursor(hoveringMergeBoundary ? mergeMouseCursor
+                                         : splitMouseCursor);
   }
 }
 
@@ -2333,7 +2322,7 @@ void PianoRollComponent::updateMouseCursorForEditMode()
   }
   else if (editMode == EditMode::Split)
   {
-    setMouseCursor(getSplitMouseCursor());
+    setMouseCursor(splitMouseCursor);
   }
   else
   {

@@ -66,6 +66,7 @@ public:
             instance.customTypeface = nullptr;
             instance.fontLoaded = false;
             instance.initialized = false;
+            juce::Typeface::clearTypefaceCache();
         }
     }
 

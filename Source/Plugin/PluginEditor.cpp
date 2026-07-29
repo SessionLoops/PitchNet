@@ -24,15 +24,15 @@ bool isLunaHostProcess()
 
 PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
     PitchNetAudioProcessor &p)
-    : AudioProcessorEditor(&p), audioProcessor(p),
-      mainView(createMainView(false))
+    : AudioProcessorEditor(&p), audioProcessor(p)
 #if JucePlugin_Enable_ARA
       ,
       AudioProcessorEditorARAExtension(&p)
 #endif
 {
-  // Initialize UI resources
+  // Fonts must exist before MainComponent constructs labels that retain them.
   initializeUiResources();
+  mainView = createMainView(false);
 
   // Enable keyboard focus for the editor and the main view. This is required so
   // that when the host forwards a key event (see the IPlugView::onKeyDown patch
@@ -105,6 +105,11 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
     audioProcessor.getTransportController().clearCallbacks();
     audioProcessor.setMainComponent(nullptr);
   }
+
+  // Destroy all components (and their retained Font/Typeface objects) before
+  // releasing the final shared UI resources. This is especially important for
+  // DirectWrite memory fonts when a Windows host unloads the plugin DLL.
+  mainView.reset();
   shutdownUiResources();
 }
 

@@ -307,6 +307,8 @@ private:
 
   // Edit mode
   EditMode &editMode = viewState.editMode;
+  juce::MouseCursor splitMouseCursor;
+  juce::MouseCursor mergeMouseCursor;
 
   // View settings
   bool &showDeltaPitch = viewState.showDeltaPitch;
