@@ -389,7 +389,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // output frame range [startFrame, endFrame), PLUS margin samples on
           // each side so that composeGlobalWaveform() can crossfade with real
           // audio instead of held-value extrapolation at note boundaries.
-          constexpr int kSynthMarginSamples = 256; // margin each side
+          constexpr int kSynthMarginSamples = 512; // margin each side
           constexpr int kAdjacentFrameTolerance = 1;
 
           const bool hasF0DirtyRange = f0DirtyStart >= 0 && f0DirtyEnd >= 0;

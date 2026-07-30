@@ -684,52 +684,104 @@ void Project::composeGlobalWaveform()
         }
     }
 
-    constexpr int kGapFadeSamples = 512;   // ~11.6ms — crossfade to base at gaps
-    constexpr int kSpliceFadeSamples = 64; // ~1.5ms  — minimal fade at synth-synth edges
+    // Synth/original fades are centred on the note boundary: 512 samples of
+    // real synth margin outside the note and 512 samples inside the note.
+    // Adjacent synth notes still use the dedicated short splice in Step 6.
+    constexpr int kGapFadeHalfSamples = 512;
+    constexpr int kSpliceFadeSamples = 64; // ~1.5ms — minimal fade at synth-synth edges
 
     for (const auto &si : synthInfos)
     {
         const auto &synthWave = si.note->getSynthWaveform();
         const int preroll = si.preroll;
-        // The synthWaveform global start (including preroll margin)
-        const int synthGlobalStart = si.bodyStartSample - preroll;
         const int synthTotalLen = si.synthTotalLen;
+        const int postroll =
+            std::max(0, synthTotalLen - preroll - si.bodySamples);
+        const int leftOutside =
+            si.leftAdjacentSynth
+                ? 0
+                : std::min(kGapFadeHalfSamples, std::max(0, preroll));
+        const int rightOutside =
+            si.rightAdjacentSynth
+                ? 0
+                : std::min(kGapFadeHalfSamples, postroll);
 
-        // Choose fade lengths per edge
-        const int leftFadeReq = si.leftAdjacentSynth ? kSpliceFadeSamples : kGapFadeSamples;
-        const int rightFadeReq = si.rightAdjacentSynth ? kSpliceFadeSamples : kGapFadeSamples;
-        const int maxFade = std::max(1, si.bodySamples / 4);
-        const int leftFade = std::min(leftFadeReq, maxFade);
-        const int rightFade = std::min(rightFadeReq, maxFade);
-
-        // We overlay only the body portion [preroll .. preroll+bodySamples)
-        // The margin is reserved for Step 6 crossfade.
+        // Non-adjacent edges extend into the stored synth margins so the
+        // original/synth fade straddles the boundary. Adjacent edges remain
+        // inside the note body; Step 6 replaces their junction with a direct
+        // synth-to-synth splice.
+        const int overlayStart = -leftOutside;
+        const int overlayEnd = si.bodySamples + rightOutside;
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float *dst = waveform.getWritePointer(ch);
 
-            for (int i = 0; i < si.bodySamples; ++i)
+            for (int i = overlayStart; i < overlayEnd; ++i)
             {
                 const int globalIdx = si.bodyStartSample + i;
                 if (globalIdx < 0 || globalIdx >= totalSamples)
                     continue;
 
-                // Asymmetric edge envelope
-                float env = 1.0f;
-                if (i < leftFade && leftFade > 1)
+                float leftEnv = 1.0f;
+                if (si.leftAdjacentSynth)
                 {
-                    const float t = static_cast<float>(i) /
-                                    static_cast<float>(leftFade);
-                    env = t * t * (3.0f - 2.0f * t); // smoothstep
+                    if (i < kSpliceFadeSamples)
+                    {
+                        const float t = juce::jlimit(
+                            0.0f, 1.0f,
+                            static_cast<float>(i) /
+                                static_cast<float>(kSpliceFadeSamples));
+                        leftEnv = t * t * (3.0f - 2.0f * t);
+                    }
                 }
-                else if (i >= si.bodySamples - rightFade && rightFade > 1)
+                else if (i < kGapFadeHalfSamples)
                 {
-                    const int fromEnd = si.bodySamples - 1 - i;
-                    const float t = static_cast<float>(fromEnd) /
-                                    static_cast<float>(rightFade);
-                    env = t * t * (3.0f - 2.0f * t);
+                    const int fadeLength =
+                        leftOutside + kGapFadeHalfSamples;
+                    const float t = fadeLength > 0
+                                        ? juce::jlimit(
+                                              0.0f, 1.0f,
+                                              static_cast<float>(
+                                                  i + leftOutside) /
+                                                  static_cast<float>(
+                                                      fadeLength))
+                                        : 1.0f;
+                    leftEnv = t * t * (3.0f - 2.0f * t);
                 }
 
+                float rightEnv = 1.0f;
+                if (si.rightAdjacentSynth)
+                {
+                    const int fadeStart =
+                        si.bodySamples - kSpliceFadeSamples;
+                    if (i >= fadeStart)
+                    {
+                        const float t = juce::jlimit(
+                            0.0f, 1.0f,
+                            static_cast<float>(si.bodySamples - i) /
+                                static_cast<float>(kSpliceFadeSamples));
+                        rightEnv = t * t * (3.0f - 2.0f * t);
+                    }
+                }
+                else if (i >= si.bodySamples - kGapFadeHalfSamples)
+                {
+                    const int fadeLength =
+                        kGapFadeHalfSamples + rightOutside;
+                    const float t = fadeLength > 0
+                                        ? juce::jlimit(
+                                              0.0f, 1.0f,
+                                              static_cast<float>(
+                                                  si.bodySamples +
+                                                  rightOutside - i) /
+                                                  static_cast<float>(
+                                                      fadeLength))
+                                        : 1.0f;
+                    rightEnv = t * t * (3.0f - 2.0f * t);
+                }
+
+                // min() also handles very short notes whose centred edge
+                // windows overlap, without either fade overwriting the other.
+                const float env = std::min(leftEnv, rightEnv);
                 const int synthIdx = preroll + i;
                 if (synthIdx < 0 || synthIdx >= si.synthTotalLen)
                     continue;
