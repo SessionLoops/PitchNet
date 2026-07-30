@@ -4,6 +4,114 @@
 #include <cmath>
 #include <cstdint>
 
+namespace {
+constexpr int kAdjacentFrameTolerance = 1;
+
+struct EditedClusterSelection {
+  std::vector<uint8_t> members;
+  int startFrame = -1;
+  int endFrame = -1;
+};
+
+EditedClusterSelection
+selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
+                           int f0DirtyStart, int f0DirtyEnd) {
+  const auto &notes = project.getNotes();
+  EditedClusterSelection selection;
+  selection.members.assign(notes.size(), uint8_t{0});
+
+  const bool hasF0DirtyRange = f0DirtyStart >= 0 && f0DirtyEnd >= 0;
+  auto isF0Anchor = [&](const Note &note) {
+    return !hasDirtyNoteAnchors && hasF0DirtyRange &&
+           note.getStartFrame() < f0DirtyEnd &&
+           note.getEndFrame() > f0DirtyStart;
+  };
+  auto isSeed = [&](const Note &note) {
+    if (note.isRest())
+      return false;
+    if (isF0Anchor(note))
+      return true;
+    return note.isDirty() && !note.isNeutralForOriginalWaveform();
+  };
+  auto isEditedClusterCandidate = [&](const Note &note) {
+    if (note.isRest())
+      return false;
+
+    // A dirty neutral note is being reset. It must discard its cache and split
+    // the edited cluster instead of pulling its neighbours into the new pass.
+    if (note.isDirty() && note.isNeutralForOriginalWaveform() &&
+        !isF0Anchor(note))
+      return false;
+
+    return isF0Anchor(note) || note.hasSynthWaveform() ||
+           !note.isNeutralForOriginalWaveform();
+  };
+  auto areAdjacent = [&](size_t leftIndex, size_t rightIndex) {
+    const auto &left = notes[leftIndex];
+    const auto &right = notes[rightIndex];
+    return right.getStartFrame() - left.getEndFrame() <=
+           kAdjacentFrameTolerance;
+  };
+
+  std::vector<size_t> sortedIndices;
+  sortedIndices.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i)
+    if (!notes[i].isRest())
+      sortedIndices.push_back(i);
+  std::sort(sortedIndices.begin(), sortedIndices.end(),
+            [&](size_t a, size_t b) {
+              return notes[a].getStartFrame() < notes[b].getStartFrame();
+            });
+
+  // Every dirty/F0-edited note seeds a component. Walk transitively through
+  // adjacent edited notes so a whole connected phrase is refreshed from one
+  // continuous vocoder pass, not merely the immediate neighbours.
+  for (size_t seedPosition = 0; seedPosition < sortedIndices.size();
+       ++seedPosition) {
+    const size_t seedIndex = sortedIndices[seedPosition];
+    if (!isSeed(notes[seedIndex]))
+      continue;
+
+    selection.members[seedIndex] = 1;
+
+    size_t leftPosition = seedPosition;
+    while (leftPosition > 0) {
+      const size_t candidateIndex = sortedIndices[leftPosition - 1];
+      const size_t currentIndex = sortedIndices[leftPosition];
+      if (!isEditedClusterCandidate(notes[candidateIndex]) ||
+          !areAdjacent(candidateIndex, currentIndex))
+        break;
+      selection.members[candidateIndex] = 1;
+      --leftPosition;
+    }
+
+    size_t rightPosition = seedPosition;
+    while (rightPosition + 1 < sortedIndices.size()) {
+      const size_t currentIndex = sortedIndices[rightPosition];
+      const size_t candidateIndex = sortedIndices[rightPosition + 1];
+      if (!isEditedClusterCandidate(notes[candidateIndex]) ||
+          !areAdjacent(currentIndex, candidateIndex))
+        break;
+      selection.members[candidateIndex] = 1;
+      ++rightPosition;
+    }
+  }
+
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (selection.members[i] == 0)
+      continue;
+    const auto &note = notes[i];
+    if (selection.startFrame < 0 ||
+        note.getStartFrame() < selection.startFrame)
+      selection.startFrame = note.getStartFrame();
+    if (selection.endFrame < 0 || note.getEndFrame() > selection.endFrame)
+      selection.endFrame = note.getEndFrame();
+  }
+
+  return selection;
+}
+} // namespace
+
 IncrementalSynthesizer::IncrementalSynthesizer() = default;
 
 IncrementalSynthesizer::~IncrementalSynthesizer() { cancel(); }
@@ -198,8 +306,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
   const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
   const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
+  auto editedClusters = selectConnectedEditedNotes(
+      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
+  if (editedClusters.startFrame >= 0)
+    dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
+  if (editedClusters.endFrame >= 0)
+    dirtyEnd = std::max(dirtyEnd, editedClusters.endFrame);
 
-  // Compute synthesis range (voiced segments + padding)
+  // Compute synthesis range after expanding to complete connected edited-note
+  // clusters, then add voiced-segment context and padding.
   auto [startFrame, endFrame] = computeSynthesisRange(dirtyStart, dirtyEnd);
   startFrame = std::max(0, startFrame);
   endFrame =
@@ -270,6 +385,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
   int capturedStartFrame = startFrame;
   int capturedEndFrame = endFrame;
+  const size_t capturedNoteCount = project->getNotes().size();
   auto capturedCancelFlag = cancelFlag;
   auto capturedProject = project;
 
@@ -279,6 +395,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
+       capturedNoteCount, clusterMembers = std::move(editedClusters.members),
        blendMask = std::move(blendMask),
        originalSegment = std::move(originalSegment)](
           std::vector<float> synthesizedAudio) {
@@ -300,7 +417,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         std::thread([this, capturedCancelFlag, capturedProject,
                      capturedStartFrame, capturedEndFrame, hopSize,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
-                     f0DirtyStart, f0DirtyEnd, blendMask, originalSegment,
+                     f0DirtyStart, f0DirtyEnd, capturedNoteCount,
+                     clusterMembers, blendMask, originalSegment,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
           if (currentJobId != jobId.load())
             return;
@@ -313,6 +431,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           auto &audioData = capturedProject->getAudioData();
+          if (capturedProject->getNotes().size() != capturedNoteCount ||
+              clusterMembers.size() != capturedNoteCount) {
+            isBusy = false;
+            if (onComplete)
+              juce::MessageManager::callAsync(
+                  [onComplete]() { onComplete(false); });
+            return;
+          }
           int totalSamples = audioData.waveform.getNumSamples();
           int startSample = capturedStartFrame * hopSize;
           int expectedSamples =
@@ -390,8 +516,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // each side so that composeGlobalWaveform() can crossfade with real
           // audio instead of held-value extrapolation at note boundaries.
           constexpr int kSynthMarginSamples = 512; // margin each side
-          constexpr int kAdjacentFrameTolerance = 1;
-
           const bool hasF0DirtyRange = f0DirtyStart >= 0 && f0DirtyEnd >= 0;
           auto overlapsF0DirtyRange = [&](const Note &note) {
             return hasF0DirtyRange && note.getStartFrame() < f0DirtyEnd &&
@@ -407,25 +531,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             // notes overlapping the F0 dirty range are the edited anchors.
             return !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
           };
-          auto isDirectlyAdjacentToAnchor = [&](const Note &candidate) {
-            for (const auto &anchor : capturedProject->getNotes()) {
-              if (&anchor == &candidate || !isCommitAnchor(anchor))
-                continue;
 
-              const int gapAfterCandidate =
-                  anchor.getStartFrame() - candidate.getEndFrame();
-              const int gapBeforeCandidate =
-                  candidate.getStartFrame() - anchor.getEndFrame();
-              if ((gapAfterCandidate >= 0 &&
-                   gapAfterCandidate <= kAdjacentFrameTolerance) ||
-                  (gapBeforeCandidate >= 0 &&
-                   gapBeforeCandidate <= kAdjacentFrameTolerance))
-                return true;
-            }
-            return false;
-          };
-
-          for (auto &note : capturedProject->getNotes()) {
+          auto &notes = capturedProject->getNotes();
+          for (size_t noteIndex = 0; noteIndex < notes.size(); ++noteIndex) {
+            auto &note = notes[noteIndex];
             if (note.isRest())
               continue;
 
@@ -436,20 +545,23 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (overlapEnd <= overlapStart)
               continue;
 
-            // Only commit rendered context back to edited notes, or to
-            // uncached notes that are directly adjacent to edited anchors.
+            // Refresh every member of an adjacency-connected edited cluster
+            // from this same continuous pass. Anchors outside a cluster (most
+            // notably neutral reset notes) still need commit handling.
+            const bool isF0Anchor =
+                !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
             const bool shouldCommit =
-                isCommitAnchor(note) ||
-              (!note.hasSynthWaveform() &&
-                               !note.isNeutralForOriginalWaveform() &&
-                               isDirectlyAdjacentToAnchor(note));
+                isCommitAnchor(note) || clusterMembers[noteIndex] != 0;
             if (!shouldCommit)
               continue;
 
-              if (note.isNeutralForOriginalWaveform()) {
-                            note.discardSynthWaveform();
-                            continue;
-                          }
+            // A normal neutral anchor is a reset, so restore original audio.
+            // A direct-F0 anchor can be neutral in its note parameters while
+            // still carrying a real curve edit and therefore needs a cache.
+            if (note.isNeutralForOriginalWaveform() && !isF0Anchor) {
+              note.discardSynthWaveform();
+              continue;
+            }
 
             // Full note range in samples (the "body")
             const int noteStartSample = noteStart * hopSize;
