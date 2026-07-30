@@ -42,7 +42,11 @@ struct AudioData
 
     // Extracted features
     std::vector<std::vector<float>> melSpectrogram;      // [T, NUM_MELS]
-    std::vector<float> f0;                               // [T] (composed: base + delta, dense)
+    // Pitch analysis stages, all aligned to the vocoder/mel frame grid.
+    std::vector<float> rawF0;                            // [T] detector observations (0 = unvoiced)
+    std::vector<float> cleanedF0;                        // [T] rawF0 after isolated-jump repair
+    std::vector<float> denseF0;                          // [T] cleanedF0 with log-domain UV interpolation
+    std::vector<float> f0;                               // [T] current composed/edited dense F0
     std::vector<float> baseF0;                           // [T] (cached base pitch in Hz)
     std::vector<float> basePitch;                        // [T] base pitch in MIDI (dense)
     std::vector<float> deltaPitch;                       // [T] delta pitch in MIDI (dense)

@@ -912,6 +912,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
 
   const bool splitModeActive = editMode == EditMode::Split;
   noteRenderer->setHoveredNote(hoveredNote);
+  noteRenderer->setShowNoteFramesDebug(showNoteFramesDebug);
   noteRenderer->setPreviewPlaybackState(previewPlaybackActive,
                                         previewPlaybackStartFrame,
                                         previewPlaybackEndFrame,
@@ -926,6 +927,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
   params.showBasePitch = showBasePitch;
   params.showUvInterpolationDebug = showUvInterpolationDebug;
   params.showActualF0Debug = showActualF0Debug;
+  params.showCleanedF0Debug = showCleanedF0Debug;
+  params.showVocoderF0Debug = showVocoderF0Debug;
   params.hidePitchCurves = false;
   params.componentWidth = getWidth();
   pitchCurveRenderer->draw(g, params);

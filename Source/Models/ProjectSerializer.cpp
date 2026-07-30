@@ -8,7 +8,7 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 2;
+constexpr int kProjectArchiveVersion = 3;
 
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
@@ -274,7 +274,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
 
     const int formatVersion =
         static_cast<int>(json.getProperty("formatVersion", 1));
-    if (formatVersion != 1 && formatVersion != FORMAT_VERSION)
+    if (formatVersion != 1 && formatVersion != 2 &&
+        formatVersion != FORMAT_VERSION)
         return false;
 
     // Metadata
@@ -506,6 +507,9 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
         !writeAudioBuffer(out, audioData.waveform) ||
         !writeAudioBuffer(out, audioData.originalWaveform) ||
         !writeFloatVector(out, audioData.f0) ||
+        !writeFloatVector(out, audioData.rawF0) ||
+        !writeFloatVector(out, audioData.cleanedF0) ||
+        !writeFloatVector(out, audioData.denseF0) ||
         !writeFloatVector(out, audioData.baseF0) ||
         !writeFloatVector(out, audioData.basePitch) ||
         !writeFloatVector(out, audioData.deltaPitch) ||
@@ -563,7 +567,8 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
     if (static_cast<std::uint32_t>(in.readInt()) != kProjectArchiveMagic)
         return false;
     const int archiveVersion = in.readInt();
-    if (archiveVersion != 1 && archiveVersion != kProjectArchiveVersion)
+    if (archiveVersion != 1 && archiveVersion != 2 &&
+        archiveVersion != kProjectArchiveVersion)
         return false;
 
     const auto metadataJson = readString(in);
@@ -574,8 +579,17 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
     auto& audioData = project.getAudioData();
     if (!readAudioBuffer(in, audioData.waveform) ||
         !readAudioBuffer(in, audioData.originalWaveform) ||
-        !readFloatVector(in, audioData.f0) ||
-        !readFloatVector(in, audioData.baseF0) ||
+        !readFloatVector(in, audioData.f0))
+        return false;
+
+    if (archiveVersion >= 3) {
+        if (!readFloatVector(in, audioData.rawF0) ||
+            !readFloatVector(in, audioData.cleanedF0) ||
+            !readFloatVector(in, audioData.denseF0))
+            return false;
+    }
+
+    if (!readFloatVector(in, audioData.baseF0) ||
         !readFloatVector(in, audioData.basePitch) ||
         !readFloatVector(in, audioData.deltaPitch) ||
         !readBoolVector(in, audioData.voicedMask) ||
@@ -662,6 +676,18 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
 
     if (audioData.baseF0.empty())
         audioData.baseF0 = audioData.f0;
+    if (audioData.rawF0.empty()) {
+        audioData.rawF0 = audioData.f0;
+        if (audioData.voicedMask.size() == audioData.rawF0.size()) {
+            for (size_t i = 0; i < audioData.rawF0.size(); ++i)
+                if (!audioData.voicedMask[i])
+                    audioData.rawF0[i] = 0.0f;
+        }
+    }
+    if (audioData.cleanedF0.empty())
+        audioData.cleanedF0 = audioData.rawF0;
+    if (audioData.denseF0.empty())
+        audioData.denseF0 = audioData.f0;
 
     project.setModified(false);
     return true;
@@ -789,6 +815,9 @@ juce::var ProjectSerializer::pitchDataToJson(const AudioData& audioData) {
 
     // Store as compact strings for efficiency
     obj->setProperty("f0", floatArrayToString(audioData.f0, 2));
+    obj->setProperty("rawF0", floatArrayToString(audioData.rawF0, 2));
+    obj->setProperty("cleanedF0", floatArrayToString(audioData.cleanedF0, 2));
+    obj->setProperty("denseF0", floatArrayToString(audioData.denseF0, 2));
     obj->setProperty("baseF0", floatArrayToString(audioData.baseF0, 2));
     obj->setProperty("basePitch", floatArrayToString(audioData.basePitch, 4));
     obj->setProperty("deltaPitch", floatArrayToString(audioData.deltaPitch, 4));
@@ -803,6 +832,12 @@ bool ProjectSerializer::pitchDataFromJson(AudioData& audioData, const juce::var&
         return false;
 
     audioData.f0 = stringToFloatArray(json.getProperty("f0", "").toString());
+    audioData.rawF0 =
+        stringToFloatArray(json.getProperty("rawF0", "").toString());
+    audioData.cleanedF0 =
+        stringToFloatArray(json.getProperty("cleanedF0", "").toString());
+    audioData.denseF0 =
+        stringToFloatArray(json.getProperty("denseF0", "").toString());
     audioData.baseF0 = stringToFloatArray(json.getProperty("baseF0", "").toString());
     if (audioData.baseF0.empty())
         audioData.baseF0 = audioData.f0; // Backward compatibility
@@ -810,6 +845,19 @@ bool ProjectSerializer::pitchDataFromJson(AudioData& audioData, const juce::var&
     audioData.deltaPitch = stringToFloatArray(json.getProperty("deltaPitch", "").toString());
     audioData.voicedMask = stringToBoolArray(json.getProperty("voicedMask", "").toString());
     audioData.vadMask = stringToBoolArray(json.getProperty("vadMask", "").toString());
+
+    if (audioData.rawF0.empty()) {
+        audioData.rawF0 = audioData.f0;
+        if (audioData.voicedMask.size() == audioData.rawF0.size()) {
+            for (size_t i = 0; i < audioData.rawF0.size(); ++i)
+                if (!audioData.voicedMask[i])
+                    audioData.rawF0[i] = 0.0f;
+        }
+    }
+    if (audioData.cleanedF0.empty())
+        audioData.cleanedF0 = audioData.rawF0;
+    if (audioData.denseF0.empty())
+        audioData.denseF0 = audioData.f0;
 
     return true;
 }

@@ -73,14 +73,20 @@ public:
   void setShowBasePitch(bool show) { showBasePitch = show; }
   void setShowSegmentsDebug(bool show) { showSegmentsDebug = show; }
   void setShowGameValuesDebug(bool show) { showGameValuesDebug = show; }
+  void setShowNoteFramesDebug(bool show) { showNoteFramesDebug = show; }
   void setShowUvInterpolationDebug(bool show) { showUvInterpolationDebug = show; }
   void setShowActualF0Debug(bool show) { showActualF0Debug = show; }
+  void setShowCleanedF0Debug(bool show) { showCleanedF0Debug = show; }
+  void setShowVocoderF0Debug(bool show) { showVocoderF0Debug = show; }
   bool getShowDeltaPitch() const { return showDeltaPitch; }
   bool getShowBasePitch() const { return showBasePitch; }
   bool getShowSegmentsDebug() const { return showSegmentsDebug; }
   bool getShowGameValuesDebug() const { return showGameValuesDebug; }
+  bool getShowNoteFramesDebug() const { return showNoteFramesDebug; }
   bool getShowUvInterpolationDebug() const { return showUvInterpolationDebug; }
   bool getShowActualF0Debug() const { return showActualF0Debug; }
+  bool getShowCleanedF0Debug() const { return showCleanedF0Debug; }
+  bool getShowVocoderF0Debug() const { return showVocoderF0Debug; }
 
   // Callbacks
   std::function<void()> onSettingsChanged;
@@ -108,8 +114,11 @@ private:
   bool showBasePitch = false;
   bool showSegmentsDebug = false;
   bool showGameValuesDebug = false;
+  bool showNoteFramesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
+  bool showCleanedF0Debug = false;
+  bool showVocoderF0Debug = false;
   bool followSystemAudioOutput = true;
   juce::String preferredAudioOutputDevice;
   juce::String skippedUpdateVersion;

@@ -828,59 +828,49 @@ void EditorController::analyzeAudio(
   }
 
   {
-    audioData.f0.resize(targetFrames);
+    audioData.rawF0.assign(static_cast<size_t>(targetFrames), 0.0f);
+    audioData.voicedMask.assign(static_cast<size_t>(targetFrames), false);
 
     const double neuralFrameTime = 160.0 / 16000.0;
     const double vocoderFrameTime =
         static_cast<double>(HOP_SIZE) /
         static_cast<double>(std::max(1, audioData.sampleRate));
+    const int sourceFrameCount = static_cast<int>(extractedF0.size());
 
     for (int i = 0; i < targetFrames; ++i)
     {
-      double vocoderTime = i * vocoderFrameTime;
-      double neuralFramePos = vocoderTime / neuralFrameTime;
-      int srcIdx = static_cast<int>(neuralFramePos);
-      double frac = neuralFramePos - srcIdx;
+      const double vocoderTime = i * vocoderFrameTime;
+      const double neuralFramePos = vocoderTime / neuralFrameTime;
+      const int leftIdx = std::clamp(static_cast<int>(std::floor(neuralFramePos)),
+                                     0, sourceFrameCount - 1);
+      const int rightIdx = std::min(leftIdx + 1, sourceFrameCount - 1);
+      const int nearestIdx = std::clamp(
+          static_cast<int>(std::llround(neuralFramePos)), 0,
+          sourceFrameCount - 1);
+      const double frac =
+          std::clamp(neuralFramePos - std::floor(neuralFramePos), 0.0, 1.0);
 
-      if (srcIdx + 1 < static_cast<int>(extractedF0.size()))
-      {
-        float f0_a = extractedF0[srcIdx];
-        float f0_b = extractedF0[srcIdx + 1];
+      // Resample the detector's U/V decision independently from pitch. This
+      // prevents a nearby positive F0 from turning an originally unvoiced
+      // target frame into a voiced one.
+      const bool isVoiced = extractedF0[static_cast<size_t>(nearestIdx)] > 0.0f;
+      audioData.voicedMask[static_cast<size_t>(i)] = isVoiced;
+      if (!isVoiced)
+        continue;
 
-        if (f0_a > 0.0f && f0_b > 0.0f)
-        {
-          float logF0_a = std::log(f0_a);
-          float logF0_b = std::log(f0_b);
-          float logF0_interp = logF0_a * (1.0 - frac) + logF0_b * frac;
-          audioData.f0[i] = std::exp(logF0_interp);
-        }
-        else if (f0_a > 0.0f)
-        {
-          audioData.f0[i] = f0_a;
-        }
-        else if (f0_b > 0.0f)
-        {
-          audioData.f0[i] = f0_b;
-        }
-        else
-        {
-          audioData.f0[i] = 0.0f;
-        }
-      }
-      else if (srcIdx < static_cast<int>(extractedF0.size()))
+      const float leftF0 = extractedF0[static_cast<size_t>(leftIdx)];
+      const float rightF0 = extractedF0[static_cast<size_t>(rightIdx)];
+      if (leftF0 > 0.0f && rightF0 > 0.0f && leftIdx != rightIdx)
       {
-        audioData.f0[i] = extractedF0[srcIdx];
+        const float logF0 = static_cast<float>(
+            std::log(leftF0) * (1.0 - frac) + std::log(rightF0) * frac);
+        audioData.rawF0[static_cast<size_t>(i)] = std::exp(logF0);
       }
       else
       {
-        audioData.f0[i] = extractedF0.back() > 0.0f ? extractedF0.back() : 0.0f;
+        audioData.rawF0[static_cast<size_t>(i)] =
+            extractedF0[static_cast<size_t>(nearestIdx)];
       }
-    }
-
-    audioData.voicedMask.resize(audioData.f0.size());
-    for (size_t i = 0; i < audioData.f0.size(); ++i)
-    {
-      audioData.voicedMask[i] = audioData.f0[i] > 0;
     }
 
     // Compute energy-based VAD mask (captures consonants)
@@ -888,7 +878,7 @@ void EditorController::analyzeAudio(
       constexpr float kVadThreshold = 0.008f;
       const float *vadSamples = audioData.waveform.getReadPointer(0);
       const int vadNumSamples = audioData.waveform.getNumSamples();
-      const int vadNumFrames = static_cast<int>(audioData.f0.size());
+      const int vadNumFrames = static_cast<int>(audioData.rawF0.size());
       audioData.vadMask.resize(vadNumFrames);
       for (int vi = 0; vi < vadNumFrames; ++vi)
       {
@@ -907,10 +897,12 @@ void EditorController::analyzeAudio(
       }
     }
 
-    onProgress(0.325, "Smoothing pitch curve...");
-    audioData.f0 = F0Smoother::smoothF0(audioData.f0, audioData.voicedMask);
-    audioData.f0 = PitchCurveProcessor::interpolateWithUvMask(
-        audioData.f0, audioData.voicedMask);
+    onProgress(0.325, "Preparing pitch curve...");
+    audioData.cleanedF0 =
+        F0Smoother::removeOutliers(audioData.rawF0, 1.5f);
+    audioData.denseF0 = PitchCurveProcessor::interpolateWithUvMask(
+        audioData.cleanedF0, audioData.voicedMask);
+    audioData.f0 = audioData.denseF0;
   }
 
   onProgress(0.375, TR("progress.loading_vocoder"));
@@ -973,6 +965,10 @@ void EditorController::analyzeAudioAsync(
 
       project->getAudioData().melSpectrogram =
           projectCopy->getAudioData().melSpectrogram;
+      project->getAudioData().rawF0 = projectCopy->getAudioData().rawF0;
+      project->getAudioData().cleanedF0 =
+          projectCopy->getAudioData().cleanedF0;
+      project->getAudioData().denseF0 = projectCopy->getAudioData().denseF0;
       project->getAudioData().f0 = projectCopy->getAudioData().f0;
       project->getAudioData().voicedMask =
           projectCopy->getAudioData().voicedMask;

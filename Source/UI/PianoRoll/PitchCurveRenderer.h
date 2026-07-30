@@ -24,6 +24,8 @@ public:
     bool showBasePitch;
     bool showUvInterpolationDebug;
     bool showActualF0Debug;
+    bool showCleanedF0Debug;
+    bool showVocoderF0Debug;
     bool hidePitchCurves = false;
     int componentWidth;
   };

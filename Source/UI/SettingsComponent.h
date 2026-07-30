@@ -49,8 +49,11 @@ public:
   std::function<void(PitchDetectorType)> onPitchDetectorChanged;
   std::function<void(bool)> onShowSegmentsDebugChanged;
   std::function<void(bool)> onShowGameValuesDebugChanged;
+  std::function<void(bool)> onShowNoteFramesDebugChanged;
   std::function<void(bool)> onShowUvInterpolationDebugChanged;
   std::function<void(bool)> onShowActualF0DebugChanged;
+  std::function<void(bool)> onShowCleanedF0DebugChanged;
+  std::function<void(bool)> onShowVocoderF0DebugChanged;
   std::function<bool()> canChangeDevice;
 
   // Load/save settings
@@ -146,10 +149,16 @@ private:
   juce::ToggleButton segmentsDebugToggle;
   juce::Label gameValuesDebugLabel;
   juce::ToggleButton gameValuesDebugToggle;
+  juce::Label noteFramesDebugLabel;
+  juce::ToggleButton noteFramesDebugToggle;
   juce::Label uvInterpolationDebugLabel;
   juce::ToggleButton uvInterpolationDebugToggle;
   juce::Label actualF0DebugLabel;
   juce::ToggleButton actualF0DebugToggle;
+  juce::Label cleanedF0DebugLabel;
+  juce::ToggleButton cleanedF0DebugToggle;
+  juce::Label vocoderF0DebugLabel;
+  juce::ToggleButton vocoderF0DebugToggle;
 
   juce::Label infoLabel;
 
@@ -178,8 +187,11 @@ private:
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   bool showSegmentsDebug = false;
   bool showGameValuesDebug = false;
+  bool showNoteFramesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
+  bool showCleanedF0Debug = false;
+  bool showVocoderF0Debug = false;
   SettingsTab activeTab = SettingsTab::General;
   juce::TextButton generalTabButton;
   juce::TextButton audioTabButton;

@@ -29,8 +29,11 @@ struct PianoRollViewState
   bool showBasePitch = false;
   bool showSegmentsDebug = false;
   bool showGameValuesDebug = false;
+  bool showNoteFramesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
+  bool showCleanedF0Debug = false;
+  bool showVocoderF0Debug = false;
   bool snapToSemitoneDrag = false;
   DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
 

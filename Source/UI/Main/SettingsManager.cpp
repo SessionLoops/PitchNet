@@ -143,12 +143,21 @@ void SettingsManager::loadConfig()
         else if (configObj->hasProperty("showSomeValuesDebug"))
           showGameValuesDebug =
               static_cast<bool>(configObj->getProperty("showSomeValuesDebug"));
+        if (configObj->hasProperty("showNoteFramesDebug"))
+          showNoteFramesDebug =
+              static_cast<bool>(configObj->getProperty("showNoteFramesDebug"));
         if (configObj->hasProperty("showUvInterpolationDebug"))
           showUvInterpolationDebug =
               static_cast<bool>(configObj->getProperty("showUvInterpolationDebug"));
         if (configObj->hasProperty("showActualF0Debug"))
           showActualF0Debug =
               static_cast<bool>(configObj->getProperty("showActualF0Debug"));
+        if (configObj->hasProperty("showCleanedF0Debug"))
+          showCleanedF0Debug =
+              static_cast<bool>(configObj->getProperty("showCleanedF0Debug"));
+        if (configObj->hasProperty("showVocoderF0Debug"))
+          showVocoderF0Debug =
+              static_cast<bool>(configObj->getProperty("showVocoderF0Debug"));
         if (configObj->hasProperty("followSystemAudioOutput"))
           followSystemAudioOutput =
               static_cast<bool>(configObj->getProperty("followSystemAudioOutput"));
@@ -193,8 +202,11 @@ void SettingsManager::saveConfig()
   config->setProperty("showBasePitch", showBasePitch);
   config->setProperty("showSegmentsDebug", showSegmentsDebug);
   config->setProperty("showGameValuesDebug", showGameValuesDebug);
+  config->setProperty("showNoteFramesDebug", showNoteFramesDebug);
   config->setProperty("showUvInterpolationDebug", showUvInterpolationDebug);
   config->setProperty("showActualF0Debug", showActualF0Debug);
+  config->setProperty("showCleanedF0Debug", showCleanedF0Debug);
+  config->setProperty("showVocoderF0Debug", showVocoderF0Debug);
   config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
   config->setProperty("preferredAudioOutputDevice", preferredAudioOutputDevice);
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);

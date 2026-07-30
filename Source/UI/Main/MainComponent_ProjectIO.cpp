@@ -144,6 +144,18 @@ void MainComponent::openProjectFile(const juce::File &file) {
                   for (size_t i = 0; i < audioData.f0.size(); ++i)
                     audioData.voicedMask[i] = audioData.f0[i] > 0.0f;
                 }
+                if (audioData.rawF0.empty()) {
+                  audioData.rawF0 = audioData.f0;
+                  if (audioData.voicedMask.size() == audioData.rawF0.size()) {
+                    for (size_t i = 0; i < audioData.rawF0.size(); ++i)
+                      if (!audioData.voicedMask[i])
+                        audioData.rawF0[i] = 0.0f;
+                  }
+                }
+                if (audioData.cleanedF0.empty())
+                  audioData.cleanedF0 = audioData.rawF0;
+                if (audioData.denseF0.empty())
+                  audioData.denseF0 = audioData.f0;
 
                 if (audioData.basePitch.empty() || audioData.deltaPitch.empty()) {
                   if (!audioData.f0.empty()) {

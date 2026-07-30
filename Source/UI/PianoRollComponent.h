@@ -171,6 +171,11 @@ public:
     showGameValuesDebug = show;
     repaint();
   }
+  void setShowNoteFramesDebug(bool show)
+  {
+    showNoteFramesDebug = show;
+    repaint();
+  }
   void setShowUvInterpolationDebug(bool show)
   {
     showUvInterpolationDebug = show;
@@ -179,6 +184,16 @@ public:
   void setShowActualF0Debug(bool show)
   {
     showActualF0Debug = show;
+    repaint();
+  }
+  void setShowCleanedF0Debug(bool show)
+  {
+    showCleanedF0Debug = show;
+    repaint();
+  }
+  void setShowVocoderF0Debug(bool show)
+  {
+    showVocoderF0Debug = show;
     repaint();
   }
   bool getShowDeltaPitch() const { return showDeltaPitch; }
@@ -315,8 +330,11 @@ private:
   bool &showBasePitch = viewState.showBasePitch;
   bool &showSegmentsDebug = viewState.showSegmentsDebug;
   bool &showGameValuesDebug = viewState.showGameValuesDebug;
+  bool &showNoteFramesDebug = viewState.showNoteFramesDebug;
   bool &showUvInterpolationDebug = viewState.showUvInterpolationDebug;
   bool &showActualF0Debug = viewState.showActualF0Debug;
+  bool &showCleanedF0Debug = viewState.showCleanedF0Debug;
+  bool &showVocoderF0Debug = viewState.showVocoderF0Debug;
   bool &snapToSemitoneDrag = viewState.snapToSemitoneDrag;
   DragSnapMode &dragSnapMode = viewState.dragSnapMode;
   int &pitchReferenceHz = viewState.pitchReferenceHz;

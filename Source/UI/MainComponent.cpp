@@ -455,10 +455,16 @@ MainComponent::MainComponent(bool enableAudioDevice)
       settingsManager->getShowSegmentsDebug());
   pianoRoll.setShowGameValuesDebug(
       settingsManager->getShowGameValuesDebug());
+  pianoRoll.setShowNoteFramesDebug(
+      settingsManager->getShowNoteFramesDebug());
   pianoRoll.setShowUvInterpolationDebug(
       settingsManager->getShowUvInterpolationDebug());
   pianoRoll.setShowActualF0Debug(
       settingsManager->getShowActualF0Debug());
+  pianoRoll.setShowCleanedF0Debug(
+      settingsManager->getShowCleanedF0Debug());
+  pianoRoll.setShowVocoderF0Debug(
+      settingsManager->getShowVocoderF0Debug());
   pianoRollView.setShowSegmentsDebug(
       settingsManager->getShowSegmentsDebug());
   pianoRollView.onAutoZoomRequested = [this]()
@@ -2442,6 +2448,17 @@ void MainComponent::showSettings()
       pianoRoll.setShowGameValuesDebug(show);
       pianoRoll.repaint();
     };
+    settingsOverlay->getSettingsComponent()->onShowNoteFramesDebugChanged =
+        [this](bool show)
+    {
+      if (settingsManager)
+      {
+        settingsManager->setShowNoteFramesDebug(show);
+        settingsManager->saveConfig();
+      }
+      pianoRoll.setShowNoteFramesDebug(show);
+      pianoRoll.repaint();
+    };
     settingsOverlay->getSettingsComponent()->onShowUvInterpolationDebugChanged =
         [this](bool show)
     {
@@ -2462,6 +2479,28 @@ void MainComponent::showSettings()
         settingsManager->saveConfig();
       }
       pianoRoll.setShowActualF0Debug(show);
+      pianoRoll.repaint();
+    };
+    settingsOverlay->getSettingsComponent()->onShowCleanedF0DebugChanged =
+        [this](bool show)
+    {
+      if (settingsManager)
+      {
+        settingsManager->setShowCleanedF0Debug(show);
+        settingsManager->saveConfig();
+      }
+      pianoRoll.setShowCleanedF0Debug(show);
+      pianoRoll.repaint();
+    };
+    settingsOverlay->getSettingsComponent()->onShowVocoderF0DebugChanged =
+        [this](bool show)
+    {
+      if (settingsManager)
+      {
+        settingsManager->setShowVocoderF0Debug(show);
+        settingsManager->saveConfig();
+      }
+      pianoRoll.setShowVocoderF0Debug(show);
       pianoRoll.repaint();
     };
   }
@@ -2709,6 +2748,9 @@ void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
   repadBuffer(audioData.waveform);
   repadBuffer(audioData.originalWaveform);
   repadMel(audioData.melSpectrogram);
+  repadFloatVector(audioData.rawF0);
+  repadFloatVector(audioData.cleanedF0);
+  repadFloatVector(audioData.denseF0);
   repadFloatVector(audioData.f0);
   repadFloatVector(audioData.baseF0);
   repadFloatVector(audioData.basePitch);

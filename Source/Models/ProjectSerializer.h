@@ -13,7 +13,7 @@
  */
 class ProjectSerializer {
 public:
-    static constexpr int FORMAT_VERSION = 2;
+    static constexpr int FORMAT_VERSION = 3;
 
     /**
      * Save project to JSON file.

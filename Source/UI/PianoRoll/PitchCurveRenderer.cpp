@@ -98,189 +98,176 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
 
   const float globalOffset = project->getGlobalPitchOffset();
 
-  // Draw pitch curves per note with their pitch offsets applied (delta pitch)
+  // Draw the same composed pitch used by synthesis. basePitch already includes
+  // any per-note pitch offset, including the live drag preview.
   if (params.showDeltaPitch)
   {
     g.setColour(APP_COLOR_PITCH_CURVE);
-    if (params.showUvInterpolationDebug)
+
+    juce::Path path;
+    bool pathStarted = false;
+    auto strokeCurrentPath = [&]()
     {
-      const double visibleStartTime = scrollX / pixelsPerSecond;
-      const double visibleEndTime = (scrollX + params.componentWidth) / pixelsPerSecond;
-      const int visStartFrame = std::max(
-          0,
-          static_cast<int>(visibleStartTime * audioData.sampleRate / HOP_SIZE));
-      const int visEndFrame = std::min(
-          static_cast<int>(audioData.f0.size()),
-          static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
+      if (pathStarted)
+        g.strokePath(path, juce::PathStrokeType(2.0f));
+      path.clear();
+      pathStarted = false;
+    };
 
-      const auto &chunkRanges = audioData.segmentChunkRanges;
-      size_t chunkIdx = 0;
+    const auto &chunkRanges = audioData.segmentChunkRanges;
+    auto getRegionIndex = [&chunkRanges](const Note &note)
+    {
+      if (chunkRanges.empty())
+        return 0;
 
-      juce::Path path;
-      bool pathStarted = false;
-      for (int i = visStartFrame; i < visEndFrame; ++i)
+      const int midpoint = note.getStartFrame() +
+                           std::max(0, note.getDurationFrames()) / 2;
+      for (size_t i = 0; i < chunkRanges.size(); ++i)
       {
-        bool inChunk = true;
-        if (!chunkRanges.empty())
-        {
-          while (chunkIdx < chunkRanges.size() &&
-                 chunkRanges[chunkIdx].second <= i)
-            ++chunkIdx;
-          inChunk = chunkIdx < chunkRanges.size() &&
-                    chunkRanges[chunkIdx].first <= i &&
-                    chunkRanges[chunkIdx].second > i;
-        }
-        if (!inChunk)
-        {
-          pathStarted = false;
-          continue;
-        }
+        if (midpoint >= chunkRanges[i].first &&
+            midpoint < chunkRanges[i].second)
+          return static_cast<int>(i);
+      }
+      return -1;
+    };
 
-        const float baseMidi =
+    bool hasPreviousNote = false;
+    int previousEndFrame = -1;
+    int previousRegion = -1;
+
+    for (const auto &note : project->getNotes())
+    {
+      if (note.isRest())
+        continue;
+
+      const int startFrame = note.getStartFrame();
+      const int endFrame =
+          std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
+      const int currentRegion = getRegionIndex(note);
+      const bool continuesPreviousPath =
+          hasPreviousNote && startFrame == previousEndFrame &&
+          currentRegion >= 0 && currentRegion == previousRegion;
+
+      if (!continuesPreviousPath)
+        strokeCurrentPath();
+
+      for (int i = startFrame; i < endFrame; ++i)
+      {
+        float baseMidi =
             (i < static_cast<int>(audioData.basePitch.size()))
                 ? audioData.basePitch[static_cast<size_t>(i)]
                 : ((i < static_cast<int>(audioData.f0.size()) &&
                     audioData.f0[static_cast<size_t>(i)] > 0.0f)
                        ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
                        : 0.0f);
-        const float deltaMidi = (i < static_cast<int>(audioData.deltaPitch.size()))
-                                    ? audioData.deltaPitch[static_cast<size_t>(i)]
-                                    : 0.0f;
+
+        const float deltaMidi =
+            (i < static_cast<int>(audioData.deltaPitch.size()))
+                ? audioData.deltaPitch[static_cast<size_t>(i)]
+                : 0.0f;
         const float finalMidi = baseMidi + deltaMidi + globalOffset;
 
-        if (finalMidi <= 0.0f)
+        if (finalMidi > 0.0f)
         {
-          pathStarted = false;
-          continue;
-        }
-
-        const float x = framesToSeconds(i) * pixelsPerSecond;
-        const float y = coordMapper->midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
-        if (!pathStarted)
-        {
-          path.startNewSubPath(x, y);
-          pathStarted = true;
+          const float x = framesToSeconds(i) * pixelsPerSecond;
+          const float y = coordMapper->midiToY(finalMidi) +
+                          pixelsPerSemitone * 0.5f;
+          if (!pathStarted)
+          {
+            path.startNewSubPath(x, y);
+            pathStarted = true;
+          }
+          else
+          {
+            path.lineTo(x, y);
+          }
         }
         else
         {
-          path.lineTo(x, y);
+          strokeCurrentPath();
         }
       }
-      g.strokePath(path, juce::PathStrokeType(2.0f));
+
+      hasPreviousNote = true;
+      previousEndFrame = endFrame;
+      previousRegion = currentRegion;
     }
-    else
-    {
-      const bool useLiveBasePreview =
-          selectHandler && pitchEditor &&
-          (selectHandler->isSingleNoteDragging() || pitchEditor->isDraggingMultiNotes());
-      const std::vector<Note *> emptyDraggedNotes;
-      const auto &draggedNotes =
-          pitchEditor ? pitchEditor->getDraggedNotes() : emptyDraggedNotes;
 
-      for (const auto &note : project->getNotes())
-      {
-        if (note.isRest())
-          continue;
-
-        const bool isDraggedNote =
-            (selectHandler && selectHandler->isSingleNoteDragging() &&
-             selectHandler->getDraggedNote() == &note) ||
-            (pitchEditor && pitchEditor->isDraggingMultiNotes() &&
-             std::find(draggedNotes.begin(), draggedNotes.end(), &note) !=
-                 draggedNotes.end());
-        const bool applyNoteOffset = !(useLiveBasePreview && isDraggedNote);
-
-        juce::Path path;
-        bool pathStarted = false;
-
-        const int startFrame = note.getStartFrame();
-        const int endFrame =
-            std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
-
-        for (int i = startFrame; i < endFrame; ++i)
-        {
-          float baseMidi =
-              (i < static_cast<int>(audioData.basePitch.size()))
-                  ? audioData.basePitch[static_cast<size_t>(i)]
-                  : ((i < static_cast<int>(audioData.f0.size()) &&
-                      audioData.f0[static_cast<size_t>(i)] > 0.0f)
-                         ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
-                         : 0.0f);
-          if (applyNoteOffset)
-            baseMidi += note.getPitchOffset();
-
-          const float deltaMidi = (i < static_cast<int>(audioData.deltaPitch.size()))
-                                      ? audioData.deltaPitch[static_cast<size_t>(i)]
-                                      : 0.0f;
-          const float finalMidi = baseMidi + deltaMidi + globalOffset;
-
-          if (finalMidi > 0.0f)
-          {
-            const float x = framesToSeconds(i) * pixelsPerSecond;
-            const float y = coordMapper->midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
-            if (!pathStarted)
-            {
-              path.startNewSubPath(x, y);
-              pathStarted = true;
-            }
-            else
-            {
-              path.lineTo(x, y);
-            }
-          }
-        }
-
-        if (pathStarted)
-          g.strokePath(path, juce::PathStrokeType(2.0f));
-      }
-    }
+    strokeCurrentPath();
   }
 
-  if (params.showActualF0Debug)
+  auto drawHzDebugCurve =
+      [&](const std::vector<float> &curve, juce::Colour colour,
+          float strokeWidth, float midiOffset = 0.0f)
   {
+    if (curve.empty())
+      return;
+
     const double visibleStartTime = scrollX / pixelsPerSecond;
     const double visibleEndTime = (scrollX + params.componentWidth) / pixelsPerSecond;
     const int visStartFrame =
         std::max(0, static_cast<int>(visibleStartTime * audioData.sampleRate /
                                      HOP_SIZE));
     const int visEndFrame = std::min(
-        static_cast<int>(audioData.f0.size()),
+        static_cast<int>(curve.size()),
         static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
 
-    g.setColour(juce::Colours::aqua.withAlpha(0.90f));
-    juce::Path actualPath;
+    g.setColour(colour);
+    juce::Path path;
     bool pathStarted = false;
 
     for (int i = visStartFrame; i < visEndFrame; ++i)
     {
-      const float f0 = audioData.f0[static_cast<size_t>(i)];
+      const float f0 = curve[static_cast<size_t>(i)];
       if (f0 <= 0.0f)
       {
-        if (pathStarted)
-        {
-          g.strokePath(actualPath, juce::PathStrokeType(1.7f));
-          actualPath.clear();
-          pathStarted = false;
-        }
+        pathStarted = false;
         continue;
       }
 
-      const float midi = freqToMidi(f0) + globalOffset;
+      const float midi = freqToMidi(f0) + midiOffset;
       const float x = framesToSeconds(i) * pixelsPerSecond;
       const float y = coordMapper->midiToY(midi) + pixelsPerSemitone * 0.5f;
       if (!pathStarted)
       {
-        actualPath.startNewSubPath(x, y);
+        path.startNewSubPath(x, y);
         pathStarted = true;
       }
       else
       {
-        actualPath.lineTo(x, y);
+        path.lineTo(x, y);
       }
     }
 
-    if (pathStarted)
-      g.strokePath(actualPath, juce::PathStrokeType(1.7f));
+    g.strokePath(path, juce::PathStrokeType(strokeWidth));
+  };
+
+  if (params.showActualF0Debug)
+  {
+    drawHzDebugCurve(audioData.rawF0, juce::Colours::aqua.withAlpha(0.90f),
+                     1.7f);
+  }
+
+  if (params.showCleanedF0Debug)
+  {
+    drawHzDebugCurve(audioData.cleanedF0,
+                     juce::Colours::orange.withAlpha(0.90f), 1.7f);
+  }
+
+  if (params.showUvInterpolationDebug)
+  {
+    drawHzDebugCurve(audioData.denseF0,
+                     juce::Colours::magenta.withAlpha(0.86f), 1.7f);
+  }
+
+  if (params.showVocoderF0Debug)
+  {
+    const auto vocoderF0 = project->getAdjustedF0();
+    if (!vocoderF0.empty())
+      drawHzDebugCurve(vocoderF0, juce::Colours::lime.withAlpha(0.86f), 2.0f);
+    else
+      drawHzDebugCurve(audioData.f0, juce::Colours::lime.withAlpha(0.86f),
+                       2.0f, globalOffset);
   }
 
   // Draw base pitch curve as dashed line. Uses cached base pitch to avoid

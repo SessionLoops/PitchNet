@@ -1259,6 +1259,9 @@ void PitchNetAudioProcessor::removeAraRegionFromProject(
     for (int i = firstFrame; i < end; ++i)
       v[static_cast<size_t>(i)] = false;
   };
+  clearFloats(audio.rawF0);
+  clearFloats(audio.cleanedF0);
+  clearFloats(audio.denseF0);
   clearFloats(audio.f0);
   clearFloats(audio.baseF0);
   clearFloats(audio.basePitch);
@@ -1406,6 +1409,9 @@ void PitchNetAudioProcessor::analyzeAndMergeAraRegion(
           for (size_t i = 0; i < from.size(); ++i)
             to[static_cast<size_t>(frameOffset) + i] = from[i];
         };
+        mergeFloats(dst.rawF0, src.rawF0);
+        mergeFloats(dst.cleanedF0, src.cleanedF0);
+        mergeFloats(dst.denseF0, src.denseF0);
         mergeFloats(dst.f0, src.f0);
         mergeFloats(dst.baseF0, src.baseF0);
         mergeFloats(dst.basePitch, src.basePitch);
@@ -1577,6 +1583,9 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
             for (size_t i = 0; i < from.size(); ++i)
               to[static_cast<size_t>(frameOffset) + i] = from[i];
           };
+          mergeFloats(dst.rawF0, src.rawF0);
+          mergeFloats(dst.cleanedF0, src.cleanedF0);
+          mergeFloats(dst.denseF0, src.denseF0);
           mergeFloats(dst.f0, src.f0);
           mergeFloats(dst.baseF0, src.baseF0);
           mergeFloats(dst.basePitch, src.basePitch);

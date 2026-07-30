@@ -6,6 +6,7 @@
 #include "States/SelectHandler.h"
 #include "States/SplitHandler.h"
 #include "VisualWaveformEnvelope.h"
+#include "../Components/AppFont.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/ScaleUtils.h"
 #include "../../Utils/UI/Theme.h"
@@ -561,6 +562,67 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
       g.setColour(juce::Colour(0xFFEFEFEFu));
       g.setFont(juce::Font("Montserrat", "Regular", 11.0f).withPointHeight(11.0f));
+      g.drawFittedText(label, static_cast<int>(labelX),
+                       static_cast<int>(labelY),
+                       static_cast<int>(labelWidth),
+                       static_cast<int>(labelHeight),
+                       juce::Justification::centred, 1);
+    }
+
+    if (drawOverlays && showNoteFramesDebug && &note == hoveredNote)
+    {
+      const Note *nextNote = nullptr;
+      for (const auto &candidate : project->getNotes())
+      {
+        if (candidate.isRest() || &candidate == &note ||
+            candidate.getStartFrame() <= note.getStartFrame())
+          continue;
+        if (nextNote == nullptr ||
+            candidate.getStartFrame() < nextNote->getStartFrame())
+          nextNote = &candidate;
+      }
+
+      juce::String label =
+          "begin " + juce::String(note.getStartFrame()) +
+          "   end " + juce::String(note.getEndFrame()) +
+          "   length " + juce::String(note.getDurationFrames());
+      if (nextNote != nullptr)
+      {
+        const int gapFrames =
+            nextNote->getStartFrame() - note.getEndFrame();
+        label += "   next begin " + juce::String(nextNote->getStartFrame()) +
+                 "   gap " + juce::String(gapFrames);
+      }
+      else
+      {
+        label += "   next begin —";
+      }
+
+      constexpr float preferredLabelWidth = 350.0f;
+      constexpr float labelHeight = 22.0f;
+      const float viewportLeft = static_cast<float>(scrollX) + 4.0f;
+      const float viewportRight =
+          static_cast<float>(scrollX) + static_cast<float>(componentWidth) -
+          4.0f;
+      const float labelWidth =
+          std::min(preferredLabelWidth, viewportRight - viewportLeft);
+      const float preferredX =
+          x + renderedWidth * 0.5f - labelWidth * 0.5f;
+      const float labelX =
+          juce::jlimit(viewportLeft, viewportRight - labelWidth, preferredX);
+
+      const auto hoverBounds =
+          getHighlightedShadowBounds(note, x, y, renderedWidth, w, h).toFloat();
+      const float viewportTop =
+          static_cast<float>(coordMapper->getScrollY()) + 4.0f;
+      float labelY = hoverBounds.getY() - labelHeight - 3.0f;
+      if (labelY < viewportTop)
+        labelY = hoverBounds.getBottom() + 3.0f;
+
+      g.setColour(juce::Colour(0xE6282828u));
+      g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
+      g.setColour(juce::Colour(0xFFF2F2F2u));
+      g.setFont(AppFont::getFont(11.0f));
       g.drawFittedText(label, static_cast<int>(labelX),
                        static_cast<int>(labelY),
                        static_cast<int>(labelWidth),

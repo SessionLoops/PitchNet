@@ -215,7 +215,27 @@ SettingsComponent::SettingsComponent(
   };
   addAndMakeVisible(gameValuesDebugToggle);
 
-  uvInterpolationDebugLabel.setText("Show UV interpolation (debug)",
+  noteFramesDebugLabel.setText("Show note frames on hover (debug)",
+                               juce::dontSendNotification);
+  configureRowLabel(noteFramesDebugLabel);
+  addAndMakeVisible(noteFramesDebugLabel);
+
+  noteFramesDebugToggle.setButtonText("");
+  noteFramesDebugToggle.setClickingTogglesState(true);
+  noteFramesDebugToggle.onClick = [this]()
+  {
+    showNoteFramesDebug = noteFramesDebugToggle.getToggleState();
+    if (settingsManager)
+    {
+      settingsManager->setShowNoteFramesDebug(showNoteFramesDebug);
+      settingsManager->saveConfig();
+    }
+    if (onShowNoteFramesDebugChanged)
+      onShowNoteFramesDebugChanged(showNoteFramesDebug);
+  };
+  addAndMakeVisible(noteFramesDebugToggle);
+
+  uvInterpolationDebugLabel.setText("Show dense UV F0 (debug)",
                                     juce::dontSendNotification);
   configureRowLabel(uvInterpolationDebugLabel);
   addAndMakeVisible(uvInterpolationDebugLabel);
@@ -235,7 +255,7 @@ SettingsComponent::SettingsComponent(
   };
   addAndMakeVisible(uvInterpolationDebugToggle);
 
-  actualF0DebugLabel.setText("Show actual F0 (debug)",
+  actualF0DebugLabel.setText("Show raw detected F0 (debug)",
                              juce::dontSendNotification);
   configureRowLabel(actualF0DebugLabel);
   addAndMakeVisible(actualF0DebugLabel);
@@ -254,6 +274,46 @@ SettingsComponent::SettingsComponent(
       onShowActualF0DebugChanged(showActualF0Debug);
   };
   addAndMakeVisible(actualF0DebugToggle);
+
+  cleanedF0DebugLabel.setText("Show jump-cleaned F0 (debug)",
+                              juce::dontSendNotification);
+  configureRowLabel(cleanedF0DebugLabel);
+  addAndMakeVisible(cleanedF0DebugLabel);
+
+  cleanedF0DebugToggle.setButtonText("");
+  cleanedF0DebugToggle.setClickingTogglesState(true);
+  cleanedF0DebugToggle.onClick = [this]()
+  {
+    showCleanedF0Debug = cleanedF0DebugToggle.getToggleState();
+    if (settingsManager)
+    {
+      settingsManager->setShowCleanedF0Debug(showCleanedF0Debug);
+      settingsManager->saveConfig();
+    }
+    if (onShowCleanedF0DebugChanged)
+      onShowCleanedF0DebugChanged(showCleanedF0Debug);
+  };
+  addAndMakeVisible(cleanedF0DebugToggle);
+
+  vocoderF0DebugLabel.setText("Show vocoder F0 (debug)",
+                              juce::dontSendNotification);
+  configureRowLabel(vocoderF0DebugLabel);
+  addAndMakeVisible(vocoderF0DebugLabel);
+
+  vocoderF0DebugToggle.setButtonText("");
+  vocoderF0DebugToggle.setClickingTogglesState(true);
+  vocoderF0DebugToggle.onClick = [this]()
+  {
+    showVocoderF0Debug = vocoderF0DebugToggle.getToggleState();
+    if (settingsManager)
+    {
+      settingsManager->setShowVocoderF0Debug(showVocoderF0Debug);
+      settingsManager->saveConfig();
+    }
+    if (onShowVocoderF0DebugChanged)
+      onShowVocoderF0DebugChanged(showVocoderF0Debug);
+  };
+  addAndMakeVisible(vocoderF0DebugToggle);
 
   // Info label
   infoLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
@@ -329,9 +389,9 @@ SettingsComponent::SettingsComponent(
 
   // Set size based on mode
   if (pluginMode)
-    setSize(720, 420);
+    setSize(720, 520);
   else
-    setSize(820, 620);
+    setSize(820, 700);
 }
 
 SettingsComponent::~SettingsComponent()
@@ -352,8 +412,11 @@ SettingsComponent::~SettingsComponent()
   outputChannelsComboBox.setLookAndFeel(nullptr);
   segmentsDebugToggle.setLookAndFeel(nullptr);
   gameValuesDebugToggle.setLookAndFeel(nullptr);
+  noteFramesDebugToggle.setLookAndFeel(nullptr);
   uvInterpolationDebugToggle.setLookAndFeel(nullptr);
   actualF0DebugToggle.setLookAndFeel(nullptr);
+  cleanedF0DebugToggle.setLookAndFeel(nullptr);
+  vocoderF0DebugToggle.setLookAndFeel(nullptr);
 }
 
 void SettingsComponent::changeListenerCallback(
@@ -486,8 +549,11 @@ void SettingsComponent::resized()
     layoutRow(pitchDetectorLabel, pitchDetectorComboBox);
     layoutRow(gameChunksDebugLabel, segmentsDebugToggle);
     layoutRow(gameValuesDebugLabel, gameValuesDebugToggle);
-    layoutRow(uvInterpolationDebugLabel, uvInterpolationDebugToggle);
+    layoutRow(noteFramesDebugLabel, noteFramesDebugToggle);
     layoutRow(actualF0DebugLabel, actualF0DebugToggle);
+    layoutRow(cleanedF0DebugLabel, cleanedF0DebugToggle);
+    layoutRow(uvInterpolationDebugLabel, uvInterpolationDebugToggle);
+    layoutRow(vocoderF0DebugLabel, vocoderF0DebugToggle);
 
     infoLabel.setBounds(content.removeFromTop(56));
     content.removeFromTop(12);
@@ -727,10 +793,16 @@ void SettingsComponent::updateTabVisibility()
   segmentsDebugToggle.setVisible(showGeneral);
   gameValuesDebugLabel.setVisible(showGeneral);
   gameValuesDebugToggle.setVisible(showGeneral);
+  noteFramesDebugLabel.setVisible(showGeneral);
+  noteFramesDebugToggle.setVisible(showGeneral);
   uvInterpolationDebugLabel.setVisible(showGeneral);
   uvInterpolationDebugToggle.setVisible(showGeneral);
   actualF0DebugLabel.setVisible(showGeneral);
   actualF0DebugToggle.setVisible(showGeneral);
+  cleanedF0DebugLabel.setVisible(showGeneral);
+  cleanedF0DebugToggle.setVisible(showGeneral);
+  vocoderF0DebugLabel.setVisible(showGeneral);
+  vocoderF0DebugToggle.setVisible(showGeneral);
   infoLabel.setVisible(showGeneral);
 
   audioDeviceTypeLabel.setVisible(showAudio);
@@ -1069,8 +1141,11 @@ void SettingsComponent::loadSettings()
     preferredAudioOutputDevice = settingsManager->getPreferredAudioOutputDevice();
     showSegmentsDebug = settingsManager->getShowSegmentsDebug();
     showGameValuesDebug = settingsManager->getShowGameValuesDebug();
+    showNoteFramesDebug = settingsManager->getShowNoteFramesDebug();
     showUvInterpolationDebug = settingsManager->getShowUvInterpolationDebug();
     showActualF0Debug = settingsManager->getShowActualF0Debug();
+    showCleanedF0Debug = settingsManager->getShowCleanedF0Debug();
+    showVocoderF0Debug = settingsManager->getShowVocoderF0Debug();
 
     auto langCode = settingsManager->getLanguage();
     if (langCode == "auto")
@@ -1124,10 +1199,16 @@ void SettingsComponent::loadSettings()
                                      juce::dontSendNotification);
   gameValuesDebugToggle.setToggleState(showGameValuesDebug,
                                        juce::dontSendNotification);
+  noteFramesDebugToggle.setToggleState(showNoteFramesDebug,
+                                       juce::dontSendNotification);
   uvInterpolationDebugToggle.setToggleState(showUvInterpolationDebug,
                                             juce::dontSendNotification);
   actualF0DebugToggle.setToggleState(showActualF0Debug,
                                      juce::dontSendNotification);
+  cleanedF0DebugToggle.setToggleState(showCleanedF0Debug,
+                                      juce::dontSendNotification);
+  vocoderF0DebugToggle.setToggleState(showVocoderF0Debug,
+                                      juce::dontSendNotification);
 
   hasLoadedSettings = true;
   lastConfirmedDevice = currentDevice;
@@ -1162,8 +1243,11 @@ void SettingsComponent::saveSettings()
     settingsManager->setLanguage(langCode);
     settingsManager->setShowSegmentsDebug(showSegmentsDebug);
     settingsManager->setShowGameValuesDebug(showGameValuesDebug);
+    settingsManager->setShowNoteFramesDebug(showNoteFramesDebug);
     settingsManager->setShowUvInterpolationDebug(showUvInterpolationDebug);
     settingsManager->setShowActualF0Debug(showActualF0Debug);
+    settingsManager->setShowCleanedF0Debug(showCleanedF0Debug);
+    settingsManager->setShowVocoderF0Debug(showVocoderF0Debug);
     settingsManager->setFollowSystemAudioOutput(followSystemAudioOutput);
     settingsManager->setPreferredAudioOutputDevice(preferredAudioOutputDevice);
     settingsManager->saveConfig();

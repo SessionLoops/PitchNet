@@ -40,6 +40,7 @@ public:
   void setPitchToolController(PitchToolController *c) { pitchToolController = c; }
   void setBoxSelector(BoxSelector *b) { boxSelector = b; }
   void setHoveredNote(Note *note) { hoveredNote = note; }
+  void setShowNoteFramesDebug(bool show) { showNoteFramesDebug = show; }
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
                                double currentTime)
   {
@@ -61,6 +62,7 @@ private:
   PitchToolController *pitchToolController = nullptr;
   BoxSelector *boxSelector = nullptr;
   Note *hoveredNote = nullptr;
+  bool showNoteFramesDebug = false;
   bool previewPlaybackActive = false;
   int previewStartFrame = 0;
   int previewEndFrame = 0;
