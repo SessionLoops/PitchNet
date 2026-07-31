@@ -39,6 +39,15 @@ namespace
                           juce::Graphics::highResamplingQuality);
   }
 
+  juce::Image createZoomCursorImage()
+  {
+    auto image = juce::ImageFileFormat::loadFrom(
+        BinaryData::zoom_png,
+        static_cast<size_t>(BinaryData::zoom_pngSize));
+    return image.rescaled(image.getWidth() / 2, (image.getHeight() + 1) / 2,
+                          juce::Graphics::highResamplingQuality);
+  }
+
   using pianoRollView::getScaleAccentColour;
   using pianoRollView::isBlackKey;
   using pianoRollView::ScaleToneState;
@@ -149,7 +158,8 @@ namespace
 
 PianoRollComponent::PianoRollComponent()
     : splitMouseCursor(createSplitCursorImage(), 10, 8),
-      mergeMouseCursor(createMergeCursorImage(), 10, 8)
+      mergeMouseCursor(createMergeCursorImage(), 10, 8),
+      zoomMouseCursor(createZoomCursorImage(), 6, 6)
 {
   // Initialize modular components
   coordMapper = std::make_unique<CoordinateMapper>();
@@ -1233,7 +1243,9 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 {
-  if (isCanvasPoint(e) && e.mods.isAltDown())
+  const bool showZoomCursor = isCanvasPoint(e) && isModifierZoomDrag(e);
+
+  if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown())
   {
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     return;
@@ -1332,8 +1344,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     repaint();
   }
 
-  // Apply this last so loop-timeline handling cannot replace the Split cursor.
-  if (editMode == EditMode::Split)
+  // Apply modifier/edit-mode cursors last so interaction handlers cannot
+  // replace them while the pointer moves.
+  if (showZoomCursor)
+  {
+    setMouseCursor(zoomMouseCursor);
+  }
+  else if (editMode == EditMode::Split)
   {
     const bool hoveringMergeBoundary = splitHandler_ && splitHandler_->isHoveringMergeBoundary();
     setMouseCursor(hoveringMergeBoundary ? mergeMouseCursor
@@ -1350,7 +1367,15 @@ void PianoRollComponent::modifierKeysChanged(
       mousePosition.x < pianoKeysWidth + getVisibleContentWidth() &&
       mousePosition.y < headerHeight + getVisibleContentHeight();
 
-  if ((modifiers.isAltDown() && mouseOverCanvas) || modifierPanDragActive)
+#if JUCE_MAC
+  const bool zoomModifierDown = modifiers.isCommandDown();
+#else
+  const bool zoomModifierDown = modifiers.isCtrlDown();
+#endif
+
+  if (zoomModifierDown && mouseOverCanvas)
+    setMouseCursor(zoomMouseCursor);
+  else if ((modifiers.isAltDown() && mouseOverCanvas) || modifierPanDragActive)
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
   else
     updateMouseCursorForEditMode();
