@@ -1140,6 +1140,24 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
+  // Clicking a note name auditions its labelled pitch without changing the
+  // current edit or transport state.
+  if (e.x < pianoKeysWidth && e.y >= headerHeight &&
+      e.y < getHeight() - (showHorizontalScrollBar ? 8 : 0))
+  {
+    const float referenceOffset =
+        ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
+    const int midiNote =
+        juce::roundToInt(yToMidi(adjustedY) - referenceOffset);
+    if (midiNote >= MIN_MIDI_NOTE && midiNote <= MAX_MIDI_NOTE &&
+        onPianoKeyAudition)
+    {
+      pianoKeyAuditionMouseDown = true;
+      onPianoKeyAudition(midiNote);
+    }
+    return;
+  }
+
   // Handle loop timeline drag (always active, priority over edit modes)
   if (loopDragHandler_->mouseDown(e, adjustedX, adjustedY))
     return;
@@ -1212,6 +1230,14 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
+  if (pianoKeyAuditionMouseDown)
+  {
+    pianoKeyAuditionMouseDown = false;
+    if (onPianoKeyAuditionFinished)
+      onPianoKeyAuditionFinished();
+    return;
+  }
+
   if (modifierZoomDragActive)
   {
     modifierZoomDragActive = false;

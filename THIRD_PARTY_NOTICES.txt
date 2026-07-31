@@ -1,4 +1,4 @@
-PitchNet 0.3.0
+PitchNet 0.3.1
 Copyright (c) 2026 Session Loops and contributors.
 
 PitchNet is a modified derivative of HachiTune by the HachiTune contributors.

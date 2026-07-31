@@ -249,6 +249,8 @@ private:
   void auditionDraggedNote(const Note &note);
   void finishDraggedNoteAudition();
   void dispatchPendingDragAudition();
+  void auditionPianoKey(int midiNote);
+  void finishPianoKeyAudition();
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
   void showSettings();
@@ -346,6 +348,9 @@ private:
 
   bool isPlaying = false;
   bool liveRecordingActive = false;
+  bool pianoKeyAuditionActive = false;
+  bool pianoKeyAuditionWasPlaying = false;
+  double pianoKeyAuditionReturnTime = 0.0;
 
   // Sync flag to prevent infinite loops
   bool isSyncingZoom = false;

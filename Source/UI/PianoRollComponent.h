@@ -205,6 +205,8 @@ public:
   std::function<void()> onPitchEditFinished; // Called when dragging ends
   std::function<void(const Note &)> onNoteDragAudition;
   std::function<void()> onNoteDragAuditionFinished;
+  std::function<void(int midiNote)> onPianoKeyAudition;
+  std::function<void()> onPianoKeyAuditionFinished;
   std::function<void()> onCursorMoved;
   std::function<void(double)> onSeek;
   std::function<void(float)> onZoomChanged;
@@ -373,6 +375,7 @@ private:
   juce::Point<float> modifierZoomLastPosition;
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;
+  bool pianoKeyAuditionMouseDown = false;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollComponent)
 };

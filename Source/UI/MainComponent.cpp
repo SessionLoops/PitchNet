@@ -50,7 +50,7 @@ juce::String getCurrentApplicationVersion()
 #elif defined(JucePlugin_VersionString)
   return JucePlugin_VersionString;
 #else
-  return "0.3.0";
+  return "0.3.1";
 #endif
 }
 
@@ -627,6 +627,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { auditionDraggedNote(note); };
   pianoRoll.onNoteDragAuditionFinished = [this]()
   { finishDraggedNoteAudition(); };
+  pianoRoll.onPianoKeyAudition = [this](int midiNote)
+  { auditionPianoKey(midiNote); };
+  pianoRoll.onPianoKeyAuditionFinished = [this]()
+  { finishPianoKeyAudition(); };
   pianoRoll.onZoomChanged = [this](float pps)
   {
     onZoomChanged(pps);
@@ -2128,6 +2132,85 @@ void MainComponent::finishDraggedNoteAudition()
   noteDragAuditionActive = false;
   noteDragAuditionBackendPreviewStarted = false;
   noteDragAuditionWasPlaying = false;
+}
+
+void MainComponent::auditionPianoKey(int midiNote)
+{
+  constexpr double bufferDurationSeconds = 1.0;
+  constexpr double fallbackSampleRate = 44100.0;
+  constexpr float amplitude = 0.18f;
+  constexpr int fadeSamples = 256;
+
+  const double sampleRate =
+      getProject() && getProject()->getAudioData().sampleRate > 0
+          ? static_cast<double>(getProject()->getAudioData().sampleRate)
+          : fallbackSampleRate;
+  const int samples =
+      juce::jmax(2, juce::roundToInt(bufferDurationSeconds * sampleRate));
+  juce::AudioBuffer<float> tone(1, samples);
+  const double frequency = 440.0 * std::pow(2.0, (midiNote - 69) / 12.0);
+
+  for (int sample = 0; sample < samples; ++sample)
+  {
+    const float fadeIn =
+        juce::jmin(1.0f, static_cast<float>(sample) / fadeSamples);
+    const float fadeOut = juce::jmin(
+        1.0f, static_cast<float>(samples - 1 - sample) / fadeSamples);
+    const float value = amplitude * fadeIn * fadeOut *
+                        std::sin(juce::MathConstants<double>::twoPi * frequency *
+                                 static_cast<double>(sample) / sampleRate);
+    tone.setSample(0, sample, value);
+  }
+
+  if (isPluginMode())
+  {
+    // ARA starts the host preview signal flow for a range; the temporary tone
+    // buffer then replaces that source in the established audition path.
+    if (auto *project = getProject(); project && onRequestBackendPreview)
+      onRequestBackendPreview(*project, 0, 1);
+    if (onRequestDragAudition)
+      onRequestDragAudition(tone, sampleRate);
+  }
+  else if (auto *engine = editorController ? editorController->getAudioEngine()
+                                            : nullptr)
+  {
+    pianoKeyAuditionWasPlaying = engine->isPlaying();
+    pianoKeyAuditionReturnTime = engine->getPosition();
+    engine->beginAuditionLoop(tone, sampleRate);
+  }
+  else
+  {
+    return;
+  }
+
+  pianoKeyAuditionActive = true;
+}
+
+void MainComponent::finishPianoKeyAudition()
+{
+  if (!pianoKeyAuditionActive)
+    return;
+
+  if (isPluginMode())
+  {
+    if (onStopDragAudition)
+      onStopDragAudition();
+  }
+  else if (auto *engine = editorController ? editorController->getAudioEngine()
+                                            : nullptr)
+  {
+    engine->endAuditionLoop();
+    if (pianoKeyAuditionWasPlaying)
+      engine->play();
+    else
+    {
+      engine->pause();
+      engine->seek(pianoKeyAuditionReturnTime);
+    }
+  }
+
+  pianoKeyAuditionActive = false;
+  pianoKeyAuditionWasPlaying = false;
 }
 
 void MainComponent::jumpTransport(bool forward)
