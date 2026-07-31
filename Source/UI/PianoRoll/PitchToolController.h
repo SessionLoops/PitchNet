@@ -62,6 +62,7 @@ public:
   {
     return activeHandleType;
   }
+  Note* getActiveHandleNote() const { return activeHandleNote; }
   const std::vector<Note*>& getAffectedNotes() const { return affectedNotes; }
 
   /**
@@ -83,6 +84,7 @@ private:
   Project* project = nullptr;
   bool dragging = false;
   PitchToolHandles::HandleType activeHandleType = PitchToolHandles::HandleType::None;
+  Note* activeHandleNote = nullptr;
   std::vector<Note*> affectedNotes;
   std::vector<TransformParams> originalParams;
   juce::Point<float> dragStartPos;

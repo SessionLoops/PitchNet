@@ -23,15 +23,24 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
 
   const auto& handle = handles.getHandle(hitIndex);
   activeHandleType = handle.type;
+  activeHandleNote = handle.note;
 
-  // The visible top controls belong to the hovered note. Prefer that explicit
-  // ownership over the current selection, which may still refer to a note the
-  // pointer just left while moving quickly between notes.
+  // The visible top controls belong to the hovered note. When it is part of a
+  // multi-note selection, slopes and vibrato are group edits, so capture the
+  // complete selection. Hovering an unselected note must still only affect
+  // that note rather than an unrelated selection.
   affectedNotes.clear();
-  if (handle.note)
-    affectedNotes.push_back(handle.note);
-  else
+  const bool handleIsSelected =
+      handle.note && std::find(selectedNotes.begin(), selectedNotes.end(),
+                               handle.note) != selectedNotes.end();
+  const bool isGroupEdit = handleIsSelected && selectedNotes.size() > 1 &&
+      (handle.type == PitchToolHandles::HandleType::TiltLeft ||
+       handle.type == PitchToolHandles::HandleType::TiltRight ||
+       handle.type == PitchToolHandles::HandleType::Vibrato);
+  if (isGroupEdit || !handle.note)
     affectedNotes = selectedNotes;
+  else
+    affectedNotes.push_back(handle.note);
   if (affectedNotes.empty())
     return false;
   
@@ -125,6 +134,7 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
 
   dragging = false;
   activeHandleType = PitchToolHandles::HandleType::None;
+  activeHandleNote = nullptr;
   affectedNotes.clear();
   originalParams.clear();
   return true;
@@ -266,6 +276,7 @@ void PitchToolController::cancel()
 
   dragging = false;
   activeHandleType = PitchToolHandles::HandleType::None;
+  activeHandleNote = nullptr;
   affectedNotes.clear();
   originalParams.clear();
 }

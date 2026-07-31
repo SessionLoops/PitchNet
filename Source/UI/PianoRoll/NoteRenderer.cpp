@@ -518,14 +518,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         isSingleDragged || (isMultiDragged && hoveredMultiDragNote == &note);
     const bool isVibratoDragged =
         pitchToolController && pitchToolController->isDraggingVibrato() &&
-        std::find(pitchToolController->getAffectedNotes().begin(),
-                  pitchToolController->getAffectedNotes().end(),
-                  &note) != pitchToolController->getAffectedNotes().end();
+        pitchToolController->getActiveHandleNote() == &note;
     const bool isTiltDragged =
         pitchToolController && pitchToolController->isDraggingTilt() &&
-        std::find(pitchToolController->getAffectedNotes().begin(),
-                  pitchToolController->getAffectedNotes().end(),
-                  &note) != pitchToolController->getAffectedNotes().end();
+        pitchToolController->getActiveHandleNote() == &note;
     if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged))
     {
       juce::String label;
