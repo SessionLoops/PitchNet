@@ -209,6 +209,9 @@ public:
   std::function<void()> onPianoKeyAuditionFinished;
   std::function<void()> onCursorMoved;
   std::function<void(double)> onSeek;
+  // Invoked for a double-click on unoccupied canvas space. The owner seeks
+  // before toggling transport so playback starts or stops at that position.
+  std::function<void(double)> onCanvasEmptyDoubleClick;
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
   std::function<void(const LoopRange &)> onLoopRangeChanged;

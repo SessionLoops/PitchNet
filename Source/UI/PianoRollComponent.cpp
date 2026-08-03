@@ -1147,8 +1147,11 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   {
     const float referenceOffset =
         ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
-    const int midiNote =
-        juce::roundToInt(yToMidi(adjustedY) - referenceOffset);
+    // yToMidi() returns the note at the row's top edge and descends across
+    // the row. Ceiling keeps every pixel in this rendered row mapped to its
+    // label; rounding would switch to the adjacent note halfway down.
+    const int midiNote = static_cast<int>(
+        std::ceil(yToMidi(adjustedY) - referenceOffset));
     if (midiNote >= MIN_MIDI_NOTE && midiNote <= MAX_MIDI_NOTE &&
         onPianoKeyAudition)
     {
@@ -1463,6 +1466,16 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+
+  // Keep note-specific double-click interactions with their edit handlers.
+  // Everywhere else on the canvas, a double-click controls transport at the
+  // clicked time rather than changing the current edit selection.
+  if (!findNoteAt(adjustedX, adjustedY))
+  {
+    if (onCanvasEmptyDoubleClick)
+      onCanvasEmptyDoubleClick(std::max(0.0, xToTime(adjustedX)));
+    return;
+  }
 
   // Delegate to current mode handler
   if (currentHandler_)

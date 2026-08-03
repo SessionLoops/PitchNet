@@ -609,6 +609,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Setup piano roll callbacks
   pianoRoll.onSeek = [this](double time)
   { seek(time); };
+  pianoRoll.onCanvasEmptyDoubleClick = [this](double time)
+  {
+    seek(time);
+    if (isPlaying)
+      pause();
+    else
+      play();
+  };
   pianoRoll.onPreviewRegionRequested = [this](int startFrame, int endFrame)
   { previewNoteRegion(startFrame, endFrame); };
   pianoRoll.onNoteSelected = [this](Note *note)
