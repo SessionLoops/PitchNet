@@ -1877,18 +1877,23 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
     return; // Samples not ready yet; the sample-access handler will retry.
 
   const auto liveKey = pitchnetRegionKey(*region);
-  if (processor->hasAraRegionProject(liveKey)) {
+  if (processor->hasAraRegionProject(liveKey) &&
+      !processor->araRegionProjectNeedsSourceHydration(liveKey)) {
     processor->showAraRegionProjectIfActive(liveKey);
     return;
   }
-  if (auto *pitchModification =
-          region->getAudioModification<PitchNetAudioModification>()) {
-    juce::MemoryBlock archive;
-    if (pitchModification->copyProjectArchiveForRegion(liveKey, archive)) {
-      processor->restoreAraRegionProject(liveKey, archive.getData(),
-                                         archive.getSize());
-      if (processor->showAraRegionProjectIfActive(liveKey))
-        return;
+  if (!processor->hasAraRegionProject(liveKey)) {
+    auto *pitchModification =
+        region->getAudioModification<PitchNetAudioModification>();
+    if (pitchModification != nullptr) {
+      juce::MemoryBlock archive;
+      if (pitchModification->copyProjectArchiveForRegion(liveKey, archive)) {
+        processor->restoreAraRegionProject(liveKey, archive.getData(),
+                                           archive.getSize());
+        if (!processor->araRegionProjectNeedsSourceHydration(liveKey) &&
+            processor->showAraRegionProjectIfActive(liveKey))
+          return;
+      }
     }
   }
 
@@ -1920,10 +1925,20 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
   buffer.clear();
   buffer.copyFrom(0, timelineOffsetSamples, regionBuffer, 0, 0, numSamples);
 
+  // ARA region archives retain the rendered waveform and analysis/edit data,
+  // but not the duplicate pristine source. Reattach that source now and expose
+  // the restored project without running the neural analysis again.
+  if (processor->hasAraRegionProject(liveKey) &&
+      processor->hydrateAraRegionProject(liveKey, buffer,
+                                         sourceSampleRate)) {
+    processor->showAraRegionProjectIfActive(liveKey);
+    return;
+  }
+
   auto *pitchModification =
       region->getAudioModification<PitchNetAudioModification>();
   processor->analyzeAraRegionForCanvas(
-      pitchnetRegionKey(*region), pitchModification,
+      liveKey, pitchModification,
       region->getStartInAudioModificationSamples(),
       region->getStartInPlaybackTime(), buffer, sourceSampleRate);
 }

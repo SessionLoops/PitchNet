@@ -177,12 +177,18 @@ public:
   // have the same lifetime and are destroyed together.
   void removeAraRegion(const juce::String &regionKey);
 
-  // Per-region project persistence. serialize returns false if no project is
-  // cached for regionKey; restore installs a project so a saved region is not
-  // re-analysed on reload.
+  // Per-region project persistence. ARA archives omit originalWaveform because
+  // it is hydrated from the host source before editing; rendered audio and all
+  // analysis/edit data remain archived. serialize returns false if no project
+  // is cached for regionKey.
   bool serializeAraRegionProject(const juce::String &regionKey,
                                  juce::MemoryBlock &out) const;
   bool hasAraRegionProject(const juce::String &regionKey) const;
+  bool araRegionProjectNeedsSourceHydration(
+      const juce::String &regionKey) const;
+  bool hydrateAraRegionProject(const juce::String &regionKey,
+                               const juce::AudioBuffer<float> &sourceBuffer,
+                               double sourceSampleRate);
   bool araRegionProjectAppearsToCover(const juce::String &regionKey,
                                       double regionStart,
                                       double regionEnd) const;

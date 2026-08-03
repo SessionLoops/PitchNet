@@ -8,7 +8,8 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 3;
+constexpr int kProjectArchiveVersion = 4;
+constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
@@ -492,7 +493,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
 }
 
 bool ProjectSerializer::toBinaryArchive(const Project& project,
-                                        juce::MemoryBlock& destData)
+                                        juce::MemoryBlock& destData,
+                                        BinaryArchiveMode mode)
 {
     destData.setSize(0);
     juce::MemoryOutputStream out(destData, false);
@@ -500,12 +502,19 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
     const auto metadataJson =
         juce::JSON::toString(toJson(project, false, false), false);
     const auto& audioData = project.getAudioData();
+    const bool includeOriginalWaveform =
+        mode == BinaryArchiveMode::selfContained;
+    const int archiveFlags = includeOriginalWaveform
+                                 ? kProjectArchiveHasOriginalWaveform
+                                 : 0;
 
     if (!out.writeInt(static_cast<int>(kProjectArchiveMagic)) ||
         !out.writeInt(kProjectArchiveVersion) ||
+        !out.writeInt(archiveFlags) ||
         !writeString(out, metadataJson) ||
         !writeAudioBuffer(out, audioData.waveform) ||
-        !writeAudioBuffer(out, audioData.originalWaveform) ||
+        (includeOriginalWaveform &&
+         !writeAudioBuffer(out, audioData.originalWaveform)) ||
         !writeFloatVector(out, audioData.f0) ||
         !writeFloatVector(out, audioData.rawF0) ||
         !writeFloatVector(out, audioData.cleanedF0) ||
@@ -567,9 +576,13 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
     if (static_cast<std::uint32_t>(in.readInt()) != kProjectArchiveMagic)
         return false;
     const int archiveVersion = in.readInt();
-    if (archiveVersion != 1 && archiveVersion != 2 &&
-        archiveVersion != kProjectArchiveVersion)
+    if (archiveVersion < 1 || archiveVersion > kProjectArchiveVersion)
         return false;
+
+    const int archiveFlags =
+        archiveVersion >= 4 ? in.readInt() : kProjectArchiveHasOriginalWaveform;
+    const bool hasOriginalWaveform =
+        (archiveFlags & kProjectArchiveHasOriginalWaveform) != 0;
 
     const auto metadataJson = readString(in);
     auto metadata = juce::JSON::parse(metadataJson);
@@ -577,9 +590,15 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         return false;
 
     auto& audioData = project.getAudioData();
-    if (!readAudioBuffer(in, audioData.waveform) ||
-        !readAudioBuffer(in, audioData.originalWaveform) ||
-        !readFloatVector(in, audioData.f0))
+    if (!readAudioBuffer(in, audioData.waveform))
+        return false;
+    if (hasOriginalWaveform) {
+        if (!readAudioBuffer(in, audioData.originalWaveform))
+            return false;
+    } else {
+        audioData.originalWaveform.setSize(0, 0);
+    }
+    if (!readFloatVector(in, audioData.f0))
         return false;
 
     if (archiveVersion >= 3) {

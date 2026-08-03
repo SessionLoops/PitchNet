@@ -125,10 +125,12 @@ bool projectAppearsToCoverRegion(const Project &project, double regionStart,
   return false;
 }
 
-bool projectHasEditableAnalysisData(const Project &project) {
+bool projectHasRestorableAnalysisData(const Project &project) {
   const auto &audioData = project.getAudioData();
-  if (audioData.waveform.getNumSamples() <= 0 ||
-      audioData.originalWaveform.getNumSamples() <= 0 || audioData.f0.empty())
+  // ARA region archives deliberately omit originalWaveform. The rendered
+  // waveform keeps playback/UI state available while the source is hydrated
+  // from the host before the region becomes editable.
+  if (audioData.waveform.getNumSamples() <= 0 || audioData.f0.empty())
     return false;
 
   const int f0Size = static_cast<int>(audioData.f0.size());
@@ -2480,12 +2482,10 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   if (mainComponent != nullptr)
     mainComponent->bindUndoManager(incomingUndoManager);
 
-  // Show the incoming region's project. Priority:
-  //  1) a per-region project we already have (analysed this session, or restored
-  //     from the saved project) -> instant switch, no re-analysis;
-  //  2) otherwise analyse THIS region from its own source (per-region correct;
-  //     renders its processed audio). Reload no longer re-analyses because
-  //     visited regions are restored into (1) by per-region persistence.
+  // Show the incoming region's project. A project analysed in this session is
+  // ready immediately. A restored ARA archive has all analysis/edit data and
+  // rendered output but deliberately lacks originalWaveform, so it takes the
+  // source-read path below to hydrate that one buffer without re-analysis.
   if (mainComponent != nullptr) {
     auto it = araRegions.find(key);
     if ((it == araRegions.end() || !it->second.project) &&
@@ -2507,11 +2507,19 @@ void PitchNetAudioProcessor::setActiveAraRegion(
                                     archive.getSize());
           }
         }
+        // restoreAraRegionProject() may synchronously migrate, hydrate, and
+        // display the archived state under the live key when ARA sample access
+        // is already enabled. Do not replace that hydrated Project below with
+        // another copy of the source-less archived shell.
+        if (canvasShowsActiveAraRegion &&
+            mainComponent->getProject() != nullptr)
+          return;
         if (const auto archivedIt = araRegions.find(archivedKey);
             archivedIt != araRegions.end() && archivedIt->second.project &&
             projectAppearsToCoverRegion(*archivedIt->second.project,
                                         activeRegionStartSeconds,
-                                        activeRegionEndSeconds)) {
+                                        activeRegionEndSeconds) &&
+            (it == araRegions.end() || !it->second.project)) {
           araRegions[key].project =
               std::make_unique<Project>(*archivedIt->second.project);
           it = araRegions.find(key);
@@ -2519,7 +2527,11 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       }
     }
 
-    if (it != araRegions.end() && it->second.project) {
+    const bool needsSourceHydration =
+        it != araRegions.end() && it->second.project &&
+        araRegionProjectNeedsSourceHydration(key);
+    if (it != araRegions.end() && it->second.project &&
+        !needsSourceHydration) {
       regionCanvasAnalysisGeneration.fetch_add(1);
       if (regionCanvasController)
         regionCanvasController->requestCancelLoading();
@@ -2538,11 +2550,9 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       canvasShowsActiveAraRegion = true;
       mainComponent->hideAnalysisProgress();
     } else if (araDocumentController != nullptr) {
-      // The host has selected a region for which no project exists yet.  Do
-      // not leave the outgoing/composite project visible under the new
-      // region's boundary: detach it just as closing the editor detaches its
-      // project, then show the analysis state until this region's own project
-      // is ready.
+      // The host selected a region that either has no project yet or has a
+      // restored project waiting for its pristine ARA source. Do not expose a
+      // partially hydrated project to editing.
       if (mainComponent->getProject() != nullptr) {
         auto displaced = mainComponent->exchangeProject(nullptr);
         juce::ignoreUnused(displaced);
@@ -2552,9 +2562,8 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       regionCanvasAnalysisPending.store(true);
       mainComponent->setStatusMessage(TR("progress.analyzing"));
       mainComponent->showAnalysisProgress(0.0);
-      // requestRegionCanvasAnalysis() may have to wait for ARA sample access;
-      // keep the popup visible during that wait, then let the region-local
-      // analyzer drive it as soon as samples become readable.
+      // requestRegionCanvasAnalysis() hydrates restored state when possible,
+      // otherwise it starts analysis. It may have to wait for sample access.
       araDocumentController->requestRegionCanvasAnalysis(region);
     }
   }
@@ -2767,7 +2776,9 @@ bool PitchNetAudioProcessor::serializeAraRegionProject(
   if (project == nullptr)
     return false;
 
-  return ProjectSerializer::toBinaryArchive(*project, out) &&
+  return ProjectSerializer::toBinaryArchive(
+             *project, out,
+             ProjectSerializer::BinaryArchiveMode::omitOriginalWaveform) &&
          out.getSize() > 0;
 }
 
@@ -2778,6 +2789,102 @@ bool PitchNetAudioProcessor::hasAraRegionProject(
     return true;
   const auto it = araRegions.find(regionKey);
   return it != araRegions.end() && it->second.project != nullptr;
+}
+
+bool PitchNetAudioProcessor::araRegionProjectNeedsSourceHydration(
+    const juce::String &regionKey) const {
+  const Project *project = nullptr;
+  if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
+      mainComponent != nullptr)
+    project = mainComponent->getProject();
+  if (project == nullptr) {
+    const auto it = araRegions.find(regionKey);
+    if (it != araRegions.end())
+      project = it->second.project.get();
+  }
+
+  return project != nullptr &&
+         project->getAudioData().originalWaveform.getNumSamples() <= 0;
+}
+
+bool PitchNetAudioProcessor::hydrateAraRegionProject(
+    const juce::String &regionKey,
+    const juce::AudioBuffer<float> &sourceBuffer,
+    double sourceSampleRate) {
+  if (regionKey.isEmpty() || sourceBuffer.getNumChannels() <= 0 ||
+      sourceBuffer.getNumSamples() <= 0 || sourceSampleRate <= 0.0)
+    return false;
+
+  Project *project = nullptr;
+  if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
+      mainComponent != nullptr)
+    project = mainComponent->getProject();
+  if (project == nullptr) {
+    const auto it = araRegions.find(regionKey);
+    if (it != araRegions.end())
+      project = it->second.project.get();
+  }
+  if (project == nullptr)
+    return false;
+
+  auto &audioData = project->getAudioData();
+  if (audioData.originalWaveform.getNumSamples() > 0)
+    return true;
+
+  // Region analysis is stored at PitchNet's working rate, which can differ
+  // from the ARA source rate. Recreate the same resampled pristine buffer that
+  // EditorController produced during the original analysis.
+  const double projectSampleRate =
+      audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
+                               : sourceSampleRate;
+  juce::AudioBuffer<float> resampledSource;
+  const juce::AudioBuffer<float> *hydratedSource = &sourceBuffer;
+  if (!juce::approximatelyEqual(projectSampleRate, sourceSampleRate)) {
+    const int outputSamples = static_cast<int>(std::llround(
+        static_cast<double>(sourceBuffer.getNumSamples()) *
+        projectSampleRate / sourceSampleRate));
+    if (outputSamples <= 0)
+      return false;
+
+    resampledSource.setSize(sourceBuffer.getNumChannels(), outputSamples,
+                            false, false, true);
+    resampledSource.clear();
+    const double ratio = sourceSampleRate / projectSampleRate;
+    for (int channel = 0; channel < sourceBuffer.getNumChannels(); ++channel) {
+      juce::LagrangeInterpolator interpolator;
+      interpolator.process(ratio, sourceBuffer.getReadPointer(channel),
+                           resampledSource.getWritePointer(channel),
+                           outputSamples);
+    }
+    hydratedSource = &resampledSource;
+  }
+
+  double archivedRegionEnd = 0.0;
+  for (const auto &range : audioData.playbackRegionRanges)
+    archivedRegionEnd = std::max(archivedRegionEnd, range.second);
+  if (archivedRegionEnd > 0.0) {
+    const auto expectedSamples = static_cast<juce::int64>(
+        std::llround(archivedRegionEnd * projectSampleRate));
+    const auto actualSamples =
+        static_cast<juce::int64>(hydratedSource->getNumSamples());
+    if (std::abs(expectedSamples - actualSamples) > 2)
+      return false;
+  }
+
+  audioData.sampleRate = juce::roundToInt(projectSampleRate);
+  audioData.originalWaveform.makeCopyOf(*hydratedSource);
+
+  // The archived rendered waveform remains available while hydration waits.
+  // Once the pristine source exists again, rebuild edited output from the
+  // authoritative per-note synth data exactly as a self-contained restore does.
+  if (audioData.waveform.getNumSamples() <= 0)
+    audioData.waveform.makeCopyOf(*hydratedSource);
+  project->recomposeFromSynthIfPresent();
+  if (pendingRegionCanvasAnalysisKey == regionKey) {
+    pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+  }
+  return true;
 }
 
 bool PitchNetAudioProcessor::araRegionProjectAppearsToCover(
@@ -2808,11 +2915,15 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
       mainComponent == nullptr)
     return false;
 
-  if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr)
-    return true;
+  if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr) {
+    const auto &audioData = mainComponent->getProject()->getAudioData();
+    return audioData.originalWaveform.getNumSamples() > 0;
+  }
 
   auto it = araRegions.find(regionKey);
   if (it == araRegions.end() || !it->second.project)
+    return false;
+  if (it->second.project->getAudioData().originalWaveform.getNumSamples() <= 0)
     return false;
 
   regionCanvasAnalysisGeneration.fetch_add(1);
@@ -2894,6 +3005,38 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     if (mainComponent == nullptr || liveKey != activeRegionKey)
       return;
 
+    if (liveState.project != nullptr &&
+        liveState.project->getAudioData().originalWaveform.getNumSamples() <=
+            0) {
+      // Keep the restored analysis shell out of the editor until its immutable
+      // source has been read back from ARA. Otherwise an edit made in this
+      // window would blend/recompose without a pristine waveform.
+      if (mainComponent->getProject() != nullptr) {
+        auto displaced = mainComponent->exchangeProject(nullptr);
+        juce::ignoreUnused(displaced);
+      }
+      mainComponent->bindUndoManager(liveUndoManager);
+      canvasShowsActiveAraRegion = false;
+      pendingRegionCanvasAnalysisKey.clear();
+      regionCanvasAnalysisPending.store(false);
+      mainComponent->setStatusMessage(TR("progress.analyzing"));
+      mainComponent->showAnalysisProgress(0.0);
+
+      if (araDocumentController != nullptr && activeModification != nullptr) {
+        for (auto *region : activeModification->getPlaybackRegions<
+                 juce::ARAPlaybackRegion>()) {
+          if (region == nullptr || pitchnetRegionKey(*region) != liveKey)
+            continue;
+          pendingRegionCanvasAnalysisKey = liveKey;
+          regionCanvasAnalysisPending.store(true);
+          araDocumentController->setCurrentPlaybackRegion(region);
+          araDocumentController->requestRegionCanvasAnalysis(region);
+          break;
+        }
+      }
+      return;
+    }
+
     auto displaced =
         mainComponent->exchangeProject(std::move(liveState.project));
     juce::ignoreUnused(displaced);
@@ -2911,7 +3054,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
   auto project = std::make_unique<Project>();
   if (ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
-      projectHasEditableAnalysisData(*project)) {
+      projectHasRestorableAnalysisData(*project)) {
     installRestoredProject(std::move(project));
     return;
   }
@@ -2924,7 +3067,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
   project = std::make_unique<Project>();
   if (ProjectSerializer::fromJson(*project, parsed) &&
-      projectHasEditableAnalysisData(*project))
+      projectHasRestorableAnalysisData(*project))
     installRestoredProject(std::move(project));
 }
 

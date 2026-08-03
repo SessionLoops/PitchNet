@@ -3332,14 +3332,12 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   // Edit mode commands
   case CommandIDs::toggleDrawMode:
     result.setInfo(TR("command.toggle_draw"), TR("command.toggle_draw.desp"), "Edit Mode", 0);
-    result.addDefaultKeypress('d', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Draw);
     break;
 
   case CommandIDs::exitDrawMode:
     result.setInfo(TR("command.exit_draw"), TR("command.exit_draw.desp"), "Edit Mode", 0);
-    result.addDefaultKeypress(juce::KeyPress::escapeKey, juce::ModifierKeys::noModifiers);
     result.setActive(pianoRoll.getEditMode() == EditMode::Draw);
     break;
 

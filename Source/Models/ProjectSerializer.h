@@ -15,6 +15,17 @@ class ProjectSerializer {
 public:
     static constexpr int FORMAT_VERSION = 3;
 
+    enum class BinaryArchiveMode {
+        // Standalone documents and conventional plug-in state must remain
+        // usable without an external audio source.
+        selfContained,
+
+        // ARA region state can recover the immutable source samples from the
+        // host. Keep rendered audio and analysis/edit data, but omit the
+        // duplicate pristine waveform.
+        omitOriginalWaveform
+    };
+
     /**
      * Save project to JSON file.
      */
@@ -42,7 +53,9 @@ public:
      * caches as raw binary buffers. Intended for DAW/plugin state archives.
      */
     static bool toBinaryArchive(const Project& project,
-                                juce::MemoryBlock& destData);
+                                juce::MemoryBlock& destData,
+                                BinaryArchiveMode mode =
+                                    BinaryArchiveMode::selfContained);
 
     /**
      * Load a project from toBinaryArchive(). Falls back to false for unknown
