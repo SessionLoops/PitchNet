@@ -3103,7 +3103,15 @@ void MainComponent::triggerResynthesis()
     return;
 
   // Triggered by DAW parameter automation (pitch offset, formant shift).
-  // Follows the same flow as parameterPanel.onParameterEditFinished.
+  // These parameters affect the complete render and do not dirty a particular
+  // note, so explicitly request a full-range incremental pass.
+  if (auto *project = getProject())
+  {
+    const int totalFrames = static_cast<int>(
+        project->getAudioData().melSpectrogram.size());
+    if (totalFrames > 0)
+      project->setF0DirtyRange(0, totalFrames);
+  }
   resynthesizeIncremental();
   notifyProjectDataChanged();
   if (onPitchEditFinished)

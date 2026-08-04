@@ -219,17 +219,6 @@ public:
     // Check if any notes are dirty
     bool hasDirtyNotes() const;
 
-    // Compose the global waveform from originalWaveform + per-note synthWaveforms.
-    // Fills audioData.waveform with originalWaveform as base, then overlays each
-    // note's synthWaveform at its output position with edge crossfades.
-    void composeGlobalWaveform();
-
-    // Rebuild the global waveform from per-note synthesis, but only when some
-    // note actually carries synthesized audio. Used after restoring a saved
-    // project so headless playback reflects edits, without ever reverting an
-    // already-composed waveform on a project that has no per-note synthesis.
-    void recomposeFromSynthIfPresent();
-
     // F0 direct edit dirty tracking (for Draw mode)
     void setF0DirtyRange(int startFrame, int endFrame);
     void clearF0DirtyRange();

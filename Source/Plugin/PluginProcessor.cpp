@@ -73,8 +73,8 @@ using SampleRange = juce::Range<int>;
 // render. processed[0] corresponds to processedStartInModification; account
 // for later trims by advancing into that render before placing it at the
 // region's current playback position. Return false unless the processed audio
-// covers the complete current region so hydration can safely fall back to the
-// per-note reconstruction path.
+// covers the complete current region so hydration can safely leave the region
+// source-backed when no compatible composite is available.
 bool replaceTimelineRegionWithProcessedAudio(
     juce::AudioBuffer<float> &timeline, double timelineRate,
     const juce::AudioBuffer<float> &processed, double processedRate,
@@ -182,11 +182,8 @@ void mergeRenderedState(Project &target, const Project &rendered) {
   if (targetNotes.size() == renderedNotes.size()) {
     for (size_t i = 0; i < targetNotes.size(); ++i) {
       const auto &renderedNote = renderedNotes[i];
-      if (renderedNote.hasSynthWaveform())
-        targetNotes[i].setSynthWaveform(renderedNote.getSynthWaveform(),
-                                        renderedNote.getSynthPreroll());
-      else if (!renderedNote.isSynthDirty())
-        targetNotes[i].discardSynthWaveform();
+      targetNotes[i].setRenderedEdit(renderedNote.hasRenderedEdit());
+      targetNotes[i].setSynthDirty(renderedNote.isSynthDirty());
     }
   }
 }
@@ -228,8 +225,7 @@ bool projectHasRestorableAnalysisData(const Project &project) {
   const auto &audioData = project.getAudioData();
   // Host-backed ARA region archives contain the analysis/edit shell but omit
   // project-level audio and mel buffers. Those are rebuilt from the ARA source
-  // plus the processed-region render (or per-note synth fallback) before the
-  // project becomes editable.
+  // plus the processed-region render before the project becomes editable.
   if (audioData.f0.empty())
     return false;
 
@@ -345,6 +341,21 @@ void preserveProcessedAudioOutsideRanges(
     for (int ch = 0; ch < channels; ++ch)
       replacement.setSample(ch, dst, previous.getSample(ch, previousSample));
   }
+}
+
+bool clearProcessedRegionAudio(PitchNetAudioModification *modification,
+                               const juce::String &liveKey,
+                               const juce::String &archivedKey) {
+  if (modification == nullptr || liveKey.isEmpty())
+    return false;
+
+  bool cleared = modification->hasProcessedAudioForRegion(liveKey);
+  modification->clearProcessedAudioForRegion(liveKey);
+  if (archivedKey.isNotEmpty() && archivedKey != liveKey) {
+    cleared = modification->hasProcessedAudioForRegion(archivedKey) || cleared;
+    modification->clearProcessedAudioForRegion(archivedKey);
+  }
+  return cleared;
 }
 #endif
 } // namespace
@@ -1934,6 +1945,15 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                 if (region != nullptr)
                   region->notifyContentChanged(
                       juce::ARAContentUpdateScopes::samplesAreAffected(), true);
+            } else if (clearProcessedRegionAudio(
+                           renderModification, renderRegionKey,
+                           renderArchivedRegionKey)) {
+              renderModification->notifyContentChanged(
+                  juce::ARAContentUpdateScopes::samplesAreAffected(), true);
+              for (auto *region : renderModification->getPlaybackRegions())
+                if (region != nullptr)
+                  region->notifyContentChanged(
+                      juce::ARAContentUpdateScopes::samplesAreAffected(), true);
             }
           } else
 #endif
@@ -2059,6 +2079,18 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
             region->notifyContentChanged(
                 juce::ARAContentUpdateScopes::samplesAreAffected(), true);
       }
+    } else if (activeModification != nullptr) {
+      const auto archivedKey =
+          archivedRegionKeyForLiveKey(activeModification, activeRegionKey);
+      if (clearProcessedRegionAudio(activeModification, activeRegionKey,
+                                    archivedKey)) {
+        activeModification->notifyContentChanged(
+            juce::ARAContentUpdateScopes::samplesAreAffected(), true);
+        for (auto *region : activeModification->getPlaybackRegions())
+          if (region != nullptr)
+            region->notifyContentChanged(
+                juce::ARAContentUpdateScopes::samplesAreAffected(), true);
+      }
     }
   } else if (araDocumentController != nullptr &&
              projectHasRegionEdits(stateProject)) {
@@ -2078,11 +2110,10 @@ bool PitchNetAudioProcessor::projectHasRegionEdits(const Project &project) {
       project.getFormantShift() != 0.0f)
     return true;
 
-  // Any note with a synthesised waveform means the user edited it (synthesis
-  // only runs for edited notes); a freshly analysed, untouched project has
-  // none.
+  // The rendered-edit flag records that a note contributed to the persisted
+  // composite without retaining a duplicate per-note audio buffer.
   for (const auto &note : project.getNotes())
-    if (note.hasSynthWaveform())
+    if (note.hasRenderedEdit())
       return true;
 
   return false;
@@ -2158,10 +2189,6 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
     return false;
   adoptMacroParameters(*restoredProject);
 
-  // Rebuild the global waveform from the persisted per-note synthesis so
-  // headless playback reflects saved edits (see binary branch above).
-  restoredProject->recomposeFromSynthIfPresent();
-
   araAnalysisTimelineOffsetSeconds =
       restoredProject->getAudioData().timelineOffsetSeconds;
   araPlaybackRegionRanges =
@@ -2190,12 +2217,6 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
   if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
                                             sizeInBytes)) {
     adoptMacroParameters(*restoredProject);
-    // The global waveform stored in the archive can lag the authoritative
-    // per-note synthesis (it's only refreshed when the editor recomposes).
-    // Rebuild it from originalWaveform + the persisted per-note synthWaveforms
-    // so headless playback reflects the saved edits without needing the editor
-    // open. Guarded so it never reverts a project that has no per-note synthesis.
-    restoredProject->recomposeFromSynthIfPresent();
     pendingStateJson.clear();
     araAnalysisTimelineOffsetSeconds =
         restoredProject->getAudioData().timelineOffsetSeconds;
@@ -2994,10 +3015,9 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
 
   // Prefer the separately persisted region render as the authoritative
   // composite waveform. It already contains every saved edit, including
-  // global processing that cannot be recovered from per-note caches alone.
+  // global processing.
   // The project remains timeline-anchored, so start with the pristine source
   // (including its leading timeline padding) and replace the current region.
-  bool restoredProcessedWaveform = false;
   if (audioData.waveform.getNumSamples() <= 0) {
     audioData.waveform.makeCopyOf(*hydratedSource);
 
@@ -3020,7 +3040,7 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
       }
 
       if (hasProcessedAudio)
-        restoredProcessedWaveform = replaceTimelineRegionWithProcessedAudio(
+        replaceTimelineRegionWithProcessedAudio(
             audioData.waveform, projectSampleRate, processedAudio,
             processedRate, processedStartInModification,
             activeStartSampleInModification, sourceSampleRate,
@@ -3028,11 +3048,10 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
     }
   }
 
-  // Older sessions, untouched regions, and processed renders that no longer
-  // cover a trimmed/extended region retain the deterministic reconstruction
-  // path from pristine source plus the persisted per-note synthesis.
-  if (!restoredProcessedWaveform)
-    project->recomposeFromSynthIfPresent();
+  // Untouched regions and processed renders that no longer cover a
+  // trimmed/extended region remain source-backed. There is intentionally no
+  // per-note waveform reconstruction path: the composite render is now the
+  // sole persisted edited-audio representation.
   if (pendingRegionCanvasAnalysisKey == regionKey) {
     pendingRegionCanvasAnalysisKey.clear();
     regionCanvasAnalysisPending.store(false);
@@ -3113,7 +3132,6 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
   auto installRestoredProject = [this, &regionKey](
                                     std::unique_ptr<Project> project) {
-    project->recomposeFromSynthIfPresent();
     attachMacroParameters(*project);
 
     // ARA restores region archives under their stable modification/index key,
@@ -3167,7 +3185,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
          liveState.project->getAudioData().melSpectrogram.empty())) {
       // Keep the restored analysis shell out of the editor until its immutable
       // source, source-derived mel, and rendered waveform have been rebuilt.
-      // Otherwise an edit could blend/recompose without all required inputs.
+      // Otherwise an edit could synthesize without all required inputs.
       if (mainComponent->getProject() != nullptr) {
         auto displaced = mainComponent->exchangeProject(nullptr);
         juce::ignoreUnused(displaced);

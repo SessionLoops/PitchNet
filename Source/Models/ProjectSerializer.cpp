@@ -8,7 +8,7 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 7;
+constexpr int kProjectArchiveVersion = 8;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
@@ -277,8 +277,7 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
 
     const int formatVersion =
         static_cast<int>(json.getProperty("formatVersion", 1));
-    if (formatVersion != 1 && formatVersion != 2 &&
-        formatVersion != FORMAT_VERSION)
+    if (formatVersion < 1 || formatVersion > FORMAT_VERSION)
         return false;
 
     // Metadata
@@ -563,9 +562,7 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
     for (const auto& note : notes) {
         if (!writeFloatVector(out, note.getOriginalDeltaPitch()) ||
             !writeFloatVector(out, note.getDeltaPitch()) ||
-            !writeFloatVector(out, note.getF0Values()) ||
-            !out.writeInt(note.getSynthPreroll()) ||
-            !writeFloatVector(out, note.getSynthWaveform()))
+            !writeFloatVector(out, note.getF0Values()))
             return false;
     }
 
@@ -681,7 +678,6 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         std::vector<float> originalDelta;
         std::vector<float> delta;
         std::vector<float> f0Values;
-        std::vector<float> synthWaveform;
 
         if (!readFloatVector(in, originalDelta) ||
             !readFloatVector(in, delta) ||
@@ -699,9 +695,18 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
                 return false;
         }
 
-        const int synthPreroll = in.readInt();
-        if (!readFloatVector(in, synthWaveform))
-            return false;
+        // Versions through 7 stored a full per-note synthesized waveform.
+        // Consume it for compatibility, retain only the semantic fact that
+        // the note contributed rendered audio, and let the project-level or
+        // processed-region composite remain authoritative.
+        bool hadLegacySynthWaveform = false;
+        if (archiveVersion <= 7) {
+            in.readInt(); // obsolete synth preroll
+            std::vector<float> obsoleteSynthWaveform;
+            if (!readFloatVector(in, obsoleteSynthWaveform))
+                return false;
+            hadLegacySynthWaveform = !obsoleteSynthWaveform.empty();
+        }
 
         // Versions 1-4 stored a redundant per-note copy of mel frames.
         // Source frame ranges identify the same data in the project-level mel
@@ -718,8 +723,10 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
             note.setDeltaPitch(std::move(delta));
         if (!f0Values.empty())
             note.setF0Values(std::move(f0Values));
-        if (!synthWaveform.empty())
-            note.setSynthWaveform(std::move(synthWaveform), synthPreroll);
+        if (hadLegacySynthWaveform) {
+            note.setRenderedEdit(true);
+            note.setSynthDirty(false);
+        }
     }
 
     if (audioData.baseF0.empty())
@@ -761,6 +768,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
         obj->setProperty("lyric", note.getLyric());
     if (note.hasPhoneme())
         obj->setProperty("phoneme", note.getPhoneme());
+    if (note.hasRenderedEdit())
+        obj->setProperty("renderedEdit", true);
 
     // Pitch tool transformation parameters (non-destructive)
     obj->setProperty("tiltLeft", note.getTiltLeft());
@@ -778,10 +787,6 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
             obj->setProperty("deltaPitch", floatArrayToString(note.getDeltaPitch(), 4));
         if (!note.getF0Values().empty())
             obj->setProperty("f0Values", floatArrayToString(note.getF0Values(), 2));
-        if (note.hasSynthWaveform()) {
-            obj->setProperty("synthWaveform", floatArrayToString(note.getSynthWaveform(), 6));
-            obj->setProperty("synthPreroll", note.getSynthPreroll());
-        }
     }
 
     // Per-note delta scale/offset
@@ -840,11 +845,15 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     auto f0ValuesStr = json.getProperty("f0Values", juce::var());
     if (!f0ValuesStr.isVoid() && f0ValuesStr.toString().isNotEmpty())
         note.setF0Values(stringToFloatArray(f0ValuesStr.toString()));
-    auto synthWaveformStr = json.getProperty("synthWaveform", juce::var());
-    if (!synthWaveformStr.isVoid() && synthWaveformStr.toString().isNotEmpty())
-        note.setSynthWaveform(
-            stringToFloatArray(synthWaveformStr.toString()),
-            static_cast<int>(json.getProperty("synthPreroll", 0)));
+    const auto legacySynthWaveform =
+        json.getProperty("synthWaveform", juce::var());
+    const bool hasRenderedEdit =
+        static_cast<bool>(json.getProperty("renderedEdit", false)) ||
+        (!legacySynthWaveform.isVoid() &&
+         legacySynthWaveform.toString().isNotEmpty());
+    note.setRenderedEdit(hasRenderedEdit);
+    if (hasRenderedEdit)
+        note.setSynthDirty(false);
     // Per-note delta scale/offset
     note.setDeltaScale(static_cast<float>(json.getProperty("deltaScale", 1.0)));
     note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));

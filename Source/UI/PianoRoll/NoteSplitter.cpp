@@ -207,10 +207,13 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     // note's processing state rather than treating the new tail as clean.
     const bool sourceIsDirty = originalNote.isDirty();
     const bool sourceIsSynthDirty = originalNote.isSynthDirty();
+    const bool sourceHasRenderedEdit = originalNote.hasRenderedEdit();
     note->setDirty(sourceIsDirty);
     note->setSynthDirty(sourceIsSynthDirty);
+    note->setRenderedEdit(sourceHasRenderedEdit);
     secondNote.setDirty(sourceIsDirty);
     secondNote.setSynthDirty(sourceIsSynthDirty);
+    secondNote.setRenderedEdit(sourceHasRenderedEdit);
 
     // Save first note BEFORE addNote (addNote may invalidate note pointer due to vector reallocation)
     Note firstNote = *note;
@@ -359,6 +362,8 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
     const bool isDirty = firstNote.isDirty() || secondNote.isDirty();
     const bool isSynthDirty = firstNote.isSynthDirty() || secondNote.isSynthDirty();
     mergedNote.setDirty(isDirty);
+    mergedNote.setRenderedEdit(firstNote.hasRenderedEdit() ||
+                               secondNote.hasRenderedEdit());
     if (isSynthDirty)
         mergedNote.markSynthDirty();
     else

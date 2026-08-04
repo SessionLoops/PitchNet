@@ -1211,9 +1211,6 @@ bool PitchNetDocumentController::restoreProjectStateToDocument(
   auto restoredProject = std::make_unique<Project>();
   if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
                                            sizeInBytes)) {
-    // Rebuild the global waveform from the persisted per-note synthesis so the
-    // headless document playback path reflects saved edits (no vocoder needed).
-    restoredProject->recomposeFromSynthIfPresent();
     documentProjectSnapshot = std::move(restoredProject);
     documentRealtimeProcessor.setProject(documentProjectSnapshot.get());
     return true;
@@ -1226,7 +1223,6 @@ bool PitchNetDocumentController::restoreProjectStateToDocument(
       !ProjectSerializer::fromJson(*restoredProject, parsed))
     return false;
 
-  restoredProject->recomposeFromSynthIfPresent();
   documentProjectSnapshot = std::move(restoredProject);
   documentRealtimeProcessor.setProject(documentProjectSnapshot.get());
   return true;
@@ -1274,7 +1270,7 @@ void PitchNetDocumentController::publishCompositeEditsToRegions(
   const double frameSeconds = static_cast<double>(HOP_SIZE) / waveformRate;
   std::vector<juce::Range<double>> editedRanges;
   for (const auto &note : project.getNotes())
-    if (note.hasSynthWaveform())
+    if (note.hasRenderedEdit())
       editedRanges.push_back({note.getStartFrame() * frameSeconds,
                               note.getEndFrame() * frameSeconds});
   if (editedRanges.empty())

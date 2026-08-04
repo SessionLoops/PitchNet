@@ -31,8 +31,6 @@ void MainComponent::openProjectFile(const juce::File &file) {
   // self-contained state so projects reopen exactly as saved, even if the
   // original audio file has moved or changed.
   if (loadedProject->getAudioData().waveform.getNumSamples() > 0) {
-    loadedProject->recomposeFromSynthIfPresent();
-
     if (editorController)
       editorController->setProject(std::make_unique<Project>(*loadedProject));
 

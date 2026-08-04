@@ -91,27 +91,16 @@ public:
     // Get F0 values based on current midiNote + deltaPitch
     std::vector<float> computeF0FromDelta() const;
 
-    // Synthesized waveform (vocoder output for this note, regenerated when synthDirty)
-    // When synthPreroll > 0, the waveform contains extra leading samples before
-    // the note's startFrame*HOP_SIZE, enabling real-audio crossfade at boundaries.
-    const std::vector<float>& getSynthWaveform() const { return synthWaveform; }
-    void setSynthWaveform(std::vector<float> samples) { synthWaveform = std::move(samples); synthPreroll = 0; synthDirty = false; }
-    void setSynthWaveform(std::vector<float> samples, int preroll) { synthWaveform = std::move(samples); synthPreroll = preroll; synthDirty = false; }
-    bool hasSynthWaveform() const { return !synthWaveform.empty(); }
-    void clearSynthWaveform() { synthWaveform.clear(); synthPreroll = 0; synthDirty = true; }
-    void discardSynthWaveform() { synthWaveform.clear(); synthPreroll = 0; synthDirty = false; }
-
-    // Synth preroll: number of margin samples prepended before noteStart in synthWaveform.
-    // synthWaveform[0..synthPreroll) covers audio BEFORE noteStart*HOP_SIZE.
-    // synthWaveform[synthPreroll..synthPreroll+noteSamples) is the note body.
-    // synthWaveform[synthPreroll+noteSamples..) is the postroll after noteEnd.
-    int getSynthPreroll() const { return synthPreroll; }
-    void setSynthPreroll(int preroll) { synthPreroll = preroll; }
+    // True after this note has contributed to the rendered composite waveform.
+    // This lightweight state replaces the former per-note audio cache and lets
+    // incremental synthesis refresh connected edited-note clusters.
+    bool hasRenderedEdit() const { return renderedEdit; }
+    void setRenderedEdit(bool rendered) { renderedEdit = rendered; }
 
     // Synth dirty flag (needs re-synthesis; separate from display dirty flag)
     bool isSynthDirty() const { return synthDirty; }
     void setSynthDirty(bool d) { synthDirty = d; }
-    void markSynthDirty() { synthDirty = true; synthWaveform.clear(); synthPreroll = 0; }
+    void markSynthDirty() { synthDirty = true; }
 
     // Selection
     bool isSelected() const { return selected; }
@@ -170,8 +159,7 @@ private:
     float deltaOffset = 0.0f;       // Added after scale (0.0=unchanged)
 
     std::vector<float> f0Values;
-    std::vector<float> synthWaveform;    // Vocoder output (regenerated when synthDirty)
-    int synthPreroll = 0;                // Margin samples prepended before noteStart in synthWaveform
+    bool renderedEdit = false; // Audio for this note is present in the composite
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)

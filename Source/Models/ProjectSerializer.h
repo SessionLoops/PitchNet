@@ -13,7 +13,7 @@
  */
 class ProjectSerializer {
 public:
-    static constexpr int FORMAT_VERSION = 3;
+    static constexpr int FORMAT_VERSION = 4;
 
     enum class BinaryArchiveMode {
         // Standalone documents and conventional plug-in state must remain
@@ -21,9 +21,9 @@ public:
         selfContained,
 
         // ARA region state can recover immutable source samples from the host,
-        // cheaply rebuild source-derived features, and recompose edited audio
-        // from per-note synth caches. Keep edit data, but omit all project-level
-        // waveform and mel buffers.
+        // cheaply rebuild source-derived features, and restore edited audio
+        // from the separately persisted processed-region render. Keep edit
+        // state, but omit all project-level waveform and mel buffers.
         hostBackedARA
     };
 

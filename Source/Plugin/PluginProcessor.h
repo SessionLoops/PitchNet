@@ -162,8 +162,8 @@ public:
   // clip + per-region playback can read it headlessly (Stage B). Called by the
   // document controller after extracting one region's audio. Uses a dedicated
   // controller so it never disturbs the composite analysis / playback pipeline.
-  // True when the project contains actual user edits (per-note synthesis or
-  // global pitch/formant offsets) — only such projects publish per-region
+  // True when the project contains actual rendered note edits or global
+  // pitch/formant offsets — only such projects publish per-region
   // processed audio; unedited regions play their original source.
   static bool projectHasRegionEdits(const Project &project);
   void analyzeAraRegionForCanvas(const juce::String &regionKey,
@@ -180,9 +180,9 @@ public:
   // Per-region project persistence. ARA archives omit both project waveforms
   // and the global mel spectrogram because they are rebuilt from the host
   // source. The rendered waveform uses the modification's processed-region
-  // audio when available, with per-note synth caches as the compatibility
-  // fallback. Edit data remains archived. serialize returns false if no
-  // project is cached for regionKey.
+  // audio when available; otherwise the region remains source-backed. Edit
+  // data remains archived. serialize returns false if no project is cached for
+  // regionKey.
   bool serializeAraRegionProject(const juce::String &regionKey,
                                  juce::MemoryBlock &out) const;
   bool hasAraRegionProject(const juce::String &regionKey) const;
