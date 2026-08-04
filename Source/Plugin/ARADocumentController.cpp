@@ -1196,7 +1196,7 @@ void PitchNetDocumentController::ensureHeadlessPlaybackBinding() {
   setRealtimeProcessor(&owningProcessor->getRealtimeProcessor());
   setPersistenceCallbacks(
       [processor = owningProcessor](juce::MemoryBlock &destData) {
-        return processor->serializePersistentProjectState(destData);
+        return processor->serializePersistentProjectState(destData, true);
       },
       [processor = owningProcessor](const void *data, size_t sizeInBytes) {
         return processor->restorePersistentProjectState(data, sizeInBytes);
@@ -1233,7 +1233,13 @@ bool PitchNetDocumentController::serializeDocumentProjectState(
   destData.setSize(0);
   if (!documentProjectSnapshot)
     return false;
-  return ProjectSerializer::toBinaryArchive(*documentProjectSnapshot, destData);
+  // An ARA document archive can always recover immutable audio from the host.
+  // Edited playback is persisted separately as ProcessedRegionData, so storing
+  // either project waveform or the source-derived mel here only duplicates the
+  // largest payloads in the DAW project.
+  return ProjectSerializer::toBinaryArchive(
+      *documentProjectSnapshot, destData,
+      ProjectSerializer::BinaryArchiveMode::hostBackedARA);
 }
 
 void PitchNetDocumentController::prepareDocumentPlayback(double sampleRate,

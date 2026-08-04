@@ -2145,27 +2145,34 @@ void PitchNetAudioProcessor::updateAraTimelineOffset(
 }
 
 bool PitchNetAudioProcessor::serializePersistentProjectState(
-    juce::MemoryBlock &destData) const {
+    juce::MemoryBlock &destData, bool hostBackedARA) const {
   destData.setSize(0);
+
+  const auto archiveMode =
+      hostBackedARA
+          ? ProjectSerializer::BinaryArchiveMode::hostBackedARA
+          : ProjectSerializer::BinaryArchiveMode::selfContained;
 
   if (mainComponent) {
     if (auto *project = mainComponent->getProject())
-      return ProjectSerializer::toBinaryArchive(*project, destData);
+      return ProjectSerializer::toBinaryArchive(*project, destData,
+                                                archiveMode);
   }
 
   if (araAnalysisProjectSnapshot)
     return ProjectSerializer::toBinaryArchive(*araAnalysisProjectSnapshot,
-                                              destData);
+                                              destData, archiveMode);
 
   if (araAnalysisController && araAnalysisController->getProject())
     return ProjectSerializer::toBinaryArchive(
-        *araAnalysisController->getProject(), destData);
+        *araAnalysisController->getProject(), destData, archiveMode);
 
   if (pendingStateJson.isNotEmpty()) {
     Project pendingProject;
     if (ProjectSerializer::fromJson(
             pendingProject, juce::JSON::parse(pendingStateJson)))
-      return ProjectSerializer::toBinaryArchive(pendingProject, destData);
+      return ProjectSerializer::toBinaryArchive(pendingProject, destData,
+                                                archiveMode);
 
     destData.append(pendingStateJson.toRawUTF8(),
                     pendingStateJson.getNumBytesAsUTF8());
@@ -2409,7 +2416,14 @@ void PitchNetAudioProcessor::getStateInformation(
                                               : juce::String();
 
   juce::MemoryBlock projectArchive;
-  serializePersistentProjectState(projectArchive);
+  bool hostBackedARA = false;
+#if JucePlugin_Enable_ARA
+  // When this processor is attached to an ARA document, the host already owns
+  // the immutable source and the ARA object stream persists ProcessedRegionData
+  // for edited playback. Keep ordinary/non-ARA plugin state self-contained.
+  hostBackedARA = araDocumentController != nullptr;
+#endif
+  serializePersistentProjectState(projectArchive, hostBackedARA);
 
   out.writeInt(static_cast<int>(kPluginStateMagic));
   out.writeInt(kPluginStateBinaryVersion);
@@ -3290,7 +3304,7 @@ void PitchNetAudioProcessor::ensureHeadlessAraBinding() {
       // synchronously here.
       dc->setPersistenceCallbacks(
           [this](juce::MemoryBlock &destData) {
-            return serializePersistentProjectState(destData);
+            return serializePersistentProjectState(destData, true);
           },
           [this](const void *data, size_t sizeInBytes) {
             return restorePersistentProjectState(data, sizeInBytes);

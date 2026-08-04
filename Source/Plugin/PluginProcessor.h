@@ -93,7 +93,8 @@ public:
                                     double sampleRate,
                                     double timelineOffsetSeconds);
   void updateAraTimelineOffset(double timelineOffsetSeconds);
-  bool serializePersistentProjectState(juce::MemoryBlock &destData) const;
+  bool serializePersistentProjectState(juce::MemoryBlock &destData,
+                                       bool hostBackedARA = false) const;
   bool restorePersistentProjectState(const void *data, size_t sizeInBytes);
 
   void removeAraRegionFromProject(
