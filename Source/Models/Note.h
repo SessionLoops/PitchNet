@@ -113,11 +113,6 @@ public:
     void setSynthDirty(bool d) { synthDirty = d; }
     void markSynthDirty() { synthDirty = true; synthWaveform.clear(); synthPreroll = 0; }
 
-    // Mel spectrogram clip (original mel frames for this note)
-    const std::vector<std::vector<float>>& getClipMel() const { return clipMel; }
-    void setClipMel(std::vector<std::vector<float>> mel) { clipMel = std::move(mel); }
-    bool hasClipMel() const { return !clipMel.empty(); }
-
     // Selection
     bool isSelected() const { return selected; }
     void setSelected(bool sel) { selected = sel; }
@@ -177,8 +172,6 @@ private:
     std::vector<float> f0Values;
     std::vector<float> synthWaveform;    // Vocoder output (regenerated when synthDirty)
     int synthPreroll = 0;                // Margin samples prepended before noteStart in synthWaveform
-    std::vector<std::vector<float>> clipMel;  // Mel spectrogram clip [T, numMels]
-
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)

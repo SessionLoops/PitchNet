@@ -5,6 +5,7 @@
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
 #include "../Utils/Constants.h"
+#include "../Utils/MelSpectrogram.h"
 #include "../Utils/OnnxRuntime.h"
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "ARADocumentController.h"
@@ -127,9 +128,9 @@ bool projectAppearsToCoverRegion(const Project &project, double regionStart,
 
 bool projectHasRestorableAnalysisData(const Project &project) {
   const auto &audioData = project.getAudioData();
-  // ARA region archives deliberately omit originalWaveform. The rendered
-  // waveform keeps playback/UI state available while the source is hydrated
-  // from the host before the region becomes editable.
+  // ARA region archives deliberately omit source-derived waveform and mel
+  // data. The rendered waveform keeps playback/UI state available while both
+  // are rebuilt from the host source before the region becomes editable.
   if (audioData.waveform.getNumSamples() <= 0 || audioData.f0.empty())
     return false;
 
@@ -2484,8 +2485,8 @@ void PitchNetAudioProcessor::setActiveAraRegion(
 
   // Show the incoming region's project. A project analysed in this session is
   // ready immediately. A restored ARA archive has all analysis/edit data and
-  // rendered output but deliberately lacks originalWaveform, so it takes the
-  // source-read path below to hydrate that one buffer without re-analysis.
+  // rendered output but deliberately lacks originalWaveform and mel, so it
+  // takes the source-read path below to rebuild both without neural analysis.
   if (mainComponent != nullptr) {
     auto it = araRegions.find(key);
     if ((it == araRegions.end() || !it->second.project) &&
@@ -2778,7 +2779,7 @@ bool PitchNetAudioProcessor::serializeAraRegionProject(
 
   return ProjectSerializer::toBinaryArchive(
              *project, out,
-             ProjectSerializer::BinaryArchiveMode::omitOriginalWaveform) &&
+             ProjectSerializer::BinaryArchiveMode::hostBackedARA) &&
          out.getSize() > 0;
 }
 
@@ -2803,8 +2804,12 @@ bool PitchNetAudioProcessor::araRegionProjectNeedsSourceHydration(
       project = it->second.project.get();
   }
 
-  return project != nullptr &&
-         project->getAudioData().originalWaveform.getNumSamples() <= 0;
+  if (project == nullptr)
+    return false;
+
+  const auto &audioData = project->getAudioData();
+  return audioData.originalWaveform.getNumSamples() <= 0 ||
+         audioData.melSpectrogram.empty();
 }
 
 bool PitchNetAudioProcessor::hydrateAraRegionProject(
@@ -2828,7 +2833,8 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
     return false;
 
   auto &audioData = project->getAudioData();
-  if (audioData.originalWaveform.getNumSamples() > 0)
+  if (audioData.originalWaveform.getNumSamples() > 0 &&
+      !audioData.melSpectrogram.empty())
     return true;
 
   // Region analysis is stored at PitchNet's working rate, which can differ
@@ -2872,7 +2878,18 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
   }
 
   audioData.sampleRate = juce::roundToInt(projectSampleRate);
-  audioData.originalWaveform.makeCopyOf(*hydratedSource);
+  if (audioData.originalWaveform.getNumSamples() <= 0)
+    audioData.originalWaveform.makeCopyOf(*hydratedSource);
+
+  if (audioData.melSpectrogram.empty()) {
+    const auto &sourceWaveform = audioData.originalWaveform;
+    MelSpectrogram melComputer(audioData.sampleRate, N_FFT, HOP_SIZE,
+                               NUM_MELS, FMIN, FMAX);
+    audioData.melSpectrogram = melComputer.compute(
+        sourceWaveform.getReadPointer(0), sourceWaveform.getNumSamples());
+    if (audioData.melSpectrogram.empty())
+      return false;
+  }
 
   // The archived rendered waveform remains available while hydration waits.
   // Once the pristine source exists again, rebuild edited output from the
@@ -2917,13 +2934,14 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
 
   if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr) {
     const auto &audioData = mainComponent->getProject()->getAudioData();
-    return audioData.originalWaveform.getNumSamples() > 0;
+    return audioData.originalWaveform.getNumSamples() > 0 &&
+           !audioData.melSpectrogram.empty();
   }
 
   auto it = araRegions.find(regionKey);
   if (it == araRegions.end() || !it->second.project)
     return false;
-  if (it->second.project->getAudioData().originalWaveform.getNumSamples() <= 0)
+  if (araRegionProjectNeedsSourceHydration(regionKey))
     return false;
 
   regionCanvasAnalysisGeneration.fetch_add(1);
@@ -3006,11 +3024,12 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
       return;
 
     if (liveState.project != nullptr &&
-        liveState.project->getAudioData().originalWaveform.getNumSamples() <=
-            0) {
+        (liveState.project->getAudioData().originalWaveform.getNumSamples() <=
+             0 ||
+         liveState.project->getAudioData().melSpectrogram.empty())) {
       // Keep the restored analysis shell out of the editor until its immutable
-      // source has been read back from ARA. Otherwise an edit made in this
-      // window would blend/recompose without a pristine waveform.
+      // source and source-derived mel have been rebuilt from ARA. Otherwise an
+      // edit could blend/recompose without all required inputs.
       if (mainComponent->getProject() != nullptr) {
         auto displaced = mainComponent->exchangeProject(nullptr);
         juce::ignoreUnused(displaced);

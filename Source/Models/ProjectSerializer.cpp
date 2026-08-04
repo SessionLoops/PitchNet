@@ -8,8 +8,9 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 4;
+constexpr int kProjectArchiveVersion = 6;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
+constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
@@ -502,18 +503,20 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
     const auto metadataJson =
         juce::JSON::toString(toJson(project, false, false), false);
     const auto& audioData = project.getAudioData();
-    const bool includeOriginalWaveform =
+    const bool includeSourceDerivedData =
         mode == BinaryArchiveMode::selfContained;
-    const int archiveFlags = includeOriginalWaveform
-                                 ? kProjectArchiveHasOriginalWaveform
-                                 : 0;
+    const int archiveFlags =
+        includeSourceDerivedData
+            ? kProjectArchiveHasOriginalWaveform |
+                  kProjectArchiveHasMelSpectrogram
+            : 0;
 
     if (!out.writeInt(static_cast<int>(kProjectArchiveMagic)) ||
         !out.writeInt(kProjectArchiveVersion) ||
         !out.writeInt(archiveFlags) ||
         !writeString(out, metadataJson) ||
         !writeAudioBuffer(out, audioData.waveform) ||
-        (includeOriginalWaveform &&
+        (includeSourceDerivedData &&
          !writeAudioBuffer(out, audioData.originalWaveform)) ||
         !writeFloatVector(out, audioData.f0) ||
         !writeFloatVector(out, audioData.rawF0) ||
@@ -524,7 +527,8 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
         !writeFloatVector(out, audioData.deltaPitch) ||
         !writeBoolVector(out, audioData.voicedMask) ||
         !writeBoolVector(out, audioData.vadMask) ||
-        !writeMel(out, audioData.melSpectrogram))
+        (includeSourceDerivedData &&
+         !writeMel(out, audioData.melSpectrogram)))
         return false;
 
     if (!out.writeInt64(
@@ -558,8 +562,7 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
             !writeFloatVector(out, note.getDeltaPitch()) ||
             !writeFloatVector(out, note.getF0Values()) ||
             !out.writeInt(note.getSynthPreroll()) ||
-            !writeFloatVector(out, note.getSynthWaveform()) ||
-            !writeMel(out, note.getClipMel()))
+            !writeFloatVector(out, note.getSynthWaveform()))
             return false;
     }
 
@@ -583,6 +586,11 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         archiveVersion >= 4 ? in.readInt() : kProjectArchiveHasOriginalWaveform;
     const bool hasOriginalWaveform =
         (archiveFlags & kProjectArchiveHasOriginalWaveform) != 0;
+    // Versions before 6 always stored the global mel spectrogram, including
+    // host-backed archives that omitted only originalWaveform.
+    const bool hasMelSpectrogram =
+        archiveVersion < 6 ||
+        (archiveFlags & kProjectArchiveHasMelSpectrogram) != 0;
 
     const auto metadataJson = readString(in);
     auto metadata = juce::JSON::parse(metadataJson);
@@ -612,9 +620,14 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         !readFloatVector(in, audioData.basePitch) ||
         !readFloatVector(in, audioData.deltaPitch) ||
         !readBoolVector(in, audioData.voicedMask) ||
-        !readBoolVector(in, audioData.vadMask) ||
-        !readMel(in, audioData.melSpectrogram))
+        !readBoolVector(in, audioData.vadMask))
         return false;
+    if (hasMelSpectrogram) {
+        if (!readMel(in, audioData.melSpectrogram))
+            return false;
+    } else {
+        audioData.melSpectrogram.clear();
+    }
 
     const auto debugChunkCount = in.readInt64();
     if (debugChunkCount < 0 ||
@@ -658,7 +671,6 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         std::vector<float> delta;
         std::vector<float> f0Values;
         std::vector<float> synthWaveform;
-        std::vector<std::vector<float>> clipMel;
 
         if (!readFloatVector(in, originalDelta) ||
             !readFloatVector(in, delta) ||
@@ -677,9 +689,17 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         }
 
         const int synthPreroll = in.readInt();
-        if (!readFloatVector(in, synthWaveform) ||
-            !readMel(in, clipMel))
+        if (!readFloatVector(in, synthWaveform))
             return false;
+
+        // Versions 1-4 stored a redundant per-note copy of mel frames.
+        // Source frame ranges identify the same data in the project-level mel
+        // spectrogram, so consume the legacy field without retaining it.
+        if (archiveVersion <= 4) {
+            std::vector<std::vector<float>> obsoleteClipMel;
+            if (!readMel(in, obsoleteClipMel))
+                return false;
+        }
 
         if (!originalDelta.empty())
             note.setOriginalDeltaPitch(std::move(originalDelta));
@@ -689,8 +709,6 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
             note.setF0Values(std::move(f0Values));
         if (!synthWaveform.empty())
             note.setSynthWaveform(std::move(synthWaveform), synthPreroll);
-        if (!clipMel.empty())
-            note.setClipMel(std::move(clipMel));
     }
 
     if (audioData.baseF0.empty())
@@ -753,8 +771,6 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
             obj->setProperty("synthWaveform", floatArrayToString(note.getSynthWaveform(), 6));
             obj->setProperty("synthPreroll", note.getSynthPreroll());
         }
-        if (note.hasClipMel())
-            obj->setProperty("clipMel", melSpectrogramToJson(note.getClipMel()));
     }
 
     // Per-note delta scale/offset
@@ -818,10 +834,6 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
         note.setSynthWaveform(
             stringToFloatArray(synthWaveformStr.toString()),
             static_cast<int>(json.getProperty("synthPreroll", 0)));
-    std::vector<std::vector<float>> clipMel;
-    if (melSpectrogramFromJson(clipMel, json.getProperty("clipMel", juce::var())))
-        note.setClipMel(std::move(clipMel));
-
     // Per-note delta scale/offset
     note.setDeltaScale(static_cast<float>(json.getProperty("deltaScale", 1.0)));
     note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));

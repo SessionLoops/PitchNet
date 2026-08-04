@@ -90,22 +90,6 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     // Store original note data for undo
     Note originalNote = *note;
 
-    // Ensure clip mel exists before splitting
-    if (!note->hasClipMel()) {
-        auto& audioData = project->getAudioData();
-        if (!audioData.melSpectrogram.empty()) {
-            int melSize = static_cast<int>(audioData.melSpectrogram.size());
-            int melStart = std::max(0, std::min(startFrame, melSize));
-            int melEnd = std::max(melStart, std::min(endFrame, melSize));
-            if (melEnd > melStart) {
-                std::vector<std::vector<float>> melClip(
-                    audioData.melSpectrogram.begin() + melStart,
-                    audioData.melSpectrogram.begin() + melEnd);
-                note->setClipMel(std::move(melClip));
-            }
-        }
-    }
-
     // Create the second note (right part)
     Note secondNote;
     secondNote.setStartFrame(splitFrame);
@@ -139,17 +123,6 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setDeltaScale(note->getDeltaScale());
     secondNote.setDeltaOffset(note->getDeltaOffset());
     secondNote.setPitchOffset(0.0f);
-
-    // Split clip mel if available
-    if (note->hasClipMel()) {
-        const auto& mel = note->getClipMel();
-        int splitOffset = splitFrame - startFrame;
-        splitOffset = std::max(0, std::min(splitOffset, static_cast<int>(mel.size())));
-        std::vector<std::vector<float>> leftMel(mel.begin(), mel.begin() + splitOffset);
-        std::vector<std::vector<float>> rightMel(mel.begin() + splitOffset, mel.end());
-        note->setClipMel(std::move(leftMel));
-        secondNote.setClipMel(std::move(rightMel));
-    }
 
     // Split originalDeltaPitch if available.
     if (note->hasOriginalDeltaPitch()) {
@@ -352,7 +325,6 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
         left.insert(left.end(), right.begin(), right.end());
         return left;
     };
-    mergedNote.setClipMel(append(firstNote.getClipMel(), secondNote.getClipMel()));
     mergedNote.setF0Values(append(firstNote.getF0Values(), secondNote.getF0Values()));
 
     // Restore a single pitch center over the merged duration. Each half may

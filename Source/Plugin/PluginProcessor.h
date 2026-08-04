@@ -177,10 +177,10 @@ public:
   // have the same lifetime and are destroyed together.
   void removeAraRegion(const juce::String &regionKey);
 
-  // Per-region project persistence. ARA archives omit originalWaveform because
-  // it is hydrated from the host source before editing; rendered audio and all
-  // analysis/edit data remain archived. serialize returns false if no project
-  // is cached for regionKey.
+  // Per-region project persistence. ARA archives omit originalWaveform and the
+  // global mel spectrogram because both are rebuilt from the host source before
+  // editing; rendered audio and edit data remain archived. serialize returns
+  // false if no project is cached for regionKey.
   bool serializeAraRegionProject(const juce::String &regionKey,
                                  juce::MemoryBlock &out) const;
   bool hasAraRegionProject(const juce::String &regionKey) const;

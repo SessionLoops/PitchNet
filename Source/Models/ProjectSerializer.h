@@ -20,10 +20,10 @@ public:
         // usable without an external audio source.
         selfContained,
 
-        // ARA region state can recover the immutable source samples from the
-        // host. Keep rendered audio and analysis/edit data, but omit the
-        // duplicate pristine waveform.
-        omitOriginalWaveform
+        // ARA region state can recover immutable source samples from the host
+        // and cheaply rebuild source-derived features. Keep rendered audio and
+        // edit data, but omit the pristine waveform and mel spectrogram.
+        hostBackedARA
     };
 
     /**
