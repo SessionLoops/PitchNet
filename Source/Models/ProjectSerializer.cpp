@@ -8,9 +8,10 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 6;
+constexpr int kProjectArchiveVersion = 7;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
+constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
 
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
@@ -508,14 +509,16 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
     const int archiveFlags =
         includeSourceDerivedData
             ? kProjectArchiveHasOriginalWaveform |
-                  kProjectArchiveHasMelSpectrogram
+                  kProjectArchiveHasMelSpectrogram |
+                  kProjectArchiveHasRenderedWaveform
             : 0;
 
     if (!out.writeInt(static_cast<int>(kProjectArchiveMagic)) ||
         !out.writeInt(kProjectArchiveVersion) ||
         !out.writeInt(archiveFlags) ||
         !writeString(out, metadataJson) ||
-        !writeAudioBuffer(out, audioData.waveform) ||
+        (includeSourceDerivedData &&
+         !writeAudioBuffer(out, audioData.waveform)) ||
         (includeSourceDerivedData &&
          !writeAudioBuffer(out, audioData.originalWaveform)) ||
         !writeFloatVector(out, audioData.f0) ||
@@ -586,6 +589,10 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         archiveVersion >= 4 ? in.readInt() : kProjectArchiveHasOriginalWaveform;
     const bool hasOriginalWaveform =
         (archiveFlags & kProjectArchiveHasOriginalWaveform) != 0;
+    // Versions before 7 always stored the rendered project waveform.
+    const bool hasRenderedWaveform =
+        archiveVersion < 7 ||
+        (archiveFlags & kProjectArchiveHasRenderedWaveform) != 0;
     // Versions before 6 always stored the global mel spectrogram, including
     // host-backed archives that omitted only originalWaveform.
     const bool hasMelSpectrogram =
@@ -598,8 +605,12 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         return false;
 
     auto& audioData = project.getAudioData();
-    if (!readAudioBuffer(in, audioData.waveform))
-        return false;
+    if (hasRenderedWaveform) {
+        if (!readAudioBuffer(in, audioData.waveform))
+            return false;
+    } else {
+        audioData.waveform.setSize(0, 0);
+    }
     if (hasOriginalWaveform) {
         if (!readAudioBuffer(in, audioData.originalWaveform))
             return false;

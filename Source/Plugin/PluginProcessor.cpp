@@ -69,6 +69,104 @@ juce::AudioBuffer<float> copyTimelineSlice(const juce::AudioBuffer<float> &src,
 #if JucePlugin_Enable_ARA
 using SampleRange = juce::Range<int>;
 
+// Seed a timeline-anchored Project waveform from a region-local processed
+// render. processed[0] corresponds to processedStartInModification; account
+// for later trims by advancing into that render before placing it at the
+// region's current playback position. Return false unless the processed audio
+// covers the complete current region so hydration can safely fall back to the
+// per-note reconstruction path.
+bool replaceTimelineRegionWithProcessedAudio(
+    juce::AudioBuffer<float> &timeline, double timelineRate,
+    const juce::AudioBuffer<float> &processed, double processedRate,
+    juce::int64 processedStartInModification,
+    juce::int64 currentStartInModification, double modificationRate,
+    double regionStartSeconds, double regionEndSeconds) {
+  if (timeline.getNumChannels() <= 0 || timeline.getNumSamples() <= 0 ||
+      processed.getNumChannels() <= 0 || processed.getNumSamples() <= 0 ||
+      !std::isfinite(timelineRate) || !std::isfinite(processedRate) ||
+      !std::isfinite(modificationRate) || timelineRate <= 0.0 ||
+      processedRate <= 0.0 || modificationRate <= 0.0 ||
+      !std::isfinite(regionStartSeconds) ||
+      !std::isfinite(regionEndSeconds) || regionStartSeconds < 0.0 ||
+      regionEndSeconds <= regionStartSeconds)
+    return false;
+
+  const auto destinationStart64 = static_cast<juce::int64>(
+      std::llround(regionStartSeconds * timelineRate));
+  const auto destinationEnd64 = static_cast<juce::int64>(
+      std::llround(regionEndSeconds * timelineRate));
+  if (destinationStart64 < 0 || destinationEnd64 <= destinationStart64 ||
+      destinationStart64 >= timeline.getNumSamples())
+    return false;
+
+  // The independently rounded timeline length can differ from the rounded
+  // region end by one sample after host-rate -> project-rate conversion.
+  constexpr juce::int64 kTimelineCoverageTolerance = 2;
+  if (destinationEnd64 >
+      static_cast<juce::int64>(timeline.getNumSamples()) +
+          kTimelineCoverageTolerance)
+    return false;
+
+  const int destinationStart = static_cast<int>(destinationStart64);
+  const int destinationEnd = static_cast<int>(std::min<juce::int64>(
+      destinationEnd64, timeline.getNumSamples()));
+  const int destinationSamples = destinationEnd - destinationStart;
+  if (destinationSamples <= 0)
+    return false;
+
+  const double modificationOffsetSeconds =
+      static_cast<double>(currentStartInModification -
+                          processedStartInModification) /
+      modificationRate;
+  const double processedStart = modificationOffsetSeconds * processedRate;
+  const double processedStep = processedRate / timelineRate;
+  const double processedEnd =
+      processedStart + static_cast<double>(destinationSamples) * processedStep;
+
+  // Permit only rounding-sized edge discrepancies. A materially incomplete
+  // processed render must not partially replace the pristine source because
+  // that would expose an audible edited/original seam in the UI waveform.
+  constexpr double kProcessedCoverageTolerance = 2.0;
+  if (processedStart < -kProcessedCoverageTolerance ||
+      processedEnd > static_cast<double>(processed.getNumSamples()) +
+                         kProcessedCoverageTolerance)
+    return false;
+
+  const auto roundedProcessedStart =
+      static_cast<juce::int64>(std::llround(processedStart));
+  if (juce::approximatelyEqual(processedRate, timelineRate) &&
+      std::abs(processedStart - static_cast<double>(roundedProcessedStart)) <
+          1.0e-6 &&
+      roundedProcessedStart >= 0 &&
+      roundedProcessedStart + destinationSamples <=
+          processed.getNumSamples()) {
+    for (int channel = 0; channel < timeline.getNumChannels(); ++channel)
+      timeline.copyFrom(
+          channel, destinationStart, processed,
+          std::min(channel, processed.getNumChannels() - 1),
+          static_cast<int>(roundedProcessedStart), destinationSamples);
+    return true;
+  }
+
+  for (int channel = 0; channel < timeline.getNumChannels(); ++channel) {
+    const auto *source = processed.getReadPointer(
+        std::min(channel, processed.getNumChannels() - 1));
+    auto *destination = timeline.getWritePointer(channel, destinationStart);
+    for (int sample = 0; sample < destinationSamples; ++sample) {
+      const double sourcePosition = std::clamp(
+          processedStart + static_cast<double>(sample) * processedStep, 0.0,
+          static_cast<double>(processed.getNumSamples() - 1));
+      const int left = static_cast<int>(sourcePosition);
+      const int right = std::min(left + 1, processed.getNumSamples() - 1);
+      const float fraction =
+          static_cast<float>(sourcePosition - static_cast<double>(left));
+      destination[sample] =
+          source[left] + fraction * (source[right] - source[left]);
+    }
+  }
+  return true;
+}
+
 // Bring synthesized output back to the persistent region Project without
 // replacing the Project, its note vector, or the F0 vectors referenced by undo
 // actions. Analysis/edit data remains authoritative in the persistent object.
@@ -111,7 +209,7 @@ void sanitiseARAOutput(juce::AudioBuffer<float> &buffer) noexcept {
 bool projectAppearsToCoverRegion(const Project &project, double regionStart,
                                  double regionEnd) {
   const auto &audioData = project.getAudioData();
-  if (audioData.waveform.getNumSamples() <= 0 || audioData.f0.empty())
+  if (audioData.f0.empty())
     return false;
 
   constexpr double epsilon = 1.0e-3;
@@ -128,10 +226,11 @@ bool projectAppearsToCoverRegion(const Project &project, double regionStart,
 
 bool projectHasRestorableAnalysisData(const Project &project) {
   const auto &audioData = project.getAudioData();
-  // ARA region archives deliberately omit source-derived waveform and mel
-  // data. The rendered waveform keeps playback/UI state available while both
-  // are rebuilt from the host source before the region becomes editable.
-  if (audioData.waveform.getNumSamples() <= 0 || audioData.f0.empty())
+  // Host-backed ARA region archives contain the analysis/edit shell but omit
+  // project-level audio and mel buffers. Those are rebuilt from the ARA source
+  // plus the processed-region render (or per-note synth fallback) before the
+  // project becomes editable.
+  if (audioData.f0.empty())
     return false;
 
   const int f0Size = static_cast<int>(audioData.f0.size());
@@ -2484,9 +2583,9 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     mainComponent->bindUndoManager(incomingUndoManager);
 
   // Show the incoming region's project. A project analysed in this session is
-  // ready immediately. A restored ARA archive has all analysis/edit data and
-  // rendered output but deliberately lacks originalWaveform and mel, so it
-  // takes the source-read path below to rebuild both without neural analysis.
+  // ready immediately. A restored ARA archive has all analysis/edit data but
+  // deliberately lacks project waveforms and mel, so it takes the source-read
+  // path below to rebuild them without neural analysis.
   if (mainComponent != nullptr) {
     auto it = araRegions.find(key);
     if ((it == araRegions.end() || !it->second.project) &&
@@ -2808,7 +2907,8 @@ bool PitchNetAudioProcessor::araRegionProjectNeedsSourceHydration(
     return false;
 
   const auto &audioData = project->getAudioData();
-  return audioData.originalWaveform.getNumSamples() <= 0 ||
+  return audioData.waveform.getNumSamples() <= 0 ||
+         audioData.originalWaveform.getNumSamples() <= 0 ||
          audioData.melSpectrogram.empty();
 }
 
@@ -2833,7 +2933,8 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
     return false;
 
   auto &audioData = project->getAudioData();
-  if (audioData.originalWaveform.getNumSamples() > 0 &&
+  if (audioData.waveform.getNumSamples() > 0 &&
+      audioData.originalWaveform.getNumSamples() > 0 &&
       !audioData.melSpectrogram.empty())
     return true;
 
@@ -2891,12 +2992,47 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
       return false;
   }
 
-  // The archived rendered waveform remains available while hydration waits.
-  // Once the pristine source exists again, rebuild edited output from the
-  // authoritative per-note synth data exactly as a self-contained restore does.
-  if (audioData.waveform.getNumSamples() <= 0)
+  // Prefer the separately persisted region render as the authoritative
+  // composite waveform. It already contains every saved edit, including
+  // global processing that cannot be recovered from per-note caches alone.
+  // The project remains timeline-anchored, so start with the pristine source
+  // (including its leading timeline padding) and replace the current region.
+  bool restoredProcessedWaveform = false;
+  if (audioData.waveform.getNumSamples() <= 0) {
     audioData.waveform.makeCopyOf(*hydratedSource);
-  project->recomposeFromSynthIfPresent();
+
+    if (regionKey == activeRegionKey && activeModification != nullptr) {
+      juce::AudioBuffer<float> processedAudio;
+      double processedRate = 0.0;
+      juce::int64 processedStartInModification = 0;
+      bool hasProcessedAudio =
+          activeModification->copyProcessedAudioForRegion(
+              regionKey, processedAudio, processedRate,
+              processedStartInModification);
+      if (!hasProcessedAudio) {
+        const auto archivedKey =
+            archivedRegionKeyForLiveKey(activeModification, regionKey);
+        if (archivedKey.isNotEmpty() && archivedKey != regionKey)
+          hasProcessedAudio =
+              activeModification->copyProcessedAudioForRegion(
+                  archivedKey, processedAudio, processedRate,
+                  processedStartInModification);
+      }
+
+      if (hasProcessedAudio)
+        restoredProcessedWaveform = replaceTimelineRegionWithProcessedAudio(
+            audioData.waveform, projectSampleRate, processedAudio,
+            processedRate, processedStartInModification,
+            activeStartSampleInModification, sourceSampleRate,
+            activeRegionStartSeconds, activeRegionEndSeconds);
+    }
+  }
+
+  // Older sessions, untouched regions, and processed renders that no longer
+  // cover a trimmed/extended region retain the deterministic reconstruction
+  // path from pristine source plus the persisted per-note synthesis.
+  if (!restoredProcessedWaveform)
+    project->recomposeFromSynthIfPresent();
   if (pendingRegionCanvasAnalysisKey == regionKey) {
     pendingRegionCanvasAnalysisKey.clear();
     regionCanvasAnalysisPending.store(false);
@@ -2934,7 +3070,8 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
 
   if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr) {
     const auto &audioData = mainComponent->getProject()->getAudioData();
-    return audioData.originalWaveform.getNumSamples() > 0 &&
+    return audioData.waveform.getNumSamples() > 0 &&
+           audioData.originalWaveform.getNumSamples() > 0 &&
            !audioData.melSpectrogram.empty();
   }
 
@@ -3024,12 +3161,13 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
       return;
 
     if (liveState.project != nullptr &&
-        (liveState.project->getAudioData().originalWaveform.getNumSamples() <=
+        (liveState.project->getAudioData().waveform.getNumSamples() <= 0 ||
+         liveState.project->getAudioData().originalWaveform.getNumSamples() <=
              0 ||
          liveState.project->getAudioData().melSpectrogram.empty())) {
       // Keep the restored analysis shell out of the editor until its immutable
-      // source and source-derived mel have been rebuilt from ARA. Otherwise an
-      // edit could blend/recompose without all required inputs.
+      // source, source-derived mel, and rendered waveform have been rebuilt.
+      // Otherwise an edit could blend/recompose without all required inputs.
       if (mainComponent->getProject() != nullptr) {
         auto displaced = mainComponent->exchangeProject(nullptr);
         juce::ignoreUnused(displaced);

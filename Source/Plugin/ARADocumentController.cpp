@@ -1925,9 +1925,9 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
   buffer.clear();
   buffer.copyFrom(0, timelineOffsetSamples, regionBuffer, 0, 0, numSamples);
 
-  // ARA region archives retain rendered waveform and edit data, but not the
-  // pristine source or its mel spectrogram. Reattach the source and rebuild
-  // mel now, without running pitch detection or note segmentation again.
+  // ARA region archives retain edit data, but not project waveforms or mel.
+  // Reattach the source and rebuild mel/rendered audio now, without running
+  // pitch detection or note segmentation again.
   if (processor->hasAraRegionProject(liveKey) &&
       processor->hydrateAraRegionProject(liveKey, buffer,
                                          sourceSampleRate)) {
