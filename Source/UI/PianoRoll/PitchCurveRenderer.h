@@ -27,6 +27,8 @@ public:
     bool showCleanedF0Debug;
     bool showVocoderF0Debug;
     bool hidePitchCurves = false;
+    float pitchCurveAlpha = 1.0f;
+    const std::vector<float>* midiCurveOverride = nullptr;
     int componentWidth;
   };
 

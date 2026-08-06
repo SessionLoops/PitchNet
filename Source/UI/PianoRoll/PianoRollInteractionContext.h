@@ -47,6 +47,8 @@ public:
   std::function<void(Note *)> &onNoteSelected;
   std::function<void()> &onPitchEdited;
   std::function<void()> &onPitchEditFinished;
+  std::function<void()> &onPitchPreviewRenderRequested;
+  std::function<void()> &onPitchEditCommitted;
   std::function<void(const Note &)> &onNoteDragAudition;
   std::function<void()> &onNoteDragAuditionFinished;
   std::function<void(const LoopRange &)> &onLoopRangeChanged;
@@ -66,6 +68,7 @@ public:
   void updatePitchToolHandlesFromSelection();
   void invalidateWaveformCache();
   void invalidateBasePitchCache();
+  void updateAnchorConfirmation();
 
 private:
   PianoRollComponent &component;

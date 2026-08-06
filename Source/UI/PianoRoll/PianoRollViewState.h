@@ -9,7 +9,8 @@ enum class EditMode
 {
   Select,
   Draw,
-  Split
+  Split,
+  Anchor
 };
 
 struct PianoRollViewState

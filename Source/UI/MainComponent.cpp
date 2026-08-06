@@ -631,6 +631,16 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (isPluginMode() && onPitchEditFinished)
       onPitchEditFinished();
   };
+  pianoRoll.onPitchPreviewRenderRequested = [this]()
+  {
+    resynthesizeIncremental();
+  };
+  pianoRoll.onPitchEditCommitted = [this]()
+  {
+    notifyProjectDataChanged();
+    if (isPluginMode() && onPitchEditFinished)
+      onPitchEditFinished();
+  };
   pianoRoll.onNoteDragAudition = [this](const Note &note)
   { auditionDraggedNote(note); };
   pianoRoll.onNoteDragAuditionFinished = [this]()
@@ -2350,7 +2360,7 @@ void MainComponent::notifyProjectDataChanged()
 
 void MainComponent::undo()
 {
-  // Cancel any in-progress drawing first
+  // Restore any transient drawing/anchor preview before changing history.
   pianoRoll.cancelDrawing();
 
   if (undoManager && undoManager->canUndo())
@@ -2377,6 +2387,9 @@ void MainComponent::undo()
 
 void MainComponent::redo()
 {
+  // Restore any transient drawing/anchor preview before changing history.
+  pianoRoll.cancelDrawing();
+
   if (undoManager && undoManager->canRedo())
   {
     const bool requiresResynthesis = undoManager->redo();
@@ -3214,7 +3227,8 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::toggleDrawMode,
       CommandIDs::exitDrawMode,
       CommandIDs::activateMainTool,
-      CommandIDs::activateSplitTool};
+      CommandIDs::activateSplitTool,
+      CommandIDs::activateAnchorTool};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
 }
@@ -3364,6 +3378,14 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
     break;
 
+  case CommandIDs::activateAnchorTool:
+    result.setInfo("Pitch Drawing Tool", "Activate the pitch drawing tool",
+                   "Edit Mode", 0);
+    result.addDefaultKeypress('3', juce::ModifierKeys::noModifiers);
+    result.setActive(project != nullptr);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::Anchor);
+    break;
+
   default:
     break;
   }
@@ -3497,6 +3519,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
 
   case CommandIDs::activateSplitTool:
     setEditMode(EditMode::Split);
+    return true;
+
+  case CommandIDs::activateAnchorTool:
+    setEditMode(EditMode::Anchor);
     return true;
 
   default:

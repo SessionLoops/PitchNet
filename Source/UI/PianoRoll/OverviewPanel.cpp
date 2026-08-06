@@ -221,7 +221,7 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       maxPitch = std::max(maxPitch, midi);
       hasNotePitch = true;
 
-      for (const float delta : note.getDeltaPitch()) {
+      for (const float delta : note.getActiveDeltaPitch()) {
         minPitch = std::min(minPitch, midi + delta);
         maxPitch = std::max(maxPitch, midi + delta);
       }

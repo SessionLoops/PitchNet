@@ -102,7 +102,8 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
   // any per-note pitch offset, including the live drag preview.
   if (params.showDeltaPitch)
   {
-    g.setColour(APP_COLOR_PITCH_CURVE);
+    g.setColour(APP_COLOR_PITCH_CURVE.withMultipliedAlpha(
+        juce::jlimit(0.0f, 1.0f, params.pitchCurveAlpha)));
 
     juce::Path path;
     bool pathStarted = false;
@@ -153,19 +154,28 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
 
       for (int i = startFrame; i < endFrame; ++i)
       {
-        float baseMidi =
-            (i < static_cast<int>(audioData.basePitch.size()))
-                ? audioData.basePitch[static_cast<size_t>(i)]
-                : ((i < static_cast<int>(audioData.f0.size()) &&
-                    audioData.f0[static_cast<size_t>(i)] > 0.0f)
-                       ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
-                       : 0.0f);
-
-        const float deltaMidi =
-            (i < static_cast<int>(audioData.deltaPitch.size()))
-                ? audioData.deltaPitch[static_cast<size_t>(i)]
-                : 0.0f;
-        const float finalMidi = baseMidi + deltaMidi + globalOffset;
+        float finalMidi = 0.0f;
+        if (params.midiCurveOverride &&
+            i < static_cast<int>(params.midiCurveOverride->size()))
+        {
+          finalMidi = (*params.midiCurveOverride)[static_cast<size_t>(i)] +
+                      globalOffset;
+        }
+        else
+        {
+          const float baseMidi =
+              (i < static_cast<int>(audioData.basePitch.size()))
+                  ? audioData.basePitch[static_cast<size_t>(i)]
+                  : ((i < static_cast<int>(audioData.f0.size()) &&
+                      audioData.f0[static_cast<size_t>(i)] > 0.0f)
+                         ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
+                         : 0.0f);
+          const float deltaMidi =
+              (i < static_cast<int>(audioData.deltaPitch.size()))
+                  ? audioData.deltaPitch[static_cast<size_t>(i)]
+                  : 0.0f;
+          finalMidi = baseMidi + deltaMidi + globalOffset;
+        }
 
         if (finalMidi > 0.0f)
         {

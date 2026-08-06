@@ -8,7 +8,7 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 8;
+constexpr int kProjectArchiveVersion = 9;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
@@ -562,6 +562,7 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
     for (const auto& note : notes) {
         if (!writeFloatVector(out, note.getOriginalDeltaPitch()) ||
             !writeFloatVector(out, note.getDeltaPitch()) ||
+            !writeFloatVector(out, note.getBakedDeltaPitch()) ||
             !writeFloatVector(out, note.getF0Values()))
             return false;
     }
@@ -677,11 +678,15 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
     for (auto& note : project.getNotes()) {
         std::vector<float> originalDelta;
         std::vector<float> delta;
+        std::vector<float> bakedDelta;
         std::vector<float> f0Values;
 
         if (!readFloatVector(in, originalDelta) ||
-            !readFloatVector(in, delta) ||
-            !readFloatVector(in, f0Values))
+            !readFloatVector(in, delta))
+            return false;
+        if (archiveVersion >= 9 && !readFloatVector(in, bakedDelta))
+            return false;
+        if (!readFloatVector(in, f0Values))
             return false;
 
         // Version 1 stored two redundant per-note waveform caches. Consume
@@ -721,6 +726,8 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
             note.setOriginalDeltaPitch(std::move(originalDelta));
         if (!delta.empty())
             note.setDeltaPitch(std::move(delta));
+        if (!bakedDelta.empty())
+            note.setBakedDeltaPitch(std::move(bakedDelta));
         if (!f0Values.empty())
             note.setF0Values(std::move(f0Values));
         if (hadLegacySynthWaveform) {
@@ -781,6 +788,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     // Per-note original delta pitch (pristine curve from analysis)
     if (includePitchData && note.hasOriginalDeltaPitch())
         obj->setProperty("originalDeltaPitch", floatArrayToString(note.getOriginalDeltaPitch(), 4));
+    if (includePitchData && note.hasBakedDeltaPitch())
+        obj->setProperty("bakedDeltaPitch", floatArrayToString(note.getBakedDeltaPitch(), 4));
 
     if (includeAnalysisCache) {
         if (note.hasDeltaPitch())
@@ -838,6 +847,10 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     auto origDeltaStr = json.getProperty("originalDeltaPitch", juce::var());
     if (!origDeltaStr.isVoid() && origDeltaStr.toString().isNotEmpty())
         note.setOriginalDeltaPitch(stringToFloatArray(origDeltaStr.toString()));
+
+    auto bakedDeltaStr = json.getProperty("bakedDeltaPitch", juce::var());
+    if (!bakedDeltaStr.isVoid() && bakedDeltaStr.toString().isNotEmpty())
+        note.setBakedDeltaPitch(stringToFloatArray(bakedDeltaStr.toString()));
 
     auto deltaStr = json.getProperty("deltaPitch", juce::var());
     if (!deltaStr.isVoid() && deltaStr.toString().isNotEmpty())

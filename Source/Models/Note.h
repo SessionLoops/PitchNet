@@ -62,6 +62,22 @@ public:
     void setOriginalDeltaPitch(std::vector<float> delta) { originalDeltaPitch = std::move(delta); }
     bool hasOriginalDeltaPitch() const { return !originalDeltaPitch.empty(); }
 
+    // Optional committed per-frame contour. This is the editable source used
+    // by pitch tools after a destructive/baked curve operation, while
+    // originalDeltaPitch remains the immutable analysis result.
+    const std::vector<float>& getBakedDeltaPitch() const { return bakedDeltaPitch; }
+    void setBakedDeltaPitch(std::vector<float> delta) { bakedDeltaPitch = std::move(delta); }
+    void clearBakedDeltaPitch() { bakedDeltaPitch.clear(); }
+    bool hasBakedDeltaPitch() const { return !bakedDeltaPitch.empty(); }
+    const std::vector<float>& getActiveDeltaPitch() const
+    {
+        if (hasBakedDeltaPitch())
+            return bakedDeltaPitch;
+        if (hasOriginalDeltaPitch())
+            return originalDeltaPitch;
+        return deltaPitch;
+    }
+
     // Pitch tool transformation parameters (non-destructive)
     float getTiltLeft() const { return tiltLeft; }
     void setTiltLeft(float tilt) { tiltLeft = tilt; }
@@ -146,6 +162,7 @@ private:
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
     std::vector<float> originalDeltaPitch;  // Pristine curve from analysis (never modified)
+    std::vector<float> bakedDeltaPitch; // Optional committed editable contour
 
     // Pitch tool transformation parameters (non-destructive, stored as parameters)
     float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)

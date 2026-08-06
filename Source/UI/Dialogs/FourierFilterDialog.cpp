@@ -13,8 +13,8 @@ FourierFilterDialog::FourierFilterDialog(
 
   // Combine deltaPitch from all notes into single curve
   for (auto* note : notes) {
-    if (note && note->hasDeltaPitch()) {
-        const auto& dp = note->getDeltaPitch();
+    if (note && !note->getActiveDeltaPitch().empty()) {
+        const auto& dp = note->getActiveDeltaPitch();
         originalPitchCurve.insert(originalPitchCurve.end(), dp.begin(), dp.end());
     }
   }

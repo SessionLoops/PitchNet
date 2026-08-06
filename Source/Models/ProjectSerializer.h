@@ -13,7 +13,7 @@
  */
 class ProjectSerializer {
 public:
-    static constexpr int FORMAT_VERSION = 4;
+    static constexpr int FORMAT_VERSION = 5;
 
     enum class BinaryArchiveMode {
         // Standalone documents and conventional plug-in state must remain

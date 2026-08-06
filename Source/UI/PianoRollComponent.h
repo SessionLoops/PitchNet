@@ -34,6 +34,8 @@ class LoopDragHandler;
 class SelectHandler;
 class DrawHandler;
 class SplitHandler;
+class AnchorHandler;
+class AnchorConfirmationPanel;
 
 /**
  * Piano roll component for displaying and editing notes.
@@ -64,6 +66,7 @@ public:
   void mouseDrag(const juce::MouseEvent &e) override;
   void mouseUp(const juce::MouseEvent &e) override;
   void mouseMove(const juce::MouseEvent &e) override;
+  void mouseEnter(const juce::MouseEvent &e) override;
   void mouseExit(const juce::MouseEvent &e) override;
   juce::String getTooltip() override;
   void mouseDoubleClick(const juce::MouseEvent &e) override;
@@ -146,8 +149,7 @@ public:
   void setEditMode(EditMode mode);
   EditMode getEditMode() const { return editMode; }
 
-  // Cancel current drawing operation (used when undo is triggered during
-  // drawing)
+  // Cancel any transient pitch edit before undo/redo changes project history.
   void cancelDrawing();
 
   // View settings
@@ -203,6 +205,8 @@ public:
   std::function<void(Note *)> onNoteSelected;
   std::function<void()> onPitchEdited;
   std::function<void()> onPitchEditFinished; // Called when dragging ends
+  std::function<void()> onPitchPreviewRenderRequested;
+  std::function<void()> onPitchEditCommitted;
   std::function<void(const Note &)> onNoteDragAudition;
   std::function<void()> onNoteDragAuditionFinished;
   std::function<void(int midiNote)> onPianoKeyAudition;
@@ -246,6 +250,7 @@ private:
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
+  void updateAnchorConfirmationPopup();
 
   float midiToY(float midiNote) const;
   float yToMidi(float y) const;
@@ -360,7 +365,10 @@ private:
   std::unique_ptr<SelectHandler> selectHandler_;
   std::unique_ptr<DrawHandler> drawHandler_;
   std::unique_ptr<SplitHandler> splitHandler_;
+  std::unique_ptr<AnchorHandler> anchorHandler_;
   InteractionHandler *currentHandler_ = nullptr;
+
+  std::unique_ptr<AnchorConfirmationPanel> anchorConfirmationPanel;
 
   // Scrollbars
   juce::ScrollBar horizontalScrollBar{false};

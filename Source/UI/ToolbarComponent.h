@@ -134,6 +134,7 @@ private:
     // Edit mode buttons
     ToggleButton selectModeButton;
     ToggleButton splitModeButton;
+    ToggleButton anchorModeButton;
     ToolButton followButton{"Follow"};
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;

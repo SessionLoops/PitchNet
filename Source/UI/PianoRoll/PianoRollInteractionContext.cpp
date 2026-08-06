@@ -21,6 +21,8 @@ PianoRollInteractionContext::PianoRollInteractionContext(
       onNoteSelected(component.onNoteSelected),
       onPitchEdited(component.onPitchEdited),
       onPitchEditFinished(component.onPitchEditFinished),
+      onPitchPreviewRenderRequested(component.onPitchPreviewRenderRequested),
+      onPitchEditCommitted(component.onPitchEditCommitted),
       onNoteDragAudition(component.onNoteDragAudition),
       onNoteDragAuditionFinished(component.onNoteDragAuditionFinished),
       onLoopRangeChanged(component.onLoopRangeChanged),
@@ -85,4 +87,9 @@ void PianoRollInteractionContext::invalidateWaveformCache()
 void PianoRollInteractionContext::invalidateBasePitchCache()
 {
   component.invalidateBasePitchCache();
+}
+
+void PianoRollInteractionContext::updateAnchorConfirmation()
+{
+  component.updateAnchorConfirmationPopup();
 }

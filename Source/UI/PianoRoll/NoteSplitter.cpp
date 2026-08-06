@@ -48,6 +48,13 @@ void rebasePitchDeviation(Note& note, float amount)
             value += amount;
         note.setDeltaPitch(std::move(delta));
     }
+
+    if (note.hasBakedDeltaPitch()) {
+        auto delta = note.getBakedDeltaPitch();
+        for (auto& value : delta)
+            value += amount;
+        note.setBakedDeltaPitch(std::move(delta));
+    }
 }
 }
 
@@ -170,6 +177,16 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         std::vector<float> rightDelta(delta.begin() + splitOffset, delta.end());
         note->setDeltaPitch(std::move(leftDelta));
         secondNote.setDeltaPitch(std::move(rightDelta));
+    }
+
+    if (note->hasBakedDeltaPitch()) {
+        const auto& delta = note->getBakedDeltaPitch();
+        int splitOffset = splitFrame - startFrame;
+        splitOffset = std::clamp(splitOffset, 0, static_cast<int>(delta.size()));
+        std::vector<float> leftDelta(delta.begin(), delta.begin() + splitOffset);
+        std::vector<float> rightDelta(delta.begin() + splitOffset, delta.end());
+        note->setBakedDeltaPitch(std::move(leftDelta));
+        secondNote.setBakedDeltaPitch(std::move(rightDelta));
     }
 
     const auto& f0Values = note->getF0Values();
@@ -356,6 +373,17 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
     mergedNote.setDeltaPitch(mergeDeviation(
         firstNote.getDeltaPitch(), firstNote.getAdjustedMidiNote(),
         secondNote.getDeltaPitch(), secondNote.getAdjustedMidiNote()));
+    if (firstNote.hasBakedDeltaPitch() || secondNote.hasBakedDeltaPitch()) {
+        const auto& firstActive = firstNote.hasBakedDeltaPitch()
+                                      ? firstNote.getBakedDeltaPitch()
+                                      : firstNote.getOriginalDeltaPitch();
+        const auto& secondActive = secondNote.hasBakedDeltaPitch()
+                                       ? secondNote.getBakedDeltaPitch()
+                                       : secondNote.getOriginalDeltaPitch();
+        mergedNote.setBakedDeltaPitch(mergeDeviation(
+            firstActive, firstNote.getAdjustedMidiNote(),
+            secondActive, secondNote.getAdjustedMidiNote()));
+    }
     mergedNote.setMidiNote(mergedPitchCenter);
     mergedNote.setOriginalMidiNote(mergedPitchCenter);
     mergedNote.setPitchOffset(0.0f);

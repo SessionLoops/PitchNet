@@ -25,6 +25,7 @@ ToolbarComponent::ToolbarComponent()
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
     selectModeButton.setImage(loadImage(BinaryData::select_png, BinaryData::select_pngSize));
     splitModeButton.setImage(loadImage(BinaryData::split_png, BinaryData::split_pngSize));
+    anchorModeButton.setImage(loadImage(BinaryData::drawing_png, BinaryData::drawing_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
 
     // Load the remaining SVG icon with white tint.
@@ -45,6 +46,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(loopButton);
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
+    addAndMakeVisible(anchorModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(scaleSelectionButton);
     addAndMakeVisible(quantizeButton);
@@ -61,6 +63,7 @@ ToolbarComponent::ToolbarComponent()
     loopButton.addListener(this);
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
+    anchorModeButton.addListener(this);
     followButton.addListener(this);
     quantizeButton.addListener(this);
     auditionButton.addListener(this);
@@ -98,6 +101,7 @@ ToolbarComponent::ToolbarComponent()
     // Set localized text (tooltips for icon buttons)
     selectModeButton.setTooltip("Main Tool (Shortcut: 1)");
     splitModeButton.setTooltip("Note Separation Tool (Shortcut: 2)");
+    anchorModeButton.setTooltip("Pitch Drawing Tool (Shortcut: 3)");
     followButton.setTooltip(TR("toolbar.follow"));
     quantizeButton.setTooltip("Correct Pitch Macro");
     auditionButton.setTooltip("Live Audition On/Off");
@@ -252,7 +256,7 @@ void ToolbarComponent::resized()
                                     ? (logoImage.getWidth() + 1) / 2
                                     : 0);
     const int editToolGroupX = logoRight + 24;
-    const int editToolGroupWidth = editToolSlotSize * 2 + editToolGap
+    const int editToolGroupWidth = editToolSlotSize * 3 + editToolGap * 2
                                    + editToolPad * 2;
     const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
     toolContainerBounds = {editToolGroupX, editToolGroupY,
@@ -268,6 +272,11 @@ void ToolbarComponent::resized()
     splitModeButton.setBounds(editToolX,
                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                               editToolSlotSize, editToolSlotSize);
+    editToolX += editToolSlotSize + editToolGap;
+    anchorModeButton.setVisible(true);
+    anchorModeButton.setBounds(editToolX,
+                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
+                               editToolSlotSize, editToolSlotSize);
 
     // Hide the remaining controls that have been removed from the toolbar.
     timeLabel.setVisible(false);
@@ -371,6 +380,12 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onEditModeChanged)
             onEditModeChanged(EditMode::Split);
     }
+    else if (button == &anchorModeButton)
+    {
+        setEditMode(EditMode::Anchor);
+        if (onEditModeChanged)
+            onEditModeChanged(EditMode::Anchor);
+    }
     else if (button == &followButton)
     {
         followPlayback = !followPlayback;
@@ -444,6 +459,8 @@ void ToolbarComponent::setEditMode(EditMode mode)
                                     juce::dontSendNotification);
     splitModeButton.setToggleState(mode == EditMode::Split,
                                    juce::dontSendNotification);
+    anchorModeButton.setToggleState(mode == EditMode::Anchor,
+                                    juce::dontSendNotification);
     resized();
 }
 

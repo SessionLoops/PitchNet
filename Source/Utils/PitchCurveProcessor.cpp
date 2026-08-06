@@ -26,6 +26,11 @@ namespace
             audioData.deltaPitch.assign(static_cast<size_t>(totalFrames), 0.0f);
     }
 
+    const std::vector<float>& sourceDeltaFor(const Note& note)
+    {
+        return note.getActiveDeltaPitch();
+    }
+
     PitchToolOperations::AdjacentNoteContext buildAdjacentContext(
         const std::vector<Note>& allNotes, const Note& targetNote)
     {
@@ -56,18 +61,14 @@ namespace
         }
 
         if (prevNote) {
-            const auto& prevDelta = prevNote->hasOriginalDeltaPitch()
-                ? prevNote->getOriginalDeltaPitch()
-                : prevNote->getDeltaPitch();
+            const auto& prevDelta = sourceDeltaFor(*prevNote);
             if (!prevDelta.empty()) {
                 ctx.hasLeft = true;
                 ctx.leftBoundaryDelta = prevDelta.back();
             }
         }
         if (nextNote) {
-            const auto& nextDelta = nextNote->hasOriginalDeltaPitch()
-                ? nextNote->getOriginalDeltaPitch()
-                : nextNote->getDeltaPitch();
+            const auto& nextDelta = sourceDeltaFor(*nextNote);
             if (!nextDelta.empty()) {
                 ctx.hasRight = true;
                 ctx.rightBoundaryDelta = nextDelta.front();
@@ -285,8 +286,9 @@ namespace PitchCurveProcessor
             if (note.isRest())
                 continue;
                 
-            // Use originalDeltaPitch if available, else fall back to deltaPitch
-            const auto& rawSourceData = note.hasOriginalDeltaPitch() ? note.getOriginalDeltaPitch() : note.getDeltaPitch();
+            // A committed baked contour overrides the immutable analysis
+            // contour. Legacy projects may only have deltaPitch.
+            const auto& rawSourceData = sourceDeltaFor(note);
             if (rawSourceData.empty())
                 continue;
 
@@ -385,7 +387,7 @@ namespace PitchCurveProcessor
             if (!note || note->isRest())
                 continue;
 
-            const auto& rawSourceData = note->hasOriginalDeltaPitch() ? note->getOriginalDeltaPitch() : note->getDeltaPitch();
+            const auto& rawSourceData = sourceDeltaFor(*note);
             if (rawSourceData.empty())
                 continue;
 
@@ -464,8 +466,7 @@ namespace PitchCurveProcessor
             if (!note || note->isRest())
                 continue;
 
-            const auto& rawSourceData = note->hasOriginalDeltaPitch()
-                ? note->getOriginalDeltaPitch() : note->getDeltaPitch();
+            const auto& rawSourceData = sourceDeltaFor(*note);
             if (rawSourceData.empty())
                 continue;
 
