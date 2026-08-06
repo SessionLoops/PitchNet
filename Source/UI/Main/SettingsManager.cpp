@@ -167,6 +167,10 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("skippedUpdateVersion"))
           skippedUpdateVersion =
               configObj->getProperty("skippedUpdateVersion").toString();
+        if (configObj->hasProperty("uiBrightnessPercent"))
+          uiBrightnessPercent = juce::jlimit(
+              75.0, 200.0,
+              static_cast<double>(configObj->getProperty("uiBrightnessPercent")));
       }
     }
   }
@@ -210,6 +214,7 @@ void SettingsManager::saveConfig()
   config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
   config->setProperty("preferredAudioOutputDevice", preferredAudioOutputDevice);
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
+  config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
 
   juce::String jsonText = juce::JSON::toString(juce::var(config.get()));
   configFile.replaceWithText(jsonText);

@@ -180,6 +180,10 @@ ParameterPanel::ParameterPanel()
     addAndMakeVisible(timeSectionLabel);
     timeSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     timeSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(brightnessSectionLabel);
+    brightnessSectionLabel.setColour(juce::Label::textColourId,
+                                     juce::Colour(0xFF9B9B9Bu));
+    brightnessSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
     for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
@@ -266,6 +270,21 @@ ParameterPanel::ParameterPanel()
     };
     addAndMakeVisible(timelineTempoSlider);
 
+    brightnessSlider.setRange(75.0, 200.0, 1.0);
+    brightnessSlider.setValue(uiBrightnessPercent, juce::dontSendNotification);
+    brightnessSlider.setNumDecimalPlacesToDisplay(0);
+    brightnessSlider.setTextValueSuffix(" %");
+    brightnessSlider.onValueChange = [this]()
+    {
+        if (isUpdating)
+            return;
+
+        uiBrightnessPercent = brightnessSlider.getValue();
+        if (onUiBrightnessChanged)
+            onUiBrightnessChanged(uiBrightnessPercent);
+    };
+    addAndMakeVisible(brightnessSlider);
+
     timelineBeatButton.setButtonText(getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
@@ -317,6 +336,15 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.fillRoundedRectangle(timeRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
         g.drawRoundedRectangle(timeRect.reduced(0.5f), radius, 0.75f);
+    }
+
+    if (!brightnessCardBounds.isEmpty())
+    {
+        auto brightnessRect = brightnessCardBounds.toFloat();
+        g.setColour(juce::Colour(0xFF171717u));
+        g.fillRoundedRectangle(brightnessRect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(brightnessRect.reduced(0.5f), radius, 0.75f);
     }
 }
 
@@ -411,6 +439,24 @@ void ParameterPanel::resized()
         ? juce::Rectangle<int>(cardArea.getX(), pitchCardStart,
                                cardArea.getWidth(), pitchCardBottom - pitchCardStart)
         : juce::Rectangle<int>();
+
+    // =========================================================================
+    // UI BRIGHTNESS CARD
+    // =========================================================================
+    const int brightnessCardStart = pitchCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
+                                  brightnessCardStart + innerPadY,
+                                  cardArea.getWidth() - innerPadX * 2,
+                                  cardArea.getBottom() - brightnessCardStart - innerPadY * 2);
+
+    brightnessSectionLabel.setBounds(bounds.removeFromTop(20));
+    bounds.removeFromTop(rowGap + 2);
+    brightnessSlider.setBounds(bounds.removeFromTop(28));
+
+    const int brightnessCardBottom = bounds.getY() + innerPadY;
+    brightnessCardBounds = juce::Rectangle<int>(
+        cardArea.getX(), brightnessCardStart, cardArea.getWidth(),
+        brightnessCardBottom - brightnessCardStart);
 }
 
 void ParameterPanel::buttonClicked(juce::Button* button)
@@ -518,6 +564,12 @@ void ParameterPanel::setPluginMode(bool pluginMode)
     timelineBeatButton.setEnabled(!pluginMode);
     timelineTempoSlider.setEnabled(!pluginMode);
     timelineGridButton.setEnabled(true);
+}
+
+void ParameterPanel::setUiBrightness(double brightnessPercent)
+{
+    uiBrightnessPercent = juce::jlimit(75.0, 200.0, brightnessPercent);
+    brightnessSlider.setValue(uiBrightnessPercent, juce::dontSendNotification);
 }
 
 void ParameterPanel::setHostTimelineState(double bpm, int numerator, int denominator)

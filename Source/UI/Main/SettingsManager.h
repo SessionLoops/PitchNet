@@ -67,6 +67,11 @@ public:
   {
     skippedUpdateVersion = version;
   }
+  double getUiBrightnessPercent() const { return uiBrightnessPercent; }
+  void setUiBrightnessPercent(double percent)
+  {
+    uiBrightnessPercent = juce::jlimit(75.0, 200.0, percent);
+  }
 
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
@@ -122,6 +127,7 @@ private:
   bool followSystemAudioOutput = true;
   juce::String preferredAudioOutputDevice;
   juce::String skippedUpdateVersion;
+  double uiBrightnessPercent = 100.0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };

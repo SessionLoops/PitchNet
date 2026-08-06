@@ -32,6 +32,102 @@ public:
 };
 
 /**
+ * Thin horizontal slider used by macro controls and compact side-panel cards.
+ */
+class MacroSliderLookAndFeel final : public juce::LookAndFeel_V4
+{
+public:
+    void drawLabel(juce::Graphics& g, juce::Label& label) override
+    {
+        if (label.getComponentID() == "macroSliderValueBox")
+        {
+            const auto bounds = label.getLocalBounds().toFloat();
+            g.setColour(label.findColour(juce::Label::backgroundColourId));
+            g.fillRoundedRectangle(bounds, 5.0f);
+            g.setColour(label.findColour(juce::Label::textColourId));
+            g.setFont(label.getFont());
+            g.drawFittedText(label.getText(), label.getLocalBounds(),
+                             label.getJustificationType(), 1);
+            return;
+        }
+
+        juce::LookAndFeel_V4::drawLabel(g, label);
+    }
+
+    juce::Label* createSliderTextBox(juce::Slider& slider) override
+    {
+        auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
+        label->setComponentID("macroSliderValueBox");
+        label->onEditorShow = [label]
+        {
+            if (auto* editor = label->getCurrentTextEditor())
+            {
+                const auto textColour =
+                    editor->findColour(juce::TextEditor::textColourId);
+                editor->setColour(juce::TextEditor::highlightColourId,
+                                  juce::Colour(0xFF7A7D8Bu));
+                editor->setColour(juce::TextEditor::outlineColourId,
+                                  juce::Colour(0xFF3C3C3Cu));
+                editor->setColour(juce::TextEditor::focusedOutlineColourId,
+                                  juce::Colour(0xFF3C3C3Cu));
+                editor->setColour(juce::CaretComponent::caretColourId, textColour);
+            }
+        };
+        return label;
+    }
+
+    void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
+                          float sliderPos, float, float,
+                          juce::Slider::SliderStyle, juce::Slider&) override
+    {
+        const auto bounds = juce::Rectangle<float>(
+            static_cast<float>(x), static_cast<float>(y),
+            static_cast<float>(width), static_cast<float>(height));
+        const auto track = juce::Rectangle<float>(
+            bounds.getX(), bounds.getCentreY() - 1.0f, bounds.getWidth(), 2.0f);
+        g.setColour(juce::Colour(0xFF494949u));
+        g.fillRoundedRectangle(track, 1.0f);
+
+        constexpr float thumbRadius = 4.5f;
+        const auto thumbX = juce::jlimit(track.getX() + thumbRadius,
+                                         track.getRight() - thumbRadius,
+                                         sliderPos);
+        g.setColour(juce::Colour(0xFF9B9B9Bu));
+        g.fillEllipse(thumbX - thumbRadius, bounds.getCentreY() - thumbRadius,
+                      thumbRadius * 2.0f, thumbRadius * 2.0f);
+    }
+
+    static MacroSliderLookAndFeel& getInstance()
+    {
+        static MacroSliderLookAndFeel instance;
+        return instance;
+    }
+};
+
+class MacroSlider : public juce::Slider
+{
+public:
+    MacroSlider()
+    {
+        setSliderStyle(juce::Slider::LinearHorizontal);
+        setTextBoxStyle(juce::Slider::TextBoxRight, false, 54, 22);
+        setLookAndFeel(&MacroSliderLookAndFeel::getInstance());
+        setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xFFE6E6E6u));
+        setColour(juce::Slider::textBoxBackgroundColourId,
+                  juce::Colour(0xFF30302Eu));
+        setColour(juce::Slider::textBoxOutlineColourId,
+                  juce::Colours::transparentBlack);
+        setColour(juce::Slider::textBoxHighlightColourId,
+                  juce::Colour(0xFF7A7D8Bu));
+    }
+
+    ~MacroSlider() override
+    {
+        setLookAndFeel(nullptr);
+    }
+};
+
+/**
  * Pre-styled combo box with rounded, modern appearance.
  */
 class SidePanelComboLookAndFeel : public DarkLookAndFeel

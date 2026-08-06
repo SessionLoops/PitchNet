@@ -25,6 +25,8 @@
 #include <cmath>
 #include <vector>
 
+class UiBrightnessEffect;
+
 class AnalysisBackdrop : public juce::Component {
 public:
   AnalysisBackdrop() {
@@ -265,6 +267,7 @@ private:
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
   void fitAnalyzedPitchRangeToView(Project &project);
+  void applyUiBrightness(double brightnessPercent);
 
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;
@@ -334,6 +337,7 @@ private:
   PianoRollComponent pianoRoll;
   PianoRollWorkspaceView pianoRollView;
   ParameterPanel parameterPanel;
+  std::unique_ptr<UiBrightnessEffect> uiBrightnessEffect;
   AnalysisBackdrop analysisBackdrop;
   AnalysisProgressPopup analysisProgressPopup;
 

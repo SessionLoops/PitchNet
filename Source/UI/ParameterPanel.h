@@ -23,6 +23,7 @@ public:
 
     void setProject(Project* proj);
     void setPluginMode(bool pluginMode);
+    void setUiBrightness(double brightnessPercent);
     void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
@@ -44,6 +45,7 @@ public:
     std::function<void(double)> onTimelineTempoChanged;
     std::function<void(TimelineGridDivision)> onTimelineGridDivisionChanged;
     std::function<void(bool)> onTimelineSnapCycleChanged;
+    std::function<void(double)> onUiBrightnessChanged;
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -72,6 +74,8 @@ private:
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel { {}, "Time" };
     juce::Rectangle<int> timeCardBounds;
+    juce::Label brightnessSectionLabel { {}, "UI Brightness" };
+    juce::Rectangle<int> brightnessCardBounds;
 
     RadioButton chromaticToggle { "Chromatic" };
     RadioButton scaleToggle { "Scale" };
@@ -91,6 +95,7 @@ private:
     juce::Label timelineGridLabel { {}, "Grid" };
     CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle { "Snap Cycle" };
+    MacroSlider brightnessSlider;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;
@@ -104,6 +109,7 @@ private:
     double timelineTempoBpm = 120.0;
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
     bool timelineSnapCycle = false;
+    double uiBrightnessPercent = 100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

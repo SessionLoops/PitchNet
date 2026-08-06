@@ -8,64 +8,6 @@
 namespace QuantizePitchDialog {
 namespace {
 
-class ZoomSliderLookAndFeel final : public juce::LookAndFeel_V4
-{
-public:
-  void drawLabel(juce::Graphics &g, juce::Label &label) override
-  {
-    if (label.getComponentID() == "pitchCenterValueBox")
-    {
-      const auto bounds = label.getLocalBounds().toFloat();
-      g.setColour(label.findColour(juce::Label::backgroundColourId));
-      g.fillRoundedRectangle(bounds, 5.0f);
-      g.setColour(label.findColour(juce::Label::textColourId));
-      g.setFont(label.getFont());
-      g.drawFittedText(label.getText(), label.getLocalBounds(),
-                       label.getJustificationType(), 1);
-      return;
-    }
-
-    juce::LookAndFeel_V4::drawLabel(g, label);
-  }
-
-  juce::Label *createSliderTextBox(juce::Slider &slider) override
-  {
-    auto *label = juce::LookAndFeel_V4::createSliderTextBox(slider);
-    label->setComponentID("pitchCenterValueBox");
-    label->onEditorShow = [label]
-    {
-      if (auto *editor = label->getCurrentTextEditor())
-      {
-        const auto textColour = editor->findColour(juce::TextEditor::textColourId);
-        editor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xFF7A7D8B));
-        editor->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xFF3C3C3C));
-        editor->setColour(juce::TextEditor::focusedOutlineColourId,
-                          juce::Colour(0xFF3C3C3C));
-        editor->setColour(juce::CaretComponent::caretColourId, textColour);
-      }
-    };
-    return label;
-  }
-
-  void drawLinearSlider(juce::Graphics &g, int x, int y, int width, int height,
-                        float sliderPos, float, float,
-                        juce::Slider::SliderStyle, juce::Slider &) override
-  {
-    const auto bounds = juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y),
-                                               static_cast<float>(width), static_cast<float>(height));
-    const auto track = juce::Rectangle<float>(bounds.getX(), bounds.getCentreY() - 1.0f,
-                                              bounds.getWidth(), 2.0f);
-    g.setColour(juce::Colour(0xFF494949));
-    g.fillRoundedRectangle(track, 1.0f);
-    const float thumbRadius = 4.5f;
-    const auto thumbX = juce::jlimit(track.getX() + thumbRadius,
-                                     track.getRight() - thumbRadius, sliderPos);
-    g.setColour(juce::Colour(0xFF9B9B9B));
-    g.fillEllipse(thumbX - thumbRadius, bounds.getCentreY() - thumbRadius,
-                  thumbRadius * 2.0f, thumbRadius * 2.0f);
-  }
-};
-
 class Content final : public juce::Component
 {
 public:
@@ -78,17 +20,7 @@ public:
     pitchCenterLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
 
     pitchCenter.setRange(0.0, 100.0, 1.0);
-    pitchCenter.setSliderStyle(juce::Slider::LinearHorizontal);
-    pitchCenter.setTextBoxStyle(juce::Slider::TextBoxRight, false, 54, 22);
     pitchCenter.setTextValueSuffix(" %");
-    pitchCenter.setLookAndFeel(&sliderLookAndFeel);
-    pitchCenter.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xFFE6E6E6));
-    pitchCenter.setColour(juce::Slider::textBoxBackgroundColourId,
-                          juce::Colour(0xFF30302E));
-    pitchCenter.setColour(juce::Slider::textBoxOutlineColourId,
-                          juce::Colours::transparentBlack);
-    pitchCenter.setColour(juce::Slider::textBoxHighlightColourId,
-                          juce::Colour(0xFF7A7D8B));
     pitchCenter.setValue(initialPitchCenter, juce::dontSendNotification);
     pitchCenter.onValueChange = [this] { previewCorrection(); };
 
@@ -108,7 +40,6 @@ public:
 
   ~Content() override
   {
-    pitchCenter.setLookAndFeel(nullptr);
     // Covers Escape/window dismissal as well as the explicit Cancel button.
     if (!finished && onComplete)
       onComplete(false);
@@ -177,9 +108,8 @@ private:
 
   std::function<void(float, bool)> onPreview;
   std::function<void(bool)> onComplete;
-  ZoomSliderLookAndFeel sliderLookAndFeel;
   juce::Label pitchCenterLabel;
-  juce::Slider pitchCenter;
+  MacroSlider pitchCenter;
   StyledToggleButton snapToScale { "Snap to Scale" };
   juce::TextButton cancelButton, okButton;
   bool finished = false;
