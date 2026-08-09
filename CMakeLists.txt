@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
+
+# Ship universal macOS binaries by default. A caller can still request a
+# single-architecture build with -DCMAKE_OSX_ARCHITECTURES=arm64 or x86_64.
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING
+        "macOS target architectures" FORCE)
+endif()
+
 project(PitchNet VERSION 0.4.0)
 
 include(FetchContent)
@@ -26,6 +34,28 @@ set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redis
 set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
 set(GAME_MODELS_VERSION "v1.0.3" CACHE STRING "GAME release tag used to download model assets")
 set(GAME_MODELS_URL "" CACHE STRING "Optional URL to download GAME model zip")
+
+if(APPLE)
+    list(FIND CMAKE_OSX_ARCHITECTURES "arm64" PITCHNET_ARM64_ARCH_INDEX)
+    list(FIND CMAKE_OSX_ARCHITECTURES "x86_64" PITCHNET_X86_64_ARCH_INDEX)
+
+    if(PITCHNET_ARM64_ARCH_INDEX GREATER_EQUAL 0 AND
+       PITCHNET_X86_64_ARCH_INDEX GREATER_EQUAL 0)
+        set(ONNXRUNTIME_MACOS_PACKAGE "universal2")
+    elseif(PITCHNET_X86_64_ARCH_INDEX GREATER_EQUAL 0)
+        set(ONNXRUNTIME_MACOS_PACKAGE "x86_64")
+    elseif(PITCHNET_ARM64_ARCH_INDEX GREATER_EQUAL 0)
+        set(ONNXRUNTIME_MACOS_PACKAGE "arm64")
+    else()
+        message(FATAL_ERROR
+            "Unsupported macOS architecture list: ${CMAKE_OSX_ARCHITECTURES}. "
+            "PitchNet supports arm64 and x86_64.")
+    endif()
+
+    message(STATUS
+        "macOS architectures: ${CMAKE_OSX_ARCHITECTURES} "
+        "(ONNX Runtime ${ONNXRUNTIME_MACOS_PACKAGE})")
+endif()
 
 # Check that CUDA and DirectML are not both enabled
 if(USE_CUDA AND USE_DIRECTML)
@@ -63,7 +93,16 @@ if(PITCHNET_ASIO_ENABLED)
 endif()
 
 # Check if ONNX Runtime already exists in build directory
-set(ONNXRUNTIME_CACHE_DIR "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-src")
+if(APPLE)
+    # Keep packages for different architecture selections separate so that
+    # reconfiguring an existing build cannot accidentally reuse an ARM-only
+    # runtime in an Intel or universal build.
+    set(ONNXRUNTIME_CACHE_DIR
+        "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-${ONNXRUNTIME_MACOS_PACKAGE}-src")
+else()
+    set(ONNXRUNTIME_CACHE_DIR
+        "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-src")
+endif()
 if(WIN32 AND USE_DIRECTML)
     set(ONNXRUNTIME_CACHE_HEADER "${ONNXRUNTIME_CACHE_DIR}/build/native/include/onnxruntime_cxx_api.h")
 else()
@@ -89,7 +128,7 @@ else()
         if(USE_GPU)
             message(WARNING "GPU acceleration is not supported on macOS, falling back to CPU")
         endif()
-        set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz")
+        set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-${ONNXRUNTIME_MACOS_PACKAGE}-${ONNXRUNTIME_VERSION}.tgz")
     else()
         if(USE_CUDA)
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.tgz")
