@@ -499,6 +499,20 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   captureController->prepare(sampleRate, getMainBusNumOutputChannels(),
                              MAX_CAPTURE_SECONDS);
   lastCaptureUiState = captureController->getState();
+
+  // Preparing the processor is a lifecycle operation, so this is the safe
+  // place to rebuild a UI-closed playback buffer for the current host rate.
+  // Never defer this to processBlock(): setProject() copies/resamples the
+  // complete project waveform and takes a lock.
+#if JucePlugin_Enable_ARA
+  // ARA playback renderers were already handled by ensureHeadlessAraBinding()
+  // above; this branch is for an ordinary/non-ARA instance of the same binary.
+  if (!isPlaybackRenderer() && !mainComponent && araAnalysisProjectSnapshot)
+    bindRealtimeProcessorHeadless();
+#else
+  if (!mainComponent && araAnalysisProjectSnapshot)
+    bindRealtimeProcessorHeadless();
+#endif
 }
 
 void PitchNetAudioProcessor::releaseResources() {
@@ -827,9 +841,6 @@ void PitchNetAudioProcessor::processNonARAMode(
   }
 
   if (!isCaptureArmed() && hasProject) {
-    if (!mainComponent && araAnalysisProjectSnapshot)
-      bindRealtimeProcessorHeadless();
-
     if (!realtimeProcessor.isReady())
       return;
 
@@ -1323,6 +1334,12 @@ void PitchNetAudioProcessor::requestAraSourceAnalysis(
           mainComponent->hideAnalysisProgress();
         } else if (mainComponent && !regionCanvasAnalysisPending.load()) {
           mainComponent->hideAnalysisProgress();
+        } else if (!mainComponent && araAnalysisProjectSnapshot) {
+          // Analysis can finish after the editor has closed. Publish and bind
+          // the completed snapshot once here, rather than rebuilding it from
+          // every subsequent audio callback.
+          publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
+          bindRealtimeProcessorHeadless();
         }
       });
 }
@@ -1795,6 +1812,12 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
           mainComponent->hideAnalysisProgress();
         } else if (mainComponent) {
           mainComponent->hideAnalysisProgress();
+        } else if (araAnalysisProjectSnapshot) {
+          // Capture analysis may outlive the editor that started it. Keep
+          // headless playback current without doing any project-sized work in
+          // processBlock().
+          publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
+          bindRealtimeProcessorHeadless();
         }
       });
 }
@@ -1985,6 +2008,12 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                 }
                 view->finishBackendRender(success);
                 view->setStatusMessage({});
+              } else if (success && !renderActiveAraRegion &&
+                         araAnalysisProjectSnapshot) {
+                // The render finished after its editor closed. Refresh once on
+                // the message thread; bindRealtimeProcessorHeadless() will
+                // no-op if a replacement editor has since attached.
+                bindRealtimeProcessorHeadless();
               }
             });
       },
@@ -2276,6 +2305,9 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
       publishPersistentProjectSnapshot(*project);
     }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
+  } else if (araAnalysisProjectSnapshot) {
+    // JSON state can also be restored before an editor is ever opened.
+    bindRealtimeProcessorHeadless();
   }
 
   return true;

@@ -102,6 +102,9 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
 
   removeMouseListener(this);
   if (ownsProcessorMainView) {
+    // Preview/audition is editor-owned in non-ARA mode. Do not leave its
+    // per-sample rendering path active after the controls that stop it are gone.
+    audioProcessor.stopPluginAudition();
     audioProcessor.getTransportController().clearCallbacks();
     audioProcessor.setMainComponent(nullptr);
   }

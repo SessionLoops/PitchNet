@@ -263,8 +263,10 @@ private:
                              const juce::AudioBuffer<float> &dryBuffer);
 
   /** Bind the realtime processor to the persistent backend snapshot when no
-   *  editor is present (headless ARA playback / bounce). No-op if an editor is
-   *  open (it drives the binding) or no analyzed snapshot exists yet. */
+   *  editor is present (headless playback / bounce). This copies/resamples the
+   *  project waveform, so call it only from lifecycle/state-update paths and
+   *  never from processBlock(). No-op if an editor is open or no analyzed
+   *  snapshot exists yet. */
   void bindRealtimeProcessorHeadless();
 
 #if JucePlugin_Enable_ARA
