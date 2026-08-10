@@ -72,6 +72,8 @@ public:
   {
     uiBrightnessPercent = juce::jlimit(75.0, 200.0, percent);
   }
+  bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
+  void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
 
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
@@ -128,6 +130,7 @@ private:
   juce::String preferredAudioOutputDevice;
   juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
+  bool liveAuditionEnabled = false;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };

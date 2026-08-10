@@ -171,6 +171,9 @@ void SettingsManager::loadConfig()
           uiBrightnessPercent = juce::jlimit(
               75.0, 200.0,
               static_cast<double>(configObj->getProperty("uiBrightnessPercent")));
+        if (configObj->hasProperty("liveAuditionEnabled"))
+          liveAuditionEnabled =
+              static_cast<bool>(configObj->getProperty("liveAuditionEnabled"));
       }
     }
   }
@@ -215,6 +218,7 @@ void SettingsManager::saveConfig()
   config->setProperty("preferredAudioOutputDevice", preferredAudioOutputDevice);
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
+  config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
 
   juce::String jsonText = juce::JSON::toString(juce::var(config.get()));
   configFile.replaceWithText(jsonText);

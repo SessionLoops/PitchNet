@@ -476,6 +476,11 @@ void ToolbarComponent::setLoopEnabled(bool enabled)
     loopButton.setToggleState(loopEnabled, juce::dontSendNotification);
 }
 
+void ToolbarComponent::setAuditionEnabled(bool enabled)
+{
+    auditionButton.setToggleState(enabled, juce::dontSendNotification);
+}
+
 void ToolbarComponent::setParametersVisible(bool visible)
 {
     parametersVisible = visible;

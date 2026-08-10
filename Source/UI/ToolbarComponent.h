@@ -77,6 +77,7 @@ public:
     void setEditMode(EditMode mode);
     void setZoom(float pixelsPerSecond); // Update zoom slider without triggering callback
     void setLoopEnabled(bool enabled);
+    void setAuditionEnabled(bool enabled);
     void setParametersVisible(bool visible);
     void setUndoRedoEnabled(bool undoEnabled, bool redoEnabled);
     void setProject(Project* project);
