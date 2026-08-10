@@ -406,7 +406,6 @@ private:
   PluginPreviewState pluginPreview;
   juce::int64 pluginPreviewCursor = 0;
   std::shared_ptr<juce::AudioBuffer<float>> pluginAuditionBuffer;
-  std::atomic<double> pluginAuditionSampleRate{44100.0};
   // Audio-thread-only handoff state for crossfading new audition renders.
   std::shared_ptr<juce::AudioBuffer<float>> activePluginAuditionBuffer;
   std::shared_ptr<juce::AudioBuffer<float>> previousPluginAuditionBuffer;

@@ -960,10 +960,48 @@ void PitchNetAudioProcessor::startPluginAudition(
     const juce::AudioBuffer<float> &buffer, double sampleRate) {
   if (buffer.getNumSamples() <= 0)
     return;
+
+  // Drag and piano-key audition buffers are produced at the Project's sample
+  // rate, which is not necessarily the current host rate (for example after a
+  // session-rate change or when restoring captured state). The audio-thread
+  // loop below deliberately uses integer cursors, so publish host-rate audio
+  // here rather than letting one source sample incorrectly equal one host
+  // sample.
+  const double sourceRate =
+      std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
+  const double targetRate =
+      std::isfinite(hostSampleRate) && hostSampleRate > 0.0
+          ? hostSampleRate
+          : sourceRate;
   auto preview = std::make_shared<juce::AudioBuffer<float>>();
-  preview->makeCopyOf(buffer);
+
+  if (juce::approximatelyEqual(sourceRate, targetRate)) {
+    preview->makeCopyOf(buffer);
+  } else {
+    const int sourceSamples = buffer.getNumSamples();
+    const auto scaledLength = static_cast<juce::int64>(std::llround(
+        static_cast<double>(sourceSamples) * targetRate / sourceRate));
+    const int outputSamples = static_cast<int>(juce::jlimit<juce::int64>(
+        1, std::numeric_limits<int>::max(), scaledLength));
+    preview->setSize(buffer.getNumChannels(), outputSamples);
+
+    const double sourceStep = sourceRate / targetRate;
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+      const auto *source = buffer.getReadPointer(channel);
+      auto *output = preview->getWritePointer(channel);
+      for (int sample = 0; sample < outputSamples; ++sample) {
+        const double sourcePosition = std::min(
+            static_cast<double>(sourceSamples - 1), sample * sourceStep);
+        const int left = static_cast<int>(sourcePosition);
+        const int right = std::min(sourceSamples - 1, left + 1);
+        const float fraction = static_cast<float>(sourcePosition - left);
+        output[sample] =
+            source[left] + fraction * (source[right] - source[left]);
+      }
+    }
+  }
+
   std::atomic_store(&pluginAuditionBuffer, std::move(preview));
-  pluginAuditionSampleRate.store(sampleRate > 0.0 ? sampleRate : 44100.0);
   pluginPreview.restart.store(true);
   pluginPreview.active.store(true);
 }
