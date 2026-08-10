@@ -390,7 +390,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     if (notesVar.isArray()) {
         for (int i = 0; i < notesVar.size(); ++i) {
             Note note;
-            if (noteFromJson(note, notesVar[i])) {
+            if (noteFromJson(note, notesVar[i],
+                             project.getPitchCenter() > 0.0001f)) {
                 project.addNote(std::move(note));
             }
         }
@@ -765,6 +766,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("srcStartFrame", note.getSrcStartFrame());
     obj->setProperty("srcEndFrame", note.getSrcEndFrame());
     obj->setProperty("midiNote", note.getMidiNote());
+    obj->setProperty("lastNonMacroMidiNote", note.getLastNonMacroMidiNote());
     obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
@@ -807,7 +809,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     return juce::var(obj);
 }
 
-bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
+bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
+                                     bool hadPitchCorrection) {
     if (!json.isObject())
         return false;
 
@@ -821,8 +824,14 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     const float midiNote =
         static_cast<float>(json.getProperty("midiNote", 60.0));
     note.setMidiNote(midiNote);
-    note.setOriginalMidiNote(static_cast<float>(
-        json.getProperty("originalMidiNote", midiNote)));
+    const float originalMidiNote = static_cast<float>(
+        json.getProperty("originalMidiNote", midiNote));
+    note.setOriginalMidiNote(originalMidiNote);
+    // Projects written before lastNonMacroMidiNote existed used the analyzed
+    // pitch as the macro source after any correction had been applied.
+    const float legacySourceMidi = hadPitchCorrection ? originalMidiNote : midiNote;
+    note.setLastNonMacroMidiNote(static_cast<float>(
+        json.getProperty("lastNonMacroMidiNote", legacySourceMidi)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
     note.setRest(json.getProperty("rest", false));

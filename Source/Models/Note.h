@@ -43,7 +43,17 @@ public:
 
     // Pitch
     float getMidiNote() const { return midiNote; }
-    void setMidiNote(float note) { midiNote = note; }
+    // Regular pitch edits become the source for the next Pitch Center macro
+    // pass. The macro uses the dedicated setter below so that repeatedly
+    // previewing/applying correction never compounds its own output.
+    void setMidiNote(float note)
+    {
+        midiNote = note;
+        lastNonMacroMidiNote = note;
+    }
+    float getLastNonMacroMidiNote() const { return lastNonMacroMidiNote; }
+    void setLastNonMacroMidiNote(float note) { lastNonMacroMidiNote = note; }
+    void setMidiNoteFromPitchCorrection(float note) { midiNote = note; }
     float getOriginalMidiNote() const { return originalMidiNote; }
     void setOriginalMidiNote(float note) { originalMidiNote = note; }
     float getPitchOffset() const { return pitchOffset; }
@@ -156,6 +166,7 @@ private:
     int endFrame = 0;
 
     float midiNote = 60.0f;
+    float lastNonMacroMidiNote = 60.0f;
     float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)

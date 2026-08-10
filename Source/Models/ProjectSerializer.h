@@ -69,7 +69,8 @@ private:
     // Note serialization
     static juce::var noteToJson(const Note& note, bool includeAnalysisCache,
                                 bool includePitchData);
-    static bool noteFromJson(Note& note, const juce::var& json);
+    static bool noteFromJson(Note& note, const juce::var& json,
+                             bool hadPitchCorrection);
 
     // Pitch data serialization
     static juce::var pitchDataToJson(const AudioData& audioData);

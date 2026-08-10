@@ -5,7 +5,7 @@
 Note::Note(int startFrame, int endFrame, float midiNote)
     : srcStartFrame(startFrame), srcEndFrame(endFrame),
       startFrame(startFrame), endFrame(endFrame), midiNote(midiNote),
-      originalMidiNote(midiNote)
+      lastNonMacroMidiNote(midiNote), originalMidiNote(midiNote)
 {
 }
 

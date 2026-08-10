@@ -225,7 +225,7 @@ private:
         for (size_t i = 0; i < notes.size() && i < midis.size(); ++i)
         {
             if (!notes[i]) continue;
-            notes[i]->setMidiNote(midis[i]);
+            notes[i]->setMidiNoteFromPitchCorrection(midis[i]);
             notes[i]->markDirty();
             notes[i]->markSynthDirty();
         }

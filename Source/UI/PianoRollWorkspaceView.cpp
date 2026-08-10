@@ -279,7 +279,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
   {
     Note *note;
     float midiNote;
-    float originalMidiNote;
+    float sourceMidiNote;
   };
   auto centers = std::make_shared<std::vector<NoteCenter>>();
   centers->reserve(project->getNotes().size());
@@ -288,7 +288,8 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       [](const Note &note) { return !note.isRest() && note.isSelected(); });
   for (auto &note : project->getNotes())
     if (!note.isRest() && (!hasSelectedNotes || note.isSelected()))
-      centers->push_back({ &note, note.getMidiNote(), note.getOriginalMidiNote() });
+      centers->push_back(
+          { &note, note.getMidiNote(), note.getLastNonMacroMidiNote() });
 
   const float originalPitchCenter = project->getPitchCenter();
   auto previewPitchCenter = std::make_shared<float>(originalPitchCenter);
@@ -313,12 +314,10 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         for (const auto &center : *centers)
         {
           if (center.note == nullptr) continue;
-          // Always calculate from the analyzed pitch, rather than the current
-          // corrected position. This allows a later lower correction amount to
-          // restore a note's original deviation.
-          const float sourceMidi = originalPitchCenter > 0.0001f
-              ? center.originalMidiNote
-              : center.midiNote;
+          // Calculate from the latest regular edit, never from an earlier
+          // macro result. This lets a lower amount restore that edit without
+          // compounding correction or discarding edits made between passes.
+          const float sourceMidi = center.sourceMidiNote;
           const float corrected = snapToScale
               ? ScaleUtils::snapMidiToScale(sourceMidi, correctionScaleMode,
                                              project->getScaleRootNote(),
@@ -330,14 +329,15 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
             // Scale mode interpolates every note toward its closest scale tone:
             // 100% reaches it, while lower values retain that fraction of the
             // note's original scale-distance.
-            center.note->setMidiNote(corrected + signedDeviation *
+            center.note->setMidiNoteFromPitchCorrection(
+                corrected + signedDeviation *
                 ((100.0f - amount) / 100.0f));
           }
           else if (std::abs(signedDeviation) > maximumDeviation)
-            center.note->setMidiNote(corrected + std::copysign(maximumDeviation,
-                                                               signedDeviation));
+            center.note->setMidiNoteFromPitchCorrection(
+                corrected + std::copysign(maximumDeviation, signedDeviation));
           else
-            center.note->setMidiNote(sourceMidi);
+            center.note->setMidiNoteFromPitchCorrection(sourceMidi);
         }
         pianoRoll.repaint();
         refreshOverview();
@@ -365,7 +365,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
             changed = true;
           }
           else
-            center.note->setMidiNote(center.midiNote);
+            center.note->setMidiNoteFromPitchCorrection(center.midiNote);
         }
         const bool pitchCenterChanged = accepted &&
             std::abs(*previewPitchCenter - originalPitchCenter) > 0.0001f;
