@@ -34,6 +34,7 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
                                    GPUProvider provider, int deviceId)
 {
 #ifdef HAVE_ONNXRUNTIME
+  lastError.clear();
   try
   {
     // Initialize ONNX Runtime
@@ -204,15 +205,22 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
   }
   catch (const Ort::Exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("RMVPE model load failed for " + modelPath.getFullPathName() + ": " +
+        lastError);
     loaded = false;
     return false;
   }
   catch (const std::exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("RMVPE model load failed for " + modelPath.getFullPathName() + ": " +
+        lastError);
     loaded = false;
     return false;
   }
 #else
+  lastError = "ONNX Runtime is not available";
   return false;
 #endif
 }
@@ -423,8 +431,10 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
                                                  float threshold)
 {
 #ifdef HAVE_ONNXRUNTIME
+  lastError.clear();
   if (!loaded)
   {
+    lastError = "RMVPE model is not loaded";
     return {};
   }
 
@@ -483,13 +493,18 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
   }
   catch (const Ort::Exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("RMVPE inference failed: " + lastError);
     return {};
   }
   catch (const std::exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("RMVPE inference failed: " + lastError);
     return {};
   }
 #else
+  lastError = "ONNX Runtime is not available";
   return {};
 #endif
 }
@@ -500,7 +515,10 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
 {
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxSession || numSamples <= 0)
+  {
+    lastError = "RMVPE received an invalid session or empty audio buffer";
     return {};
+  }
 
   thresholdScratch[0] = threshold;
 
@@ -515,7 +533,10 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
   {
     mel = extractMel(std::vector<float>(audio16k, audio16k + numSamples));
     if (mel.empty())
+    {
+      lastError = "RMVPE mel extraction produced no frames";
       return {};
+    }
 
     const int numFrames = static_cast<int>(mel.size());
     melInputScratch.resize(static_cast<size_t>(numFrames) * N_MELS);
@@ -603,8 +624,10 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
     return decodeF0(f0Data, numFrames, threshold);
   }
 
+  lastError = "RMVPE returned an unexpected output tensor";
   return {};
 #else
+  lastError = "ONNX Runtime is not available";
   return {};
 #endif
 }
@@ -614,8 +637,10 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
     std::function<void(double)> progressCallback)
 {
 #ifdef HAVE_ONNXRUNTIME
+  lastError.clear();
   if (!loaded)
   {
+    lastError = "RMVPE model is not loaded";
     return {};
   }
 
@@ -680,13 +705,18 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
   }
   catch (const Ort::Exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("RMVPE inference failed: " + lastError);
     return {};
   }
   catch (const std::exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("RMVPE inference failed: " + lastError);
     return {};
   }
 #else
+  lastError = "ONNX Runtime is not available";
   return {};
 #endif
 }

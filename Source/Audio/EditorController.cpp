@@ -806,24 +806,121 @@ void EditorController::analyzeAudio(
                                                                       : "NO"));
 
   std::vector<float> extractedF0;
+  juce::String pitchInferenceError;
   if (pitchDetectorType == PitchDetectorType::RMVPE)
   {
     extractedF0 = rmvpePitchDetector->extractF0(samples, numSamples,
                                                 audioData.sampleRate);
+    pitchInferenceError = rmvpePitchDetector->getLastError();
   }
   else if (pitchDetectorType == PitchDetectorType::FCPE)
   {
     extractedF0 =
         fcpePitchDetector->extractF0(samples, numSamples, audioData.sampleRate);
+    pitchInferenceError = fcpePitchDetector->getLastError();
+  }
+
+  // A DirectML session can be created successfully even when its adapter or
+  // driver later rejects a graph during Run(). Retry with a fresh CPU session
+  // so systems without a usable GPU do not fail with a misleading model-file
+  // error. Keep the successful CPU detector for subsequent analyses.
+  if (extractedF0.empty() &&
+      getProviderFromDevice(device) == GPUProvider::DirectML)
+  {
+    const auto detectorName =
+        juce::String(pitchDetectorTypeToString(pitchDetectorType));
+    LOG(detectorName + " DirectML inference failed: " +
+        (pitchInferenceError.isNotEmpty() ? pitchInferenceError
+                                           : "unknown error") +
+        "; retrying with CPU");
+
+    juce::String cpuRetryError;
+    if (pitchDetectorType == PitchDetectorType::RMVPE)
+    {
+      auto cpuDetector = std::make_unique<RMVPEPitchDetector>();
+      if (cpuDetector->loadModel(rmvpeModelPath, GPUProvider::CPU, 0))
+      {
+        auto cpuF0 = cpuDetector->extractF0(samples, numSamples,
+                                            audioData.sampleRate);
+        cpuRetryError = cpuDetector->getLastError();
+        if (!cpuF0.empty())
+        {
+          extractedF0 = std::move(cpuF0);
+          rmvpePitchDetector = std::move(cpuDetector);
+        }
+      }
+      else
+      {
+        cpuRetryError = cpuDetector->getLastError();
+      }
+    }
+    else if (pitchDetectorType == PitchDetectorType::FCPE)
+    {
+      auto cpuDetector = std::make_unique<FCPEPitchDetector>();
+      if (cpuDetector->loadModel(fcpeModelPath, melFilterbankPath,
+                                 centTablePath, GPUProvider::CPU, 0))
+      {
+        auto cpuF0 = cpuDetector->extractF0(samples, numSamples,
+                                            audioData.sampleRate);
+        cpuRetryError = cpuDetector->getLastError();
+        if (!cpuF0.empty())
+        {
+          extractedF0 = std::move(cpuF0);
+          fcpePitchDetector = std::move(cpuDetector);
+        }
+      }
+      else
+      {
+        cpuRetryError = cpuDetector->getLastError();
+      }
+    }
+
+    if (!extractedF0.empty())
+    {
+      LOG(detectorName +
+          " CPU retry succeeded; using CPU for subsequent inference");
+      device = "CPU";
+      deviceId = 0;
+      if (vocoder)
+      {
+        vocoder->setExecutionDevice("CPU");
+        vocoder->setExecutionDeviceId(0);
+        if (vocoder->isLoaded() && !vocoder->reloadModel())
+          LOG("Vocoder failed to reload after DirectML-to-CPU fallback");
+      }
+
+      // GAME will run later in this analysis. Give it a fresh CPU session as
+      // well, but keep the existing detector if the optional reload fails.
+      if (gameModelDir.isDirectory())
+      {
+        auto cpuGameDetector = std::make_unique<GAMEDetector>();
+        if (cpuGameDetector->loadModels(gameModelDir, GPUProvider::CPU, 0))
+          gameDetector = std::move(cpuGameDetector);
+        else
+          LOG("GAME failed to reload after DirectML-to-CPU fallback");
+      }
+    }
+    else
+    {
+      LOG(detectorName + " CPU retry failed: " +
+          (cpuRetryError.isNotEmpty() ? cpuRetryError : "unknown error"));
+      if (cpuRetryError.isNotEmpty())
+        pitchInferenceError +=
+            "\n\nCPU retry also failed:\n" + cpuRetryError;
+    }
   }
 
   if (extractedF0.empty() || targetFrames <= 0)
   {
-    juce::MessageManager::callAsync([]()
+    const auto detail = pitchInferenceError.isNotEmpty()
+                            ? "\n\nDetails:\n" +
+                                  pitchInferenceError.substring(0, 1000)
+                            : juce::String();
+    juce::MessageManager::callAsync([detail]()
                                     { juce::AlertWindow::showMessageBoxAsync(
                                           juce::AlertWindow::WarningIcon, "Inference failed",
-                                          "Failed to extract pitch (F0). Please check your model installation "
-                                          "and settings."); });
+                                          "Failed to extract pitch (F0). Please try the CPU inference "
+                                          "device or check the application log." + detail); });
     return;
   }
 

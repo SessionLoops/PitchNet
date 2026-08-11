@@ -154,6 +154,7 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
                                   GPUProvider provider, int deviceId)
 {
 #ifdef HAVE_ONNXRUNTIME
+  lastError.clear();
   try
   {
     // Load mel filterbank from file if provided (dense binary → sparse)
@@ -370,19 +371,22 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
   }
   catch (const Ort::Exception &e)
   {
+    lastError = juce::String(e.what());
     LOG("FCPE model load failed for " + modelPath.getFullPathName() + ": " +
-        juce::String(e.what()));
+        lastError);
     loaded = false;
     return false;
   }
   catch (const std::exception &e)
   {
+    lastError = juce::String(e.what());
     LOG("FCPE model load failed for " + modelPath.getFullPathName() + ": " +
-        juce::String(e.what()));
+        lastError);
     loaded = false;
     return false;
   }
 #else
+  lastError = "ONNX Runtime is not available";
   return false;
 #endif
 }
@@ -585,8 +589,10 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
                                                 float threshold)
 {
 #ifdef HAVE_ONNXRUNTIME
+  lastError.clear();
   if (!loaded)
   {
+    lastError = "FCPE model is not loaded";
     return {};
   }
 
@@ -600,6 +606,7 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
 
     if (mel.empty())
     {
+      lastError = "FCPE mel extraction produced no frames";
       return {};
     }
 
@@ -641,6 +648,7 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
         outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
     if (outputCount < static_cast<size_t>(OUT_DIMS))
     {
+      lastError = "FCPE returned an unexpected output tensor";
       return {};
     }
     const int outFrames = static_cast<int>(outputCount / OUT_DIMS);
@@ -650,13 +658,18 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
   }
   catch (const Ort::Exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("FCPE inference failed: " + lastError);
     return {};
   }
   catch (const std::exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("FCPE inference failed: " + lastError);
     return {};
   }
 #else
+  lastError = "ONNX Runtime is not available";
   return {};
 #endif
 }
@@ -666,8 +679,10 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     std::function<void(double)> progressCallback)
 {
 #ifdef HAVE_ONNXRUNTIME
+  lastError.clear();
   if (!loaded)
   {
+    lastError = "FCPE model is not loaded";
     return {};
   }
 
@@ -687,6 +702,7 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
 
     if (mel.empty())
     {
+      lastError = "FCPE mel extraction produced no frames";
       return {};
     }
 
@@ -737,6 +753,7 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
         outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
     if (outputCount < static_cast<size_t>(OUT_DIMS))
     {
+      lastError = "FCPE returned an unexpected output tensor";
       return {};
     }
     const int outFrames = static_cast<int>(outputCount / OUT_DIMS);
@@ -754,13 +771,18 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
   }
   catch (const Ort::Exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("FCPE inference failed: " + lastError);
     return {};
   }
   catch (const std::exception &e)
   {
+    lastError = juce::String(e.what());
+    LOG("FCPE inference failed: " + lastError);
     return {};
   }
 #else
+  lastError = "ONNX Runtime is not available";
   return {};
 #endif
 }

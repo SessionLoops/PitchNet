@@ -831,6 +831,14 @@ void SettingsComponent::updateDeviceList()
   auto devices = getAvailableDevices();
   int selectedIndex = 0;
 
+  // A DirectML runtime can be installed even when Windows exposes no usable
+  // hardware adapter. Do not retain a stale GPU choice in that case.
+  if (!devices.contains(currentDevice))
+  {
+    currentDevice = "CPU";
+    gpuDeviceId = 0;
+  }
+
   const bool shouldUseDefaultDevice =
       settingsManager == nullptr || !settingsManager->hasStoredDevice();
 
@@ -1082,7 +1090,11 @@ juce::StringArray SettingsComponent::getAvailableDevices()
     // Add available GPU providers based on compile-time flags
     // DML and CUDA are mutually exclusive
 #ifdef USE_DIRECTML
-    if (hasDml)
+    if (hasDml
+#ifdef _WIN32
+        && !getDxgiAdapterNames().isEmpty()
+#endif
+    )
     {
       devices.add("DirectML");
     }

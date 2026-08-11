@@ -62,6 +62,9 @@ public:
      */
     bool isLoaded() const { return loaded; }
 
+    /** Return the most recent model loading or inference error. */
+    juce::String getLastError() const { return lastError; }
+
     /**
      * Extract F0 from audio buffer.
      * The audio will be resampled to 16kHz internally.
@@ -99,6 +102,7 @@ public:
 
 private:
     bool loaded = false;
+    juce::String lastError;
 
     /** Sparse representation of one mel filter band. */
     struct MelBand
