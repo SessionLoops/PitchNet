@@ -338,6 +338,9 @@ void TimingHandler::updateMarqueeSelection(float worldX)
 bool TimingHandler::mouseDown(const juce::MouseEvent& e, float worldX,
                               float worldY)
 {
+  if (!owner_.isCanvasPoint(e))
+    return false;
+
   const auto boundaries = buildBoundaries();
   const int index = findBoundary(worldX, worldY, boundaries);
   if (index < 0)
@@ -448,9 +451,20 @@ bool TimingHandler::mouseUp(const juce::MouseEvent&, float, float)
   return true;
 }
 
-void TimingHandler::mouseMove(const juce::MouseEvent&, float worldX,
+void TimingHandler::mouseMove(const juce::MouseEvent& e, float worldX,
                               float worldY)
 {
+  if (!owner_.isCanvasPoint(e))
+  {
+    if (hoveredBoundaryFrame >= 0.0f)
+    {
+      hoveredBoundaryFrame = -1.0f;
+      owner_.repaint();
+    }
+    owner_.setMouseCursor(juce::MouseCursor::NormalCursor);
+    return;
+  }
+
   const auto boundaries = buildBoundaries();
   const int index = findBoundary(worldX, worldY, boundaries);
   const float nextHover = index >= 0

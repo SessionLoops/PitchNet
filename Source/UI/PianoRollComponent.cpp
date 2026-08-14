@@ -1460,17 +1460,35 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     repaint();
   }
 
-  // Apply modifier/edit-mode cursors last so interaction handlers cannot
-  // replace them while the pointer moves.
-  if (showZoomCursor)
+  // Cycle handles take priority over every edit-mode cursor. Once the pointer
+  // leaves a handle, the active tool immediately restores its canvas cursor.
+  if (loopDragHandler_ && loopDragHandler_->isHoveringHandle())
+  {
+    setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+  }
+  else if (showZoomCursor)
   {
     setMouseCursor(zoomMouseCursor);
   }
+  else if (editMode == EditMode::Select)
+  {
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+  }
   else if (editMode == EditMode::Split)
   {
-    const bool hoveringMergeBoundary = splitHandler_ && splitHandler_->isHoveringMergeBoundary();
-    setMouseCursor(hoveringMergeBoundary ? mergeMouseCursor
-                                         : splitMouseCursor);
+    if (!isCanvasPoint(e))
+      setMouseCursor(juce::MouseCursor::NormalCursor);
+    else
+    {
+      const bool hoveringMergeBoundary =
+          splitHandler_ && splitHandler_->isHoveringMergeBoundary();
+      const bool hoveringNote =
+          splitHandler_ && splitHandler_->getSplitGuideNote() != nullptr;
+      setMouseCursor(hoveringMergeBoundary
+                         ? mergeMouseCursor
+                         : (hoveringNote ? splitMouseCursor
+                                         : juce::MouseCursor::NormalCursor));
+    }
   }
   else if (editMode == EditMode::Anchor)
   {
@@ -2547,7 +2565,7 @@ void PianoRollComponent::updateMouseCursorForEditMode()
   }
   else if (editMode == EditMode::Split)
   {
-    setMouseCursor(splitMouseCursor);
+    setMouseCursor(juce::MouseCursor::NormalCursor);
   }
   else if (editMode == EditMode::Anchor)
   {

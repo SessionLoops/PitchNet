@@ -23,6 +23,7 @@ public:
 
   // Accessors for rendering (drawLoopOverlay / drawLoopTimeline)
   bool isDragging() const { return loopDragMode != LoopDragMode::None; }
+  bool isHoveringHandle() const { return hoveringHandle; }
   double getDragStartSeconds() const { return loopDragStartSeconds; }
   double getDragEndSeconds() const { return loopDragEndSeconds; }
 
@@ -36,5 +37,6 @@ private:
   double loopDragAnchorSeconds = 0.0;
   double loopDragOriginalStart = 0.0;
   double loopDragOriginalEnd = 0.0;
+  bool hoveringHandle = false;
   static constexpr float loopHandleHitPadding = 6.0f;
 };

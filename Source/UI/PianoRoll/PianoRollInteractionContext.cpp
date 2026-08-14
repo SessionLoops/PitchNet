@@ -64,6 +64,12 @@ double PianoRollInteractionContext::snapTimeToTimelineGrid(
   return component.snapTimeToTimelineGrid(timeSeconds);
 }
 
+bool PianoRollInteractionContext::isCanvasPoint(
+    const juce::MouseEvent &e) const
+{
+  return component.isCanvasPoint(e);
+}
+
 Note *PianoRollInteractionContext::findNoteAt(float x, float y)
 {
   return component.findNoteAt(x, y);

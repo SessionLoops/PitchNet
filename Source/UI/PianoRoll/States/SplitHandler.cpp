@@ -7,7 +7,8 @@ SplitHandler::SplitHandler(PianoRollComponent &owner)
 
 bool SplitHandler::mouseDown(const juce::MouseEvent &e, float worldX,
                              float worldY) {
-  juce::ignoreUnused(e);
+  if (!owner_.isCanvasPoint(e))
+    return false;
 
   if (mergeFirstNote && mergeSecondNote &&
       owner_.noteSplitter->mergeNotes(mergeFirstNote, mergeSecondNote))
@@ -26,7 +27,10 @@ bool SplitHandler::mouseDown(const juce::MouseEvent &e, float worldX,
 
 void SplitHandler::mouseMove(const juce::MouseEvent &e, float worldX,
                              float worldY) {
-  juce::ignoreUnused(e);
+  if (!owner_.isCanvasPoint(e)) {
+    clearGuide();
+    return;
+  }
 
   if (!owner_.project) {
     clearGuide();

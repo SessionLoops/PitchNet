@@ -155,6 +155,7 @@ void LoopDragHandler::mouseMove(const juce::MouseEvent &e, float worldX,
                                 float worldY) {
   juce::ignoreUnused(worldX, worldY);
 
+  hoveringHandle = false;
   if (!owner_.project || e.y < PianoRollComponent::timelineHeight ||
       e.y >= PianoRollComponent::headerHeight ||
       e.x < PianoRollComponent::pianoKeysWidth) {
@@ -174,6 +175,7 @@ void LoopDragHandler::mouseMove(const juce::MouseEvent &e, float worldX,
 
     if (std::abs(static_cast<float>(e.x) - startX) <= loopHandleHitPadding ||
         std::abs(static_cast<float>(e.x) - endX) <= loopHandleHitPadding) {
+      hoveringHandle = true;
       owner_.setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
     } else {
       owner_.setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -187,4 +189,7 @@ bool LoopDragHandler::isActive() const {
   return loopDragMode != LoopDragMode::None;
 }
 
-void LoopDragHandler::cancel() { loopDragMode = LoopDragMode::None; }
+void LoopDragHandler::cancel() {
+  loopDragMode = LoopDragMode::None;
+  hoveringHandle = false;
+}

@@ -62,6 +62,7 @@ public:
   float timeToX(double time) const;
   double xToTime(float x) const;
   double snapTimeToTimelineGrid(double timeSeconds) const;
+  bool isCanvasPoint(const juce::MouseEvent &e) const;
 
   Note *findNoteAt(float x, float y);
   std::vector<Note *> getSelectedNotes() const;
