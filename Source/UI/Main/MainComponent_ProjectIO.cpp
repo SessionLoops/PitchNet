@@ -243,7 +243,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
                   safeThis->toolbar.showProgress(TR("progress.synthesizing"));
                   safeThis->toolbar.setProgress(-1.0f);
-                  safeThis->toolbar.setEnabled(false);
+                  safeThis->setToolGroupEnabled(false);
 
                   safeThis->editorController->resynthesizeIncrementalAsync(
                       *project,
@@ -256,7 +256,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
                         if (safeThis == nullptr)
                           return;
 
-                        safeThis->toolbar.setEnabled(true);
+                        safeThis->setToolGroupEnabled(true);
                         safeThis->toolbar.hideProgress();
                         safeThis->isLoadingAudio = false;
                         safeThis->repaint();

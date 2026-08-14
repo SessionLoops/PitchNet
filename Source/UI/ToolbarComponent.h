@@ -72,6 +72,7 @@ public:
 
     void setPlaying(bool playing);
     void setTransportEnabled(bool enabled);
+    void setToolGroupEnabled(bool enabled);
     void setCurrentTime(double time);
     void setTotalTime(double time);
     void setEditMode(EditMode mode);
@@ -99,8 +100,6 @@ public:
     std::function<void()> onPlay;
     std::function<void()> onPause;
     std::function<void()> onStop;
-    std::function<void()> onGoToStart;
-    std::function<void()> onGoToEnd;
     std::function<void(float)> onZoomChanged;
     std::function<void(EditMode)> onEditModeChanged;
     std::function<void(bool)> onToggleLoop;
@@ -124,8 +123,6 @@ private:
     ToggleButton recordButton;
     ToggleButton playButton;
     Button stopButton;
-    Button goToStartButton;
-    Button goToEndButton;
     ToggleButton loopButton;
     juce::Image logoImage;
 

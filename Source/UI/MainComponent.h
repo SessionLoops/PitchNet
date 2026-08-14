@@ -293,12 +293,14 @@ private:
   void undo();
   void redo();
   void setEditMode(EditMode mode);
+  void setToolGroupEnabled(bool enabled);
 
   std::unique_ptr<EditorController> ownedEditorController;
   EditorController *editorController = nullptr;
   std::unique_ptr<PitchUndoManager> ownedUndoManager;
   PitchUndoManager *undoManager = nullptr;
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;
+  bool toolGroupEnabled = true;
   bool previewRegionActive = false;
   double previewRegionEndTime = 0.0;
   double previewRegionReturnTime = 0.0;

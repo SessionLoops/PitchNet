@@ -586,10 +586,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { pause(); };
   toolbar.onStop = [this]()
   { stop(); };
-  toolbar.onGoToStart = [this]()
-  { jumpTransport(false); };
-  toolbar.onGoToEnd = [this]()
-  { jumpTransport(true); };
   toolbar.onZoomChanged = [this](float pps)
   { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode)
@@ -2378,7 +2374,7 @@ void MainComponent::resynthesizeIncremental()
 
   toolbar.showProgress(TR("progress.synthesizing"));
   toolbar.setProgress(-1.0f);
-  toolbar.setEnabled(false);
+  setToolGroupEnabled(false);
 
   if (isPluginMode() && onRequestBackendRender)
   {
@@ -2400,7 +2396,7 @@ void MainComponent::resynthesizeIncremental()
         if (safeThis == nullptr)
           return;
 
-        safeThis->toolbar.setEnabled(true);
+        safeThis->setToolGroupEnabled(true);
         safeThis->toolbar.hideProgress();
 
         if (!success)
@@ -2514,6 +2510,15 @@ void MainComponent::setEditMode(EditMode mode)
     commandManager->commandStatusChanged();
 }
 
+void MainComponent::setToolGroupEnabled(bool enabled)
+{
+  toolGroupEnabled = enabled;
+  toolbar.setToolGroupEnabled(enabled);
+
+  if (commandManager)
+    commandManager->commandStatusChanged();
+}
+
 void MainComponent::segmentIntoNotes()
 {
   auto *project = getProject();
@@ -2575,7 +2580,7 @@ void MainComponent::hideAnalysisProgress()
 
 void MainComponent::finishBackendRender(bool success)
 {
-  toolbar.setEnabled(true);
+  setToolGroupEnabled(true);
   toolbar.hideProgress();
 
   if (!success)
@@ -3257,9 +3262,11 @@ void MainComponent::renderProcessedAudio()
 
   // Show progress
   toolbar.showProgress(TR("progress.rendering"));
+  setToolGroupEnabled(false);
   auto *vocoder = editorController ? editorController->getVocoder() : nullptr;
   if (!vocoder)
   {
+    setToolGroupEnabled(true);
     toolbar.hideProgress();
     return;
   }
@@ -3275,6 +3282,7 @@ void MainComponent::renderProcessedAudio()
         {
           if (safeThis == nullptr)
             return;
+          safeThis->setToolGroupEnabled(true);
           safeThis->toolbar.hideProgress();
           if (ok)
             safeThis->notifyProjectDataChanged();
@@ -3460,7 +3468,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   case CommandIDs::activateMainTool:
     result.setInfo("Main Tool", "Activate the main editing tool", "Edit Mode", 0);
     result.addDefaultKeypress('1', juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Select);
     break;
 
@@ -3468,7 +3476,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo("Note Separation Tool", "Activate the note separation tool",
                    "Edit Mode", 0);
     result.addDefaultKeypress('2', juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
     break;
 
@@ -3476,7 +3484,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo("Pitch Drawing Tool", "Activate the pitch drawing tool",
                    "Edit Mode", 0);
     result.addDefaultKeypress('3', juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Anchor);
     break;
 
@@ -3484,7 +3492,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo("Timing Tool", "Activate the timing editing tool",
                    "Edit Mode", 0);
     result.addDefaultKeypress('4', juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Timing);
     break;
 
@@ -3616,19 +3624,23 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     return true;
 
   case CommandIDs::activateMainTool:
-    setEditMode(EditMode::Select);
+    if (toolGroupEnabled)
+      setEditMode(EditMode::Select);
     return true;
 
   case CommandIDs::activateSplitTool:
-    setEditMode(EditMode::Split);
+    if (toolGroupEnabled)
+      setEditMode(EditMode::Split);
     return true;
 
   case CommandIDs::activateAnchorTool:
-    setEditMode(EditMode::Anchor);
+    if (toolGroupEnabled)
+      setEditMode(EditMode::Anchor);
     return true;
 
   case CommandIDs::activateTimingTool:
-    setEditMode(EditMode::Timing);
+    if (toolGroupEnabled)
+      setEditMode(EditMode::Timing);
     return true;
 
   default:

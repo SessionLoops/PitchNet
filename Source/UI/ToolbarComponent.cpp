@@ -16,8 +16,6 @@ ToolbarComponent::ToolbarComponent()
     recordButton.setImage(loadImage(BinaryData::record_png, BinaryData::record_pngSize));
     playButton.setImage(loadImage(BinaryData::play_png, BinaryData::play_pngSize));
     stopButton.setImage(loadImage(BinaryData::stop_png, BinaryData::stop_pngSize));
-    goToStartButton.setImage(loadImage(BinaryData::backward_png, BinaryData::backward_pngSize));
-    goToEndButton.setImage(loadImage(BinaryData::forward_png, BinaryData::forward_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
     quantizeButton.setImage(loadImage(BinaryData::quantize_png, BinaryData::quantize_pngSize));
     auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
@@ -40,10 +38,8 @@ ToolbarComponent::ToolbarComponent()
 
     // Configure buttons
     addChildComponent(recordButton);
-    addAndMakeVisible(goToStartButton);
     addAndMakeVisible(playButton);
     addAndMakeVisible(stopButton);
-    addAndMakeVisible(goToEndButton);
     addAndMakeVisible(loopButton);
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
@@ -58,10 +54,8 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(parametersButton);
 
     recordButton.addListener(this);
-    goToStartButton.addListener(this);
     playButton.addListener(this);
     stopButton.addListener(this);
-    goToEndButton.addListener(this);
     loopButton.addListener(this);
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
@@ -250,8 +244,7 @@ void ToolbarComponent::resized()
         capsuleY + (capsuleH - 26) / 2,
         scaleButtonWidth, 26);
 
-    // Keep the edit tools next to the logo so they remain easy to reach without
-    // disturbing the centered transport controls.
+    // Keep the edit tools centered in the toolbar.
     const int editToolGap = 6;
     const int editToolPad = 15;
     const int editToolSlotSize = 22;
@@ -259,9 +252,10 @@ void ToolbarComponent::resized()
     const int logoRight = 17 + (logoImage.isValid()
                                     ? (logoImage.getWidth() + 1) / 2
                                     : 0);
-    const int editToolGroupX = logoRight + 24;
     const int editToolGroupWidth = editToolSlotSize * 4 + editToolGap * 3
                                    + editToolPad * 2;
+    const int editToolGroupX = fullToolbarBounds.getCentreX()
+                               - editToolGroupWidth / 2;
     const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
     toolContainerBounds = {editToolGroupX, editToolGroupY,
                            editToolGroupWidth, editToolGroupHeight};
@@ -294,30 +288,27 @@ void ToolbarComponent::resized()
     zoomSlider.setVisible(false);
     timeCapsuleBounds = {};
 
-    goToStartButton.setVisible(true);
     playButton.setVisible(true);
     stopButton.setVisible(true);
-    goToEndButton.setVisible(true);
     loopButton.setVisible(true);
 
-    // Transport controls grouped in capsule. In plugin mode these buttons
-    // request host transport changes through MainComponent.
+    // Keep transport beside the logo. In plugin mode these buttons request
+    // host transport changes through MainComponent.
     const int transportSlotSize = 30;
-    const int transportPad = 15;
-    const int transportGap = 6;
-    const int numCenteredTransport = 4;
-    const int numTransport = recordButton.isVisible() ? 6 : 5;
-    const int centeredTransportW = transportSlotSize * numCenteredTransport + (numCenteredTransport - 1) * transportGap + transportPad * 2;
-    const int capsuleW = transportSlotSize * numTransport + (numTransport - 1) * transportGap + transportPad * 2;
-    int cx = fullToolbarBounds.getCentreX() - centeredTransportW / 2;
-    const int capsuleX = cx - (recordButton.isVisible() ? transportSlotSize + transportGap : 0);
+    const int transportPad = 9;
+    const int transportSlotStride = 28;
+    const int numTransport = recordButton.isVisible() ? 4 : 3;
+    const int capsuleW = transportSlotSize
+                         + (numTransport - 1) * transportSlotStride
+                         + transportPad * 2;
+    const int capsuleX = logoRight + 24;
     const int transportCapsuleH = 38;
     const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
     transportCapsuleBounds = juce::Rectangle<int>(capsuleX, transportCapsuleY, capsuleW, transportCapsuleH);
     if (showingProgress)
-        progressBar.setBounds(transportCapsuleBounds.getX(),
-                              transportCapsuleBounds.getBottom() - 2,
-                              transportCapsuleBounds.getWidth(), 2);
+        progressBar.setBounds(toolContainerBounds.getX(),
+                              toolContainerBounds.getBottom() - 2,
+                              toolContainerBounds.getWidth(), 2);
 
     auto setButtonInSlot = [&](juce::Button &button, int slotX)
     {
@@ -331,16 +322,12 @@ void ToolbarComponent::resized()
     int slotX = capsuleX + transportPad;
     if (recordButton.isVisible()) {
         setButtonInSlot(recordButton, slotX);
-        slotX += transportSlotSize + transportGap;
+        slotX += transportSlotStride;
     }
     setButtonInSlot(stopButton, slotX);
-    slotX += transportSlotSize + transportGap;
-    setButtonInSlot(goToStartButton, slotX);
-    slotX += transportSlotSize + transportGap;
+    slotX += transportSlotStride;
     setButtonInSlot(playButton, slotX);
-    slotX += transportSlotSize + transportGap;
-    setButtonInSlot(goToEndButton, slotX);
-    slotX += transportSlotSize + transportGap;
+    slotX += transportSlotStride;
     setButtonInSlot(loopButton, slotX);
 }
 
@@ -351,10 +338,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onToggleRecord)
             onToggleRecord(recordButton.getToggleState());
     }
-    else if (button == &goToStartButton && onGoToStart)
-        onGoToStart();
-    else if (button == &goToEndButton && onGoToEnd)
-        onGoToEnd();
     else if (button == &playButton)
     {
         if (isPlaying)
@@ -445,9 +428,15 @@ void ToolbarComponent::setTransportEnabled(bool enabled)
     recordButton.setEnabled(enabled);
     stopButton.setEnabled(enabled);
     playButton.setEnabled(enabled);
-    goToStartButton.setEnabled(enabled);
-    goToEndButton.setEnabled(enabled);
     loopButton.setEnabled(enabled);
+}
+
+void ToolbarComponent::setToolGroupEnabled(bool enabled)
+{
+    selectModeButton.setEnabled(enabled);
+    splitModeButton.setEnabled(enabled);
+    anchorModeButton.setEnabled(enabled);
+    timingModeButton.setEnabled(enabled);
 }
 
 void ToolbarComponent::setProject(Project* project)
@@ -587,10 +576,8 @@ void ToolbarComponent::setPluginMode(bool isPlugin)
 {
     pluginMode = isPlugin;
 
-    goToStartButton.setVisible(true);
     playButton.setVisible(true);
     stopButton.setVisible(true);
-    goToEndButton.setVisible(true);
     loopButton.setVisible(true);
 
     // In plugin mode, hide follow button (host controls playback)
