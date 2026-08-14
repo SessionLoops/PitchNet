@@ -111,6 +111,7 @@ public:
 
   // Cursor
   void setCursorTime(double time);
+  void setPlaybackActive(bool active);
   double getCursorTime() const { return cursorTime; }
 
   // Zoom with optional center point
@@ -331,6 +332,7 @@ private:
   float &pixelsPerSemitone = viewState.pixelsPerSemitone;
 
   double &cursorTime = viewState.cursorTime;
+  bool playbackActive = false;
   double &scrollX = viewState.scrollX;
   double &scrollY = viewState.scrollY;
 

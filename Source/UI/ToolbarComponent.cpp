@@ -26,21 +26,17 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setImage(loadImage(BinaryData::select_png, BinaryData::select_pngSize));
     splitModeButton.setImage(loadImage(BinaryData::split_png, BinaryData::split_pngSize));
     anchorModeButton.setImage(loadImage(BinaryData::drawing_png, BinaryData::drawing_pngSize));
+    timingModeButton.setImage(loadImage(BinaryData::timing_png, BinaryData::timing_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
 
     // Load the remaining SVG icon with white tint.
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
-    auto timingIcon = SvgUtils::loadSvg(BinaryData::movestartline_svg,
-                                        BinaryData::movestartline_svgSize,
-                                        juce::Colours::white);
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
 
     followButton.setImages(followIcon.get());
-    timingModeButton.setImages(timingIcon.get());
 
     // Set edge indent for icon padding (makes icons smaller within button bounds).
     followButton.setEdgeIndent(6);
-    timingModeButton.setEdgeIndent(2);
 
     // Configure buttons
     addChildComponent(recordButton);
@@ -480,7 +476,8 @@ void ToolbarComponent::setEditMode(EditMode mode)
                                    juce::dontSendNotification);
     anchorModeButton.setToggleState(mode == EditMode::Anchor,
                                     juce::dontSendNotification);
-    timingModeButton.setActive(mode == EditMode::Timing);
+    timingModeButton.setToggleState(mode == EditMode::Timing,
+                                    juce::dontSendNotification);
     resized();
 }
 

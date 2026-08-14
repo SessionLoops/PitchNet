@@ -492,7 +492,9 @@ void PianoRollComponent::paint(juce::Graphics &g)
   drawTimeline(g);
   drawLoopTimeline(g);
 
-  // Draw unified cursor line (spans from timeline through grid)
+  // Timing boundaries use the full canvas height. Hide the stationary
+  // playhead in Timing mode so it cannot be mistaken for an editable edge.
+  if (editMode != EditMode::Timing || playbackActive)
   {
     float x = static_cast<float>(pianoKeysWidth) + timeToX(cursorTime) -
               static_cast<float>(scrollX);
@@ -2207,6 +2209,15 @@ void PianoRollComponent::setCursorTime(double time)
 
   if (onCursorMoved)
     onCursorMoved();
+}
+
+void PianoRollComponent::setPlaybackActive(bool active)
+{
+  if (playbackActive == active)
+    return;
+
+  playbackActive = active;
+  repaint();
 }
 
 void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)

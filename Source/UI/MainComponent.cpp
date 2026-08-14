@@ -849,6 +849,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
         return;
       safeThis->isPlaying = false;
       safeThis->toolbar.setPlaying(false);
+      safeThis->pianoRoll.setPlaybackActive(false);
       safeThis->seek(0.0); });
   }
 
@@ -1912,6 +1913,7 @@ void MainComponent::play()
       onRequestHostPlayState(true);
     isPlaying = true;
     toolbar.setPlaying(true);
+    pianoRoll.setPlaybackActive(true);
     return;
   }
 
@@ -1919,6 +1921,7 @@ void MainComponent::play()
   {
     isPlaying = false;
     toolbar.setPlaying(false);
+    pianoRoll.setPlaybackActive(false);
     return;
   }
 
@@ -1941,6 +1944,7 @@ void MainComponent::play()
 
   isPlaying = true;
   toolbar.setPlaying(true);
+  pianoRoll.setPlaybackActive(true);
   audioEngine->play();
 }
 
@@ -1959,6 +1963,7 @@ void MainComponent::pause()
       onRequestHostPlayState(false);
     isPlaying = false;
     toolbar.setPlaying(false);
+    pianoRoll.setPlaybackActive(false);
     return;
   }
 
@@ -1968,6 +1973,7 @@ void MainComponent::pause()
     return;
   isPlaying = false;
   toolbar.setPlaying(false);
+  pianoRoll.setPlaybackActive(false);
   audioEngine->pause();
 }
 
@@ -1985,6 +1991,7 @@ void MainComponent::stop()
       onRequestHostStop();
     isPlaying = false;
     toolbar.setPlaying(false);
+    pianoRoll.setPlaybackActive(false);
     seek(0.0);
     return;
   }
@@ -1995,6 +2002,7 @@ void MainComponent::stop()
     return;
   isPlaying = false;
   toolbar.setPlaying(false);
+  pianoRoll.setPlaybackActive(false);
   audioEngine->stop();
   seek(0.0);
 }
@@ -3048,6 +3056,7 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);
+  pianoRoll.setPlaybackActive(hostIsPlaying);
 }
 
 void MainComponent::updateHostTimelineState(double bpm, int numerator,

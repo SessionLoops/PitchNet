@@ -474,6 +474,7 @@ void MainComponent::clearProjectForNewLoad() {
   parameterPanel.setProject(project);
   parameterPanel.setSelectedNote(nullptr);
   toolbar.setPlaying(false);
+  pianoRoll.setPlaybackActive(false);
   toolbar.setCurrentTime(0.0);
   toolbar.setTotalTime(0.0);
   toolbar.setLoopEnabled(false);

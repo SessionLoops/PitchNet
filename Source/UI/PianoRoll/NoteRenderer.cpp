@@ -90,6 +90,12 @@ void setNoteGradientFill(juce::Graphics &g,
   gradient.addColour(gradientCentre, colours.centre);
   g.setGradientFill(gradient);
 }
+
+bool isContinuousSplitPair(const Note &left, const Note &right)
+{
+  return left.getEndFrame() == right.getStartFrame() &&
+         left.getSrcEndFrame() == right.getSrcStartFrame();
+}
 } // namespace
 
 void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
@@ -173,14 +179,16 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const auto index = static_cast<size_t>(std::distance(timelineNotes.begin(), it));
     const int noteRegion = getRegionIndex(note);
     if (index > 0 && noteRegion >= 0 &&
-        getRegionIndex(*timelineNotes[index - 1]) == noteRegion)
+        getRegionIndex(*timelineNotes[index - 1]) == noteRegion &&
+        isContinuousSplitPair(*timelineNotes[index - 1], note))
     {
       leftLimit = static_cast<int>(std::lround(
           0.5f * framesToSeconds(timelineNotes[index - 1]->getEndFrame() +
                                   note.getStartFrame()) * pixelsPerSecond)) + 2;
     }
     if (index + 1 < timelineNotes.size() && noteRegion >= 0 &&
-        getRegionIndex(*timelineNotes[index + 1]) == noteRegion)
+        getRegionIndex(*timelineNotes[index + 1]) == noteRegion &&
+        isContinuousSplitPair(note, *timelineNotes[index + 1]))
     {
       rightLimit = static_cast<int>(std::lround(
           0.5f * framesToSeconds(note.getEndFrame() +
@@ -640,9 +648,9 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     }
   }
 
-  // In split mode, show the boundary between each consecutive pair of notes
-  // in the same audio region. Span the full pitch interval so the connector
-  // reaches from the higher note's top to the lower note's bottom.
+  // In split mode, show boundaries only for true contiguous splits. A gap in
+  // either timeline or source frames starts a separate logical region, even
+  // when GAME placed both notes in the same analysis chunk.
   if (drawOverlays && splitModeActive)
   {
     std::vector<const Note *> timelineNotes;
@@ -680,7 +688,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       const auto &left = *timelineNotes[i];
       const auto &right = *timelineNotes[i + 1];
       const int leftRegion = getRegionIndex(left);
-      if (leftRegion < 0 || leftRegion != getRegionIndex(right))
+      if (leftRegion < 0 || leftRegion != getRegionIndex(right) ||
+          !isContinuousSplitPair(left, right))
         continue;
 
       const float boundaryX =
@@ -702,14 +711,16 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const int boundaryPixel = static_cast<int>(std::lround(boundaryX));
         int firstHighlightLeft = std::numeric_limits<int>::min();
         int secondHighlightRight = std::numeric_limits<int>::max();
-        if (i > 0 && getRegionIndex(*timelineNotes[i - 1]) == leftRegion)
+        if (i > 0 && getRegionIndex(*timelineNotes[i - 1]) == leftRegion &&
+            isContinuousSplitPair(*timelineNotes[i - 1], left))
         {
           firstHighlightLeft = static_cast<int>(std::lround(
               0.5f * framesToSeconds(timelineNotes[i - 1]->getEndFrame() +
                                       left.getStartFrame()) * pixelsPerSecond)) + 2;
         }
         if (i + 2 < timelineNotes.size() &&
-            getRegionIndex(*timelineNotes[i + 2]) == leftRegion)
+            getRegionIndex(*timelineNotes[i + 2]) == leftRegion &&
+            isContinuousSplitPair(right, *timelineNotes[i + 2]))
         {
           secondHighlightRight = static_cast<int>(std::lround(
               0.5f * framesToSeconds(right.getEndFrame() +
@@ -744,10 +755,12 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                      adjacentBoundaryX,
                      std::max(firstY, secondY) + pixelsPerSemitone, 1.5f);
         };
-        if (i > 0 && getRegionIndex(*timelineNotes[i - 1]) == leftRegion)
+        if (i > 0 && getRegionIndex(*timelineNotes[i - 1]) == leftRegion &&
+            isContinuousSplitPair(*timelineNotes[i - 1], left))
           drawAdjacentBoundary(*timelineNotes[i - 1], left);
         if (i + 2 < timelineNotes.size() &&
-            getRegionIndex(*timelineNotes[i + 2]) == leftRegion)
+            getRegionIndex(*timelineNotes[i + 2]) == leftRegion &&
+            isContinuousSplitPair(right, *timelineNotes[i + 2]))
           drawAdjacentBoundary(right, *timelineNotes[i + 2]);
         continue;
       }

@@ -125,121 +125,268 @@ std::vector<Note*> TimingHandler::collectAffectedNotes(
   return notes;
 }
 
+std::vector<Note*> TimingHandler::collectAffectedNotes(
+    const std::vector<Boundary>& boundaries) const
+{
+  std::vector<Note*> notes;
+  for (const auto& boundary : boundaries)
+    for (auto* note : collectAffectedNotes(boundary))
+      if (std::find(notes.begin(), notes.end(), note) == notes.end())
+        notes.push_back(note);
+  return notes;
+}
+
 std::vector<NoteTimingState> TimingHandler::captureAffected(
-    const Boundary& boundary) const
+    const std::vector<Boundary>& boundaries) const
 {
   std::vector<NoteTimingState> states;
-  for (auto* note : collectAffectedNotes(boundary))
+  for (auto* note : collectAffectedNotes(boundaries))
     states.push_back(NoteTimingState::capture(*note));
   return states;
 }
 
-float TimingHandler::clampFrame(const Boundary& boundary,
-                                float requestedFrame) const
+std::pair<float, float> TimingHandler::getGroupDeltaRange(
+    const std::vector<Boundary>& boundaries) const
 {
-  float minimum = 0.0f;
-  float maximum = owner_.project
-                      ? static_cast<float>(
-                            owner_.project->getAudioData().getNumFrames())
-                      : requestedFrame;
-  if (boundary.left)
-    minimum = std::max(minimum,
-                       boundary.left->getVisualStartFrame() + 1.0f);
-  if (boundary.right)
-    maximum = std::min(maximum,
-                       boundary.right->getVisualEndFrame() - 1.0f);
+  if (!owner_.project || boundaries.empty())
+    return {0.0f, 0.0f};
 
-  // A boundary next to a rest may approach the neighboring region/note, but
-  // never cross it or remove the required one-frame rest.
-  if (!boundary.left && boundary.restCompanion)
-    minimum = std::max(minimum,
-                       boundary.restCompanion->getVisualEndFrame() + 1.0f);
-  if (!boundary.right && boundary.restCompanion)
-    maximum = std::min(maximum,
-                       boundary.restCompanion->getVisualStartFrame() - 1.0f);
-
-  // The unpitched audio attached to a region's first/last note moves without
-  // changing length. Constrain the derived region edge, not just the note,
-  // so neighboring regions always retain at least one frame of separation.
-  if (boundary.right &&
-      timingRegions::isFirstNote(*owner_.project, *boundary.right))
+  const auto movesStart = [&](const Note* note)
   {
-    const auto region =
-        timingRegions::getSourceRegion(*owner_.project, *boundary.right);
-    const float leadLength = static_cast<float>(
-        boundary.right->getSrcStartFrame() - region.start);
-    float earliestRegionStart = 0.0f;
-    if (region.index > 0)
-      earliestRegionStart =
-          timingRegions::visualEnd(
-              *owner_.project,
-              timingRegions::regionAt(*owner_.project, region.index - 1)) +
-          1.0f;
-    minimum = std::max(minimum, earliestRegionStart + leadLength);
+    return std::any_of(boundaries.begin(), boundaries.end(),
+                       [note](const Boundary& boundary)
+                       { return boundary.right == note; });
+  };
+  const auto movesEnd = [&](const Note* note)
+  {
+    return std::any_of(boundaries.begin(), boundaries.end(),
+                       [note](const Boundary& boundary)
+                       { return boundary.left == note; });
+  };
+
+  const float frameCount = static_cast<float>(
+      owner_.project->getAudioData().getNumFrames());
+  float minimum = std::numeric_limits<float>::lowest();
+  float maximum = std::numeric_limits<float>::max();
+
+  for (const auto& boundary : boundaries)
+  {
+    minimum = std::max(minimum, -boundary.frame);
+    maximum = std::min(maximum, frameCount - boundary.frame);
+
+    if (boundary.left && !movesStart(boundary.left))
+      minimum = std::max(
+          minimum,
+          boundary.left->getVisualStartFrame() + 1.0f - boundary.frame);
+    if (boundary.right && !movesEnd(boundary.right))
+      maximum = std::min(
+          maximum,
+          boundary.right->getVisualEndFrame() - 1.0f - boundary.frame);
+
+    // A boundary next to a rest may approach the neighboring region/note, but
+    // never cross it or remove the required one-frame rest. If both sides are
+    // selected, their shared translation preserves the rest length.
+    if (!boundary.left && boundary.restCompanion &&
+        !movesEnd(boundary.restCompanion))
+      minimum = std::max(
+          minimum,
+          boundary.restCompanion->getVisualEndFrame() + 1.0f -
+              boundary.frame);
+    if (!boundary.right && boundary.restCompanion &&
+        !movesStart(boundary.restCompanion))
+      maximum = std::min(
+          maximum,
+          boundary.restCompanion->getVisualStartFrame() - 1.0f -
+              boundary.frame);
+
+    // The unpitched audio attached to a region's first/last note moves without
+    // changing length. Constraints between two selected regions cancel out;
+    // only the project edge or an unselected neighboring region limits them.
+    if (boundary.right &&
+        timingRegions::isFirstNote(*owner_.project, *boundary.right))
+    {
+      const auto region =
+          timingRegions::getSourceRegion(*owner_.project, *boundary.right);
+      const float leadLength = static_cast<float>(
+          boundary.right->getSrcStartFrame() - region.start);
+      float earliestRegionStart = 0.0f;
+      if (region.index > 0)
+      {
+        const auto previousRegion =
+            timingRegions::regionAt(*owner_.project, region.index - 1);
+        const auto* previousLast =
+            timingRegions::lastNote(*owner_.project, previousRegion);
+        if (!previousLast || !movesEnd(previousLast))
+          earliestRegionStart =
+              timingRegions::visualEnd(*owner_.project, previousRegion) +
+              1.0f;
+      }
+      minimum = std::max(
+          minimum,
+          earliestRegionStart + leadLength - boundary.frame);
+    }
+
+    if (boundary.left &&
+        timingRegions::isLastNote(*owner_.project, *boundary.left))
+    {
+      const auto region =
+          timingRegions::getSourceRegion(*owner_.project, *boundary.left);
+      const float tailLength = static_cast<float>(
+          region.end - boundary.left->getSrcEndFrame());
+      float latestRegionEnd = frameCount;
+      if (region.index + 1 < timingRegions::regionCount(*owner_.project))
+      {
+        const auto nextRegion =
+            timingRegions::regionAt(*owner_.project, region.index + 1);
+        const auto* nextFirst =
+            timingRegions::firstNote(*owner_.project, nextRegion);
+        if (!nextFirst || !movesStart(nextFirst))
+          latestRegionEnd =
+              timingRegions::visualStart(*owner_.project, nextRegion) -
+              1.0f;
+      }
+      maximum = std::min(
+          maximum,
+          latestRegionEnd - tailLength - boundary.frame);
+    }
   }
 
-  if (boundary.left &&
-      timingRegions::isLastNote(*owner_.project, *boundary.left))
-  {
-    const auto region =
-        timingRegions::getSourceRegion(*owner_.project, *boundary.left);
-    const float tailLength = static_cast<float>(
-        region.end - boundary.left->getSrcEndFrame());
-    float latestRegionEnd = static_cast<float>(
-        owner_.project->getAudioData().getNumFrames());
-    if (region.index + 1 < timingRegions::regionCount(*owner_.project))
-      latestRegionEnd =
-          timingRegions::visualStart(
-              *owner_.project,
-              timingRegions::regionAt(*owner_.project, region.index + 1)) -
-          1.0f;
-    maximum = std::min(maximum, latestRegionEnd - tailLength);
-  }
-
-  return minimum <= maximum ? std::clamp(requestedFrame, minimum, maximum)
-                            : boundary.frame;
+  return minimum <= maximum ? std::pair<float, float>{minimum, maximum}
+                            : std::pair<float, float>{0.0f, 0.0f};
 }
 
-void TimingHandler::applyPreviewFrame(float frame)
+void TimingHandler::applyPreviewDelta(float delta)
 {
-  frame = clampFrame(activeBoundary, frame);
-  previewBoundaryFrame = frame;
-  if (activeBoundary.left)
-    activeBoundary.left->setTimingPreviewEndFrame(frame);
-  if (activeBoundary.right)
-    activeBoundary.right->setTimingPreviewStartFrame(frame);
+  previewDelta = std::clamp(delta, minimumDelta, maximumDelta);
+  for (const auto& boundary : dragBoundaries)
+  {
+    const float frame = boundary.frame + previewDelta;
+    if (boundary.left)
+      boundary.left->setTimingPreviewEndFrame(frame);
+    if (boundary.right)
+      boundary.right->setTimingPreviewStartFrame(frame);
+  }
   owner_.repaint();
 }
 
 void TimingHandler::clearAffectedPreviews()
 {
-  for (auto* note : collectAffectedNotes(activeBoundary))
+  for (auto* note : collectAffectedNotes(dragBoundaries))
     note->clearTimingPreview();
 }
 
-bool TimingHandler::mouseDown(const juce::MouseEvent&, float worldX,
+TimingHandler::BoundaryKey TimingHandler::keyFor(const Boundary& boundary)
+{
+  return {boundary.left, boundary.right};
+}
+
+bool TimingHandler::keysMatch(const BoundaryKey& a, const BoundaryKey& b)
+{
+  return a.left == b.left && a.right == b.right;
+}
+
+bool TimingHandler::isSelected(const Boundary& boundary) const
+{
+  const auto key = keyFor(boundary);
+  return std::any_of(selectedBoundaries.begin(), selectedBoundaries.end(),
+                     [&](const BoundaryKey& selected)
+                     { return keysMatch(selected, key); });
+}
+
+void TimingHandler::addSelected(const Boundary& boundary)
+{
+  if (!isSelected(boundary))
+    selectedBoundaries.push_back(keyFor(boundary));
+}
+
+void TimingHandler::removeSelected(const Boundary& boundary)
+{
+  const auto key = keyFor(boundary);
+  selectedBoundaries.erase(
+      std::remove_if(selectedBoundaries.begin(), selectedBoundaries.end(),
+                     [&](const BoundaryKey& selected)
+                     { return keysMatch(selected, key); }),
+      selectedBoundaries.end());
+}
+
+std::vector<TimingHandler::Boundary> TimingHandler::resolveSelection(
+    const std::vector<Boundary>& boundaries) const
+{
+  std::vector<Boundary> result;
+  for (const auto& boundary : boundaries)
+    if (isSelected(boundary))
+      result.push_back(boundary);
+  return result;
+}
+
+void TimingHandler::updateMarqueeSelection(float worldX)
+{
+  selectionCurrentX = worldX;
+  selectedBoundaries = selectionBaseline;
+  const float left = std::min(selectionStartX, selectionCurrentX);
+  const float right = std::max(selectionStartX, selectionCurrentX);
+  for (const auto& boundary : buildBoundaries())
+  {
+    const float x = static_cast<float>(framesToSeconds(boundary.frame) *
+                                       owner_.pixelsPerSecond);
+    if (x >= left && x <= right)
+      addSelected(boundary);
+  }
+  owner_.repaint();
+}
+
+bool TimingHandler::mouseDown(const juce::MouseEvent& e, float worldX,
                               float worldY)
 {
   const auto boundaries = buildBoundaries();
   const int index = findBoundary(worldX, worldY, boundaries);
   if (index < 0)
-    return false;
+  {
+    selecting = true;
+    selectionStartX = selectionCurrentX = worldX;
+    selectionBaseline = e.mods.isShiftDown()
+                            ? selectedBoundaries
+                            : std::vector<BoundaryKey>{};
+    selectedBoundaries = selectionBaseline;
+    owner_.repaint();
+    return true;
+  }
 
   activeBoundary = boundaries[static_cast<size_t>(index)];
-  before = captureAffected(activeBoundary);
-  previewBoundaryFrame = activeBoundary.frame;
+  if (e.mods.isShiftDown() && isSelected(activeBoundary))
+  {
+    removeSelected(activeBoundary);
+    owner_.repaint();
+    return true;
+  }
+
+  if (!e.mods.isShiftDown() && !isSelected(activeBoundary))
+    selectedBoundaries.clear();
+  addSelected(activeBoundary);
+  dragBoundaries = resolveSelection(boundaries);
+  before = captureAffected(dragBoundaries);
+  const auto deltaRange = getGroupDeltaRange(dragBoundaries);
+  minimumDelta = deltaRange.first;
+  maximumDelta = deltaRange.second;
+  previewDelta = 0.0f;
   dragging = true;
+  owner_.repaint();
   return true;
 }
 
 bool TimingHandler::mouseDrag(const juce::MouseEvent&, float worldX, float)
 {
+  if (selecting)
+  {
+    updateMarqueeSelection(worldX);
+    return true;
+  }
   if (!dragging || !owner_.project)
     return false;
 
   const float seconds = worldX / std::max(1.0f, owner_.pixelsPerSecond);
   const float frame = seconds * SAMPLE_RATE / static_cast<float>(HOP_SIZE);
-  applyPreviewFrame(frame);
+  applyPreviewDelta(frame - activeBoundary.frame);
   if (owner_.onPitchEdited)
     owner_.onPitchEdited();
   return true;
@@ -247,19 +394,31 @@ bool TimingHandler::mouseDrag(const juce::MouseEvent&, float worldX, float)
 
 bool TimingHandler::mouseUp(const juce::MouseEvent&, float, float)
 {
+  if (selecting)
+  {
+    selecting = false;
+    selectionBaseline.clear();
+    owner_.repaint();
+    return true;
+  }
   if (!dragging || !owner_.project)
     return false;
 
   dragging = false;
-  const int snappedFrame = static_cast<int>(std::lround(previewBoundaryFrame));
+  const float snappedDelta = std::clamp(
+      static_cast<float>(std::lround(previewDelta)), minimumDelta,
+      maximumDelta);
   clearAffectedPreviews();
-  const int committedFrame = static_cast<int>(std::lround(
-      clampFrame(activeBoundary, static_cast<float>(snappedFrame))));
-  if (activeBoundary.left)
-    activeBoundary.left->setEndFrame(committedFrame);
-  if (activeBoundary.right)
-    activeBoundary.right->setStartFrame(committedFrame);
-  auto after = captureAffected(activeBoundary);
+  for (const auto& boundary : dragBoundaries)
+  {
+    const int committedFrame = static_cast<int>(
+        std::lround(boundary.frame + snappedDelta));
+    if (boundary.left)
+      boundary.left->setEndFrame(committedFrame);
+    if (boundary.right)
+      boundary.right->setStartFrame(committedFrame);
+  }
+  auto after = captureAffected(dragBoundaries);
   bool changed = before.size() == after.size();
   if (changed)
   {
@@ -284,6 +443,7 @@ bool TimingHandler::mouseUp(const juce::MouseEvent&, float, float)
   if (changed && owner_.onPitchEditFinished)
     owner_.onPitchEditFinished();
   before.clear();
+  dragBoundaries.clear();
   owner_.repaint();
   return true;
 }
@@ -314,24 +474,39 @@ void TimingHandler::draw(juce::Graphics& g)
   {
     const float x = static_cast<float>(framesToSeconds(boundary.frame) *
                                        owner_.pixelsPerSecond);
-    const bool highlighted = dragging
-                                 ? std::abs(boundary.frame -
-                                            previewBoundaryFrame) < 0.001f
-                                 : std::abs(boundary.frame -
-                                            hoveredBoundaryFrame) < 0.001f;
-    g.setColour(highlighted ? APP_COLOR_PRIMARY
-                            : APP_COLOR_TEXT_PRIMARY.withAlpha(0.72f));
-    g.fillRect(x - (highlighted ? 1.0f : 0.5f), 0.0f,
-               highlighted ? 2.0f : 1.0f, canvasHeight);
+    const bool selected = isSelected(boundary);
+    const bool hovered = std::abs(boundary.frame -
+                                  hoveredBoundaryFrame) < 0.001f;
+    const bool highlighted = hovered || (dragging && selected);
+    g.setColour(highlighted
+                    ? juce::Colour(0xFFFFFFFFu)
+                    : selected ? juce::Colour(0xFFFFFFFFu)
+                               : APP_COLOR_TEXT_PRIMARY.withAlpha(0.72f));
+    const float width = highlighted || selected ? 2.0f : 1.0f;
+    g.fillRect(x - width * 0.5f, 0.0f, width, canvasHeight);
+  }
+
+  if (selecting)
+  {
+    const float left = std::min(selectionStartX, selectionCurrentX);
+    const float width = std::abs(selectionCurrentX - selectionStartX);
+    g.setColour(juce::Colours::white.withAlpha(0.12f));
+    g.fillRect(left, 0.0f, width, canvasHeight);
+    g.setColour(juce::Colours::white.withAlpha(0.75f));
+    g.drawRect(left, 0.0f, width, canvasHeight, 1.0f);
   }
 }
 
 void TimingHandler::cancel()
 {
-  if (!dragging || !owner_.project)
-    return;
+  if (dragging && owner_.project)
+    clearAffectedPreviews();
   dragging = false;
-  clearAffectedPreviews();
+  selecting = false;
   before.clear();
+  dragBoundaries.clear();
+  selectedBoundaries.clear();
+  selectionBaseline.clear();
+  hoveredBoundaryFrame = -1.0f;
   owner_.repaint();
 }
