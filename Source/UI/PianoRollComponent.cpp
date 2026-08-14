@@ -1199,7 +1199,11 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
-  if (isCanvasPoint(e) && isModifierPanDrag(e))
+  // In Select mode, Alt inverts note-drag snapping. Keep Alt-drag panning
+  // available when the gesture begins anywhere else on the canvas.
+  const bool altNoteDrag =
+      editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
+  if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
   {
     modifierPanDragActive = true;
     modifierPanLastPosition = e.position;
@@ -1350,21 +1354,25 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 {
   const bool showZoomCursor = isCanvasPoint(e) && isModifierZoomDrag(e);
+  const float adjustedX =
+      e.x - pianoKeysWidth + static_cast<float>(scrollX);
+  const float adjustedY =
+      e.y - headerHeight + static_cast<float>(scrollY);
 
-  if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown())
+  Note *noteAtPointer = nullptr;
+  if (e.y >= headerHeight && e.x >= pianoKeysWidth)
+    noteAtPointer = findNoteAt(adjustedX, adjustedY);
+
+  const bool altControlsNoteSnap =
+      editMode == EditMode::Select && noteAtPointer != nullptr;
+  if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
+      !altControlsNoteSnap)
   {
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     return;
   }
 
-  float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-  float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
-
   Note *noteUnderMouse = nullptr;
-  Note *noteAtPointer = nullptr;
-  if (e.y >= headerHeight && e.x >= pianoKeysWidth)
-    noteAtPointer = findNoteAt(adjustedX, adjustedY);
-
   bool overCurrentHoverLayout = false;
   bool overCurrentControl = false;
   bool withinCurrentNoteEdges = false;
@@ -1497,6 +1505,13 @@ void PianoRollComponent::modifierKeysChanged(
       mousePosition.x >= pianoKeysWidth && mousePosition.y >= headerHeight &&
       mousePosition.x < pianoKeysWidth + getVisibleContentWidth() &&
       mousePosition.y < headerHeight + getVisibleContentHeight();
+  const float worldX = mousePosition.x - pianoKeysWidth +
+                       static_cast<float>(scrollX);
+  const float worldY = mousePosition.y - headerHeight +
+                       static_cast<float>(scrollY);
+  const bool pointerOverNote =
+      mouseOverCanvas && editMode == EditMode::Select &&
+      findNoteAt(worldX, worldY) != nullptr;
 
 #if JUCE_MAC
   const bool zoomModifierDown = modifiers.isCommandDown();
@@ -1506,7 +1521,8 @@ void PianoRollComponent::modifierKeysChanged(
 
   if (zoomModifierDown && mouseOverCanvas)
     setMouseCursor(zoomMouseCursor);
-  else if ((modifiers.isAltDown() && mouseOverCanvas) || modifierPanDragActive)
+  else if (modifierPanDragActive ||
+           (modifiers.isAltDown() && mouseOverCanvas && !pointerOverNote))
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
   else
     updateMouseCursorForEditMode();

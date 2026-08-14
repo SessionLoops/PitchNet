@@ -327,7 +327,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   // Multi-note drag
   if (owner_.pitchEditor->isDraggingMultiNotes())
   {
-    owner_.pitchEditor->updateMultiNoteDrag(worldX, worldY);
+    owner_.pitchEditor->updateMultiNoteDrag(worldX, worldY,
+                                            e.mods.isAltDown());
     if (owner_.onNoteDragAudition)
     {
       if (auto *note = owner_.pitchEditor->getHoveredMultiDragNote())
@@ -349,7 +350,7 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   {
     float deltaY = dragStartY - worldY;
     float deltaSemitones = deltaY / owner_.pixelsPerSemitone;
-    if (owner_.snapToSemitoneDrag)
+    if (owner_.snapToSemitoneDrag != e.mods.isAltDown())
       deltaSemitones = owner_.pitchEditor->getSnappedDragOffset(
           deltaSemitones, originalMidiNote);
 

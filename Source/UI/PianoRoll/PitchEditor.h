@@ -40,7 +40,7 @@ public:
     // Multi-note dragging
     void startMultiNoteDrag(const std::vector<Note*>& notes, float y,
                             Note* hoveredNote);
-    void updateMultiNoteDrag(float x, float y);
+    void updateMultiNoteDrag(float x, float y, bool invertSnap = false);
     void endMultiNoteDrag();
     bool isDraggingMultiNotes() const { return isMultiDragging; }
     const std::vector<Note*>& getDraggedNotes() const { return draggedNotes; }
