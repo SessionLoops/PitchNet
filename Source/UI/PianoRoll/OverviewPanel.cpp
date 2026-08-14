@@ -253,9 +253,11 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
           continue;
 
         const double startTime =
-            static_cast<double>(note.getStartFrame()) * HOP_SIZE / SAMPLE_RATE;
+            static_cast<double>(note.getVisualStartFrame()) * HOP_SIZE /
+            SAMPLE_RATE;
         const double endTime =
-            static_cast<double>(note.getEndFrame()) * HOP_SIZE / SAMPLE_RATE;
+            static_cast<double>(note.getVisualEndFrame()) * HOP_SIZE /
+            SAMPLE_RATE;
 
         if (endTime <= startTime)
           continue;

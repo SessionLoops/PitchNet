@@ -3312,7 +3312,8 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::exitDrawMode,
       CommandIDs::activateMainTool,
       CommandIDs::activateSplitTool,
-      CommandIDs::activateAnchorTool};
+      CommandIDs::activateAnchorTool,
+      CommandIDs::activateTimingTool};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
 }
@@ -3470,6 +3471,14 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setTicked(pianoRoll.getEditMode() == EditMode::Anchor);
     break;
 
+  case CommandIDs::activateTimingTool:
+    result.setInfo("Timing Tool", "Activate the timing editing tool",
+                   "Edit Mode", 0);
+    result.addDefaultKeypress('4', juce::ModifierKeys::noModifiers);
+    result.setActive(project != nullptr);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::Timing);
+    break;
+
   default:
     break;
   }
@@ -3607,6 +3616,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
 
   case CommandIDs::activateAnchorTool:
     setEditMode(EditMode::Anchor);
+    return true;
+
+  case CommandIDs::activateTimingTool:
+    setEditMode(EditMode::Timing);
     return true;
 
   default:

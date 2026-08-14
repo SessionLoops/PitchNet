@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include <cmath>
+#include <limits>
 #include <vector>
 
 /**
@@ -40,6 +42,44 @@ public:
     void setStartFrame(int frame) { startFrame = frame; }
     void setEndFrame(int frame) { endFrame = frame; }
     int getDurationFrames() const { return endFrame - startFrame; }
+
+    // Sub-frame timing preview used while dragging timing boundaries. These
+    // values are deliberately transient: only mouse-up commits integer frame
+    // positions to the project and undo history.
+    float getVisualStartFrame() const
+    {
+        return std::isfinite(timingPreviewStartFrame)
+                   ? timingPreviewStartFrame
+                   : static_cast<float>(startFrame);
+    }
+    float getVisualEndFrame() const
+    {
+        return std::isfinite(timingPreviewEndFrame)
+                   ? timingPreviewEndFrame
+                   : static_cast<float>(endFrame);
+    }
+    float getVisualDurationFrames() const
+    {
+        return getVisualEndFrame() - getVisualStartFrame();
+    }
+    void setTimingPreviewStartFrame(float frame)
+    {
+        timingPreviewStartFrame = frame;
+    }
+    void setTimingPreviewEndFrame(float frame)
+    {
+        timingPreviewEndFrame = frame;
+    }
+    void clearTimingPreview()
+    {
+        timingPreviewStartFrame = std::numeric_limits<float>::quiet_NaN();
+        timingPreviewEndFrame = std::numeric_limits<float>::quiet_NaN();
+    }
+    bool hasTimingPreview() const
+    {
+        return std::isfinite(timingPreviewStartFrame) ||
+               std::isfinite(timingPreviewEndFrame);
+    }
 
     // Pitch
     float getMidiNote() const { return midiNote; }
@@ -164,6 +204,8 @@ private:
     // Destination position in the output timeline
     int startFrame = 0;
     int endFrame = 0;
+    float timingPreviewStartFrame = std::numeric_limits<float>::quiet_NaN();
+    float timingPreviewEndFrame = std::numeric_limits<float>::quiet_NaN();
 
     float midiNote = 60.0f;
     float lastNonMacroMidiNote = 60.0f;

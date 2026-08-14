@@ -6,6 +6,7 @@
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
+#include "../Utils/TimingRegionUtils.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
@@ -13,12 +14,15 @@
 #include "PianoRoll/States/DrawHandler.h"
 #include "PianoRoll/States/SplitHandler.h"
 #include "PianoRoll/States/AnchorHandler.h"
+#include "PianoRoll/States/TimingHandler.h"
 #include "PianoRoll/AnchorConfirmationPanel.h"
+#include "Components/PitchPopupMenu.h"
 #include "BinaryData.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace
@@ -140,26 +144,44 @@ namespace
   class ResetNoteEditsAction final : public UndoableAction
   {
   public:
-    ResetNoteEditsAction(Project& project, Note& note)
-        : project(project), note(note), before(NoteEditState::capture(note)),
-          after(NoteEditState::defaultsFor(note)) {}
+    ResetNoteEditsAction(Project& project, std::vector<Note*> notes)
+        : project(project), notes(std::move(notes))
+    {
+      before.reserve(this->notes.size());
+      after.reserve(this->notes.size());
+      for (const auto* note : this->notes)
+      {
+        before.push_back(NoteEditState::capture(*note));
+        after.push_back(NoteEditState::defaultsFor(*note));
+      }
+    }
 
     void undo() override { apply(before); }
     void redo() override { apply(after); }
-    juce::String getName() const override { return "Reset Note Edits"; }
+    juce::String getName() const override { return "Restore Pitch"; }
 
   private:
-    void apply(const NoteEditState& state)
+    void apply(const std::vector<NoteEditState>& states)
     {
-      state.applyTo(note);
+      int dirtyStart = std::numeric_limits<int>::max();
+      int dirtyEnd = std::numeric_limits<int>::min();
+      for (size_t i = 0; i < notes.size() && i < states.size(); ++i)
+      {
+        if (!notes[i])
+          continue;
+        states[i].applyTo(*notes[i]);
+        dirtyStart = std::min(dirtyStart, notes[i]->getStartFrame());
+        dirtyEnd = std::max(dirtyEnd, notes[i]->getEndFrame());
+      }
       PitchCurveProcessor::rebuildBaseFromNotes(project);
-      project.setF0DirtyRange(note.getStartFrame(), note.getEndFrame());
+      if (dirtyStart <= dirtyEnd)
+        project.setF0DirtyRange(dirtyStart, dirtyEnd);
     }
 
     Project& project;
-    Note& note;
-    NoteEditState before;
-    NoteEditState after;
+    std::vector<Note*> notes;
+    std::vector<NoteEditState> before;
+    std::vector<NoteEditState> after;
   };
 }
 
@@ -190,6 +212,7 @@ PianoRollComponent::PianoRollComponent()
   drawHandler_ = std::make_unique<DrawHandler>(*this);
   splitHandler_ = std::make_unique<SplitHandler>(*this);
   anchorHandler_ = std::make_unique<AnchorHandler>(*this);
+  timingHandler_ = std::make_unique<TimingHandler>(*this);
   currentHandler_ = selectHandler_.get();
 
   // Wire up components
@@ -327,7 +350,7 @@ PianoRollComponent::PianoRollComponent()
   resetButton.onClick = [this]()
   {
     if (hoveredNote)
-      resetNoteEdits(*hoveredNote);
+      showResetMenu(*hoveredNote);
   };
   addAndMakeVisible(resetButton);
 
@@ -1390,8 +1413,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   {
     noteUnderMouse = hoveredNote;
   }
-  // Anchor mode uses its own point hover treatment. Keep note hover state
-  // clear so note background/controls do not compete with anchor editing.
+  // Anchor mode uses its own point hover treatment. Split and Timing retain
+  // ordinary note hover so their preview/reset controls remain available.
   setHoveredNote(editMode == EditMode::Anchor ? nullptr : noteUnderMouse);
 
   // Loop timeline cursor handling (always active)
@@ -1449,6 +1472,10 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       setMouseCursor(anchorHandler_->isPointerOverPitchRegion()
                          ? juce::MouseCursor::CrosshairCursor
                          : juce::MouseCursor::NormalCursor);
+  }
+  else if (editMode == EditMode::Timing)
+  {
+    // TimingHandler owns edge-specific cursor arbitration.
   }
 }
 
@@ -2422,6 +2449,9 @@ void PianoRollComponent::setEditMode(EditMode mode)
   {
     anchorHandler_->cancel();
   }
+  if (previousMode == EditMode::Timing && mode != EditMode::Timing &&
+      timingHandler_)
+    timingHandler_->cancel();
   editMode = mode;
 
   if (mode == EditMode::Anchor)
@@ -2449,6 +2479,9 @@ void PianoRollComponent::setEditMode(EditMode mode)
     break;
   case EditMode::Anchor:
     currentHandler_ = anchorHandler_.get();
+    break;
+  case EditMode::Timing:
+    currentHandler_ = timingHandler_.get();
     break;
   }
 
@@ -2505,6 +2538,10 @@ void PianoRollComponent::updateMouseCursorForEditMode()
                          : juce::MouseCursor::CrosshairCursor);
     else
       setMouseCursor(juce::MouseCursor::NormalCursor);
+  }
+  else if (editMode == EditMode::Timing)
+  {
+    setMouseCursor(juce::MouseCursor::NormalCursor);
   }
   else
   {
@@ -2739,7 +2776,10 @@ void PianoRollComponent::updatePreviewButtonBounds()
                        pitchEditor->isDraggingMultiNotes() ||
                        pitchEditor->isDrawingPitch()));
 
-  if (!hoveredNote || !project || editMode != EditMode::Select ||
+  const bool supportsNoteHoverControls =
+      editMode == EditMode::Select || editMode == EditMode::Split ||
+      editMode == EditMode::Timing;
+  if (!hoveredNote || !project || !supportsNoteHoverControls ||
       isChangingPitch)
   {
     previewButton.setVisible(false);
@@ -2774,18 +2814,139 @@ Note *PianoRollComponent::findPreviewButtonNoteAt(float x, float y) const
              : nullptr;
 }
 
+std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
+{
+  std::vector<Note *> targets{&note};
+  if (!project || editMode != EditMode::Select)
+    return targets;
+
+  std::vector<Note *> selected;
+  for (auto &candidate : project->getNotes())
+    if (!candidate.isRest() && candidate.isSelected())
+      selected.push_back(&candidate);
+  return selected.size() > 1 ? selected : targets;
+}
+
 void PianoRollComponent::resetNoteEdits(Note &note)
 {
   if (!project)
     return;
 
-  auto action = std::make_unique<ResetNoteEditsAction>(*project, note);
+  auto action = std::make_unique<ResetNoteEditsAction>(
+      *project, getResetTargetNotes(note));
   action->redo();
   if (undoManager)
     undoManager->addAction(std::move(action));
 
   updatePitchToolHandlesFromSelection();
   updatePreviewButtonBounds();
+  if (onPitchEdited)
+    onPitchEdited();
+  if (onPitchEditFinished)
+    onPitchEditFinished();
+  repaint();
+}
+
+void PianoRollComponent::showResetMenu(Note &note)
+{
+  juce::PopupMenu menu;
+  menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
+  menu.addCustomItem(
+      1, std::make_unique<pitchPopupMenu::MenuItemComponent>(
+             "Pitch", false, std::function<void()>{}, false),
+      nullptr, "Pitch");
+  menu.addCustomItem(
+      2, std::make_unique<pitchPopupMenu::MenuItemComponent>(
+             "Timing", false, std::function<void()>{}, false),
+      nullptr, "Timing");
+
+  juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+  Note* notePtr = &note;
+  menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&resetButton),
+                     [safeThis, notePtr](int result)
+  {
+    if (safeThis == nullptr || !safeThis->project || result == 0)
+      return;
+    auto& notes = safeThis->project->getNotes();
+    if (std::none_of(notes.begin(), notes.end(),
+                     [notePtr](const Note& candidate)
+                     { return &candidate == notePtr; }))
+      return;
+    if (result == 1)
+      safeThis->resetNoteEdits(*notePtr);
+    else if (result == 2)
+      safeThis->resetNoteTiming(*notePtr);
+  });
+}
+
+void PianoRollComponent::resetNoteTiming(Note &note)
+{
+  if (!project)
+    return;
+
+  auto& notes = project->getNotes();
+  const auto targets = getResetTargetNotes(note);
+  std::unordered_set<Note*> targetSet(targets.begin(), targets.end());
+  std::unordered_map<Note*, NoteTimingState> desired;
+  auto ensureDesired = [&](Note* candidate) -> NoteTimingState&
+  {
+    auto [it, inserted] = desired.emplace(
+        candidate, NoteTimingState::capture(*candidate));
+    juce::ignoreUnused(inserted);
+    return it->second;
+  };
+
+  // Selected notes restore their own immutable ranges. Shared-boundary
+  // companions outside the selection follow the restored selected edge.
+  for (auto* target : targets)
+  {
+    if (!target)
+      continue;
+
+    Note* previous = nullptr;
+    Note* next = nullptr;
+    for (auto& candidate : notes)
+    {
+      if (&candidate == target || candidate.isRest())
+        continue;
+      if (candidate.getEndFrame() <= target->getStartFrame() &&
+          (!previous || candidate.getEndFrame() > previous->getEndFrame()))
+        previous = &candidate;
+      if (candidate.getStartFrame() >= target->getEndFrame() &&
+          (!next || candidate.getStartFrame() < next->getStartFrame()))
+        next = &candidate;
+    }
+
+    const bool sharesLeftBoundary =
+        previous && previous->getEndFrame() == target->getStartFrame();
+    const bool sharesRightBoundary =
+        next && next->getStartFrame() == target->getEndFrame();
+
+    auto& targetState = ensureDesired(target);
+    targetState.startFrame = target->getSrcStartFrame();
+    targetState.endFrame = target->getSrcEndFrame();
+    if (sharesLeftBoundary && targetSet.count(previous) == 0)
+      ensureDesired(previous).endFrame = targetState.startFrame;
+    if (sharesRightBoundary && targetSet.count(next) == 0)
+      ensureDesired(next).startFrame = targetState.endFrame;
+  }
+
+  std::vector<NoteTimingState> before;
+  std::vector<NoteTimingState> after;
+  before.reserve(desired.size());
+  after.reserve(desired.size());
+  for (const auto& [affectedNote, targetState] : desired)
+  {
+    before.push_back(NoteTimingState::capture(*affectedNote));
+    after.push_back(targetState);
+  }
+
+  applyNoteTimingStates(*project, after);
+  if (undoManager)
+    undoManager->addAction(std::make_unique<TimingAction>(
+        *project, std::move(before), std::move(after), "Restore Timing"));
+
+  invalidateBasePitchCache();
   if (onPitchEdited)
     onPitchEdited();
   if (onPitchEditFinished)
@@ -2805,31 +2966,11 @@ void PianoRollComponent::triggerPreviewForNote(Note &note)
   if (it == notes.end())
     return;
 
-  const auto &chunkRanges = project->getAudioData().segmentChunkRanges;
-  const int noteMidFrame = note.getStartFrame() +
-                           std::max(0, note.getDurationFrames()) / 2;
-  int regionStartFrame = std::numeric_limits<int>::min();
-  int regionEndFrame = std::numeric_limits<int>::max();
-  for (const auto &range : chunkRanges)
-  {
-    if (noteMidFrame >= range.first && noteMidFrame < range.second)
-    {
-      regionStartFrame = range.first;
-      regionEndFrame = range.second;
-      break;
-    }
-  }
+  const auto sourceRegion = timingRegions::getSourceRegion(*project, note);
 
   auto isInSameRegion = [&](const Note &candidate)
   {
-    if (chunkRanges.empty())
-      return true;
-
-    const int candidateMidFrame =
-        candidate.getStartFrame() +
-        std::max(0, candidate.getDurationFrames()) / 2;
-    return candidateMidFrame >= regionStartFrame &&
-           candidateMidFrame < regionEndFrame;
+    return timingRegions::belongsTo(candidate, sourceRegion);
   };
 
   Note *startNote = &note;
@@ -2838,25 +2979,15 @@ void PianoRollComponent::triggerPreviewForNote(Note &note)
   for (auto prev = it; prev != notes.begin();)
   {
     --prev;
-    if (chunkRanges.empty() || prev->getEndFrame() > regionStartFrame)
+    if (!prev->isRest() && isInSameRegion(*prev))
     {
-      if (!prev->isRest() && isInSameRegion(*prev))
-      {
-        startNote = &(*prev);
-        break;
-      }
-    }
-    else
-    {
+      startNote = &(*prev);
       break;
     }
   }
 
   for (auto next = std::next(it); next != notes.end(); ++next)
   {
-    if (!chunkRanges.empty() && next->getStartFrame() >= regionEndFrame)
-      break;
-
     if (!next->isRest() && isInSameRegion(*next))
     {
       endNote = &(*next);

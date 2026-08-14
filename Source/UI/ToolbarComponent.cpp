@@ -30,12 +30,17 @@ ToolbarComponent::ToolbarComponent()
 
     // Load the remaining SVG icon with white tint.
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
+    auto timingIcon = SvgUtils::loadSvg(BinaryData::movestartline_svg,
+                                        BinaryData::movestartline_svgSize,
+                                        juce::Colours::white);
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
 
     followButton.setImages(followIcon.get());
+    timingModeButton.setImages(timingIcon.get());
 
     // Set edge indent for icon padding (makes icons smaller within button bounds).
     followButton.setEdgeIndent(6);
+    timingModeButton.setEdgeIndent(2);
 
     // Configure buttons
     addChildComponent(recordButton);
@@ -47,6 +52,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(anchorModeButton);
+    addAndMakeVisible(timingModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(scaleSelectionButton);
     addAndMakeVisible(quantizeButton);
@@ -64,6 +70,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
     anchorModeButton.addListener(this);
+    timingModeButton.addListener(this);
     followButton.addListener(this);
     quantizeButton.addListener(this);
     auditionButton.addListener(this);
@@ -102,6 +109,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setTooltip("Main Tool (Shortcut: 1)");
     splitModeButton.setTooltip("Note Separation Tool (Shortcut: 2)");
     anchorModeButton.setTooltip("Pitch Drawing Tool (Shortcut: 3)");
+    timingModeButton.setTooltip("Timing Tool (Shortcut: 4)");
     followButton.setTooltip(TR("toolbar.follow"));
     quantizeButton.setTooltip("Correct Pitch Macro");
     auditionButton.setTooltip("Live Audition On/Off");
@@ -256,7 +264,7 @@ void ToolbarComponent::resized()
                                     ? (logoImage.getWidth() + 1) / 2
                                     : 0);
     const int editToolGroupX = logoRight + 24;
-    const int editToolGroupWidth = editToolSlotSize * 3 + editToolGap * 2
+    const int editToolGroupWidth = editToolSlotSize * 4 + editToolGap * 3
                                    + editToolPad * 2;
     const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
     toolContainerBounds = {editToolGroupX, editToolGroupY,
@@ -275,6 +283,11 @@ void ToolbarComponent::resized()
     editToolX += editToolSlotSize + editToolGap;
     anchorModeButton.setVisible(true);
     anchorModeButton.setBounds(editToolX,
+                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
+                               editToolSlotSize, editToolSlotSize);
+    editToolX += editToolSlotSize + editToolGap;
+    timingModeButton.setVisible(true);
+    timingModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                                editToolSlotSize, editToolSlotSize);
 
@@ -386,6 +399,12 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onEditModeChanged)
             onEditModeChanged(EditMode::Anchor);
     }
+    else if (button == &timingModeButton)
+    {
+        setEditMode(EditMode::Timing);
+        if (onEditModeChanged)
+            onEditModeChanged(EditMode::Timing);
+    }
     else if (button == &followButton)
     {
         followPlayback = !followPlayback;
@@ -461,6 +480,7 @@ void ToolbarComponent::setEditMode(EditMode mode)
                                    juce::dontSendNotification);
     anchorModeButton.setToggleState(mode == EditMode::Anchor,
                                     juce::dontSendNotification);
+    timingModeButton.setActive(mode == EditMode::Timing);
     resized();
 }
 

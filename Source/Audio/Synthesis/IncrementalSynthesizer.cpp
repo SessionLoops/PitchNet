@@ -1,5 +1,6 @@
 #include "IncrementalSynthesizer.h"
 #include "../../Utils/Localization.h"
+#include "../../Utils/TimingRegionUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -12,6 +13,147 @@ struct EditedClusterSelection {
   int startFrame = -1;
   int endFrame = -1;
 };
+
+struct PreservedTimingSpan {
+  int sourceStart = 0;
+  int sourceEnd = 0;
+  int destinationStart = 0;
+  int destinationEnd = 0;
+  bool leading = false;
+};
+
+struct AudioMovePatch {
+  int destinationStartSample = 0;
+  std::vector<float> samples;
+  int clearStartSample = -1;
+  int clearEndSample = -1;
+};
+
+bool hasTimingEdit(const Note &note) {
+  return note.getStartFrame() != note.getSrcStartFrame() ||
+         note.getEndFrame() != note.getSrcEndFrame();
+}
+
+std::vector<PreservedTimingSpan>
+getPreservedTimingSpans(const Project &project, const Note &note) {
+  std::vector<PreservedTimingSpan> spans;
+  if (note.isRest())
+    return spans;
+
+  const auto region = timingRegions::getSourceRegion(project, note);
+  if (note.getStartFrame() != note.getSrcStartFrame() &&
+      timingRegions::isFirstNote(project, note)) {
+    const int offset = note.getStartFrame() - note.getSrcStartFrame();
+    if (region.start < note.getSrcStartFrame())
+      spans.push_back({region.start, note.getSrcStartFrame(),
+                       region.start + offset, note.getStartFrame(), true});
+  }
+  if (note.getEndFrame() != note.getSrcEndFrame() &&
+      timingRegions::isLastNote(project, note)) {
+    const int offset = note.getEndFrame() - note.getSrcEndFrame();
+    if (note.getSrcEndFrame() < region.end)
+      spans.push_back({note.getSrcEndFrame(), region.end, note.getEndFrame(),
+                       region.end + offset, false});
+  }
+  return spans;
+}
+
+std::vector<float> interpolateMelFrame(
+    const std::vector<std::vector<float>> &mel, double sourceFrame) {
+  if (mel.empty())
+    return {};
+
+  sourceFrame = std::clamp(sourceFrame, 0.0,
+                           static_cast<double>(mel.size() - 1));
+  const int left = static_cast<int>(std::floor(sourceFrame));
+  const int right = std::min(left + 1, static_cast<int>(mel.size()) - 1);
+  const float amount = static_cast<float>(sourceFrame - left);
+  const size_t bins = std::min(mel[static_cast<size_t>(left)].size(),
+                               mel[static_cast<size_t>(right)].size());
+  std::vector<float> frame(bins, 0.0f);
+  for (size_t bin = 0; bin < bins; ++bin)
+    frame[bin] = mel[static_cast<size_t>(left)][bin] * (1.0f - amount) +
+                 mel[static_cast<size_t>(right)][bin] * amount;
+  return frame;
+}
+
+void retimeMelInterval(const std::vector<std::vector<float>> &sourceMel,
+                       int sourceStart, int sourceEnd, int destinationStart,
+                       int destinationEnd, int rangeStart, int rangeEnd,
+                       std::vector<std::vector<float>> &melRange) {
+  const int sourceLength = sourceEnd - sourceStart;
+  const int destinationLength = destinationEnd - destinationStart;
+  if (sourceLength <= 0 || destinationLength <= 0)
+    return;
+
+  const int overlapStart = std::max(rangeStart, destinationStart);
+  const int overlapEnd = std::min(rangeEnd, destinationEnd);
+  for (int frame = overlapStart; frame < overlapEnd; ++frame) {
+    const double normalized =
+        (static_cast<double>(frame - destinationStart) + 0.5) /
+        static_cast<double>(destinationLength);
+    const double sourceFrame = static_cast<double>(sourceStart) +
+                               normalized * sourceLength - 0.5;
+    melRange[static_cast<size_t>(frame - rangeStart)] =
+        interpolateMelFrame(sourceMel, sourceFrame);
+  }
+}
+
+void moveMelInterval(const std::vector<std::vector<float>> &sourceMel,
+                     const PreservedTimingSpan &span, int rangeStart,
+                     int rangeEnd,
+                     std::vector<std::vector<float>> &melRange) {
+  const int overlapStart = std::max(rangeStart, span.destinationStart);
+  const int overlapEnd = std::min(rangeEnd, span.destinationEnd);
+  for (int frame = overlapStart; frame < overlapEnd; ++frame) {
+    const int sourceFrame = span.sourceStart + frame - span.destinationStart;
+    if (sourceFrame >= 0 && sourceFrame < static_cast<int>(sourceMel.size()))
+      melRange[static_cast<size_t>(frame - rangeStart)] =
+          sourceMel[static_cast<size_t>(sourceFrame)];
+  }
+}
+
+void applyNoteTimingToMel(const Project &project, int rangeStart,
+                          int rangeEnd,
+                          std::vector<std::vector<float>> &melRange) {
+  const auto &sourceMel = project.getAudioData().melSpectrogram;
+  for (const auto &note : project.getNotes()) {
+    if (note.isRest() || !hasTimingEdit(note))
+      continue;
+
+    for (const auto &span : getPreservedTimingSpans(project, note))
+      moveMelInterval(sourceMel, span, rangeStart, rangeEnd, melRange);
+
+    retimeMelInterval(sourceMel, note.getSrcStartFrame(),
+                      note.getSrcEndFrame(), note.getStartFrame(),
+                      note.getEndFrame(), rangeStart, rangeEnd, melRange);
+  }
+}
+
+void applyPreservedTimingToF0(const Project &project, int rangeStart,
+                              int rangeEnd,
+                              std::vector<float> &adjustedF0Range) {
+  const auto &audioData = project.getAudioData();
+  const auto &sourceF0 =
+      audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+  if (sourceF0.empty() || adjustedF0Range.empty())
+    return;
+
+  for (const auto &note : project.getNotes()) {
+    for (const auto &span : getPreservedTimingSpans(project, note)) {
+      const int overlapStart = std::max(rangeStart, span.destinationStart);
+      const int overlapEnd = std::min(rangeEnd, span.destinationEnd);
+      for (int frame = overlapStart; frame < overlapEnd; ++frame) {
+        const int sourceFrame =
+            span.sourceStart + frame - span.destinationStart;
+        if (sourceFrame >= 0 &&
+            sourceFrame < static_cast<int>(sourceF0.size()))
+          adjustedF0Range[static_cast<size_t>(frame - rangeStart)] =
+              sourceF0[static_cast<size_t>(sourceFrame)];
+      }
+    }
+  }
+}
 
 EditedClusterSelection
 selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
@@ -330,6 +472,30 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   int hopSize = vocoder->getHopSize();
   std::vector<float> blendMask = generateBlendMask(startFrame, endFrame, hopSize);
 
+  // Timing edits cannot be mixed with pristine samples at their destination
+  // positions: even an originally unvoiced/consonant frame has moved. Keep
+  // the entire retimed note on the synthesized side of the blend.
+  for (const auto &note : project->getNotes()) {
+    if (note.isRest() || !hasTimingEdit(note))
+      continue;
+    int timingStart = std::min(note.getSrcStartFrame(), note.getStartFrame());
+    int timingEnd = std::max(note.getSrcEndFrame(), note.getEndFrame());
+    for (const auto &span : getPreservedTimingSpans(*project, note)) {
+      timingStart = std::min(
+          {timingStart, span.sourceStart, span.destinationStart});
+      timingEnd =
+          std::max({timingEnd, span.sourceEnd, span.destinationEnd});
+    }
+    const int first = std::max(startFrame, timingStart);
+    const int last = std::min(endFrame, timingEnd);
+    const int firstSample = (first - startFrame) * hopSize;
+    const int lastSample = (last - startFrame) * hopSize;
+    for (int sample = std::max(0, firstSample);
+         sample < std::min(static_cast<int>(blendMask.size()), lastSample);
+         ++sample)
+      blendMask[static_cast<size_t>(sample)] = 1.0f;
+  }
+
   // Early exit: if blend mask is all-zero, nothing to synthesize
   bool hasVoiced = std::any_of(blendMask.begin(), blendMask.end(),
                                [](float v) { return v > 0.0f; });
@@ -358,14 +524,50 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 originalSegment.begin());
   }
 
+  // Preserve the audio attached outside a region's first/last pitched note as
+  // exact waveform copies. These patches are captured before the async render
+  // so repeated edits and undo always read from immutable source audio.
+  std::vector<AudioMovePatch> audioMovePatches;
+  if (origWaveform.getNumChannels() > 0) {
+    const float *origPtr = origWaveform.getReadPointer(0);
+    for (const auto &note : project->getNotes()) {
+      for (const auto &span : getPreservedTimingSpans(*project, note)) {
+        const int sourceStartSample = span.sourceStart * hopSize;
+        const int sourceEndSample = span.sourceEnd * hopSize;
+        const int destinationStartSample = span.destinationStart * hopSize;
+        const int sampleCount = sourceEndSample - sourceStartSample;
+        if (sampleCount <= 0 || sourceStartSample < 0 ||
+            sourceEndSample > totalOrigSamples || destinationStartSample < 0 ||
+            destinationStartSample + sampleCount > totalOrigSamples)
+          continue;
+
+        AudioMovePatch patch;
+        patch.destinationStartSample = destinationStartSample;
+        patch.samples.assign(origPtr + sourceStartSample,
+                             origPtr + sourceEndSample);
+        if (span.leading && span.destinationStart > span.sourceStart) {
+          patch.clearStartSample = sourceStartSample;
+          patch.clearEndSample = destinationStartSample;
+        } else if (!span.leading &&
+                   span.destinationEnd < span.sourceEnd) {
+          patch.clearStartSample = span.destinationEnd * hopSize;
+          patch.clearEndSample = sourceEndSample;
+        }
+        audioMovePatches.push_back(std::move(patch));
+      }
+    }
+  }
+
   std::vector<std::vector<float>> melRange;
 
   if (melRange.empty()) {
     melRange.assign(audioData.melSpectrogram.begin() + startFrame,
                     audioData.melSpectrogram.begin() + endFrame);
   }
+  applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
   std::vector<float> adjustedF0Range =
       project->getAdjustedF0ForRange(startFrame, endFrame);
+  applyPreservedTimingToF0(*project, startFrame, endFrame, adjustedF0Range);
 
   if (melRange.empty() || adjustedF0Range.empty()) {
     if (onComplete)
@@ -397,7 +599,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
        capturedNoteCount, clusterMembers = std::move(editedClusters.members),
        blendMask = std::move(blendMask),
-       originalSegment = std::move(originalSegment)](
+       originalSegment = std::move(originalSegment),
+       audioMovePatches = std::move(audioMovePatches)](
           std::vector<float> synthesizedAudio) {
         if (currentJobId != jobId.load())
           return;
@@ -419,6 +622,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
                      clusterMembers, blendMask, originalSegment,
+                     audioMovePatches,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
           if (currentJobId != jobId.load())
             return;
@@ -584,6 +788,39 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               const float current = destination[sample];
               const float rendered = targetSegment[static_cast<size_t>(sample)];
               destination[sample] = current + blend * (rendered - current);
+            }
+          }
+
+          // Apply fixed-length attached audio after the synthesized patch so
+          // it remains sample-identical and is not affected by vocoder or
+          // patch-edge fades. Clear only the vacated outer edge when the
+          // region contracts away from its original boundary.
+          for (int channel = 0; channel < audioData.waveform.getNumChannels();
+               ++channel) {
+            auto *destination = audioData.waveform.getWritePointer(channel);
+            for (const auto &patch : audioMovePatches) {
+              if (patch.clearStartSample >= 0 &&
+                  patch.clearEndSample > patch.clearStartSample) {
+                const int clearStart =
+                    std::clamp(patch.clearStartSample, 0, totalSamples);
+                const int clearEnd =
+                    std::clamp(patch.clearEndSample, clearStart, totalSamples);
+                std::fill(destination + clearStart, destination + clearEnd,
+                          0.0f);
+              }
+            }
+            for (const auto &patch : audioMovePatches) {
+              const int copyStart = std::clamp(
+                  patch.destinationStartSample, 0, totalSamples);
+              const int sourceOffset =
+                  copyStart - patch.destinationStartSample;
+              const int copyCount = std::min(
+                  static_cast<int>(patch.samples.size()) - sourceOffset,
+                  totalSamples - copyStart);
+              if (copyCount > 0)
+                std::copy(patch.samples.begin() + sourceOffset,
+                          patch.samples.begin() + sourceOffset + copyCount,
+                          destination + copyStart);
             }
           }
 

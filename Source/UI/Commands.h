@@ -42,6 +42,7 @@ namespace CommandIDs
         activateMainTool    = 0x2042,
         activateSplitTool   = 0x2043,
         activateAnchorTool  = 0x2044,
+        activateTimingTool  = 0x2045,
         
         // Pitch Tool Commands (0x2050-0x205F)
         fourierFilter       = 0x2050

@@ -46,3 +46,7 @@ inline int secondsToFrames(float seconds) {
 inline float framesToSeconds(int frames) {
   return static_cast<float>(frames) * HOP_SIZE / SAMPLE_RATE;
 }
+
+inline float framesToSeconds(float frames) {
+  return frames * HOP_SIZE / SAMPLE_RATE;
+}

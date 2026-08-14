@@ -158,8 +158,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     {
       if (chunkRanges.empty())
         return 0;
-      const int midpoint = candidate.getStartFrame() +
-                           std::max(0, candidate.getDurationFrames()) / 2;
+      const int midpoint = candidate.getSrcStartFrame() +
+                           std::max(0, candidate.getSrcDurationFrames()) / 2;
       for (size_t i = 0; i < chunkRanges.size(); ++i)
         if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)
           return static_cast<int>(i);
@@ -207,9 +207,15 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     int endSample = 0;
     if (samples && totalSamples > 0)
     {
-      startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
+      const float sampleStartFrame = note.hasTimingPreview()
+                                         ? static_cast<float>(note.getSrcStartFrame())
+                                         : note.getVisualStartFrame();
+      const float sampleEndFrame = note.hasTimingPreview()
+                                       ? static_cast<float>(note.getSrcEndFrame())
+                                       : note.getVisualEndFrame();
+      startSample = static_cast<int>(framesToSeconds(sampleStartFrame) *
                                      audioData.sampleRate);
-      endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
+      endSample = static_cast<int>(framesToSeconds(sampleEndFrame) *
                                    audioData.sampleRate);
       startSample = std::max(0, std::min(startSample, totalSamples - 1));
       endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
@@ -251,13 +257,14 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       continue;
 
     // Viewport culling: skip notes outside visible area
-    const double noteStartTime = framesToSeconds(note.getStartFrame());
-    const double noteEndTime = framesToSeconds(note.getEndFrame());
+    const double noteStartTime = framesToSeconds(note.getVisualStartFrame());
+    const double noteEndTime = framesToSeconds(note.getVisualEndFrame());
     if (noteEndTime < visibleStartTime || noteStartTime > visibleEndTime)
       continue;
 
     const float x = static_cast<float>(noteStartTime * pixelsPerSecond);
-    const float w = framesToSeconds(note.getDurationFrames()) * pixelsPerSecond;
+    const float w = framesToSeconds(note.getVisualDurationFrames()) *
+                    pixelsPerSecond;
     const float h = pixelsPerSemitone;
     const float renderedWidth = std::max(w, 4.0f);
 
@@ -308,9 +315,15 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       int endSample = 0;
       if (samples && totalSamples > 0)
       {
-        startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
+        const float sampleStartFrame = note.hasTimingPreview()
+                                           ? static_cast<float>(note.getSrcStartFrame())
+                                           : note.getVisualStartFrame();
+        const float sampleEndFrame = note.hasTimingPreview()
+                                         ? static_cast<float>(note.getSrcEndFrame())
+                                         : note.getVisualEndFrame();
+        startSample = static_cast<int>(framesToSeconds(sampleStartFrame) *
                                        audioData.sampleRate);
-        endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
+        endSample = static_cast<int>(framesToSeconds(sampleEndFrame) *
                                      audioData.sampleRate);
         startSample = std::max(0, std::min(startSample, totalSamples - 1));
         endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
@@ -651,8 +664,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       if (chunkRanges.empty())
         return 0;
 
-      const int midpoint = note.getStartFrame() +
-                           std::max(0, note.getDurationFrames()) / 2;
+      const int midpoint = note.getSrcStartFrame() +
+                           std::max(0, note.getSrcDurationFrames()) / 2;
       for (size_t i = 0; i < chunkRanges.size(); ++i)
       {
         if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)

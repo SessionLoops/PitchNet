@@ -275,8 +275,8 @@ std::pair<Note*, Note*> NoteSplitter::findMergeableNotesAt(float x, float y)
         if (chunkRanges.empty())
             return 0;
 
-        const int midpoint = note.getStartFrame() +
-                             std::max(0, note.getDurationFrames()) / 2;
+        const int midpoint = note.getSrcStartFrame() +
+                             std::max(0, note.getSrcDurationFrames()) / 2;
         for (size_t i = 0; i < chunkRanges.size(); ++i)
             if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)
                 return static_cast<int>(i);

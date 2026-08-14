@@ -121,8 +121,8 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       if (chunkRanges.empty())
         return 0;
 
-      const int midpoint = note.getStartFrame() +
-                           std::max(0, note.getDurationFrames()) / 2;
+      const int midpoint = note.getSrcStartFrame() +
+                           std::max(0, note.getSrcDurationFrames()) / 2;
       for (size_t i = 0; i < chunkRanges.size(); ++i)
       {
         if (midpoint >= chunkRanges[i].first &&
@@ -133,7 +133,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
     };
 
     bool hasPreviousNote = false;
-    int previousEndFrame = -1;
+    float previousVisualEndFrame = -1.0f;
     int previousRegion = -1;
 
     for (const auto &note : project->getNotes())
@@ -144,9 +144,12 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       const int startFrame = note.getStartFrame();
       const int endFrame =
           std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
+      const float visualStartFrame = note.getVisualStartFrame();
+      const float visualEndFrame = note.getVisualEndFrame();
       const int currentRegion = getRegionIndex(note);
       const bool continuesPreviousPath =
-          hasPreviousNote && startFrame == previousEndFrame &&
+          hasPreviousNote &&
+          std::abs(visualStartFrame - previousVisualEndFrame) < 0.001f &&
           currentRegion >= 0 && currentRegion == previousRegion;
 
       if (!continuesPreviousPath)
@@ -179,7 +182,14 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
 
         if (finalMidi > 0.0f)
         {
-          const float x = framesToSeconds(i) * pixelsPerSecond;
+          const int sourceLength = std::max(1, endFrame - startFrame);
+          const float position =
+              (static_cast<float>(i - startFrame) + 0.5f) /
+              static_cast<float>(sourceLength);
+          const float visualFrame =
+              visualStartFrame + position * (visualEndFrame - visualStartFrame) -
+              0.5f;
+          const float x = framesToSeconds(visualFrame) * pixelsPerSecond;
           const float y = coordMapper->midiToY(finalMidi) +
                           pixelsPerSemitone * 0.5f;
           if (!pathStarted)
@@ -199,7 +209,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       }
 
       hasPreviousNote = true;
-      previousEndFrame = endFrame;
+      previousVisualEndFrame = visualEndFrame;
       previousRegion = currentRegion;
     }
 

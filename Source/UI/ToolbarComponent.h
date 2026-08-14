@@ -136,6 +136,7 @@ private:
     ToggleButton selectModeButton;
     ToggleButton splitModeButton;
     ToggleButton anchorModeButton;
+    ToolButton timingModeButton{"Timing"};
     ToolButton followButton{"Follow"};
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;

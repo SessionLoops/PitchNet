@@ -35,6 +35,7 @@ class SelectHandler;
 class DrawHandler;
 class SplitHandler;
 class AnchorHandler;
+class TimingHandler;
 class AnchorConfirmationPanel;
 
 /**
@@ -279,7 +280,10 @@ private:
   juce::Rectangle<int> getResetButtonLocalBounds(const Note &note) const;
   void updatePreviewButtonBounds();
   void triggerPreviewForNote(Note &note);
+  std::vector<Note *> getResetTargetNotes(Note &note) const;
   void resetNoteEdits(Note &note);
+  void resetNoteTiming(Note &note);
+  void showResetMenu(Note &note);
   void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
@@ -366,6 +370,7 @@ private:
   std::unique_ptr<DrawHandler> drawHandler_;
   std::unique_ptr<SplitHandler> splitHandler_;
   std::unique_ptr<AnchorHandler> anchorHandler_;
+  std::unique_ptr<TimingHandler> timingHandler_;
   InteractionHandler *currentHandler_ = nullptr;
 
   std::unique_ptr<AnchorConfirmationPanel> anchorConfirmationPanel;
