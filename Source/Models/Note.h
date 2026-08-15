@@ -1,8 +1,6 @@
 #pragma once
 
 #include "../JuceHeader.h"
-#include <cmath>
-#include <limits>
 #include <vector>
 
 /**
@@ -48,13 +46,13 @@ public:
     // positions to the project and undo history.
     float getVisualStartFrame() const
     {
-        return std::isfinite(timingPreviewStartFrame)
+        return timingPreviewStartActive
                    ? timingPreviewStartFrame
                    : static_cast<float>(startFrame);
     }
     float getVisualEndFrame() const
     {
-        return std::isfinite(timingPreviewEndFrame)
+        return timingPreviewEndActive
                    ? timingPreviewEndFrame
                    : static_cast<float>(endFrame);
     }
@@ -65,20 +63,21 @@ public:
     void setTimingPreviewStartFrame(float frame)
     {
         timingPreviewStartFrame = frame;
+        timingPreviewStartActive = true;
     }
     void setTimingPreviewEndFrame(float frame)
     {
         timingPreviewEndFrame = frame;
+        timingPreviewEndActive = true;
     }
     void clearTimingPreview()
     {
-        timingPreviewStartFrame = std::numeric_limits<float>::quiet_NaN();
-        timingPreviewEndFrame = std::numeric_limits<float>::quiet_NaN();
+        timingPreviewStartActive = false;
+        timingPreviewEndActive = false;
     }
     bool hasTimingPreview() const
     {
-        return std::isfinite(timingPreviewStartFrame) ||
-               std::isfinite(timingPreviewEndFrame);
+        return timingPreviewStartActive || timingPreviewEndActive;
     }
 
     // Pitch
@@ -204,8 +203,10 @@ private:
     // Destination position in the output timeline
     int startFrame = 0;
     int endFrame = 0;
-    float timingPreviewStartFrame = std::numeric_limits<float>::quiet_NaN();
-    float timingPreviewEndFrame = std::numeric_limits<float>::quiet_NaN();
+    float timingPreviewStartFrame = 0.0f;
+    float timingPreviewEndFrame = 0.0f;
+    bool timingPreviewStartActive = false;
+    bool timingPreviewEndActive = false;
 
     float midiNote = 60.0f;
     float lastNonMacroMidiNote = 60.0f;
