@@ -29,6 +29,11 @@ struct AudioMovePatch {
   int clearEndSample = -1;
 };
 
+struct CommitFrameRange {
+  int start = 0;
+  int end = 0;
+};
+
 bool hasTimingEdit(const Note &note) {
   return note.getStartFrame() != note.getSrcStartFrame() ||
          note.getEndFrame() != note.getSrcEndFrame();
@@ -155,6 +160,54 @@ void applyPreservedTimingToF0(const Project &project, int rangeStart,
   }
 }
 
+std::vector<CommitFrameRange>
+collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
+                         int f0DirtyStart, int f0DirtyEnd) {
+  std::vector<CommitFrameRange> ranges;
+
+  if (hasDirtyNoteAnchors) {
+    for (const auto &note : project.getNotes()) {
+      if (note.isRest() || !note.isDirty())
+        continue;
+
+      int start = note.getStartFrame();
+      int end = note.getEndFrame();
+
+      // Timing edits move audio as well as changing the note body. Their
+      // commit range must cover both the old and new positions plus any
+      // fixed-length audio attached to the region boundary.
+      if (hasTimingEdit(note)) {
+        start = std::min(start, note.getSrcStartFrame());
+        end = std::max(end, note.getSrcEndFrame());
+        for (const auto &span : getPreservedTimingSpans(project, note)) {
+          start = std::min({start, span.sourceStart, span.destinationStart});
+          end = std::max({end, span.sourceEnd, span.destinationEnd});
+        }
+      }
+
+      if (end > start)
+        ranges.push_back({start, end});
+    }
+  } else if (f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart) {
+    ranges.push_back({f0DirtyStart, f0DirtyEnd});
+  }
+
+  std::sort(ranges.begin(), ranges.end(),
+            [](const CommitFrameRange &a, const CommitFrameRange &b) {
+              return a.start < b.start;
+            });
+
+  std::vector<CommitFrameRange> merged;
+  for (const auto &range : ranges) {
+    if (merged.empty() || range.start > merged.back().end) {
+      merged.push_back(range);
+    } else {
+      merged.back().end = std::max(merged.back().end, range.end);
+    }
+  }
+  return merged;
+}
+
 EditedClusterSelection
 selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
                            int f0DirtyStart, int f0DirtyEnd) {
@@ -206,8 +259,9 @@ selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
             });
 
   // Every dirty/F0-edited note seeds a component. Walk transitively through
-  // adjacent edited notes so a whole connected phrase is refreshed from one
-  // continuous vocoder pass, not merely the immediate neighbours.
+  // adjacent edited notes so the vocoder receives one continuous phrase as
+  // render context. A separate commit mask later limits waveform replacement
+  // to the notes that were actually edited.
   for (size_t seedPosition = 0; seedPosition < sortedIndices.size();
        ++seedPosition) {
     const size_t seedIndex = sortedIndices[seedPosition];
@@ -448,6 +502,13 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
   const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
   const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
+  auto commitFrameRanges = collectCommitFrameRanges(
+      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
+  if (commitFrameRanges.empty()) {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
   auto editedClusters = selectConnectedEditedNotes(
       *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
   if (editedClusters.startFrame >= 0)
@@ -597,7 +658,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
-       capturedNoteCount, clusterMembers = std::move(editedClusters.members),
+       capturedNoteCount, commitFrameRanges = std::move(commitFrameRanges),
        blendMask = std::move(blendMask),
        originalSegment = std::move(originalSegment),
        audioMovePatches = std::move(audioMovePatches)](
@@ -621,7 +682,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      capturedStartFrame, capturedEndFrame, hopSize,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
-                     clusterMembers, blendMask, originalSegment,
+                     commitFrameRanges, blendMask, originalSegment,
                      audioMovePatches,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
           if (currentJobId != jobId.load())
@@ -635,8 +696,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           auto &audioData = capturedProject->getAudioData();
-          if (capturedProject->getNotes().size() != capturedNoteCount ||
-              clusterMembers.size() != capturedNoteCount) {
+          if (capturedProject->getNotes().size() != capturedNoteCount) {
             isBusy = false;
             if (onComplete)
               juce::MessageManager::callAsync(
@@ -758,33 +818,65 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // Commit the continuously rendered range directly into the existing
-          // composite waveform. The synthesis range already includes voiced
-          // context and padding; a short edge fade joins it to preserved audio
-          // outside the affected range without rebuilding the whole project.
-          constexpr int kPatchFadeSamples = 512;
-          const bool fadeLeft = startSample > 0;
-          const bool fadeRight = startSample + samplesToWrite < totalSamples;
-          const int fadeSamples =
-              std::min(kPatchFadeSamples, samplesToWrite / 2);
+          // The vocoder renders a broad, phase-stable context range, but only
+          // commit the notes/F0 interval that actually changed. The centered
+          // boundary ramps use rendered context on the edited side while
+          // preserving the existing composite outside the narrow transition.
+          constexpr int kCommitFadeHalfSamples = 512;
+          std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
+                                        0.0f);
+          auto smoothstep = [](float t) {
+            t = std::clamp(t, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+          };
+          for (const auto &range : commitFrameRanges) {
+            const int bodyStart =
+                (range.start - capturedStartFrame) * hopSize;
+            const int bodyEnd = (range.end - capturedStartFrame) * hopSize;
+            const int bodySamples = bodyEnd - bodyStart;
+            if (bodySamples <= 0)
+              continue;
+
+            const int fadeHalf =
+                std::min(kCommitFadeHalfSamples, std::max(1, bodySamples / 2));
+            const bool fadeLeft = range.start > 0;
+            const bool fadeRight = range.end * hopSize < totalSamples;
+            const int leftFadeStart = bodyStart - fadeHalf;
+            const int leftFadeEnd = bodyStart + fadeHalf;
+            const int rightFadeStart = bodyEnd - fadeHalf;
+            const int rightFadeEnd = bodyEnd + fadeHalf;
+            const int firstSample =
+                std::max(0, fadeLeft ? leftFadeStart : bodyStart);
+            const int lastSample = std::min(
+                samplesToWrite, fadeRight ? rightFadeEnd : bodyEnd);
+
+            for (int sample = firstSample; sample < lastSample; ++sample) {
+              float leftBlend = 1.0f;
+              if (fadeLeft && sample < leftFadeEnd)
+                leftBlend = smoothstep(
+                    static_cast<float>(sample - leftFadeStart) /
+                    static_cast<float>(2 * fadeHalf));
+
+              float rightBlend = 1.0f;
+              if (fadeRight && sample >= rightFadeStart)
+                rightBlend = smoothstep(
+                    static_cast<float>(rightFadeEnd - sample) /
+                    static_cast<float>(2 * fadeHalf));
+
+              const float blend = std::min(leftBlend, rightBlend);
+              auto &mask = commitMask[static_cast<size_t>(sample)];
+              mask = std::max(mask, blend);
+            }
+          }
+
           for (int channel = 0; channel < audioData.waveform.getNumChannels();
                ++channel) {
             auto *destination =
                 audioData.waveform.getWritePointer(channel, startSample);
             for (int sample = 0; sample < samplesToWrite; ++sample) {
-              float blend = 1.0f;
-              if (fadeLeft && fadeSamples > 0 && sample < fadeSamples) {
-                const float t = static_cast<float>(sample) /
-                                static_cast<float>(fadeSamples);
-                blend = std::min(blend, t * t * (3.0f - 2.0f * t));
-              }
-              if (fadeRight && fadeSamples > 0 &&
-                  sample >= samplesToWrite - fadeSamples) {
-                const float t = static_cast<float>(samplesToWrite - 1 - sample) /
-                                static_cast<float>(fadeSamples);
-                blend = std::min(blend, t * t * (3.0f - 2.0f * t));
-              }
-
+              const float blend = commitMask[static_cast<size_t>(sample)];
+              if (blend <= 0.0f)
+                continue;
               const float current = destination[sample];
               const float rendered = targetSegment[static_cast<size_t>(sample)];
               destination[sample] = current + blend * (rendered - current);
@@ -845,8 +937,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           };
 
           auto &notes = capturedProject->getNotes();
-          for (size_t noteIndex = 0; noteIndex < notes.size(); ++noteIndex) {
-            auto &note = notes[noteIndex];
+          for (auto &note : notes) {
             if (note.isRest())
               continue;
 
@@ -857,14 +948,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (overlapEnd <= overlapStart)
               continue;
 
-            // Refresh every member of an adjacency-connected edited cluster
-            // from this same continuous pass. Anchors outside a cluster (most
-            // notably neutral reset notes) still need commit handling.
             const bool isF0Anchor =
                 !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
-            const bool shouldCommit =
-                isCommitAnchor(note) || clusterMembers[noteIndex] != 0;
-            if (!shouldCommit)
+            if (!isCommitAnchor(note))
               continue;
 
             const bool isNeutralReset =
