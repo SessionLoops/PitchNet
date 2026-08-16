@@ -1423,9 +1423,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   {
     noteUnderMouse = hoveredNote;
   }
-  // Anchor mode uses its own point hover treatment. Split and Timing retain
-  // ordinary note hover so their preview/reset controls remain available.
-  setHoveredNote(editMode == EditMode::Anchor ? nullptr : noteUnderMouse);
+  // Anchor mode uses its own point hover treatment. Split mode must wait until
+  // its handler has resolved merge-boundary hover before changing hoveredNote.
+  // Otherwise the preview/reset child components are shown and hidden again
+  // during the same mouse event, which can stall the Windows mouse-message
+  // loop while a custom cursor is active over a boundary.
+  if (editMode != EditMode::Split)
+    setHoveredNote(editMode == EditMode::Anchor ? nullptr : noteUnderMouse);
 
   // Loop timeline cursor handling (always active)
   loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
@@ -1434,11 +1438,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (currentHandler_)
     currentHandler_->mouseMove(e, adjustedX, adjustedY);
 
-  // A merge boundary draws its own two-note hover treatment. Suppress the
-  // ordinary single-note hover so the two treatments do not overlap.
-  if (editMode == EditMode::Split && splitHandler_ &&
-      splitHandler_->isHoveringMergeBoundary())
-    setHoveredNote(nullptr);
+  // A merge boundary draws its own two-note hover treatment. Resolve the
+  // split-mode hover once, after boundary hit-testing, so child controls never
+  // enter a transient visible state over the boundary.
+  if (editMode == EditMode::Split)
+    setHoveredNote(splitHandler_ && splitHandler_->isHoveringMergeBoundary()
+                       ? nullptr
+                       : noteUnderMouse);
 
   // Pitch tool handle hover (uses raw event coordinates, not world-adjusted)
   if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty() &&
