@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace {
 constexpr int kAdjacentFrameTolerance = 1;
@@ -206,6 +207,71 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
     }
   }
   return merged;
+}
+
+int findBestSpliceCenter(const float *existing,
+                         const std::vector<float> &rendered,
+                         int nominalCenter, int searchRadius,
+                         int analysisHalfSamples) {
+  const int sampleCount = static_cast<int>(rendered.size());
+  if (existing == nullptr || sampleCount <= 0)
+    return std::clamp(nominalCenter, 0, std::max(0, sampleCount - 1));
+
+  const int firstCenter =
+      std::max({1, analysisHalfSamples, nominalCenter - searchRadius});
+  const int lastCenter = std::min(
+      sampleCount - analysisHalfSamples - 1, nominalCenter + searchRadius);
+  if (firstCenter > lastCenter)
+    return std::clamp(nominalCenter, 0, sampleCount - 1);
+
+  double bestScore = std::numeric_limits<double>::infinity();
+  int bestCenter = std::clamp(nominalCenter, firstCenter, lastCenter);
+  const double distanceScale = 1.0 / std::max(1, searchRadius);
+
+  for (int center = firstCenter; center <= lastCenter; ++center) {
+    double squaredError = 0.0;
+    double signalEnergy = 1.0e-12;
+    for (int offset = -analysisHalfSamples;
+         offset <= analysisHalfSamples; ++offset) {
+      const int sample = center + offset;
+      const double weight =
+          1.0 - static_cast<double>(std::abs(offset)) /
+                    static_cast<double>(analysisHalfSamples + 1);
+      const double oldSample = existing[sample];
+      const double newSample = rendered[static_cast<size_t>(sample)];
+      const double difference = oldSample - newSample;
+      squaredError += weight * difference * difference;
+      signalEnergy +=
+          weight * (oldSample * oldSample + newSample * newSample);
+    }
+
+    const double oldValue = existing[center];
+    const double newValue = rendered[static_cast<size_t>(center)];
+    const double valueDifference = oldValue - newValue;
+    const double valueEnergy =
+        oldValue * oldValue + newValue * newValue + signalEnergy * 1.0e-3;
+
+    const double oldSlope = existing[center] - existing[center - 1];
+    const double newSlope = rendered[static_cast<size_t>(center)] -
+                            rendered[static_cast<size_t>(center - 1)];
+    const double slopeDifference = oldSlope - newSlope;
+    const double slopeEnergy =
+        oldSlope * oldSlope + newSlope * newSlope + signalEnergy * 1.0e-4;
+
+    // Waveform agreement dominates. Matching the exact value and first
+    // derivative at the splice center further suppresses residual clicks.
+    const double score =
+        squaredError / signalEnergy +
+        0.25 * valueDifference * valueDifference / valueEnergy +
+        0.10 * slopeDifference * slopeDifference / slopeEnergy +
+        1.0e-6 * std::abs(center - nominalCenter) * distanceScale;
+    if (score < bestScore) {
+      bestScore = score;
+      bestCenter = center;
+    }
+  }
+
+  return bestCenter;
 }
 
 EditedClusterSelection
@@ -819,12 +885,17 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           // The vocoder renders a broad, phase-stable context range, but only
-          // commit the notes/F0 interval that actually changed. The centered
-          // boundary ramps use rendered context on the edited side while
-          // preserving the existing composite outside the narrow transition.
-          constexpr int kCommitFadeHalfSamples = 512;
+          // commit the notes/F0 interval that actually changed. Search within
+          // the existing boundary allowance for the point where the current
+          // composite and new render best agree, then use a short smoothstep
+          // transition there to avoid both clicks and long phasey overlaps.
+          constexpr int kCommitBoundaryMarginSamples = 512;
+          constexpr int kAdaptiveFadeHalfSamples = 128;
+          constexpr int kSpliceAnalysisHalfSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
+          const float *existingSamples =
+              audioData.waveform.getReadPointer(0, startSample);
           auto smoothstep = [](float t) {
             t = std::clamp(t, 0.0f, 1.0f);
             return t * t * (3.0f - 2.0f * t);
@@ -838,13 +909,36 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               continue;
 
             const int fadeHalf =
-                std::min(kCommitFadeHalfSamples, std::max(1, bodySamples / 2));
+                std::min(kAdaptiveFadeHalfSamples,
+                         std::max(1, bodySamples / 4));
             const bool fadeLeft = range.start > 0;
             const bool fadeRight = range.end * hopSize < totalSamples;
-            const int leftFadeStart = bodyStart - fadeHalf;
-            const int leftFadeEnd = bodyStart + fadeHalf;
-            const int rightFadeStart = bodyEnd - fadeHalf;
-            const int rightFadeEnd = bodyEnd + fadeHalf;
+            const int availableSearchRadius = std::max(
+                0, kCommitBoundaryMarginSamples - fadeHalf);
+            const int nonOverlappingSearchRadius =
+                std::max(0, bodySamples / 2 - fadeHalf);
+            const int searchRadius =
+                std::min(availableSearchRadius, nonOverlappingSearchRadius);
+            const int analysisHalf = std::min(
+                kSpliceAnalysisHalfSamples,
+                std::max(1, samplesToWrite / 2 - 1));
+
+            const int leftCenter = fadeLeft
+                                       ? findBestSpliceCenter(
+                                             existingSamples, targetSegment,
+                                             bodyStart, searchRadius,
+                                             analysisHalf)
+                                       : bodyStart;
+            const int rightCenter = fadeRight
+                                        ? findBestSpliceCenter(
+                                              existingSamples, targetSegment,
+                                              bodyEnd, searchRadius,
+                                              analysisHalf)
+                                        : bodyEnd;
+            const int leftFadeStart = leftCenter - fadeHalf;
+            const int leftFadeEnd = leftCenter + fadeHalf;
+            const int rightFadeStart = rightCenter - fadeHalf;
+            const int rightFadeEnd = rightCenter + fadeHalf;
             const int firstSample =
                 std::max(0, fadeLeft ? leftFadeStart : bodyStart);
             const int lastSample = std::min(
