@@ -189,7 +189,12 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
       if (end > start)
         ranges.push_back({start, end});
     }
-  } else if (f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart) {
+  }
+
+  // Timing undo/reset can leave a dirty note at its neutral source bounds,
+  // while the F0 dirty range still records the previous moved region edge.
+  // Commit both ranges so audio at the vacated destination is restored too.
+  if (f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart) {
     ranges.push_back({f0DirtyStart, f0DirtyEnd});
   }
 

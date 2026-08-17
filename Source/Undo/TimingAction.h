@@ -43,10 +43,14 @@ inline void applyNoteTimingStates(Project& project,
         {
             const auto region =
                 timingRegions::getSourceRegion(project, *state.note);
+            const int currentRegionStart =
+                region.start + state.note->getStartFrame() -
+                state.note->getSrcStartFrame();
             const int destinationRegionStart =
                 region.start + state.startFrame -
                 state.note->getSrcStartFrame();
             dirtyStart = std::min({dirtyStart, region.start,
+                                   currentRegionStart,
                                    destinationRegionStart});
         }
 
@@ -58,9 +62,13 @@ inline void applyNoteTimingStates(Project& project,
         {
             const auto region =
                 timingRegions::getSourceRegion(project, *state.note);
+            const int currentRegionEnd =
+                region.end + state.note->getEndFrame() -
+                state.note->getSrcEndFrame();
             const int destinationRegionEnd =
                 region.end + state.endFrame - state.note->getSrcEndFrame();
             dirtyEnd = std::max({dirtyEnd, region.end,
+                                 currentRegionEnd,
                                  destinationRegionEnd});
         }
 
