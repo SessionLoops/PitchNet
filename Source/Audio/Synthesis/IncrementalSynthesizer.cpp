@@ -28,6 +28,7 @@ struct AudioMovePatch {
   std::vector<float> samples;
   int clearStartSample = -1;
   int clearEndSample = -1;
+  std::vector<float> clearSamples;
 };
 
 struct CommitFrameRange {
@@ -657,12 +658,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
 
   // Preserve the audio attached outside a region's first/last pitched note as
-  // exact waveform copies. These patches are captured before the async render
-  // so repeated edits and undo always read from immutable source audio.
+  // immutable waveform patches. They are captured before the async render so
+  // repeated edits and undo do not accumulate synthesis or splice artifacts.
   std::vector<AudioMovePatch> audioMovePatches;
   if (origWaveform.getNumChannels() > 0) {
     const float *origPtr = origWaveform.getReadPointer(0);
     for (const auto &note : project->getNotes()) {
+      if (note.isRest() || !note.isDirty() || !hasTimingEdit(note))
+        continue;
       for (const auto &span : getPreservedTimingSpans(*project, note)) {
         const int sourceStartSample = span.sourceStart * hopSize;
         const int sourceEndSample = span.sourceEnd * hopSize;
@@ -684,6 +687,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                    span.destinationEnd < span.sourceEnd) {
           patch.clearStartSample = span.destinationEnd * hopSize;
           patch.clearEndSample = sourceEndSample;
+        }
+        if (patch.clearStartSample >= 0 &&
+            patch.clearEndSample > patch.clearStartSample &&
+            patch.clearEndSample <= totalOrigSamples) {
+          patch.clearSamples.assign(origPtr + patch.clearStartSample,
+                                    origPtr + patch.clearEndSample);
         }
         audioMovePatches.push_back(std::move(patch));
       }
@@ -982,36 +991,127 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // Apply fixed-length attached audio after the synthesized patch so
-          // it remains sample-identical and is not affected by vocoder or
-          // patch-edge fades. Clear only the vacated outer edge when the
-          // region contracts away from its original boundary.
+          // Apply fixed-length audio attached to timing-region boundaries.
+          // These joins happen after the synthesized commit, so they need
+          // their own smoothing instead of hard clear/copy operations.
+          constexpr int kTimingClearFadeSamples = 128;
+          constexpr int kTimingPatchBoundaryMarginSamples = 512;
+          constexpr int kTimingPatchFadeHalfSamples = 128;
+          constexpr int kTimingPatchAnalysisHalfSamples = 128;
+
+          // Fade vacated timing intervals to silence from immutable source
+          // samples. Using the source makes this idempotent across later edits.
           for (int channel = 0; channel < audioData.waveform.getNumChannels();
                ++channel) {
             auto *destination = audioData.waveform.getWritePointer(channel);
             for (const auto &patch : audioMovePatches) {
-              if (patch.clearStartSample >= 0 &&
-                  patch.clearEndSample > patch.clearStartSample) {
-                const int clearStart =
-                    std::clamp(patch.clearStartSample, 0, totalSamples);
-                const int clearEnd =
-                    std::clamp(patch.clearEndSample, clearStart, totalSamples);
-                std::fill(destination + clearStart, destination + clearEnd,
-                          0.0f);
+              if (patch.clearStartSample < 0 ||
+                  patch.clearEndSample <= patch.clearStartSample)
+                continue;
+
+              const int clearStart =
+                  std::clamp(patch.clearStartSample, 0, totalSamples);
+              const int clearEnd =
+                  std::clamp(patch.clearEndSample, clearStart, totalSamples);
+              const int clearCount = clearEnd - clearStart;
+              if (clearCount <= 0)
+                continue;
+
+              const int sourceOffset = clearStart - patch.clearStartSample;
+              const int fadeSamples =
+                  std::min(kTimingClearFadeSamples, clearCount / 2);
+              for (int sample = 0; sample < clearCount; ++sample) {
+                float clearAmount = 1.0f;
+                if (fadeSamples > 0 && sample < fadeSamples)
+                  clearAmount = smoothstep(
+                      static_cast<float>(sample) /
+                      static_cast<float>(fadeSamples));
+                if (fadeSamples > 0 && sample >= clearCount - fadeSamples)
+                  clearAmount = std::min(
+                      clearAmount,
+                      smoothstep(static_cast<float>(clearCount - 1 - sample) /
+                                 static_cast<float>(fadeSamples)));
+
+                const int immutableIndex = sourceOffset + sample;
+                const float source =
+                    immutableIndex >= 0 &&
+                            immutableIndex <
+                                static_cast<int>(patch.clearSamples.size())
+                        ? patch.clearSamples[static_cast<size_t>(immutableIndex)]
+                        : destination[clearStart + sample];
+                destination[clearStart + sample] =
+                    source * (1.0f - clearAmount);
               }
             }
-            for (const auto &patch : audioMovePatches) {
-              const int copyStart = std::clamp(
-                  patch.destinationStartSample, 0, totalSamples);
-              const int sourceOffset =
-                  copyStart - patch.destinationStartSample;
-              const int copyCount = std::min(
-                  static_cast<int>(patch.samples.size()) - sourceOffset,
-                  totalSamples - copyStart);
-              if (copyCount > 0)
-                std::copy(patch.samples.begin() + sourceOffset,
-                          patch.samples.begin() + sourceOffset + copyCount,
-                          destination + copyStart);
+          }
+
+          // Adaptively crossfade each moved patch at both ends. The shorter
+          // fades stay inside the patch while the search remains bounded by
+          // the same 512-sample timing margin.
+          for (const auto &patch : audioMovePatches) {
+            const int copyStart = std::clamp(
+                patch.destinationStartSample, 0, totalSamples);
+            const int sourceOffset = copyStart - patch.destinationStartSample;
+            const int copyCount = std::min(
+                static_cast<int>(patch.samples.size()) - sourceOffset,
+                totalSamples - copyStart);
+            if (copyCount <= 0)
+              continue;
+
+            std::vector<float> movedSamples(
+                patch.samples.begin() + sourceOffset,
+                patch.samples.begin() + sourceOffset + copyCount);
+            const int fadeHalf =
+                std::min(kTimingPatchFadeHalfSamples,
+                         std::max(1, copyCount / 4));
+            const int searchRadius = std::min(
+                std::max(0, kTimingPatchBoundaryMarginSamples - 2 * fadeHalf),
+                std::max(0, copyCount / 2 - 2 * fadeHalf));
+            const int analysisHalf =
+                std::min(kTimingPatchAnalysisHalfSamples, fadeHalf);
+            const float *existing =
+                audioData.waveform.getReadPointer(0, copyStart);
+            const int leftCenter = findBestSpliceCenter(
+                existing, movedSamples, fadeHalf, searchRadius, analysisHalf);
+            const int rightCenter = findBestSpliceCenter(
+                existing, movedSamples, copyCount - fadeHalf, searchRadius,
+                analysisHalf);
+            const int leftFadeStart = leftCenter - fadeHalf;
+            const int leftFadeEnd = leftCenter + fadeHalf;
+            const int rightFadeStart = rightCenter - fadeHalf;
+            const int rightFadeEnd = rightCenter + fadeHalf;
+
+            std::vector<float> patchMask(static_cast<size_t>(copyCount), 0.0f);
+            for (int sample = std::max(0, leftFadeStart);
+                 sample < std::min(copyCount, rightFadeEnd); ++sample) {
+              float leftBlend = 1.0f;
+              if (sample < leftFadeEnd)
+                leftBlend = smoothstep(
+                    static_cast<float>(sample - leftFadeStart) /
+                    static_cast<float>(2 * fadeHalf));
+
+              float rightBlend = 1.0f;
+              if (sample >= rightFadeStart)
+                rightBlend = smoothstep(
+                    static_cast<float>(rightFadeEnd - sample) /
+                    static_cast<float>(2 * fadeHalf));
+
+              patchMask[static_cast<size_t>(sample)] =
+                  std::min(leftBlend, rightBlend);
+            }
+
+            for (int channel = 0;
+                 channel < audioData.waveform.getNumChannels(); ++channel) {
+              auto *destination =
+                  audioData.waveform.getWritePointer(channel, copyStart);
+              for (int sample = 0; sample < copyCount; ++sample) {
+                const float blend = patchMask[static_cast<size_t>(sample)];
+                if (blend <= 0.0f)
+                  continue;
+                destination[sample] +=
+                    blend * (movedSamples[static_cast<size_t>(sample)] -
+                             destination[sample]);
+              }
             }
           }
 
