@@ -663,9 +663,72 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   std::vector<AudioMovePatch> audioMovePatches;
   if (origWaveform.getNumChannels() > 0) {
     const float *origPtr = origWaveform.getReadPointer(0);
+    std::vector<CommitFrameRange> clearFrameRanges;
+    auto addClearFrameRange = [&](int start, int end) {
+      start = std::clamp(start, 0, audioData.getNumFrames());
+      end = std::clamp(end, start, audioData.getNumFrames());
+      if (end > start)
+        clearFrameRanges.push_back({start, end});
+    };
+    auto addClearPatch = [&](int startSample, int endSample) {
+      startSample = std::clamp(startSample, 0, totalOrigSamples);
+      endSample = std::clamp(endSample, startSample, totalOrigSamples);
+      if (endSample <= startSample)
+        return;
+
+      AudioMovePatch patch;
+      patch.clearStartSample = startSample;
+      patch.clearEndSample = endSample;
+      patch.clearSamples.assign(origPtr + startSample, origPtr + endSample);
+      audioMovePatches.push_back(std::move(patch));
+    };
+
     for (const auto &note : project->getNotes()) {
-      if (note.isRest() || !note.isDirty() || !hasTimingEdit(note))
+      if (note.isRest())
         continue;
+
+      const auto region = timingRegions::getSourceRegion(*project, note);
+
+      // A region edge moving inward from its last rendered position vacates
+      // that part of the composite. Compare against the rendered edge rather
+      // than only the immutable source edge so extend-then-shorten sequences
+      // clear the previous extension as well.
+      if (note.isDirty() && timingRegions::isFirstNote(*project, note) &&
+          note.getStartFrame() > note.getRenderedStartFrame()) {
+        const int renderedOffset =
+            note.getRenderedStartFrame() - note.getSrcStartFrame();
+        const int destinationOffset =
+            note.getStartFrame() - note.getSrcStartFrame();
+        addClearFrameRange(region.start + renderedOffset,
+                           region.start + destinationOffset);
+      }
+      if (note.isDirty() && timingRegions::isLastNote(*project, note) &&
+          note.getEndFrame() < note.getRenderedEndFrame()) {
+        const int destinationOffset =
+            note.getEndFrame() - note.getSrcEndFrame();
+        const int renderedOffset =
+            note.getRenderedEndFrame() - note.getSrcEndFrame();
+        addClearFrameRange(region.end + destinationOffset,
+                           region.end + renderedOffset);
+      }
+
+      // Keep every currently vacated source interval clear. A later edit to an
+      // adjacent region can otherwise blend immutable waveform samples back
+      // into a gap created by an earlier timing edit.
+      if (timingRegions::isFirstNote(*project, note) &&
+          note.getStartFrame() > note.getSrcStartFrame()) {
+        const int offset = note.getStartFrame() - note.getSrcStartFrame();
+        addClearFrameRange(region.start, region.start + offset);
+      }
+      if (timingRegions::isLastNote(*project, note) &&
+          note.getEndFrame() < note.getSrcEndFrame()) {
+        const int offset = note.getEndFrame() - note.getSrcEndFrame();
+        addClearFrameRange(region.end + offset, region.end);
+      }
+
+      if (!note.isDirty() || !hasTimingEdit(note))
+        continue;
+
       for (const auto &span : getPreservedTimingSpans(*project, note)) {
         const int sourceStartSample = span.sourceStart * hopSize;
         const int sourceEndSample = span.sourceEnd * hopSize;
@@ -680,22 +743,62 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         patch.destinationStartSample = destinationStartSample;
         patch.samples.assign(origPtr + sourceStartSample,
                              origPtr + sourceEndSample);
-        if (span.leading && span.destinationStart > span.sourceStart) {
-          patch.clearStartSample = sourceStartSample;
-          patch.clearEndSample = destinationStartSample;
-        } else if (!span.leading &&
-                   span.destinationEnd < span.sourceEnd) {
-          patch.clearStartSample = span.destinationEnd * hopSize;
-          patch.clearEndSample = sourceEndSample;
-        }
-        if (patch.clearStartSample >= 0 &&
-            patch.clearEndSample > patch.clearStartSample &&
-            patch.clearEndSample <= totalOrigSamples) {
-          patch.clearSamples.assign(origPtr + patch.clearStartSample,
-                                    origPtr + patch.clearEndSample);
-        }
         audioMovePatches.push_back(std::move(patch));
       }
+    }
+
+    // Merge overlapping clear requests, then remove any interval occupied by
+    // the current region layout. This lets an adjacent region extend into a
+    // previously vacated area while the remainder of the gap stays silent.
+    std::sort(clearFrameRanges.begin(), clearFrameRanges.end(),
+              [](const CommitFrameRange &a, const CommitFrameRange &b) {
+                return a.start < b.start ||
+                       (a.start == b.start && a.end < b.end);
+              });
+    std::vector<CommitFrameRange> mergedClearRanges;
+    for (const auto &range : clearFrameRanges) {
+      if (mergedClearRanges.empty() ||
+          range.start > mergedClearRanges.back().end) {
+        mergedClearRanges.push_back(range);
+      } else {
+        mergedClearRanges.back().end =
+            std::max(mergedClearRanges.back().end, range.end);
+      }
+    }
+
+    std::vector<CommitFrameRange> occupiedRegionRanges;
+    for (int index = 0; index < timingRegions::regionCount(*project); ++index) {
+      const auto region = timingRegions::regionAt(*project, index);
+      const int currentStart =
+          static_cast<int>(std::lround(timingRegions::visualStart(*project,
+                                                                  region)));
+      const int currentEnd =
+          static_cast<int>(std::lround(timingRegions::visualEnd(*project,
+                                                                region)));
+      if (currentEnd > currentStart)
+        occupiedRegionRanges.push_back({currentStart, currentEnd});
+    }
+    std::sort(occupiedRegionRanges.begin(), occupiedRegionRanges.end(),
+              [](const CommitFrameRange &a, const CommitFrameRange &b) {
+                return a.start < b.start;
+              });
+
+    for (const auto &clearRange : mergedClearRanges) {
+      int cursor = clearRange.start;
+      for (const auto &occupied : occupiedRegionRanges) {
+        if (occupied.end <= cursor)
+          continue;
+        if (occupied.start >= clearRange.end)
+          break;
+        if (occupied.start > cursor)
+          addClearPatch(cursor * hopSize,
+                        std::min(occupied.start, clearRange.end) * hopSize);
+        cursor = std::max(cursor, occupied.end);
+        if (cursor >= clearRange.end)
+          break;
+      }
+      if (cursor < clearRange.end)
+        addClearPatch(cursor * hopSize, clearRange.end * hopSize);
     }
   }
 
@@ -995,9 +1098,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // These joins happen after the synthesized commit, so they need
           // their own smoothing instead of hard clear/copy operations.
           constexpr int kTimingClearFadeSamples = 128;
-          constexpr int kTimingPatchBoundaryMarginSamples = 512;
-          constexpr int kTimingPatchFadeHalfSamples = 128;
-          constexpr int kTimingPatchAnalysisHalfSamples = 128;
+          constexpr int kTimingPatchSearchRadiusSamples = 256;
+          constexpr int kTimingPatchFadeHalfSamples = 256;
+          constexpr int kTimingPatchAnalysisHalfSamples = 256;
 
           // Fade vacated timing intervals to silence from immutable source
           // samples. Using the source makes this idempotent across later edits.
@@ -1045,9 +1148,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // Adaptively crossfade each moved patch at both ends. The shorter
-          // fades stay inside the patch while the search remains bounded by
-          // the same 512-sample timing margin.
+          // Adaptively crossfade each moved patch at both ends. The 512-sample
+          // fades stay inside the patch while retaining a bounded search for
+          // a lower-error splice position.
           for (const auto &patch : audioMovePatches) {
             const int copyStart = std::clamp(
                 patch.destinationStartSample, 0, totalSamples);
@@ -1065,7 +1168,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 std::min(kTimingPatchFadeHalfSamples,
                          std::max(1, copyCount / 4));
             const int searchRadius = std::min(
-                std::max(0, kTimingPatchBoundaryMarginSamples - 2 * fadeHalf),
+                kTimingPatchSearchRadiusSamples,
                 std::max(0, copyCount / 2 - 2 * fadeHalf));
             const int analysisHalf =
                 std::min(kTimingPatchAnalysisHalfSamples, fadeHalf);

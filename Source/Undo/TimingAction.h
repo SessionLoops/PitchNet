@@ -33,11 +33,13 @@ inline void applyNoteTimingStates(Project& project,
         if (!state.note)
             continue;
 
-        // Most timing callers stage the target frame before capturing the
-        // action, so also compare the target to the immutable source edge.
         const bool leftEdgeChanged =
-            state.note->getStartFrame() != state.startFrame ||
-            state.startFrame != state.note->getSrcStartFrame();
+            state.note->getStartFrame() != state.startFrame;
+        const bool rightEdgeChanged =
+            state.note->getEndFrame() != state.endFrame;
+        if (!leftEdgeChanged && !rightEdgeChanged)
+            continue;
+
         if (leftEdgeChanged &&
             timingRegions::isFirstNote(project, *state.note))
         {
@@ -54,9 +56,6 @@ inline void applyNoteTimingStates(Project& project,
                                    destinationRegionStart});
         }
 
-        const bool rightEdgeChanged =
-            state.note->getEndFrame() != state.endFrame ||
-            state.endFrame != state.note->getSrcEndFrame();
         if (rightEdgeChanged &&
             timingRegions::isLastNote(project, *state.note))
         {

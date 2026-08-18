@@ -437,6 +437,17 @@ bool TimingHandler::mouseUp(const juce::MouseEvent&, float, float)
 
   if (changed)
   {
+    // Preview commits stage the snapped frames directly on the notes. Restore
+    // the captured state first so applyNoteTimingStates can distinguish notes
+    // that actually moved from unchanged rest companions. Otherwise a prior
+    // inward region edit can clear audio written by this edit.
+    for (const auto& state : before)
+    {
+      if (!state.note)
+        continue;
+      state.note->setStartFrame(state.startFrame);
+      state.note->setEndFrame(state.endFrame);
+    }
     applyNoteTimingStates(*owner_.project, after);
     owner_.invalidateBasePitchCache();
     if (owner_.undoManager)

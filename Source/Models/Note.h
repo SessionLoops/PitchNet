@@ -160,7 +160,14 @@ public:
     // This lightweight state replaces the former per-note audio cache and lets
     // incremental synthesis refresh connected edited-note clusters.
     bool hasRenderedEdit() const { return renderedEdit; }
-    void setRenderedEdit(bool rendered) { renderedEdit = rendered; }
+    void setRenderedEdit(bool rendered)
+    {
+        renderedEdit = rendered;
+        renderedStartFrame = startFrame;
+        renderedEndFrame = endFrame;
+    }
+    int getRenderedStartFrame() const { return renderedStartFrame; }
+    int getRenderedEndFrame() const { return renderedEndFrame; }
 
     // Synth dirty flag (needs re-synthesis; separate from display dirty flag)
     bool isSynthDirty() const { return synthDirty; }
@@ -231,6 +238,10 @@ private:
 
     std::vector<float> f0Values;
     bool renderedEdit = false; // Audio for this note is present in the composite
+    // Timeline bounds represented by the current composite waveform. These can
+    // differ from both the immutable source bounds and the next pending edit.
+    int renderedStartFrame = 0;
+    int renderedEndFrame = 0;
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)
