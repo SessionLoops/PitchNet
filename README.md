@@ -22,6 +22,8 @@ PitchNet is a standalone app and audio plugin for editing vocal pitch in a piano
 - GAME-based note segmentation with D3PM diffusion model
 - Pitch curve editing with per-note delta, scale, offset, tilt, and variance controls
 - Real-time incremental vocoder resynthesis (PC-NSF-HiFiGAN)
+- High-quality, band-limited audio sample-rate conversion with
+  [r8brain-free-src](https://github.com/avaneev/r8brain-free-src)
 - Undo/redo for all editing operations
 - Export audio (WAV) and MIDI
 - Standalone app plus VST3/AU plugins (AAX optional, ARA supported)
@@ -127,8 +129,9 @@ PitchNet/
     fonts/        # UI fonts
     svg/          # Toolbar icons
   third_party/
-    JUCE/         # JUCE framework (submodule)
-    ARA_SDK/      # ARA SDK (submodule, optional)
+    JUCE/             # JUCE framework (submodule)
+    ARA_SDK/          # ARA SDK (submodule, optional)
+    r8brain-free-src/ # High-quality audio resampler (submodule)
   CMakeLists.txt
 ```
 
@@ -139,6 +142,10 @@ This project uses the following models from the open-source community:
 - [GAME](https://github.com/openvpi/GAME) — Note segmentation model by [OpenVPI](https://github.com/openvpi)
 - [PC-NSF-HiFiGAN](https://github.com/openvpi/vocoders) — Neural vocoder by [OpenVPI](https://github.com/openvpi)
 - [RMVPE](https://github.com/yxlllc/RMVPE) — Robust pitch estimation model by [yxlllc](https://github.com/yxlllc)
+
+Audio sample-rate conversion uses
+[r8brain-free-src](https://github.com/avaneev/r8brain-free-src) by Aleksey
+Vaneev under the MIT License.
 
 ## License
 

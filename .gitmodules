@@ -6,3 +6,6 @@
 	path = third_party/ARA_SDK
 	url = https://github.com/Celemony/ARA_SDK
 	branch = main
+[submodule "third_party/r8brain-free-src"]
+	path = third_party/r8brain-free-src
+	url = https://github.com/avaneev/r8brain-free-src.git

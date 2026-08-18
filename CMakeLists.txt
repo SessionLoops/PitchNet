@@ -186,6 +186,13 @@ endif()
 # Add JUCE as a subdirectory (git submodule in third_party/)
 add_subdirectory(third_party/JUCE)
 
+set(R8BRAIN_INCLUDE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/r8brain-free-src")
+if(NOT EXISTS "${R8BRAIN_INCLUDE_DIR}/CDSPResampler.h")
+    message(FATAL_ERROR
+        "r8brain-free-src submodule is missing - run: git submodule update --init --recursive")
+endif()
+
 # Create GUI application
 juce_add_gui_app(PitchNet
     PRODUCT_NAME "PitchNet"
@@ -315,6 +322,8 @@ target_sources(PitchNetPlugin PRIVATE
 # Core/UI libraries (stage 1 modularization)
 add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
 add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
+
+target_include_directories(pitchnet_core PRIVATE ${R8BRAIN_INCLUDE_DIR})
 
 # Binary data for toolbar images/icons
 file(GLOB IMAGE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/*")

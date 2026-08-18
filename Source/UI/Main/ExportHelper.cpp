@@ -1,4 +1,5 @@
 #include "ExportHelper.h"
+#include "../../Utils/AudioResampler.h"
 #include "../StyledComponents.h"
 #include <cmath>
 
@@ -69,24 +70,7 @@ juce::AudioBuffer<float> convertChannels(const juce::AudioBuffer<float> &input,
 
 juce::AudioBuffer<float> resampleAudio(const juce::AudioBuffer<float> &input,
                                         int sourceRate, int targetRate) {
-  if (sourceRate <= 0 || targetRate <= 0 || sourceRate == targetRate)
-    return input;
-
-  const int channels = juce::jmax(1, input.getNumChannels());
-  const int inSamples = input.getNumSamples();
-  const double ratio = static_cast<double>(sourceRate) / targetRate;
-  const int outSamples = juce::jmax(1, static_cast<int>(std::llround(inSamples / ratio)));
-
-  juce::AudioBuffer<float> output(channels, outSamples);
-  output.clear();
-
-  for (int ch = 0; ch < channels; ++ch) {
-    juce::LagrangeInterpolator interpolator;
-    interpolator.reset();
-    interpolator.process(ratio, input.getReadPointer(ch), output.getWritePointer(ch),
-                         outSamples);
-  }
-  return output;
+  return AudioResampler::resample(input, sourceRate, targetRate);
 }
 
 juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,

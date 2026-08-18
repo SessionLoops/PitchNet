@@ -1,4 +1,5 @@
 #include "AudioFileManager.h"
+#include "../../Utils/AudioResampler.h"
 #include "../../Utils/Localization.h"
 
 AudioFileManager::AudioFileManager() {
@@ -304,30 +305,7 @@ juce::File AudioFileManager::getFirstAudioFile(const juce::StringArray &files) {
 juce::AudioBuffer<float>
 AudioFileManager::resampleIfNeeded(const juce::AudioBuffer<float> &buffer,
                                    int srcSampleRate, int targetSampleRate) {
-  if (srcSampleRate == targetSampleRate)
-    return buffer;
-
-  const double ratio = static_cast<double>(srcSampleRate) / targetSampleRate;
-  const int numSamples = buffer.getNumSamples();
-  const int newNumSamples = static_cast<int>(numSamples / ratio);
-
-  juce::AudioBuffer<float> resampledBuffer(1, newNumSamples);
-  const float *src = buffer.getReadPointer(0);
-  float *dst = resampledBuffer.getWritePointer(0);
-
-  for (int i = 0; i < newNumSamples; ++i) {
-    const double srcPos = i * ratio;
-    const int srcIndex = static_cast<int>(srcPos);
-    const double frac = srcPos - srcIndex;
-
-    if (srcIndex + 1 < numSamples)
-      dst[i] = static_cast<float>(src[srcIndex] * (1.0 - frac) +
-                                  src[srcIndex + 1] * frac);
-    else
-      dst[i] = src[srcIndex];
-  }
-
-  return resampledBuffer;
+  return AudioResampler::resample(buffer, srcSampleRate, targetSampleRate);
 }
 
 juce::AudioBuffer<float>

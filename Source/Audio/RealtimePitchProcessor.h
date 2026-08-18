@@ -4,6 +4,7 @@
 #include "../Models/Project.h"
 #include "Vocoder.h"
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <thread>
 
@@ -49,6 +50,7 @@ private:
     std::atomic<bool> ready{false};
     std::atomic<bool> computing{false};
     std::atomic<bool> cancelCompute{false};
+    std::atomic<std::uint64_t> invalidateGeneration{0};
     std::atomic<double> position{0.0};
 
     // Continuous read cursor, touched only on the audio thread. Lets playback

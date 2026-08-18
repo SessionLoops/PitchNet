@@ -1,4 +1,5 @@
 #include "RealtimePitchProcessor.h"
+#include "../Utils/AudioResampler.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -6,6 +7,7 @@
 RealtimePitchProcessor::RealtimePitchProcessor() = default;
 
 RealtimePitchProcessor::~RealtimePitchProcessor() {
+  invalidateGeneration.fetch_add(1);
   cancelCompute = true;
   if (computeThread && computeThread->joinable())
     computeThread->join();
@@ -29,10 +31,21 @@ void RealtimePitchProcessor::setVocoder(Vocoder *voc) {
 }
 
 void RealtimePitchProcessor::prepareToPlay(double sr, int) {
+  const bool sampleRateChanged = !juce::approximatelyEqual(sampleRate, sr);
+  bool hasProject = false;
+  {
+    const juce::ScopedLock sl(bufferLock);
+    hasProject = project != nullptr;
+  }
   sampleRate = sr;
   position.store(0.0);
   readPosition = 0;
   readPositionValid = false;
+
+  // A project may be attached before the host reveals its actual sample rate.
+  // Rebuild the cache so its sample positions match the new host timeline.
+  if (sampleRateChanged && hasProject)
+    invalidate();
 }
 
 bool RealtimePitchProcessor::processBlock(
@@ -135,7 +148,7 @@ bool RealtimePitchProcessor::processBlock(
 
 void RealtimePitchProcessor::invalidate() {
   ready = false;
-
+  const auto generation = invalidateGeneration.fetch_add(1) + 1;
 
   Project *proj = nullptr;
   juce::AudioBuffer<float> waveformSnapshot;
@@ -168,43 +181,34 @@ void RealtimePitchProcessor::invalidate() {
   // consistency with standalone mode
   const int dstSampleRate = static_cast<int>(sampleRate);
 
-
   if (srcSampleRate == dstSampleRate || srcSampleRate <= 0) {
     // No resampling needed
     const juce::ScopedLock sl(bufferLock);
     processedBuffer.makeCopyOf(waveformSnapshot);
     ready = true;
   } else {
-    // Resample to host sample rate
-    const double ratio = static_cast<double>(srcSampleRate) / dstSampleRate;
-    const int srcSamples = waveformSnapshot.getNumSamples();
-    const int dstSamples = static_cast<int>(srcSamples / ratio);
-    const int numChannels = waveformSnapshot.getNumChannels();
+    // Build the host-rate cache in the background. Chaining ownership of the
+    // previous worker keeps destruction safe without blocking the caller.
+    auto previousWorker = std::move(computeThread);
+    computeThread = std::make_unique<std::thread>(
+        [this, generation, waveform = std::move(waveformSnapshot),
+         srcSampleRate, dstSampleRate,
+         previous = std::move(previousWorker)]() mutable {
+          if (previous && previous->joinable())
+            previous->join();
+          if (invalidateGeneration.load() != generation)
+            return;
 
-    juce::AudioBuffer<float> resampled(numChannels, dstSamples);
-
-    for (int ch = 0; ch < numChannels; ++ch) {
-      const float *src = waveformSnapshot.getReadPointer(ch);
-      float *dst = resampled.getWritePointer(ch);
-
-      for (int i = 0; i < dstSamples; ++i) {
-        const double srcPos = i * ratio;
-        const int srcIndex = static_cast<int>(srcPos);
-        const double frac = srcPos - srcIndex;
-
-        if (srcIndex + 1 < srcSamples)
-          dst[i] = static_cast<float>(src[srcIndex] * (1.0 - frac) +
-                                      src[srcIndex + 1] * frac);
-        else if (srcIndex < srcSamples)
-          dst[i] = src[srcIndex];
-        else
-          dst[i] = 0.0f;
-      }
-    }
-
-    const juce::ScopedLock sl(bufferLock);
-    processedBuffer = std::move(resampled);
-    ready = true;
+          // r8brain's one-shot converter provides band-limited SRC without
+          // adding variable-output streaming state to processBlock().
+          auto resampled = AudioResampler::resample(
+              waveform, srcSampleRate, dstSampleRate);
+          const juce::ScopedLock sl(bufferLock);
+          if (invalidateGeneration.load() != generation)
+            return;
+          processedBuffer = std::move(resampled);
+          ready = processedBuffer.getNumSamples() > 0;
+        });
   }
 }
 

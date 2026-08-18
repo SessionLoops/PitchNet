@@ -1,4 +1,5 @@
 #include "EditorController.h"
+#include "../Utils/AudioResampler.h"
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/ScaleUtils.h"
 #include "../Utils/Constants.h"
@@ -463,23 +464,8 @@ void EditorController::setHostAudioAsync(
     const double inputSampleRate = sampleRate;
     if (inputSampleRate > 0.0 &&
         std::abs(inputSampleRate - static_cast<double>(SAMPLE_RATE)) > 1e-6) {
-      const int inSamples = buffer.getNumSamples();
-      const int outSamples = static_cast<int>(
-          std::llround(static_cast<double>(inSamples) *
-                       (static_cast<double>(SAMPLE_RATE) / inputSampleRate)));
-      const int channels = buffer.getNumChannels();
-      resampledBuffer.setSize(channels, std::max(0, outSamples), false, false,
-                              true);
-      resampledBuffer.clear();
-
-      const double ratio = inputSampleRate / static_cast<double>(SAMPLE_RATE);
-      for (int ch = 0; ch < channels; ++ch) {
-        juce::LagrangeInterpolator interp;
-        interp.reset();
-        interp.process(ratio, buffer.getReadPointer(ch),
-                       resampledBuffer.getWritePointer(ch),
-                       resampledBuffer.getNumSamples());
-      }
+      resampledBuffer = AudioResampler::resample(
+          buffer, inputSampleRate, static_cast<double>(SAMPLE_RATE));
     }
 
     const juce::AudioBuffer<float> &stored =

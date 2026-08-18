@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "../Utils/AudioResampler.h"
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
 #include "../Models/ProjectSerializer.h"
@@ -3052,22 +3053,10 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
   juce::AudioBuffer<float> resampledSource;
   const juce::AudioBuffer<float> *hydratedSource = &sourceBuffer;
   if (!juce::approximatelyEqual(projectSampleRate, sourceSampleRate)) {
-    const int outputSamples = static_cast<int>(std::llround(
-        static_cast<double>(sourceBuffer.getNumSamples()) *
-        projectSampleRate / sourceSampleRate));
-    if (outputSamples <= 0)
+    resampledSource = AudioResampler::resample(
+        sourceBuffer, sourceSampleRate, projectSampleRate);
+    if (resampledSource.getNumSamples() <= 0)
       return false;
-
-    resampledSource.setSize(sourceBuffer.getNumChannels(), outputSamples,
-                            false, false, true);
-    resampledSource.clear();
-    const double ratio = sourceSampleRate / projectSampleRate;
-    for (int channel = 0; channel < sourceBuffer.getNumChannels(); ++channel) {
-      juce::LagrangeInterpolator interpolator;
-      interpolator.process(ratio, sourceBuffer.getReadPointer(channel),
-                           resampledSource.getWritePointer(channel),
-                           outputSamples);
-    }
     hydratedSource = &resampledSource;
   }
 

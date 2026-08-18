@@ -1,4 +1,5 @@
 #include "ARADocumentController.h"
+#include "../Utils/AudioResampler.h"
 
 #if JucePlugin_Enable_ARA
 
@@ -1620,12 +1621,8 @@ void PitchNetDocumentController::processDocument(
             for (int ch = 0; ch < compositeChannels; ++ch)
               rendered.copyFrom(ch, 0, sourceBuffer, ch, 0, renderLength);
           } else {
-            const double ratio = sourceRate / compositeSampleRate;
-            for (int ch = 0; ch < compositeChannels; ++ch) {
-              juce::LagrangeInterpolator interpolator;
-              interpolator.process(ratio, sourceBuffer.getReadPointer(ch),
-                                   rendered.getWritePointer(ch), renderLength);
-            }
+            rendered = AudioResampler::resample(
+                sourceBuffer, sourceRate, compositeSampleRate, renderLength);
           }
 
           // Playback regions may overlap, so match the renderer and mix them.
