@@ -28,7 +28,8 @@ struct AudioMovePatch {
   std::vector<float> samples;
   int clearStartSample = -1;
   int clearEndSample = -1;
-  std::vector<float> clearSamples;
+  bool releaseBeforeClear = false;
+  bool attackAfterClear = false;
 };
 
 struct CommitFrameRange {
@@ -670,7 +671,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       if (end > start)
         clearFrameRanges.push_back({start, end});
     };
-    auto addClearPatch = [&](int startSample, int endSample) {
+    auto addClearPatch = [&](int startSample, int endSample,
+                             bool releaseBefore, bool attackAfter) {
       startSample = std::clamp(startSample, 0, totalOrigSamples);
       endSample = std::clamp(endSample, startSample, totalOrigSamples);
       if (endSample <= startSample)
@@ -679,7 +681,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       AudioMovePatch patch;
       patch.clearStartSample = startSample;
       patch.clearEndSample = endSample;
-      patch.clearSamples.assign(origPtr + startSample, origPtr + endSample);
+      patch.releaseBeforeClear = releaseBefore;
+      patch.attackAfterClear = attackAfter;
       audioMovePatches.push_back(std::move(patch));
     };
 
@@ -783,6 +786,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 return a.start < b.start;
               });
 
+    std::vector<CommitFrameRange> unoccupiedClearRanges;
     for (const auto &clearRange : mergedClearRanges) {
       int cursor = clearRange.start;
       for (const auto &occupied : occupiedRegionRanges) {
@@ -791,14 +795,70 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         if (occupied.start >= clearRange.end)
           break;
         if (occupied.start > cursor)
-          addClearPatch(cursor * hopSize,
-                        std::min(occupied.start, clearRange.end) * hopSize);
+          unoccupiedClearRanges.push_back(
+              {cursor, std::min(occupied.start, clearRange.end)});
         cursor = std::max(cursor, occupied.end);
         if (cursor >= clearRange.end)
           break;
       }
       if (cursor < clearRange.end)
-        addClearPatch(cursor * hopSize, clearRange.end * hopSize);
+        unoccupiedClearRanges.push_back({cursor, clearRange.end});
+    }
+
+    // If a vacated interval lies between two current regions, clear the whole
+    // current gap. The release and attack are then placed inside the adjacent
+    // regions instead of leaving fade remnants in the gap itself.
+    std::vector<CommitFrameRange> currentGapRanges;
+    for (const auto &range : unoccupiedClearRanges) {
+      CommitFrameRange gap = range;
+      bool hasLeftRegion = false;
+      bool hasRightRegion = false;
+      for (const auto &occupied : occupiedRegionRanges) {
+        if (occupied.end <= range.start) {
+          gap.start = occupied.end;
+          hasLeftRegion = true;
+          continue;
+        }
+        if (occupied.start >= range.end) {
+          gap.end = occupied.start;
+          hasRightRegion = true;
+          break;
+        }
+      }
+      if (!hasLeftRegion)
+        gap.start = range.start;
+      if (!hasRightRegion)
+        gap.end = range.end;
+      if (gap.end > gap.start)
+        currentGapRanges.push_back(gap);
+    }
+    std::sort(currentGapRanges.begin(), currentGapRanges.end(),
+              [](const CommitFrameRange &a, const CommitFrameRange &b) {
+                return a.start < b.start ||
+                       (a.start == b.start && a.end < b.end);
+              });
+    std::vector<CommitFrameRange> mergedGapRanges;
+    for (const auto &range : currentGapRanges) {
+      if (mergedGapRanges.empty() || range.start > mergedGapRanges.back().end)
+        mergedGapRanges.push_back(range);
+      else
+        mergedGapRanges.back().end =
+            std::max(mergedGapRanges.back().end, range.end);
+    }
+
+    for (const auto &gap : mergedGapRanges) {
+      const bool releaseBefore = std::any_of(
+          occupiedRegionRanges.begin(), occupiedRegionRanges.end(),
+          [&](const CommitFrameRange &occupied) {
+            return occupied.end == gap.start;
+          });
+      const bool attackAfter = std::any_of(
+          occupiedRegionRanges.begin(), occupiedRegionRanges.end(),
+          [&](const CommitFrameRange &occupied) {
+            return occupied.start == gap.end;
+          });
+      addClearPatch(gap.start * hopSize, gap.end * hopSize, releaseBefore,
+                    attackAfter);
     }
   }
 
@@ -1102,8 +1162,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           constexpr int kTimingPatchFadeHalfSamples = 256;
           constexpr int kTimingPatchAnalysisHalfSamples = 256;
 
-          // Fade vacated timing intervals to silence from immutable source
-          // samples. Using the source makes this idempotent across later edits.
+          // Vacated timing gaps are fully silent. Their click prevention is
+          // applied as a release/attack inside the adjacent regions below.
           for (int channel = 0; channel < audioData.waveform.getNumChannels();
                ++channel) {
             auto *destination = audioData.waveform.getWritePointer(channel);
@@ -1119,32 +1179,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               const int clearCount = clearEnd - clearStart;
               if (clearCount <= 0)
                 continue;
-
-              const int sourceOffset = clearStart - patch.clearStartSample;
-              const int fadeSamples =
-                  std::min(kTimingClearFadeSamples, clearCount / 2);
-              for (int sample = 0; sample < clearCount; ++sample) {
-                float clearAmount = 1.0f;
-                if (fadeSamples > 0 && sample < fadeSamples)
-                  clearAmount = smoothstep(
-                      static_cast<float>(sample) /
-                      static_cast<float>(fadeSamples));
-                if (fadeSamples > 0 && sample >= clearCount - fadeSamples)
-                  clearAmount = std::min(
-                      clearAmount,
-                      smoothstep(static_cast<float>(clearCount - 1 - sample) /
-                                 static_cast<float>(fadeSamples)));
-
-                const int immutableIndex = sourceOffset + sample;
-                const float source =
-                    immutableIndex >= 0 &&
-                            immutableIndex <
-                                static_cast<int>(patch.clearSamples.size())
-                        ? patch.clearSamples[static_cast<size_t>(immutableIndex)]
-                        : destination[clearStart + sample];
-                destination[clearStart + sample] =
-                    source * (1.0f - clearAmount);
-              }
+              std::fill(destination + clearStart, destination + clearEnd,
+                        0.0f);
             }
           }
 
@@ -1214,6 +1250,48 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 destination[sample] +=
                     blend * (movedSamples[static_cast<size_t>(sample)] -
                              destination[sample]);
+              }
+            }
+          }
+
+          // Shape audio on the occupied sides of each gap. Keeping these
+          // envelopes outside the cleared samples guarantees that the gap
+          // remains visually and audibly silent.
+          for (int channel = 0; channel < audioData.waveform.getNumChannels();
+               ++channel) {
+            auto *destination = audioData.waveform.getWritePointer(channel);
+            for (const auto &patch : audioMovePatches) {
+              if (patch.clearStartSample < 0 ||
+                  patch.clearEndSample <= patch.clearStartSample)
+                continue;
+
+              const int clearStart =
+                  std::clamp(patch.clearStartSample, 0, totalSamples);
+              const int clearEnd =
+                  std::clamp(patch.clearEndSample, clearStart, totalSamples);
+              if (patch.releaseBeforeClear && clearStart > 0) {
+                const int fadeCount =
+                    std::min(kTimingClearFadeSamples, clearStart);
+                const int fadeStart = clearStart - fadeCount;
+                const float denominator =
+                    static_cast<float>(std::max(1, fadeCount - 1));
+                for (int sample = 0; sample < fadeCount; ++sample) {
+                  const float gain = smoothstep(
+                      static_cast<float>(fadeCount - 1 - sample) /
+                      denominator);
+                  destination[fadeStart + sample] *= gain;
+                }
+              }
+              if (patch.attackAfterClear && clearEnd < totalSamples) {
+                const int fadeCount = std::min(kTimingClearFadeSamples,
+                                               totalSamples - clearEnd);
+                const float denominator =
+                    static_cast<float>(std::max(1, fadeCount - 1));
+                for (int sample = 0; sample < fadeCount; ++sample) {
+                  const float gain = smoothstep(
+                      static_cast<float>(sample) / denominator);
+                  destination[clearEnd + sample] *= gain;
+                }
               }
             }
           }
