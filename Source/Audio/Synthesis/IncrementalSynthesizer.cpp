@@ -1158,9 +1158,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // These joins happen after the synthesized commit, so they need
           // their own smoothing instead of hard clear/copy operations.
           constexpr int kTimingClearFadeSamples = 128;
-          constexpr int kTimingPatchSearchRadiusSamples = 256;
-          constexpr int kTimingPatchFadeHalfSamples = 256;
-          constexpr int kTimingPatchAnalysisHalfSamples = 256;
+          constexpr int kTimingPatchBoundaryMarginSamples = 512;
+          constexpr int kTimingPatchFadeHalfSamples = 128;
+          constexpr int kTimingPatchAnalysisHalfSamples = 128;
 
           // Vacated timing gaps are fully silent. Their click prevention is
           // applied as a release/attack inside the adjacent regions below.
@@ -1184,9 +1184,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // Adaptively crossfade each moved patch at both ends. The 512-sample
-          // fades stay inside the patch while retaining a bounded search for
-          // a lower-error splice position.
+          // Adaptively crossfade each moved patch at both ends. The shorter
+          // fades stay inside the patch while the search remains bounded by
+          // the same 512-sample timing margin.
           for (const auto &patch : audioMovePatches) {
             const int copyStart = std::clamp(
                 patch.destinationStartSample, 0, totalSamples);
@@ -1204,7 +1204,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 std::min(kTimingPatchFadeHalfSamples,
                          std::max(1, copyCount / 4));
             const int searchRadius = std::min(
-                kTimingPatchSearchRadiusSamples,
+                std::max(0, kTimingPatchBoundaryMarginSamples - 2 * fadeHalf),
                 std::max(0, copyCount / 2 - 2 * fadeHalf));
             const int analysisHalf =
                 std::min(kTimingPatchAnalysisHalfSamples, fadeHalf);
