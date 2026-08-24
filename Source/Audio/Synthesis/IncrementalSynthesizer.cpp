@@ -42,6 +42,15 @@ bool hasTimingEdit(const Note &note) {
          note.getEndFrame() != note.getSrcEndFrame();
 }
 
+// A timing edit needs a broad waveform commit only while its output position
+// differs from the position already represented in the composite waveform.
+// A note can remain timing-edited after that render, so comparing against the
+// immutable source bounds here would incorrectly broaden later pitch commits.
+bool hasPendingTimingPositionChange(const Note &note) {
+  return note.getStartFrame() != note.getRenderedStartFrame() ||
+         note.getEndFrame() != note.getRenderedEndFrame();
+}
+
 std::vector<PreservedTimingSpan>
 getPreservedTimingSpans(const Project &project, const Note &note) {
   std::vector<PreservedTimingSpan> spans;
@@ -167,6 +176,7 @@ std::vector<CommitFrameRange>
 collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
                          int f0DirtyStart, int f0DirtyEnd) {
   std::vector<CommitFrameRange> ranges;
+  bool needsF0RangeCommit = !hasDirtyNoteAnchors;
 
   if (hasDirtyNoteAnchors) {
     for (const auto &note : project.getNotes()) {
@@ -176,12 +186,15 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
       int start = note.getStartFrame();
       int end = note.getEndFrame();
 
-      // Timing edits move audio as well as changing the note body. Their
-      // commit range must cover both the old and new positions plus any
-      // fixed-length audio attached to the region boundary.
-      if (hasTimingEdit(note)) {
-        start = std::min(start, note.getSrcStartFrame());
-        end = std::max(end, note.getSrcEndFrame());
+      // Timing moves need their old and new output positions committed. A
+      // previously rendered timing edit is not a pending move, so a later
+      // pitch edit on that note keeps its waveform commit local.
+      if (hasPendingTimingPositionChange(note)) {
+        needsF0RangeCommit = true;
+        start = std::min(
+            {start, note.getSrcStartFrame(), note.getRenderedStartFrame()});
+        end = std::max(
+            {end, note.getSrcEndFrame(), note.getRenderedEndFrame()});
         for (const auto &span : getPreservedTimingSpans(project, note)) {
           start = std::min({start, span.sourceStart, span.destinationStart});
           end = std::max({end, span.sourceEnd, span.destinationEnd});
@@ -193,10 +206,12 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
     }
   }
 
-  // Timing undo/reset can leave a dirty note at its neutral source bounds,
-  // while the F0 dirty range still records the previous moved region edge.
-  // Commit both ranges so audio at the vacated destination is restored too.
-  if (f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart) {
+  // F0-only tools have no dirty-note anchor, so their edited curve range is
+  // the commit range. Timing undo/reset also needs it to restore a vacated
+  // destination. Ordinary pitch drags use this range only as render context;
+  // committing it would replace neighboring notes' waveform.
+  if (needsF0RangeCommit && f0DirtyStart >= 0 &&
+      f0DirtyEnd > f0DirtyStart) {
     ranges.push_back({f0DirtyStart, f0DirtyEnd});
   }
 
