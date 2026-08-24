@@ -169,6 +169,10 @@ Vocoder::~Vocoder()
 
 void Vocoder::log(const std::string &message)
 {
+#if JUCE_DEBUG
+  DBG("[Vocoder] " + juce::String(message));
+#endif
+
   if (logFile && logFile->is_open())
   {
     auto now = std::chrono::system_clock::now();
@@ -449,9 +453,9 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     }
   }
 
-  log("Vocoder: ONNX Runtime not available, using sine fallback");
-  loaded = true; // Allow "loaded" state for fallback
-  return true;
+  log("Vocoder: ONNX Runtime is not available; model inference is disabled");
+  loaded = false;
+  return false;
 #endif
 }
 
@@ -478,8 +482,8 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       auto result = inferCoreMLChunkLocked(mel, f0, numFrames);
       if (result.empty())
       {
-        log("Core ML single-chunk inference failed, using fallback");
-        return generateSineFallback(f0);
+        log("Core ML single-chunk inference failed");
+        return {};
       }
       return result;
     }
@@ -518,7 +522,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       {
         log("Core ML chunk " + std::to_string(chunkIdx) +
             " inference failed");
-        return generateSineFallback(f0);
+        return {};
       }
 
       const size_t dstOffset = frameOff * static_cast<size_t>(hopSize);
@@ -584,8 +588,8 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxSession || inputNames.empty() || outputNames.empty())
   {
-    log("ONNX session not available, using fallback");
-    return generateSineFallback(f0);
+    log("ONNX session not available");
+    return {};
   }
 
   try
@@ -598,8 +602,8 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       auto result = inferChunkLocked(mel, f0, numFrames);
       if (result.empty())
       {
-        log("Single-chunk inference failed, using fallback");
-        return generateSineFallback(f0);
+        log("Single-chunk inference failed");
+        return {};
       }
       if (verboseInferLog)
       {
@@ -653,7 +657,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       if (chunkWav.empty())
       {
         log("Chunk " + std::to_string(chunkIdx) + " inference failed");
-        return generateSineFallback(f0);
+        return {};
       }
 
       const size_t dstOffset =
@@ -731,10 +735,11 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   catch (const Ort::Exception &e)
   {
     log("ONNX inference failed: " + std::string(e.what()));
-    return generateSineFallback(f0);
+    return {};
   }
 #else
-  return generateSineFallback(f0);
+  log("ONNX Runtime is not available");
+  return {};
 #endif
 }
 
@@ -919,36 +924,48 @@ Vocoder::inferCoreMLChunkLocked(const std::vector<std::vector<float>> &mel,
                                 const std::vector<float> &f0,
                                 size_t numFrames)
 {
-  std::vector<float> melInput(static_cast<size_t>(numMels) * numFrames);
-  for (size_t frame = 0; frame < numFrames; ++frame)
+  // The bundled Core ML model accepts 2..2048 frames. A chunked render can
+  // leave a one-frame tail, so repeat its last frame for inference and trim
+  // the generated tail afterwards.
+  constexpr size_t kCoreMLMinimumFrames = 2;
+  const size_t inputFrames = std::max(numFrames, kCoreMLMinimumFrames);
+  if (inputFrames != numFrames)
+    log("Core ML input padded from " + std::to_string(numFrames) + " to " +
+        std::to_string(inputFrames) + " frames");
+
+  std::vector<float> melInput(static_cast<size_t>(numMels) * inputFrames);
+  for (size_t frame = 0; frame < inputFrames; ++frame)
   {
-    const auto &sourceFrame = mel[frame];
+    const auto &sourceFrame = mel[std::min(frame, numFrames - 1)];
     const int melCount =
         juce::jmin(numMels, static_cast<int>(sourceFrame.size()));
     size_t dstIndex = frame;
     int m = 0;
-    for (; m < melCount; ++m, dstIndex += numFrames)
+    for (; m < melCount; ++m, dstIndex += inputFrames)
     {
       melInput[dstIndex] = std::clamp(
           sourceFrame[static_cast<size_t>(m)], kMelMinClamp, kMelMaxClamp);
     }
-    for (; m < numMels; ++m, dstIndex += numFrames)
+    for (; m < numMels; ++m, dstIndex += inputFrames)
       melInput[dstIndex] = 0.0f;
   }
 
-  std::vector<float> f0Input(numFrames);
-  for (size_t i = 0; i < numFrames; ++i)
+  std::vector<float> f0Input(inputFrames);
+  for (size_t i = 0; i < inputFrames; ++i)
   {
-    const float freq = f0[i];
+    const float freq = f0[std::min(i, numFrames - 1)];
     f0Input[i] =
         (freq > 0.0f) ? std::clamp(freq, kF0MinValid, kF0MaxValid) : 0.0f;
   }
 
   std::string error;
-  auto waveform = coreMLBackend->infer(melInput, f0Input, numFrames, numMels,
+  auto waveform = coreMLBackend->infer(melInput, f0Input, inputFrames, numMels,
                                        hopSize, error);
   if (waveform.empty() && !error.empty())
     log(error);
+  const size_t requestedSamples = numFrames * static_cast<size_t>(hopSize);
+  if (waveform.size() > requestedSamples)
+    waveform.resize(requestedSamples);
   return waveform;
 }
 #endif
@@ -996,40 +1013,6 @@ void Vocoder::inferAsync(std::vector<std::vector<float>> mel,
                   std::move(cancelFlag)});
     asyncCondition.notify_one();
   }
-}
-
-std::vector<float> Vocoder::generateSineFallback(const std::vector<float> &f0)
-{
-  // Fallback: Generate simple sine wave based on F0
-  size_t numFrames = f0.size();
-  size_t numSamples = numFrames * hopSize;
-
-  std::vector<float> waveform(numSamples, 0.0f);
-
-  float phase = 0.0f;
-  for (size_t frame = 0; frame < numFrames; ++frame)
-  {
-    float freq = f0[frame];
-    if (freq <= 0.0f)
-      freq = 0.0f; // Unvoiced
-
-    for (int s = 0; s < hopSize; ++s)
-    {
-      size_t sampleIdx = frame * hopSize + s;
-      if (sampleIdx >= numSamples)
-        break;
-
-      if (freq > 0.0f)
-      {
-        waveform[sampleIdx] = 0.3f * std::sin(phase);
-        phase += 2.0f * juce::MathConstants<float>::pi * freq / sampleRate;
-        if (phase > 2.0f * juce::MathConstants<float>::pi)
-          phase -= 2.0f * juce::MathConstants<float>::pi;
-      }
-    }
-  }
-
-  return waveform;
 }
 
 void Vocoder::setExecutionDevice(const juce::String &device)

@@ -177,10 +177,5 @@ private:
                          size_t numFrames);
 #endif
 
-  /**
-   * Generate simple sine wave fallback when ONNX is not available.
-   */
-  std::vector<float> generateSineFallback(const std::vector<float> &f0);
-
   juce::File resolvePreferredModelFile(const juce::File &requestedModelPath) const;
 };
