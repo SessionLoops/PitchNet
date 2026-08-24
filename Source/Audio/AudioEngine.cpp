@@ -40,6 +40,11 @@ void AudioEngine::releaseResources() {}
 
 void AudioEngine::getNextAudioBlock(
     const juce::AudioSourceChannelInfo &bufferToFill) {
+  // Install any waveform published since the last block. This runs before the
+  // !playing early-out so a swap published while paused still lands promptly.
+  if (waveformSwapPending.load(std::memory_order_acquire))
+    applyPendingWaveformSwap();
+
   const bool auditioning = auditionActive.load();
   if (!playing ||
       (auditioning ? auditionWaveform.getNumSamples()
@@ -264,16 +269,101 @@ void AudioEngine::getNextAudioBlock(
 
 void AudioEngine::changeListenerCallback(juce::ChangeBroadcaster *source) {}
 
+void AudioEngine::publishWaveform(const juce::AudioBuffer<float> &buffer,
+                                  int sampleRate) {
+  {
+    const juce::SpinLock::ScopedLockType lock(pendingWaveformLock);
+    // Release the previously retired buffer here, on the message thread, so
+    // the audio thread's move-assignment in applyPendingWaveformSwap() never
+    // has to free anything.
+    retiredWaveform.setSize(0, 0);
+    pendingWaveform = buffer;
+    pendingWaveformSampleRate = sampleRate;
+  }
+  waveformSwapPending.store(true, std::memory_order_release);
+}
+
+void AudioEngine::applyPendingWaveformSwap() {
+  const juce::SpinLock::ScopedTryLockType pendingLock(pendingWaveformLock);
+  if (!pendingLock.isLocked())
+    return; // A publish is in flight; pick it up on the next block.
+
+  const juce::SpinLock::ScopedTryLockType lock(waveformLock);
+  if (!lock.isLocked())
+    return;
+
+  if (!waveformSwapPending.load(std::memory_order_acquire))
+    return;
+
+  const int newLength = pendingWaveform.getNumSamples();
+
+  // Blend the outgoing audio into the head of the incoming buffer at the
+  // playhead. Both buffers are versions of the same timeline and are identical
+  // outside the re-rendered region, so the ramp is linear (smoothstep-weighted)
+  // rather than equal-power: cos/sin sums to sqrt(2) on correlated content and
+  // would trade the click for a level bump. Nothing before the playhead is
+  // touched.
+  const int64_t position = currentPosition.load();
+  if (playing.load() && newLength > 0 && position >= 0 &&
+      position < static_cast<int64_t>(newLength) &&
+      currentWaveform.getNumSamples() > position) {
+    const int available = static_cast<int>(
+        std::min<int64_t>(newLength - position,
+                          currentWaveform.getNumSamples() - position));
+    const int fadeSamples = std::min(kWaveformSwapFadeSamples, available);
+    const int channels =
+        std::min(pendingWaveform.getNumChannels(),
+                 currentWaveform.getNumChannels());
+
+    for (int channel = 0; channel < channels; ++channel) {
+      const float *outgoing =
+          currentWaveform.getReadPointer(channel, static_cast<int>(position));
+      float *incoming =
+          pendingWaveform.getWritePointer(channel, static_cast<int>(position));
+      for (int sample = 0; sample < fadeSamples; ++sample) {
+        const float t =
+            static_cast<float>(sample) / static_cast<float>(fadeSamples);
+        const float weight = t * t * (3.0f - 2.0f * t);
+        incoming[sample] =
+            outgoing[sample] + weight * (incoming[sample] - outgoing[sample]);
+      }
+    }
+  }
+
+  retiredWaveform = std::move(currentWaveform);
+  currentWaveform = std::move(pendingWaveform);
+  waveformSampleRate = pendingWaveformSampleRate;
+
+  if (currentSampleRate > 0)
+    playbackRatio = static_cast<double>(waveformSampleRate) / currentSampleRate;
+  else
+    playbackRatio = 1.0;
+
+  waveformSwapPending.store(false, std::memory_order_release);
+}
+
 void AudioEngine::loadWaveform(const juce::AudioBuffer<float> &buffer,
                                int sampleRate, bool preservePosition) {
-  // Save playing state if we need to preserve it
-  bool wasPlaying = playing.load();
+  const int64_t newLength = buffer.getNumSamples();
 
-  // Stop playback first to safely update waveform
-  playing = false;
-
-  {
+  // An incremental resynthesis commit that lands during playback goes through
+  // the deferred handoff: stopping the transport and deep-copying under
+  // waveformLock would emit hard silence on both edges of the swap, which is
+  // audible as a click for every render the user triggers while playing.
+  if (preservePosition && playing.load()) {
+    publishWaveform(buffer, sampleRate);
+  } else {
     const juce::SpinLock::ScopedLockType lock(waveformLock);
+
+    // Drop any handoff that has not been picked up yet; this buffer supersedes
+    // it, and leaving the flag set would overwrite us on the next block.
+    waveformSwapPending.store(false, std::memory_order_release);
+    {
+      const juce::SpinLock::ScopedLockType pending(pendingWaveformLock);
+      pendingWaveform.setSize(0, 0);
+      retiredWaveform.setSize(0, 0);
+    }
+
     currentWaveform = buffer;
     waveformSampleRate = sampleRate;
 
@@ -292,19 +382,11 @@ void AudioEngine::loadWaveform(const juce::AudioBuffer<float> &buffer,
     interpolator.reset();
   }
 
-  // Restore playing state if preserving position (e.g., during incremental
-  // synthesis)
-  if (preservePosition && wasPlaying) {
-    playing = true;
-  }
-
-
   if (loopEnabled.load()) {
     auto loopStart = loopStartSample.load();
     auto loopEnd = loopEndSample.load();
-    const int64_t waveformLength = currentWaveform.getNumSamples();
-    loopStart = juce::jlimit<int64_t>(0, waveformLength, loopStart);
-    loopEnd = juce::jlimit<int64_t>(0, waveformLength, loopEnd);
+    loopStart = juce::jlimit<int64_t>(0, newLength, loopStart);
+    loopEnd = juce::jlimit<int64_t>(0, newLength, loopEnd);
     loopStartSample.store(loopStart);
     loopEndSample.store(loopEnd);
     if (loopEnd <= loopStart)

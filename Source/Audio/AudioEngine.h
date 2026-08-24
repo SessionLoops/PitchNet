@@ -85,6 +85,15 @@ private:
   juce::AudioDeviceManager deviceManager;
   juce::AudioSourcePlayer audioSourcePlayer;
 
+  /// Publish a freshly rendered waveform for the audio thread to pick up.
+  /// Called on the message thread; the swap itself happens in
+  /// getNextAudioBlock() so playback is never gated on the copy.
+  void publishWaveform(const juce::AudioBuffer<float> &buffer, int sampleRate);
+
+  /// Audio-thread side of the handoff: installs pendingWaveform and blends the
+  /// outgoing samples into it across kWaveformSwapFadeSamples at the playhead.
+  void applyPendingWaveformSwap();
+
   Project *project = nullptr;
   juce::AudioBuffer<float> currentWaveform;
   int waveformSampleRate = 44100;
@@ -118,6 +127,21 @@ private:
 
   // Thread safety for waveform updates
   juce::SpinLock waveformLock;
+
+  // Deferred waveform handoff. An incremental resynthesis commit publishes the
+  // new composite here instead of stopping playback and deep-copying under
+  // waveformLock; the audio thread installs it between blocks and crossfades
+  // the outgoing samples into it, so a render that lands mid-playback is
+  // inaudible rather than a hard silence gap on both edges.
+  static constexpr int kWaveformSwapFadeSamples = 512;
+
+  juce::AudioBuffer<float> pendingWaveform;
+  int pendingWaveformSampleRate = 44100;
+  // Holds the outgoing buffer so its deallocation happens on the message
+  // thread (in publishWaveform) rather than inside the audio callback.
+  juce::AudioBuffer<float> retiredWaveform;
+  juce::SpinLock pendingWaveformLock;
+  std::atomic<bool> waveformSwapPending{false};
 
   // Volume control (linear gain, lock-free for audio thread)
   std::atomic<float> volumeGain{1.0f};

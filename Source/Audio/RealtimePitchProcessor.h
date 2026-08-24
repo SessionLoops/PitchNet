@@ -42,11 +42,24 @@ private:
     void startComputation();
     void computeInBackground();
 
+    /// Install a newly built cache. Keeps the outgoing buffer alive so
+    /// processBlock() can ramp between the two instead of cutting.
+    /// Caller must hold bufferLock.
+    void publishProcessedBuffer(juce::AudioBuffer<float>&& buffer);
+
     Project* project = nullptr;
     Vocoder* vocoder = nullptr;
     double sampleRate = 44100.0;
 
+    // Length of the ramp between an outgoing and an incoming cache. A
+    // resynthesis commit that lands mid-playback used to drop straight to the
+    // dry input until the new cache was built, which is an abrupt jump between
+    // two unrelated signals at both edges.
+    static constexpr int kBufferSwapFadeSamples = 512;
+
     juce::AudioBuffer<float> processedBuffer;
+    juce::AudioBuffer<float> previousProcessedBuffer;
+    int swapFadeRemaining = 0;
     std::atomic<bool> ready{false};
     std::atomic<bool> computing{false};
     std::atomic<bool> cancelCompute{false};

@@ -141,13 +141,69 @@ bool RealtimePitchProcessor::processBlock(
 
     for (int ch = channelsToCopy; ch < numChannels; ++ch)
       output.clear(ch, 0, numSamples);
+
+    // Ramp out of the cache this render replaced. Both caches describe the
+    // same timeline and are identical outside the re-rendered region, so the
+    // ramp is linear (smoothstep-weighted) and leaves untouched audio
+    // bit-exact; an equal-power fade would sum to sqrt(2) on correlated
+    // content and add an audible level bump at every commit.
+    if (swapFadeRemaining > 0) {
+      const int previousAvailable =
+          previousProcessedBuffer.getNumSamples() - static_cast<int>(posSamples);
+      const int fadeCount =
+          std::min({swapFadeRemaining, toCopy, std::max(0, previousAvailable)});
+      const int fadeChannels =
+          std::min(channelsToCopy, previousProcessedBuffer.getNumChannels());
+      const float fadeTotal = static_cast<float>(kBufferSwapFadeSamples);
+
+      for (int ch = 0; ch < fadeChannels; ++ch) {
+        const float *outgoing = previousProcessedBuffer.getReadPointer(
+            ch, static_cast<int>(posSamples));
+        float *blended = output.getWritePointer(ch);
+        for (int sample = 0; sample < fadeCount; ++sample) {
+          const float t = juce::jlimit(
+              0.0f, 1.0f,
+              static_cast<float>(kBufferSwapFadeSamples - swapFadeRemaining +
+                                 sample) /
+                  fadeTotal);
+          const float weight = t * t * (3.0f - 2.0f * t);
+          blended[sample] =
+              outgoing[sample] + weight * (blended[sample] - outgoing[sample]);
+        }
+      }
+
+      swapFadeRemaining = std::max(0, swapFadeRemaining - toCopy);
+      if (swapFadeRemaining == 0)
+        previousProcessedBuffer.setSize(0, 0, false, false, true);
+    }
   }
 
   return true;
 }
 
+void RealtimePitchProcessor::publishProcessedBuffer(
+    juce::AudioBuffer<float> &&buffer) {
+  const bool canCrossfade =
+      ready.load() && processedBuffer.getNumSamples() > 0 &&
+      buffer.getNumSamples() > 0;
+
+  if (canCrossfade) {
+    previousProcessedBuffer = std::move(processedBuffer);
+    swapFadeRemaining = kBufferSwapFadeSamples;
+  } else {
+    previousProcessedBuffer.setSize(0, 0, false, false, true);
+    swapFadeRemaining = 0;
+  }
+
+  processedBuffer = std::move(buffer);
+  ready = processedBuffer.getNumSamples() > 0;
+}
+
 void RealtimePitchProcessor::invalidate() {
-  ready = false;
+  // Deliberately does NOT clear `ready`. Keep serving the existing cache until
+  // its replacement is built, then hand over with a ramp in processBlock().
+  // Dropping to passthrough here means every resynthesis commit that lands
+  // during playback cuts to the dry input and back.
   const auto generation = invalidateGeneration.fetch_add(1) + 1;
 
   Project *proj = nullptr;
@@ -184,8 +240,7 @@ void RealtimePitchProcessor::invalidate() {
   if (srcSampleRate == dstSampleRate || srcSampleRate <= 0) {
     // No resampling needed
     const juce::ScopedLock sl(bufferLock);
-    processedBuffer.makeCopyOf(waveformSnapshot);
-    ready = true;
+    publishProcessedBuffer(std::move(waveformSnapshot));
   } else {
     // Build the host-rate cache in the background. Chaining ownership of the
     // previous worker keeps destruction safe without blocking the caller.
@@ -206,8 +261,7 @@ void RealtimePitchProcessor::invalidate() {
           const juce::ScopedLock sl(bufferLock);
           if (invalidateGeneration.load() != generation)
             return;
-          processedBuffer = std::move(resampled);
-          ready = processedBuffer.getNumSamples() > 0;
+          publishProcessedBuffer(std::move(resampled));
         });
   }
 }
