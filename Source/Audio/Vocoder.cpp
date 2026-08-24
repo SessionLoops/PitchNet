@@ -20,10 +20,10 @@ namespace
   constexpr float kF0MinValid = 20.0f;
   constexpr float kF0MaxValid = 2000.0f;
 
-  // Maximum frames per single ONNX inference call.
-  // Large tensors can cause "Error in building plan" on CoreML and OOM on other
-  // providers.  512 frames ≈ 5.9 s at 44100/512 and is safe across all backends.
-  constexpr size_t kMaxChunkFrames = 512;
+  // Prefer a longer request to reduce chunk boundaries. Core ML requests that
+  // cannot run at this size are retried at the conservative fallback below.
+  constexpr size_t kMaxChunkFrames = 1024;
+  constexpr size_t kCoreMLFallbackChunkFrames = 512;
   // Overlap between adjacent chunks for crossfade (in frames).
   constexpr size_t kOverlapFrames = 16;
 
@@ -477,72 +477,63 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 #if __APPLE__
   if (usingCoreMLModel && coreMLBackend)
   {
-    if (numFrames <= kMaxChunkFrames)
-    {
-      auto result = inferCoreMLChunkLocked(mel, f0, numFrames);
-      if (result.empty())
-      {
-        log("Core ML single-chunk inference failed");
-        return {};
-      }
-      return result;
-    }
-
-    const size_t step = kMaxChunkFrames - kOverlapFrames;
-    const size_t overlapSamples =
-        kOverlapFrames * static_cast<size_t>(hopSize);
-    const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
-
-    size_t numChunks = 0;
-    for (size_t off = 0; off < numFrames; off += step)
-      ++numChunks;
-
-    log("Core ML chunked inference: " + std::to_string(numFrames) +
-        " frames -> " + std::to_string(numChunks) + " chunks");
-
-    std::vector<float> waveform(totalSamples, 0.0f);
-    size_t waveformWriteEnd = 0;
-
-    for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
-         ++chunkIdx, frameOff += step)
-    {
-      const size_t chunkEnd =
-          std::min(frameOff + kMaxChunkFrames, numFrames);
-      const size_t chunkFrames = chunkEnd - frameOff;
-
-      std::vector<std::vector<float>> chunkMel(
-          mel.begin() + static_cast<ptrdiff_t>(frameOff),
-          mel.begin() + static_cast<ptrdiff_t>(chunkEnd));
-      std::vector<float> chunkF0(
-          f0.begin() + static_cast<ptrdiff_t>(frameOff),
-          f0.begin() + static_cast<ptrdiff_t>(chunkEnd));
-
-      auto chunkWav = inferCoreMLChunkLocked(chunkMel, chunkF0, chunkFrames);
-      if (chunkWav.empty())
-      {
-        log("Core ML chunk " + std::to_string(chunkIdx) +
-            " inference failed");
-        return {};
+    auto inferCoreMLWithChunkSize = [&](size_t maxChunkFrames) {
+      if (numFrames <= maxChunkFrames) {
+        auto result = inferCoreMLChunkLocked(mel, f0, numFrames);
+        if (result.empty())
+          log("Core ML single-chunk inference failed at " +
+              std::to_string(maxChunkFrames) + " frames");
+        return result;
       }
 
-      const size_t dstOffset = frameOff * static_cast<size_t>(hopSize);
-      const size_t chunkSamples = chunkWav.size();
+      const size_t step = maxChunkFrames - kOverlapFrames;
+      const size_t overlapSamples =
+          kOverlapFrames * static_cast<size_t>(hopSize);
+      const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
+      size_t numChunks = 0;
+      for (size_t off = 0; off < numFrames; off += step)
+        ++numChunks;
 
-      if (chunkIdx == 0)
-      {
-        const size_t copyLen = std::min(chunkSamples, totalSamples);
-        std::copy_n(chunkWav.begin(), copyLen, waveform.begin());
-        waveformWriteEnd = copyLen;
-      }
-      else
-      {
+      log("Core ML chunked inference: " + std::to_string(numFrames) +
+          " frames -> " + std::to_string(numChunks) + " chunks (max " +
+          std::to_string(maxChunkFrames) + ")");
+
+      std::vector<float> waveform(totalSamples, 0.0f);
+      size_t waveformWriteEnd = 0;
+      for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
+           ++chunkIdx, frameOff += step) {
+        const size_t chunkEnd =
+            std::min(frameOff + maxChunkFrames, numFrames);
+        const size_t chunkFrames = chunkEnd - frameOff;
+        std::vector<std::vector<float>> chunkMel(
+            mel.begin() + static_cast<ptrdiff_t>(frameOff),
+            mel.begin() + static_cast<ptrdiff_t>(chunkEnd));
+        std::vector<float> chunkF0(
+            f0.begin() + static_cast<ptrdiff_t>(frameOff),
+            f0.begin() + static_cast<ptrdiff_t>(chunkEnd));
+        auto chunkWav =
+            inferCoreMLChunkLocked(chunkMel, chunkF0, chunkFrames);
+        if (chunkWav.empty()) {
+          log("Core ML chunk " + std::to_string(chunkIdx) +
+              " inference failed at " + std::to_string(maxChunkFrames) +
+              " frames");
+          return std::vector<float>{};
+        }
+
+        const size_t dstOffset = frameOff * static_cast<size_t>(hopSize);
+        const size_t chunkSamples = chunkWav.size();
+        if (chunkIdx == 0) {
+          const size_t copyLen = std::min(chunkSamples, totalSamples);
+          std::copy_n(chunkWav.begin(), copyLen, waveform.begin());
+          waveformWriteEnd = copyLen;
+          continue;
+        }
+
         const size_t prevTail =
-            (waveformWriteEnd > dstOffset) ? (waveformWriteEnd - dstOffset) : 0;
+            waveformWriteEnd > dstOffset ? waveformWriteEnd - dstOffset : 0;
         const size_t fadeSamples =
             std::min({overlapSamples, prevTail, chunkSamples});
-
-        for (size_t i = 0; i < fadeSamples; ++i)
-        {
+        for (size_t i = 0; i < fadeSamples; ++i) {
           const float t =
               static_cast<float>(i) / static_cast<float>(fadeSamples);
           waveform[dstOffset + i] =
@@ -551,23 +542,30 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 
         const size_t dstTailStart = dstOffset + fadeSamples;
         const size_t srcTailLen =
-            (chunkSamples > fadeSamples) ? (chunkSamples - fadeSamples) : 0;
+            chunkSamples > fadeSamples ? chunkSamples - fadeSamples : 0;
         const size_t safeTailLen =
             std::min(srcTailLen, totalSamples - dstTailStart);
         if (safeTailLen > 0)
-        {
           std::copy_n(chunkWav.begin() + static_cast<ptrdiff_t>(fadeSamples),
                       safeTailLen,
                       waveform.begin() + static_cast<ptrdiff_t>(dstTailStart));
-        }
-        waveformWriteEnd =
-            std::min(dstTailStart + safeTailLen, totalSamples);
+        waveformWriteEnd = std::min(dstTailStart + safeTailLen, totalSamples);
       }
-    }
 
-    waveform.resize(waveformWriteEnd);
-    for (auto &s : waveform)
-      s = std::clamp(s, -1.0f, 1.0f);
+      waveform.resize(waveformWriteEnd);
+      for (auto &sample : waveform)
+        sample = std::clamp(sample, -1.0f, 1.0f);
+      return waveform;
+    };
+
+    auto waveform = inferCoreMLWithChunkSize(kMaxChunkFrames);
+    if (waveform.empty() && numFrames > kCoreMLFallbackChunkFrames) {
+      log("Core ML retrying inference with " +
+          std::to_string(kCoreMLFallbackChunkFrames) + "-frame chunks");
+      waveform = inferCoreMLWithChunkSize(kCoreMLFallbackChunkFrames);
+    }
+    if (waveform.empty())
+      return {};
 
     if (verboseInferLog)
     {
@@ -577,8 +575,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
                                                                 startTotal)
               .count();
       log("Core ML vocoder infer [" + std::to_string(numFrames) +
-          " frames, " + std::to_string(numChunks) + " chunks] total=" +
-          std::to_string(totalMs) + "ms");
+          " frames] total=" + std::to_string(totalMs) + "ms");
     }
 
     return waveform;
