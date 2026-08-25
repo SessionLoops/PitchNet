@@ -275,11 +275,62 @@ PsolaSynthesizer::render(const Request &request,
            static_cast<double>(request.sourceStartSample);
   };
 
+  // Nearest pitch mark to a slice position, or -1 when the nearest one is not
+  // actually near - the pre-roll before the first, the tail past the last, or
+  // a voiced stretch too short to have been marked. Callers fall back to the
+  // copy path there rather than stamping one distant pulse repeatedly.
+  auto nearestMark = [&](double sourceSample) -> int {
+    if (marks.empty())
+      return -1;
+    const auto upper = std::lower_bound(
+        marks.begin(), marks.end(), static_cast<int>(std::lround(sourceSample)));
+    int index = static_cast<int>(upper - marks.begin());
+    if (index >= static_cast<int>(marks.size()))
+      index = static_cast<int>(marks.size()) - 1;
+    if (index > 0) {
+      const double here =
+          std::abs(marks[static_cast<size_t>(index)] - sourceSample);
+      const double before =
+          std::abs(marks[static_cast<size_t>(index - 1)] - sourceSample);
+      if (before < here)
+        --index;
+    }
+    if (std::abs(marks[static_cast<size_t>(index)] - sourceSample) >
+        periodAt(request, sourceSample))
+      return -1;
+    return index;
+  };
+
   auto ratioAt = [&](double outputSample) {
     const double outputFrame = outputSample / static_cast<double>(hopSize);
     return std::clamp(dspSynthesis::samplePitchRatio(request.pitchRatio,
                                                      outputFrame, numOutputFrames),
                       kMinPitchRatio, kMaxPitchRatio);
+  };
+
+  // How far the first grain of a voiced run starting at this output position
+  // would have to move to land on its pitch mark, in output samples. Zero when
+  // there is no such run or no mark near it.
+  auto anchorCorrectionAt = [&](double outputSample) -> double {
+    const double source = sourcePositionAt(outputSample);
+    const double sourceFrameHere =
+        frameForSliceSample(source, request.sourceStartSample, hopSize);
+    if (!voicedAtFrame(request.sourceVoiced, sourceFrameHere))
+      return 0.0;
+    const int index = nearestMark(source);
+    if (index < 0)
+      return 0.0;
+
+    const double delta = 0.5 * static_cast<double>(hopSize);
+    const double slope = (sourcePositionAt(outputSample + delta) -
+                          sourcePositionAt(outputSample - delta)) /
+                         (2.0 * delta);
+    if (slope <= 1.0e-3)
+      return 0.0;
+
+    // The snap error is in source samples, so divide by the local
+    // d(source)/d(output) to land back in output samples.
+    return (static_cast<double>(marks[static_cast<size_t>(index)]) - source) / slope;
   };
 
   // Lay grains along the output timeline. Each one independently asks the time
@@ -311,30 +362,8 @@ PsolaSynthesizer::render(const Request &request,
     int index = 0;
 
     if (voiced) {
-      // Nearest pitch mark to where this output instant reads from.
-      const auto upper = std::lower_bound(
-          marks.begin(), marks.end(), static_cast<int>(std::lround(sourcePosition)));
-      index = static_cast<int>(upper - marks.begin());
-      if (index >= static_cast<int>(marks.size()))
-        index = static_cast<int>(marks.size()) - 1;
-      if (index > 0) {
-        const double here = std::abs(marks[static_cast<size_t>(index)] - sourcePosition);
-        const double before =
-            std::abs(marks[static_cast<size_t>(index - 1)] - sourcePosition);
-        if (before < here)
-          --index;
-      }
-
-      // "Nearest" is only meaningful if it is actually near. Inside a marked
-      // run the nearest mark is at most half a period away; further than a
-      // full period means there is no mark here at all - the pre-roll ahead
-      // of the first one, the tail past the last, or a voiced stretch too
-      // short for the detector to have marked. Snapping anyway stamps one
-      // distant pulse over and over, so hand those frames to the copy path
-      // instead, which is what they wanted in the first place.
-      const double distance =
-          std::abs(static_cast<double>(marks[static_cast<size_t>(index)]) - sourcePosition);
-      if (distance > periodAt(request, sourcePosition))
+      index = nearestMark(sourcePosition);
+      if (index < 0)
         voiced = false;
       else
         grainCentre = marks[static_cast<size_t>(index)];
@@ -385,6 +414,42 @@ PsolaSynthesizer::render(const Request &request,
       grainCentre = static_cast<int>(std::lround(sourcePosition));
       grainHalf = unvoicedGrainHalf;
       advance = static_cast<double>(unvoicedGrainHalf);
+
+      // Spend the next voiced run's anchor here instead of at the onset.
+      //
+      // The anchor shifts the first grain of a run onto its pitch mark. Doing
+      // that at the onset jumps the output timeline, and a forward jump
+      // vacates a stretch nothing else covers: measured, the output dips to
+      // about 0.6 of the source for several milliseconds immediately before
+      // the note starts, which is audible as a click - and it lands exactly
+      // where the blend mask is ramping between synthesized and original.
+      //
+      // Grain positions on this path are free, because the copy places its
+      // content wherever the time map says regardless of where the grain sits.
+      // So absorbing the correction into this advance moves the boundary
+      // rather than tearing a hole at it, and the voiced run then starts
+      // already aligned with nothing left to jump.
+      const double correction = anchorCorrectionAt(outputPosition + advance);
+      if (correction != 0.0) {
+        // Keep consecutive grains overlapping by at least a quarter so the
+        // envelope cannot dip here either; any remainder is small enough for
+        // the onset anchor to take without a visible gap.
+        const double maxAdvance = 1.5 * static_cast<double>(unvoicedGrainHalf);
+        advance = std::clamp(advance + correction, 4.0, maxAdvance);
+      }
+
+      // Widen the grain to at least the hop it is about to take. On a copy
+      // path the width is free - the content lands where the time map says
+      // regardless of how much of it a grain carries - and holding width >=
+      // hop keeps consecutive grains at 50% overlap or better, so the
+      // overlap-add envelope never dips.
+      //
+      // Without this, absorbing a correction above stretches the hop past the
+      // grain and the two windows meet on their tails instead of their
+      // shoulders: measured, the envelope fell to ~0.2, under the floor
+      // below, and the output dropped to ~0.6 of the source for a few
+      // milliseconds. Which is the click this was supposed to remove.
+      grainHalf = std::max(grainHalf, static_cast<int>(std::ceil(advance)));
     }
 
     const double maxAdvance =
