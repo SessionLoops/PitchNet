@@ -1234,6 +1234,48 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               sampleGain[static_cast<size_t>(i)] *= gain;
             }
           }
+          // Soften the steps between notes.
+          //
+          // sampleGain is piecewise constant, so every note edge where the
+          // volume differs from its neighbour is a discontinuity in the
+          // signal - a click by construction, whichever engine produced the
+          // audio. A centred box filter turns each step into a linear ramp of
+          // the same length, and because it acts on the finished gain curve it
+          // needs no per-edge cases: abutting notes with different volumes
+          // cross over smoothly, an isolated note fades in and out of the
+          // surrounding unity gain, and a constant stretch is returned
+          // unchanged.
+          //
+          // Half a hop is a few milliseconds - long enough to remove the
+          // discontinuity, short enough not to audibly reshape a note's
+          // attack. Indices are clamped rather than zero-padded so the region
+          // edges are not ramped toward silence.
+          {
+            const int rampSamples = std::max(64, hopSize / 2);
+            const int half = rampSamples / 2;
+            const int last = samplesToWrite - 1;
+            if (samplesToWrite > 2 * half + 1) {
+              auto at = [&](int index) {
+                return static_cast<double>(
+                    sampleGain[static_cast<size_t>(std::clamp(index, 0, last))]);
+              };
+
+              double running = 0.0;
+              for (int k = -half; k <= half; ++k)
+                running += at(k);
+
+              const double norm = 1.0 / static_cast<double>(2 * half + 1);
+              std::vector<float> smoothedGain(static_cast<size_t>(samplesToWrite));
+              for (int i = 0; i < samplesToWrite; ++i) {
+                smoothedGain[static_cast<size_t>(i)] =
+                    static_cast<float>(running * norm);
+                running -= at(i - half);
+                running += at(i + half + 1);
+              }
+              sampleGain.swap(smoothedGain);
+            }
+          }
+
           for (int i = 0; i < samplesToWrite; ++i) {
             targetSegment[static_cast<size_t>(i)] *=
                 sampleGain[static_cast<size_t>(i)];
