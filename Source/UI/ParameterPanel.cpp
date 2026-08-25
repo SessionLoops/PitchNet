@@ -399,11 +399,48 @@ void ParameterPanel::resized()
     synthesisSectionLabel.setBounds(bounds.removeFromTop(20));
     bounds.removeFromTop(rowGap + 2);
 
-    auto engineRow = bounds.removeFromTop(22);
-    auto vocoderArea = engineRow.removeFromLeft((engineRow.getWidth() - columnGap) / 2);
-    engineRow.removeFromLeft(columnGap);
-    vocoderEngineToggle.setBounds(vocoderArea);
-    psolaEngineToggle.setBounds(engineRow);
+    // The two engine labels are different lengths, so split the row by what
+    // each one actually needs rather than in half. Measured from the real
+    // typeface at the real size, so this survives a font change, DPI scaling
+    // and translation - an estimate would not. 30px is the radio circle and
+    // its gap, which RadioButton::paintButton trims off; 4px keeps the longer
+    // label clear of its neighbour.
+    const auto engineFont = AppFont::getFont(15.0f);
+    constexpr int radioInset = 30;
+    constexpr int labelPad = 4;
+
+    const int vocoderNeeds =
+        radioInset + labelPad +
+        juce::GlyphArrangement::getStringWidthInt(engineFont,
+                                                  vocoderEngineToggle.getButtonText());
+    const int psolaNeeds =
+        radioInset + labelPad +
+        juce::GlyphArrangement::getStringWidthInt(engineFont,
+                                                  psolaEngineToggle.getButtonText());
+
+    if (vocoderNeeds + psolaNeeds + columnGap <= bounds.getWidth())
+    {
+        // Side by side, each taking what it needs and the first taking the
+        // slack, so the pair stays left-aligned against the card.
+        auto engineRow = bounds.removeFromTop(22);
+        auto vocoderArea =
+            engineRow.removeFromLeft(engineRow.getWidth() - columnGap - psolaNeeds);
+        engineRow.removeFromLeft(columnGap);
+        vocoderEngineToggle.setBounds(vocoderArea);
+        psolaEngineToggle.setBounds(engineRow);
+    }
+    else
+    {
+        // A label too long for half a row goes full width on its own line
+        // rather than being squashed by drawFittedText, which shrinks the font
+        // instead of truncating and would leave one option visibly smaller
+        // than everything else in the panel. The card measures its own height
+        // from where the layout ends, so it simply grows and the cards below
+        // shift down.
+        vocoderEngineToggle.setBounds(bounds.removeFromTop(22));
+        bounds.removeFromTop(rowGap);
+        psolaEngineToggle.setBounds(bounds.removeFromTop(22));
+    }
 
     const int synthesisCardBottom = bounds.getY() + innerPadY;
     synthesisCardBounds = juce::Rectangle<int>(

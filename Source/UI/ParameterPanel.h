@@ -80,7 +80,7 @@ private:
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel { {}, "Time" };
     juce::Rectangle<int> timeCardBounds;
-    juce::Label synthesisSectionLabel { {}, "Resynthesis" };
+    juce::Label synthesisSectionLabel { {}, "Rendering" };
     juce::Rectangle<int> synthesisCardBounds;
     juce::Label brightnessSectionLabel { {}, "UI Brightness" };
     juce::Rectangle<int> brightnessCardBounds;
@@ -88,12 +88,16 @@ private:
     RadioButton chromaticToggle { "Chromatic" };
     RadioButton scaleToggle { "Scale" };
 
-    // Which engine resynthesizes an edited region. Named for the mechanism
-    // rather than ranked by quality: neither is better everywhere. The model
-    // wins on large pitch moves, and PSOLA returns untouched audio bit for
-    // bit, so a quality ordering would be wrong half the time. The member
+    // How an edited region is rendered. Only one of these is resynthesis in
+    // the analysis/resynthesis sense - the model turns a spectrum back into a
+    // signal, while PSOLA never leaves the time domain and emits the original
+    // samples, windowed and repositioned. Hence "Rendering" as the umbrella
+    // and the asymmetric labels.
+    //
+    // Not ranked by quality: neither is better everywhere. The model wins on
+    // large pitch moves, PSOLA returns untouched audio bit for bit. The member
     // names track the enum, the button text is what the user reads.
-    RadioButton vocoderEngineToggle { "Neural" };
+    RadioButton vocoderEngineToggle { "AI Resynthesis" };
     RadioButton psolaEngineToggle { "Classic" };
 
     juce::Label referenceLabel { {}, "Reference (A4)" };
