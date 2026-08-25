@@ -204,6 +204,18 @@ ParameterPanel::ParameterPanel()
         radio->addListener(this);
     }
 
+    // The button text stays plain language; the algorithm names live here, so
+    // they are discoverable without putting "PC-NSF-HiFiGAN" in a 55px label.
+    vocoderEngineToggle.setTooltip(
+        "Neural vocoder (PC-NSF-HiFiGAN)\n"
+        "Rebuilds the voice from its spectrum. Handles large pitch moves best, "
+        "and reshapes tone across the whole edited region.");
+    psolaEngineToggle.setTooltip(
+        "Classic DSP (time-domain PSOLA)\n"
+        "Shifts the original recording itself. Leaves untouched audio "
+        "identical and needs no model, so it is far faster on CPU. Large "
+        "pitch moves are rougher.");
+
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel })
     {

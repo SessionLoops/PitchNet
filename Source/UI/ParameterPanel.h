@@ -80,7 +80,7 @@ private:
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel { {}, "Time" };
     juce::Rectangle<int> timeCardBounds;
-    juce::Label synthesisSectionLabel { {}, "Synthesis" };
+    juce::Label synthesisSectionLabel { {}, "Resynthesis" };
     juce::Rectangle<int> synthesisCardBounds;
     juce::Label brightnessSectionLabel { {}, "UI Brightness" };
     juce::Rectangle<int> brightnessCardBounds;
@@ -88,10 +88,13 @@ private:
     RadioButton chromaticToggle { "Chromatic" };
     RadioButton scaleToggle { "Scale" };
 
-    // Which engine resynthesizes an edited region: the neural vocoder, or
-    // PSOLA working from the original waveform.
-    RadioButton vocoderEngineToggle { "Vocoder" };
-    RadioButton psolaEngineToggle { "PSOLA" };
+    // Which engine resynthesizes an edited region. Named for the mechanism
+    // rather than ranked by quality: neither is better everywhere. The model
+    // wins on large pitch moves, and PSOLA returns untouched audio bit for
+    // bit, so a quality ordering would be wrong half the time. The member
+    // names track the enum, the button text is what the user reads.
+    RadioButton vocoderEngineToggle { "Neural" };
+    RadioButton psolaEngineToggle { "Classic" };
 
     juce::Label referenceLabel { {}, "Reference (A4)" };
     SliderBox referenceSlider { "Pitch Reference" };
