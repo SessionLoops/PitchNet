@@ -380,7 +380,7 @@ void ParameterPanel::resized()
 
     constexpr int cardPadX = 5;    // horizontal padding outside cards
     constexpr int cardPadY = 6;    // vertical padding outside cards
-    constexpr int cardGap = 6;     // gap between pitch and time cards
+    constexpr int cardGap = 6;     // gap between cards
     constexpr int innerPadX = 10;  // padding inside each card
     constexpr int innerPadY = 8;   // padding inside each card
     constexpr int rowGap = 5;
@@ -388,10 +388,33 @@ void ParameterPanel::resized()
 
     auto cardArea = outerBounds.reduced(cardPadX, cardPadY);
     // =========================================================================
+    // SYNTHESIS CARD
+    // =========================================================================
+    const int synthesisCardStart = cardArea.getY();
+    auto bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
+                                       synthesisCardStart + innerPadY,
+                                       cardArea.getWidth() - innerPadX * 2,
+                                       cardArea.getBottom() - synthesisCardStart - innerPadY * 2);
+
+    synthesisSectionLabel.setBounds(bounds.removeFromTop(20));
+    bounds.removeFromTop(rowGap + 2);
+
+    auto engineRow = bounds.removeFromTop(22);
+    auto vocoderArea = engineRow.removeFromLeft((engineRow.getWidth() - columnGap) / 2);
+    engineRow.removeFromLeft(columnGap);
+    vocoderEngineToggle.setBounds(vocoderArea);
+    psolaEngineToggle.setBounds(engineRow);
+
+    const int synthesisCardBottom = bounds.getY() + innerPadY;
+    synthesisCardBounds = juce::Rectangle<int>(
+        cardArea.getX(), synthesisCardStart, cardArea.getWidth(),
+        synthesisCardBottom - synthesisCardStart);
+
+    // =========================================================================
     // TIME CARD
     // =========================================================================
-    const int timeCardStart = cardArea.getY();
-    auto bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
+    const int timeCardStart = synthesisCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
     timeSectionLabel.setBounds(bounds.removeFromTop(20));
@@ -467,32 +490,9 @@ void ParameterPanel::resized()
         : juce::Rectangle<int>();
 
     // =========================================================================
-    // SYNTHESIS CARD
-    // =========================================================================
-    const int synthesisCardStart = pitchCardBottom + cardGap;
-    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
-                                  synthesisCardStart + innerPadY,
-                                  cardArea.getWidth() - innerPadX * 2,
-                                  cardArea.getBottom() - synthesisCardStart - innerPadY * 2);
-
-    synthesisSectionLabel.setBounds(bounds.removeFromTop(20));
-    bounds.removeFromTop(rowGap + 2);
-
-    auto engineRow = bounds.removeFromTop(22);
-    auto vocoderArea = engineRow.removeFromLeft((engineRow.getWidth() - columnGap) / 2);
-    engineRow.removeFromLeft(columnGap);
-    vocoderEngineToggle.setBounds(vocoderArea);
-    psolaEngineToggle.setBounds(engineRow);
-
-    const int synthesisCardBottom = bounds.getY() + innerPadY;
-    synthesisCardBounds = juce::Rectangle<int>(
-        cardArea.getX(), synthesisCardStart, cardArea.getWidth(),
-        synthesisCardBottom - synthesisCardStart);
-
-    // =========================================================================
     // UI BRIGHTNESS CARD
     // =========================================================================
-    const int brightnessCardStart = synthesisCardBottom + cardGap;
+    const int brightnessCardStart = pitchCardBottom + cardGap;
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
                                   brightnessCardStart + innerPadY,
                                   cardArea.getWidth() - innerPadX * 2,
