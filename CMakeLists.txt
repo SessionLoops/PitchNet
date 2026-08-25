@@ -8,7 +8,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
         "macOS target architectures" FORCE)
 endif()
 
-project(PitchNet VERSION 0.5.3)
+project(PitchNet VERSION 0.5.5)
 
 include(FetchContent)
 include(cmake/Asio.cmake)
