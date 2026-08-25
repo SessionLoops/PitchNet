@@ -204,7 +204,6 @@ public:
   void updateHostAudioTimelineOffset(double timelineOffsetSeconds) override;
   void clearHostAudio() override;
   void focusTimelineRange(double startSeconds, double endSeconds) override;
-  void renderProcessedAudio();
 
   // Plugin mode callbacks
   std::function<void()>

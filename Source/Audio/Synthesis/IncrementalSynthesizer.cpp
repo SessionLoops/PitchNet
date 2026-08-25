@@ -1,4 +1,5 @@
 #include "IncrementalSynthesizer.h"
+#include "../../Utils/Constants.h"
 #include "../../Utils/Localization.h"
 #include "../../Utils/TimingRegionUtils.h"
 #include <algorithm>
@@ -145,6 +146,77 @@ void applyNoteTimingToMel(const Project &project, int rangeStart,
                       note.getSrcEndFrame(), note.getStartFrame(),
                       note.getEndFrame(), rangeStart, rangeEnd, melRange);
   }
+}
+
+void moveSourceFrameInterval(const PreservedTimingSpan &span, int rangeStart,
+                             int rangeEnd,
+                             std::vector<double> &sourceFrameMap) {
+  const int overlapStart = std::max(rangeStart, span.destinationStart);
+  const int overlapEnd = std::min(rangeEnd, span.destinationEnd);
+  for (int frame = overlapStart; frame < overlapEnd; ++frame)
+    sourceFrameMap[static_cast<size_t>(frame - rangeStart)] =
+        static_cast<double>(span.sourceStart + frame - span.destinationStart);
+}
+
+void retimeSourceFrameInterval(int sourceStart, int sourceEnd,
+                               int destinationStart, int destinationEnd,
+                               int rangeStart, int rangeEnd,
+                               std::vector<double> &sourceFrameMap) {
+  const int sourceLength = sourceEnd - sourceStart;
+  const int destinationLength = destinationEnd - destinationStart;
+  if (sourceLength <= 0 || destinationLength <= 0)
+    return;
+
+  const int overlapStart = std::max(rangeStart, destinationStart);
+  const int overlapEnd = std::min(rangeEnd, destinationEnd);
+  for (int frame = overlapStart; frame < overlapEnd; ++frame) {
+    const double normalized =
+        (static_cast<double>(frame - destinationStart) + 0.5) /
+        static_cast<double>(destinationLength);
+    sourceFrameMap[static_cast<size_t>(frame - rangeStart)] =
+        static_cast<double>(sourceStart) + normalized * sourceLength - 0.5;
+  }
+}
+
+// The phase-vocoder counterpart of applyNoteTimingToMel(): the vocoder path
+// retimes the mel it feeds the model, this path retimes where the analysis
+// window reads from. Same spans, same order, so both engines place a
+// retimed note identically.
+void applyNoteTimingToSourceFrames(const Project &project, int rangeStart,
+                                   int rangeEnd,
+                                   std::vector<double> &sourceFrameMap) {
+  for (const auto &note : project.getNotes()) {
+    if (note.isRest() || !hasTimingEdit(note))
+      continue;
+
+    for (const auto &span : getPreservedTimingSpans(project, note))
+      moveSourceFrameInterval(span, rangeStart, rangeEnd, sourceFrameMap);
+
+    retimeSourceFrameInterval(note.getSrcStartFrame(), note.getSrcEndFrame(),
+                              note.getStartFrame(), note.getEndFrame(),
+                              rangeStart, rangeEnd, sourceFrameMap);
+  }
+}
+
+float interpolateF0(const std::vector<float> &f0, double frame) {
+  if (f0.empty())
+    return 0.0f;
+
+  frame = std::clamp(frame, 0.0, static_cast<double>(f0.size() - 1));
+  const int left = static_cast<int>(std::floor(frame));
+  const int right = std::min(left + 1, static_cast<int>(f0.size()) - 1);
+  const float leftValue = f0[static_cast<size_t>(left)];
+  const float rightValue = f0[static_cast<size_t>(right)];
+
+  // Never interpolate across an unvoiced gap: averaging a real pitch with a
+  // zero would halve it and swing the ratio wildly for one frame.
+  if (leftValue <= 0.0f)
+    return rightValue;
+  if (rightValue <= 0.0f)
+    return leftValue;
+
+  const float amount = static_cast<float>(frame - left);
+  return leftValue * (1.0f - amount) + rightValue * amount;
 }
 
 void applyPreservedTimingToF0(const Project &project, int rangeStart,
@@ -555,9 +627,62 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
 // ---------------------------------------------------------------------------
 // synthesizeRegion: Voiced-Only Blend approach.
 // ---------------------------------------------------------------------------
+std::vector<double>
+IncrementalSynthesizer::buildSourceFrameMap(int startFrame, int endFrame) const {
+  std::vector<double> sourceFrameMap;
+  if (!project || endFrame <= startFrame)
+    return sourceFrameMap;
+
+  sourceFrameMap.resize(static_cast<size_t>(endFrame - startFrame));
+  for (int frame = startFrame; frame < endFrame; ++frame)
+    sourceFrameMap[static_cast<size_t>(frame - startFrame)] =
+        static_cast<double>(frame);
+
+  applyNoteTimingToSourceFrames(*project, startFrame, endFrame, sourceFrameMap);
+  return sourceFrameMap;
+}
+
+std::vector<float> IncrementalSynthesizer::buildPitchRatioCurve(
+    int startFrame, int endFrame, const std::vector<double> &sourceFrameMap,
+    const std::vector<float> &targetF0) const {
+  std::vector<float> ratio;
+  if (!project || endFrame <= startFrame)
+    return ratio;
+
+  const auto &audioData = project->getAudioData();
+  const auto &sourceF0 =
+      audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+
+  const int numFrames = endFrame - startFrame;
+  ratio.assign(static_cast<size_t>(numFrames), 1.0f);
+  if (sourceF0.empty())
+    return ratio;
+
+  for (int frame = 0; frame < numFrames; ++frame) {
+    const size_t index = static_cast<size_t>(frame);
+    if (index >= targetF0.size() || index >= sourceFrameMap.size())
+      break;
+
+    const float target = targetF0[index];
+    const float source = interpolateF0(sourceF0, sourceFrameMap[index]);
+
+    // An unvoiced frame has no meaningful pitch to move. Those frames come
+    // from the original side of the blend anyway, so leaving the ratio at
+    // unity keeps the transform out of their way.
+    if (target > 0.0f && source > 0.0f)
+      ratio[index] = target / source;
+  }
+
+  return ratio;
+}
+
 void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                                               CompleteCallback onComplete) {
-  if (!project || !vocoder) {
+  // PSOLA transforms the original waveform, so it needs neither the model nor
+  // a loaded one, and it does not want the mel.
+  const bool usePsola = synthesisEngine == SynthesisEngineType::Psola;
+
+  if (!project || (!usePsola && !vocoder)) {
     if (onComplete)
       onComplete(false);
     return;
@@ -570,7 +695,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!vocoder->isLoaded()) {
+  if (!usePsola && !vocoder->isLoaded()) {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
+
+  if (usePsola && audioData.originalWaveform.getNumSamples() == 0 &&
+      audioData.waveform.getNumSamples() == 0) {
     if (onComplete)
       onComplete(false);
     return;
@@ -617,8 +749,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  // Generate blend mask before async call (voicedMask is stable here)
-  int hopSize = vocoder->getHopSize();
+  // Generate blend mask before async call (voicedMask is stable here).
+  // Both engines share the analysis frame grid; the phase vocoder just may
+  // not have a model to ask for it.
+  const int hopSize = (vocoder != nullptr && vocoder->isLoaded())
+                          ? vocoder->getHopSize()
+                          : HOP_SIZE;
   std::vector<float> blendMask = generateBlendMask(startFrame, endFrame, hopSize);
 
   // Timing edits cannot be mixed with pristine samples at their destination
@@ -877,21 +1013,91 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     }
   }
 
-  std::vector<std::vector<float>> melRange;
-
-  if (melRange.empty()) {
-    melRange.assign(audioData.melSpectrogram.begin() + startFrame,
-                    audioData.melSpectrogram.begin() + endFrame);
-  }
-  applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
   std::vector<float> adjustedF0Range =
       project->getAdjustedF0ForRange(startFrame, endFrame);
   applyPreservedTimingToF0(*project, startFrame, endFrame, adjustedF0Range);
 
-  if (melRange.empty() || adjustedF0Range.empty()) {
+  if (adjustedF0Range.empty()) {
     if (onComplete)
       onComplete(false);
     return;
+  }
+
+  // Mel is the neural vocoder's input and is not cheap to copy, so the PSOLA
+  // path skips building it entirely.
+  std::vector<std::vector<float>> melRange;
+  if (!usePsola) {
+    melRange.assign(audioData.melSpectrogram.begin() + startFrame,
+                    audioData.melSpectrogram.begin() + endFrame);
+    applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
+
+    if (melRange.empty()) {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+  }
+
+  // PSOLA's two input curves: where each output frame reads from in the
+  // original audio, and how far its pitch has to move once it gets there.
+  // Built here on the message thread while the project is stable.
+  DspSynthesisRequest dspRequest;
+  if (usePsola) {
+    const auto sourceFrameMap = buildSourceFrameMap(startFrame, endFrame);
+    auto pitchRatio =
+        buildPitchRatioCurve(startFrame, endFrame, sourceFrameMap, adjustedF0Range);
+
+    if (sourceFrameMap.empty() || pitchRatio.empty()) {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+
+    // Copy only the span the curves actually reach, plus a window of context
+    // on each side, rather than the whole track on every keystroke.
+    double minSourceFrame = sourceFrameMap.front();
+    double maxSourceFrame = sourceFrameMap.front();
+    for (double frame : sourceFrameMap) {
+      minSourceFrame = std::min(minSourceFrame, frame);
+      maxSourceFrame = std::max(maxSourceFrame, frame);
+    }
+
+    // Enough margin for the widest grain PSOLA can ask for at the lowest
+    // pitch it will track, plus room for the mark search either side.
+    const int context = 4096;
+    const int totalSourceSamples = origWaveform.getNumSamples();
+    const int sourceStart = std::clamp(
+        static_cast<int>(std::floor(minSourceFrame)) * hopSize - context, 0,
+        std::max(0, totalSourceSamples));
+    const int sourceEnd = std::clamp(
+        (static_cast<int>(std::ceil(maxSourceFrame)) + 1) * hopSize + context, 0,
+        totalSourceSamples);
+
+    if (sourceEnd <= sourceStart || origWaveform.getNumChannels() <= 0) {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+
+    const float *sourcePtr = origWaveform.getReadPointer(0);
+    dspRequest.source.assign(sourcePtr + sourceStart, sourcePtr + sourceEnd);
+    dspRequest.sourceStartSample = sourceStart;
+    dspRequest.sourceFrame = sourceFrameMap;
+    dspRequest.pitchRatio = std::move(pitchRatio);
+    dspRequest.hopSize = hopSize;
+    dspRequest.numOutputFrames = endFrame - startFrame;
+    dspRequest.sampleRate = audioData.sampleRate;
+
+    // PSOLA places one grain per pitch period, so it needs the original pitch
+    // itself rather than only the ratio, and the voiced mask to know where a
+    // period is meaningful at all. Absolute frame indexing, so a retimed note
+    // reading outside the range still resolves.
+    dspRequest.sourceF0 =
+        audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+    dspRequest.sourceVoiced.resize(audioData.voicedMask.size());
+    for (size_t frame = 0; frame < audioData.voicedMask.size(); ++frame)
+      dspRequest.sourceVoiced[frame] =
+          audioData.voicedMask[frame] ? uint8_t{1} : uint8_t{0};
   }
 
   if (onProgress)
@@ -911,8 +1117,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   auto capturedProject = project;
 
 
-  vocoder->inferAsync(
-      std::move(melRange), std::move(adjustedF0Range),
+  // Everything past the render is engine-agnostic: both paths hand back the
+  // same span of samples and share this callback verbatim.
+  auto onRendered =
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
@@ -1027,6 +1234,48 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               sampleGain[static_cast<size_t>(i)] *= gain;
             }
           }
+          // Soften the steps between notes.
+          //
+          // sampleGain is piecewise constant, so every note edge where the
+          // volume differs from its neighbour is a discontinuity in the
+          // signal - a click by construction, whichever engine produced the
+          // audio. A centred box filter turns each step into a linear ramp of
+          // the same length, and because it acts on the finished gain curve it
+          // needs no per-edge cases: abutting notes with different volumes
+          // cross over smoothly, an isolated note fades in and out of the
+          // surrounding unity gain, and a constant stretch is returned
+          // unchanged.
+          //
+          // Half a hop is a few milliseconds - long enough to remove the
+          // discontinuity, short enough not to audibly reshape a note's
+          // attack. Indices are clamped rather than zero-padded so the region
+          // edges are not ramped toward silence.
+          {
+            const int rampSamples = std::max(64, hopSize / 2);
+            const int half = rampSamples / 2;
+            const int last = samplesToWrite - 1;
+            if (samplesToWrite > 2 * half + 1) {
+              auto at = [&](int index) {
+                return static_cast<double>(
+                    sampleGain[static_cast<size_t>(std::clamp(index, 0, last))]);
+              };
+
+              double running = 0.0;
+              for (int k = -half; k <= half; ++k)
+                running += at(k);
+
+              const double norm = 1.0 / static_cast<double>(2 * half + 1);
+              std::vector<float> smoothedGain(static_cast<size_t>(samplesToWrite));
+              for (int i = 0; i < samplesToWrite; ++i) {
+                smoothedGain[static_cast<size_t>(i)] =
+                    static_cast<float>(running * norm);
+                running -= at(i - half);
+                running += at(i + half + 1);
+              }
+              sampleGain.swap(smoothedGain);
+            }
+          }
+
           for (int i = 0; i < samplesToWrite; ++i) {
             targetSegment[static_cast<size_t>(i)] *=
                 sampleGain[static_cast<size_t>(i)];
@@ -1362,5 +1611,13 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 if (onComplete) onComplete(true);
               });
         }).detach();
-      });
+      };
+
+  if (usePsola) {
+    psola.renderAsync(std::move(dspRequest), std::move(onRendered),
+                      capturedCancelFlag);
+  } else {
+    vocoder->inferAsync(std::move(melRange), std::move(adjustedF0Range),
+                        std::move(onRendered));
+  }
 }

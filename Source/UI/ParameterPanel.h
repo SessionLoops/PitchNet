@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/SynthesisEngineType.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
@@ -27,11 +28,13 @@ public:
     void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
+    void setSynthesisEngine(SynthesisEngineType type);
+    SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
     void updateFromNote();
     void updateGlobalSliders();
     std::function<void(Project*)> onProjectBound;
 
-    int getPreferredHeight() const { return 470; }
+    int getPreferredHeight() const { return 545; }
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;
@@ -46,6 +49,7 @@ public:
     std::function<void(TimelineGridDivision)> onTimelineGridDivisionChanged;
     std::function<void(bool)> onTimelineSnapCycleChanged;
     std::function<void(double)> onUiBrightnessChanged;
+    std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -59,6 +63,8 @@ private:
     void setDragSnapModeInternal(DragSnapMode mode, bool notify);
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
+    void refreshSynthesisToggles();
+    void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);
     void refreshTimelineModeToggles();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
     void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
@@ -74,11 +80,21 @@ private:
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel { {}, "Time" };
     juce::Rectangle<int> timeCardBounds;
+    juce::Label synthesisSectionLabel { {}, "Resynthesis" };
+    juce::Rectangle<int> synthesisCardBounds;
     juce::Label brightnessSectionLabel { {}, "UI Brightness" };
     juce::Rectangle<int> brightnessCardBounds;
 
     RadioButton chromaticToggle { "Chromatic" };
     RadioButton scaleToggle { "Scale" };
+
+    // Which engine resynthesizes an edited region. Named for the mechanism
+    // rather than ranked by quality: neither is better everywhere. The model
+    // wins on large pitch moves, and PSOLA returns untouched audio bit for
+    // bit, so a quality ordering would be wrong half the time. The member
+    // names track the enum, the button text is what the user reads.
+    RadioButton vocoderEngineToggle { "Neural" };
+    RadioButton psolaEngineToggle { "Classic" };
 
     juce::Label referenceLabel { {}, "Reference (A4)" };
     SliderBox referenceSlider { "Pitch Reference" };
@@ -110,6 +126,7 @@ private:
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
     bool timelineSnapCycle = false;
     double uiBrightnessPercent = 100.0;
+    SynthesisEngineType synthesisEngine = SynthesisEngineType::Vocoder;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

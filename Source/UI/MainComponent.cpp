@@ -474,6 +474,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     editorController->setPitchDetectorType(
         settingsManager->getPitchDetectorType());
+    editorController->setSynthesisEngineType(
+        settingsManager->getSynthesisEngineType());
     editorController->setDeviceConfig(settingsManager->getDevice(),
                                       settingsManager->getGPUDeviceId());
     editorController->reloadInferenceModels(false);
@@ -577,6 +579,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     settingsManager->setUiBrightnessPercent(brightnessPercent);
     applyUiBrightness(brightnessPercent);
+  };
+  parameterPanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
+  parameterPanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
+  {
+    settingsManager->setSynthesisEngineType(type);
+    settingsManager->saveConfig();
+    if (editorController)
+      editorController->setSynthesisEngineType(type);
   };
 
   // Setup toolbar callbacks
@@ -966,6 +976,8 @@ void MainComponent::bindBackendController(EditorController *controller)
     {
       editorController->setPitchDetectorType(
           settingsManager->getPitchDetectorType());
+      editorController->setSynthesisEngineType(
+          settingsManager->getSynthesisEngineType());
       editorController->setDeviceConfig(settingsManager->getDevice(),
                                         settingsManager->getGPUDeviceId());
       if (!editorController->isSelectedPitchDetectorLoaded())
@@ -1086,8 +1098,6 @@ bool MainComponent::isInferenceBusy() const
   if (isLoadingAudio.load())
     return true;
   if (editorController && editorController->isLoading())
-    return true;
-  if (editorController && editorController->isRendering())
     return true;
   if (editorController && editorController->isInferenceBusy())
     return true;
@@ -1547,6 +1557,13 @@ void MainComponent::analyzeAudio()
         safeThis->pianoRollView.setProject(&projectRef);
         safeThis->fitAnalyzedPitchRangeToView(projectRef);
         safeThis->pianoRoll.repaint();
+
+        // Analysis may have fallen back to CPU inference and taken the
+        // synthesis engine with it. Keep the Synthesis card showing whatever
+        // is actually rendering.
+        if (safeThis->editorController != nullptr)
+          safeThis->parameterPanel.setSynthesisEngine(
+              safeThis->editorController->getSynthesisEngineType());
       },
       [safeThis]()
       {
@@ -3128,8 +3145,6 @@ bool MainComponent::hasAnalyzedProject() const
 void MainComponent::bindRealtimeProcessor(RealtimePitchProcessor &processor)
 {
   processor.setProject(getProject());
-  processor.setVocoder(editorController ? editorController->getVocoder()
-                                        : nullptr);
 }
 
 juce::String MainComponent::serializeProjectJson() const
@@ -3251,43 +3266,6 @@ bool MainComponent::isARAModeActive() const
   }
 
   return false;
-}
-
-void MainComponent::renderProcessedAudio()
-{
-  auto *project = getProject();
-  if (!isPluginMode() || !project ||
-      project->getAudioData().originalWaveform.getNumSamples() == 0)
-    return;
-
-  // Show progress
-  toolbar.showProgress(TR("progress.rendering"));
-  setToolGroupEnabled(false);
-  auto *vocoder = editorController ? editorController->getVocoder() : nullptr;
-  if (!vocoder)
-  {
-    setToolGroupEnabled(true);
-    toolbar.hideProgress();
-    return;
-  }
-
-  const float globalOffset = project->getGlobalPitchOffset();
-  juce::Component::SafePointer<MainComponent> safeThis(this);
-
-  if (editorController)
-  {
-    editorController->renderProcessedAudioAsync(
-        *project, globalOffset,
-        [safeThis](bool ok)
-        {
-          if (safeThis == nullptr)
-            return;
-          safeThis->setToolGroupEnabled(true);
-          safeThis->toolbar.hideProgress();
-          if (ok)
-            safeThis->notifyProjectDataChanged();
-        });
-  }
 }
 
 // ApplicationCommandTarget interface implementations

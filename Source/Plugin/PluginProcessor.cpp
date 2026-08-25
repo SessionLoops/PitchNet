@@ -940,8 +940,6 @@ void PitchNetAudioProcessor::bindRealtimeProcessorHeadless() {
     return; // an open editor drives the binding
   if (!araAnalysisProjectSnapshot)
     return; // nothing analyzed yet
-  realtimeProcessor.setVocoder(
-      araAnalysisController ? araAnalysisController->getVocoder() : nullptr);
   realtimeProcessor.setProject(araAnalysisProjectSnapshot.get());
 }
 
@@ -2463,7 +2461,6 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
       bindRealtimeProcessorHeadless();
     } else {
       realtimeProcessor.setProject(nullptr);
-      realtimeProcessor.setVocoder(nullptr);
     }
   }
 }

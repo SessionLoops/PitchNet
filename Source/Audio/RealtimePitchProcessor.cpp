@@ -8,7 +8,6 @@ RealtimePitchProcessor::RealtimePitchProcessor() = default;
 
 RealtimePitchProcessor::~RealtimePitchProcessor() {
   invalidateGeneration.fetch_add(1);
-  cancelCompute = true;
   if (computeThread && computeThread->joinable())
     computeThread->join();
 }
@@ -19,15 +18,6 @@ void RealtimePitchProcessor::setProject(Project *proj) {
     project = proj;
   }
   invalidate();
-}
-
-void RealtimePitchProcessor::setVocoder(Vocoder *voc) {
-  {
-    const juce::ScopedLock sl(bufferLock);
-    vocoder = voc;
-  }
-  // Don't call invalidate() here - wait for project to be set first
-  // invalidate() will be called by setProject() or explicitly
 }
 
 void RealtimePitchProcessor::prepareToPlay(double sr, int) {
@@ -264,111 +254,4 @@ void RealtimePitchProcessor::invalidate() {
           publishProcessedBuffer(std::move(resampled));
         });
   }
-}
-
-void RealtimePitchProcessor::startComputation() {
-  // Cancel previous computation
-  cancelCompute = true;
-  if (computeThread && computeThread->joinable()) {
-    // Don't block - start new thread that waits for old one
-    auto oldThread = std::move(computeThread);
-    cancelCompute = false;
-    computing = true;
-
-    computeThread = std::make_unique<std::thread>(
-        [this, old = std::move(oldThread)]() mutable {
-          if (old && old->joinable())
-            old->join();
-          if (!cancelCompute.load())
-            computeInBackground();
-        });
-  } else {
-    cancelCompute = false;
-    computing = true;
-    computeThread =
-        std::make_unique<std::thread>([this]() { computeInBackground(); });
-  }
-}
-
-void RealtimePitchProcessor::computeInBackground() {
-
-  Project *proj = nullptr;
-  Vocoder *voc = nullptr;
-  std::vector<std::vector<float>> melSnapshot;
-  std::vector<float> adjustedF0Snapshot;
-  int numChannelsSnapshot = 1;
-  float volumeDbSnapshot = 0.0f;
-
-  {
-    const juce::ScopedLock sl(bufferLock);
-    proj = project;
-    voc = vocoder;
-
-    if (proj) {
-      auto &audioData = proj->getAudioData();
-      melSnapshot = audioData.melSpectrogram;
-      numChannelsSnapshot = std::max(1, audioData.waveform.getNumChannels());
-      volumeDbSnapshot = proj->getVolume();
-      adjustedF0Snapshot = proj->getAdjustedF0();
-    }
-  }
-
-  if (!proj || !voc || !voc->isLoaded()) {
-    computing = false;
-    return;
-  }
-
-  if (melSnapshot.empty()) {
-    computing = false;
-    return;
-  }
-
-
-  if (adjustedF0Snapshot.empty() ||
-      adjustedF0Snapshot.size() != melSnapshot.size()) {
-    computing = false;
-    return;
-  }
-
-  if (cancelCompute.load()) {
-    computing = false;
-    return;
-  }
-
-  // Synthesize
-  std::vector<float> synthesized;
-  try {
-    synthesized = voc->infer(melSnapshot, adjustedF0Snapshot);
-  } catch (...) {
-    computing = false;
-    return;
-  }
-
-
-  if (cancelCompute.load() || synthesized.empty()) {
-    computing = false;
-    return;
-  }
-
-  // Create output buffer
-  int numChannels = numChannelsSnapshot;
-  int numSamples = static_cast<int>(synthesized.size());
-
-  juce::AudioBuffer<float> output(numChannels, numSamples);
-  for (int ch = 0; ch < numChannels; ++ch)
-    for (int i = 0; i < numSamples; ++i)
-      output.setSample(ch, i, synthesized[i]);
-
-  // Apply volume
-  float volumeDb = volumeDbSnapshot;
-  if (volumeDb != 0.0f)
-    output.applyGain(std::pow(10.0f, volumeDb / 20.0f));
-
-  // Update buffer directly (with lock)
-  if (!cancelCompute.load()) {
-    const juce::ScopedLock sl(bufferLock);
-    processedBuffer = std::move(output);
-    ready = true;
-  }
-  computing = false;
 }

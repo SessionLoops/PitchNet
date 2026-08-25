@@ -180,6 +180,9 @@ ParameterPanel::ParameterPanel()
     addAndMakeVisible(timeSectionLabel);
     timeSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     timeSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(synthesisSectionLabel);
+    synthesisSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    synthesisSectionLabel.setFont(AppFont::getBoldFont(16.0f));
     addAndMakeVisible(brightnessSectionLabel);
     brightnessSectionLabel.setColour(juce::Label::textColourId,
                                      juce::Colour(0xFF9B9B9Bu));
@@ -193,12 +196,25 @@ ParameterPanel::ParameterPanel()
     }
 
     for (auto* radio : { &chromaticToggle, &scaleToggle,
-                         &beatsTimelineToggle, &timeTimelineToggle })
+                         &beatsTimelineToggle, &timeTimelineToggle,
+                         &vocoderEngineToggle, &psolaEngineToggle })
     {
         addAndMakeVisible(radio);
         radio->setClickingTogglesState(true);
         radio->addListener(this);
     }
+
+    // The button text stays plain language; the algorithm names live here, so
+    // they are discoverable without putting "PC-NSF-HiFiGAN" in a 55px label.
+    vocoderEngineToggle.setTooltip(
+        "Neural vocoder (PC-NSF-HiFiGAN)\n"
+        "Rebuilds the voice from its spectrum. Handles large pitch moves best, "
+        "and reshapes tone across the whole edited region.");
+    psolaEngineToggle.setTooltip(
+        "Classic DSP (time-domain PSOLA)\n"
+        "Shifts the original recording itself. Leaves untouched audio "
+        "identical and needs no model, so it is far faster on CPU. Large "
+        "pitch moves are rougher.");
 
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel })
@@ -301,6 +317,7 @@ ParameterPanel::ParameterPanel()
 
     refreshModeToggles();
     refreshTimelineModeToggles();
+    refreshSynthesisToggles();
 }
 
 ParameterPanel::~ParameterPanel()
@@ -338,6 +355,15 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.drawRoundedRectangle(timeRect.reduced(0.5f), radius, 0.75f);
     }
 
+    if (!synthesisCardBounds.isEmpty())
+    {
+        auto synthesisRect = synthesisCardBounds.toFloat();
+        g.setColour(juce::Colour(0xFF171717u));
+        g.fillRoundedRectangle(synthesisRect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(synthesisRect.reduced(0.5f), radius, 0.75f);
+    }
+
     if (!brightnessCardBounds.isEmpty())
     {
         auto brightnessRect = brightnessCardBounds.toFloat();
@@ -354,7 +380,7 @@ void ParameterPanel::resized()
 
     constexpr int cardPadX = 5;    // horizontal padding outside cards
     constexpr int cardPadY = 6;    // vertical padding outside cards
-    constexpr int cardGap = 6;     // gap between pitch and time cards
+    constexpr int cardGap = 6;     // gap between cards
     constexpr int innerPadX = 10;  // padding inside each card
     constexpr int innerPadY = 8;   // padding inside each card
     constexpr int rowGap = 5;
@@ -362,10 +388,33 @@ void ParameterPanel::resized()
 
     auto cardArea = outerBounds.reduced(cardPadX, cardPadY);
     // =========================================================================
+    // SYNTHESIS CARD
+    // =========================================================================
+    const int synthesisCardStart = cardArea.getY();
+    auto bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
+                                       synthesisCardStart + innerPadY,
+                                       cardArea.getWidth() - innerPadX * 2,
+                                       cardArea.getBottom() - synthesisCardStart - innerPadY * 2);
+
+    synthesisSectionLabel.setBounds(bounds.removeFromTop(20));
+    bounds.removeFromTop(rowGap + 2);
+
+    auto engineRow = bounds.removeFromTop(22);
+    auto vocoderArea = engineRow.removeFromLeft((engineRow.getWidth() - columnGap) / 2);
+    engineRow.removeFromLeft(columnGap);
+    vocoderEngineToggle.setBounds(vocoderArea);
+    psolaEngineToggle.setBounds(engineRow);
+
+    const int synthesisCardBottom = bounds.getY() + innerPadY;
+    synthesisCardBounds = juce::Rectangle<int>(
+        cardArea.getX(), synthesisCardStart, cardArea.getWidth(),
+        synthesisCardBottom - synthesisCardStart);
+
+    // =========================================================================
     // TIME CARD
     // =========================================================================
-    const int timeCardStart = cardArea.getY();
-    auto bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
+    const int timeCardStart = synthesisCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
     timeSectionLabel.setBounds(bounds.removeFromTop(20));
@@ -506,6 +555,23 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         {
             setTimelineDisplayModeInternal(TimelineDisplayMode::Beats, true);
         }
+        return;
+    }
+
+    if (button == &vocoderEngineToggle || button == &psolaEngineToggle)
+    {
+        auto picked = synthesisEngine;
+        if (button == &vocoderEngineToggle && vocoderEngineToggle.getToggleState())
+            picked = SynthesisEngineType::Vocoder;
+        else if (button == &psolaEngineToggle && psolaEngineToggle.getToggleState())
+            picked = SynthesisEngineType::Psola;
+
+        // Clicking the active one toggles it off; put it back rather than
+        // leaving the group with nothing selected.
+        if (picked != synthesisEngine)
+            setSynthesisEngineInternal(picked, true);
+        else
+            refreshSynthesisToggles();
         return;
     }
 
@@ -657,6 +723,28 @@ void ParameterPanel::refreshModeToggles()
 
     chromaticToggle.setToggleState(isChromatic, juce::dontSendNotification);
     scaleToggle.setToggleState(isScale, juce::dontSendNotification);
+}
+
+void ParameterPanel::setSynthesisEngine(SynthesisEngineType type)
+{
+    setSynthesisEngineInternal(type, false);
+}
+
+void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool notify)
+{
+    synthesisEngine = type;
+    refreshSynthesisToggles();
+
+    if (notify && onSynthesisEngineChanged)
+        onSynthesisEngineChanged(synthesisEngine);
+}
+
+void ParameterPanel::refreshSynthesisToggles()
+{
+    vocoderEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Vocoder,
+                                       juce::dontSendNotification);
+    psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
+                                     juce::dontSendNotification);
 }
 
 void ParameterPanel::refreshTimelineModeToggles()

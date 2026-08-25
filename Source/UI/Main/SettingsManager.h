@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Audio/PitchDetectorType.h"
+#include "../../Audio/SynthesisEngineType.h"
 #include "../../Audio/Vocoder.h"
 #include "../../JuceHeader.h"
 #include "../../Utils/PlatformPaths.h"
@@ -30,6 +31,8 @@ public:
   void setThreads(int t) { threads = t; }
   PitchDetectorType getPitchDetectorType() const { return pitchDetectorType; }
   void setPitchDetectorType(PitchDetectorType t) { pitchDetectorType = t; }
+  SynthesisEngineType getSynthesisEngineType() const { return synthesisEngineType; }
+  void setSynthesisEngineType(SynthesisEngineType t) { synthesisEngineType = t; }
   int getGPUDeviceId() const { return gpuDeviceId; }
   void setGPUDeviceId(int id) { gpuDeviceId = id; }
   juce::String getLanguage() const { return language; }
@@ -109,6 +112,7 @@ private:
   bool hasStoredDeviceSetting = false;
   int threads = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
+  SynthesisEngineType synthesisEngineType = SynthesisEngineType::Vocoder;
   int gpuDeviceId = 0;
   juce::String language = "en";
 
