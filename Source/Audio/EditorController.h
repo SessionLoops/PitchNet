@@ -8,6 +8,7 @@
 #include "RMVPEPitchDetector.h"
 #include "GAMEDetector.h"
 #include "Synthesis/IncrementalSynthesizer.h"
+#include "SynthesisEngineType.h"
 #include "Vocoder.h"
 #include "../Models/Project.h"
 #include "../Utils/AppLogger.h"
@@ -44,6 +45,18 @@ public:
     pitchDetectorType = type;
   }
 
+  void setSynthesisEngineType(SynthesisEngineType type)
+  {
+    synthesisEngineType = type;
+    if (incrementalSynth)
+      incrementalSynth->setSynthesisEngine(type);
+  }
+
+  SynthesisEngineType getSynthesisEngineType() const
+  {
+    return synthesisEngineType;
+  }
+
   void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
   {
     device = deviceName;
@@ -54,7 +67,6 @@ public:
   bool isSelectedPitchDetectorLoaded() const;
   bool isInferenceBusy() const;
   bool isLoading() const { return isLoadingAudio.load(); }
-  bool isRendering() const { return isRenderingFlag.load(); }
 
   using ProgressCallback =
       std::function<void(double, const juce::String &)>;
@@ -71,11 +83,6 @@ public:
                          const ProgressCallback &onProgress,
                          const LoadCompleteCallback &onComplete);
   void requestCancelLoading();
-
-  void renderProcessedAudioAsync(const Project &project,
-                                 float globalPitchOffset,
-                                 const std::function<void(bool)> &onComplete);
-  void requestCancelRender();
 
   void resynthesizeIncrementalAsync(
       Project &project,
@@ -118,6 +125,7 @@ private:
   juce::File rmvpeModelPath;
   juce::File gameModelDir;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
+  SynthesisEngineType synthesisEngineType = SynthesisEngineType::Vocoder;
   juce::String device = "CPU";
   int deviceId = 0;
 
@@ -132,9 +140,6 @@ private:
   std::atomic<std::uint64_t> hostAnalysisJobId{0};
 
   // Async render state
-  std::thread renderThread;
-  std::atomic<bool> cancelRenderFlag{false};
-  std::atomic<bool> isRenderingFlag{false};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorController)
 };

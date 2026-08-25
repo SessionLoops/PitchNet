@@ -43,6 +43,7 @@ EditorController::EditorController(bool enableAudioDevice)
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
 
   incrementalSynth->setVocoder(vocoder.get());
+  incrementalSynth->setSynthesisEngine(synthesisEngineType);
   if (audioEngine)
     playbackController->setAudioEngine(audioEngine.get());
 }
@@ -56,9 +57,6 @@ EditorController::~EditorController()
     loaderThread.join();
   if (loaderJoinerThread.joinable())
     loaderJoinerThread.join();
-  cancelRenderFlag = true;
-  if (renderThread.joinable())
-    renderThread.join();
 }
 
 void EditorController::setProject(std::unique_ptr<Project> newProject)
@@ -511,77 +509,6 @@ void EditorController::setHostAudioAsync(
         }); });
 }
 
-void EditorController::requestCancelRender()
-{
-  cancelRenderFlag = true;
-}
-
-void EditorController::renderProcessedAudioAsync(
-    const Project &project,
-    float globalPitchOffset,
-    const std::function<void(bool)> &onComplete)
-{
-  cancelRenderFlag = true;
-  if (renderThread.joinable())
-    renderThread.join();
-  isRenderingFlag = false;
-  cancelRenderFlag = false;
-
-  auto f0Snapshot = project.getAudioData().f0;
-  auto voicedMaskSnapshot = project.getAudioData().voicedMask;
-  auto melSpecSnapshot = project.getAudioData().melSpectrogram;
-  Vocoder *voc = vocoder.get();
-
-  renderThread = std::thread(
-      [this, f0Snapshot = std::move(f0Snapshot),
-       voicedMaskSnapshot = std::move(voicedMaskSnapshot),
-       melSpecSnapshot = std::move(melSpecSnapshot), globalPitchOffset, voc,
-       onComplete]() mutable
-      {
-        isRenderingFlag = true;
-
-        auto finishRendering = [this]()
-        { isRenderingFlag = false; };
-
-        if (cancelRenderFlag.load())
-          return finishRendering();
-
-        if (f0Snapshot.empty() || melSpecSnapshot.empty())
-        {
-          if (onComplete)
-            juce::MessageManager::callAsync([onComplete]()
-                                            { onComplete(false); });
-          return finishRendering();
-        }
-
-        if (voicedMaskSnapshot.size() < f0Snapshot.size())
-          voicedMaskSnapshot.resize(f0Snapshot.size(), true);
-
-        for (size_t i = 0; i < f0Snapshot.size(); ++i)
-        {
-          if (cancelRenderFlag.load())
-            return finishRendering();
-          if (voicedMaskSnapshot[i] && f0Snapshot[i] > 0)
-            f0Snapshot[i] *= std::pow(2.0f, globalPitchOffset / 12.0f);
-        }
-
-        if (cancelRenderFlag.load())
-          return finishRendering();
-
-        auto synthesized = voc ? voc->infer(melSpecSnapshot, f0Snapshot)
-                               : std::vector<float>{};
-
-        if (cancelRenderFlag.load())
-          return finishRendering();
-
-        if (onComplete)
-          juce::MessageManager::callAsync(
-              [onComplete, ok = !synthesized.empty()]()
-              { onComplete(ok); });
-        finishRendering();
-      });
-}
-
 void EditorController::resynthesizeIncrementalAsync(
     Project &project,
     const std::function<void(const juce::String &)> &onProgress,
@@ -642,6 +569,7 @@ void EditorController::resynthesizeIncrementalAsync(
 
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
+  synth->setSynthesisEngine(synthesisEngineType);
   pendingRerun.store(false);
 
   if (onProgress)

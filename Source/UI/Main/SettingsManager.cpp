@@ -45,6 +45,10 @@ void SettingsManager::loadSettings()
       "pitchDetector", pitchDetectorTypeToString(pitchDetectorType));
   pitchDetectorType = stringToPitchDetectorType(pitchDetectorStr);
 
+  juce::String synthesisEngineStr = xml->getStringAttribute(
+      "synthesisEngine", synthesisEngineTypeToString(synthesisEngineType));
+  synthesisEngineType = stringToSynthesisEngineType(synthesisEngineStr);
+
   gpuDeviceId = xml->getIntAttribute("gpuDeviceId", gpuDeviceId);
   language = xml->getStringAttribute("language", language);
 
@@ -95,6 +99,13 @@ void SettingsManager::loadConfig()
           auto pitchDetectorStr =
               configObj->getProperty("pitchDetector").toString();
           pitchDetectorType = stringToPitchDetectorType(pitchDetectorStr);
+        }
+
+        if (configObj->hasProperty("synthesisEngine"))
+        {
+          auto synthesisEngineStr =
+              configObj->getProperty("synthesisEngine").toString();
+          synthesisEngineType = stringToSynthesisEngineType(synthesisEngineStr);
         }
 
         if (configObj->hasProperty("gpuDeviceId"))
@@ -189,6 +200,8 @@ void SettingsManager::saveConfig()
   config->setProperty("threads", threads);
   config->setProperty("pitchDetector",
                       pitchDetectorTypeToString(pitchDetectorType));
+  config->setProperty("synthesisEngine",
+                      synthesisEngineTypeToString(synthesisEngineType));
   config->setProperty("gpuDeviceId", gpuDeviceId);
   config->setProperty("language", language);
 

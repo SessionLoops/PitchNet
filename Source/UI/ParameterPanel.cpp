@@ -180,6 +180,9 @@ ParameterPanel::ParameterPanel()
     addAndMakeVisible(timeSectionLabel);
     timeSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     timeSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(synthesisSectionLabel);
+    synthesisSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    synthesisSectionLabel.setFont(AppFont::getBoldFont(16.0f));
     addAndMakeVisible(brightnessSectionLabel);
     brightnessSectionLabel.setColour(juce::Label::textColourId,
                                      juce::Colour(0xFF9B9B9Bu));
@@ -193,7 +196,8 @@ ParameterPanel::ParameterPanel()
     }
 
     for (auto* radio : { &chromaticToggle, &scaleToggle,
-                         &beatsTimelineToggle, &timeTimelineToggle })
+                         &beatsTimelineToggle, &timeTimelineToggle,
+                         &vocoderEngineToggle, &psolaEngineToggle })
     {
         addAndMakeVisible(radio);
         radio->setClickingTogglesState(true);
@@ -301,6 +305,7 @@ ParameterPanel::ParameterPanel()
 
     refreshModeToggles();
     refreshTimelineModeToggles();
+    refreshSynthesisToggles();
 }
 
 ParameterPanel::~ParameterPanel()
@@ -336,6 +341,15 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.fillRoundedRectangle(timeRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
         g.drawRoundedRectangle(timeRect.reduced(0.5f), radius, 0.75f);
+    }
+
+    if (!synthesisCardBounds.isEmpty())
+    {
+        auto synthesisRect = synthesisCardBounds.toFloat();
+        g.setColour(juce::Colour(0xFF171717u));
+        g.fillRoundedRectangle(synthesisRect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(synthesisRect.reduced(0.5f), radius, 0.75f);
     }
 
     if (!brightnessCardBounds.isEmpty())
@@ -441,9 +455,32 @@ void ParameterPanel::resized()
         : juce::Rectangle<int>();
 
     // =========================================================================
+    // SYNTHESIS CARD
+    // =========================================================================
+    const int synthesisCardStart = pitchCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
+                                  synthesisCardStart + innerPadY,
+                                  cardArea.getWidth() - innerPadX * 2,
+                                  cardArea.getBottom() - synthesisCardStart - innerPadY * 2);
+
+    synthesisSectionLabel.setBounds(bounds.removeFromTop(20));
+    bounds.removeFromTop(rowGap + 2);
+
+    auto engineRow = bounds.removeFromTop(22);
+    auto vocoderArea = engineRow.removeFromLeft((engineRow.getWidth() - columnGap) / 2);
+    engineRow.removeFromLeft(columnGap);
+    vocoderEngineToggle.setBounds(vocoderArea);
+    psolaEngineToggle.setBounds(engineRow);
+
+    const int synthesisCardBottom = bounds.getY() + innerPadY;
+    synthesisCardBounds = juce::Rectangle<int>(
+        cardArea.getX(), synthesisCardStart, cardArea.getWidth(),
+        synthesisCardBottom - synthesisCardStart);
+
+    // =========================================================================
     // UI BRIGHTNESS CARD
     // =========================================================================
-    const int brightnessCardStart = pitchCardBottom + cardGap;
+    const int brightnessCardStart = synthesisCardBottom + cardGap;
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
                                   brightnessCardStart + innerPadY,
                                   cardArea.getWidth() - innerPadX * 2,
@@ -506,6 +543,23 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         {
             setTimelineDisplayModeInternal(TimelineDisplayMode::Beats, true);
         }
+        return;
+    }
+
+    if (button == &vocoderEngineToggle || button == &psolaEngineToggle)
+    {
+        auto picked = synthesisEngine;
+        if (button == &vocoderEngineToggle && vocoderEngineToggle.getToggleState())
+            picked = SynthesisEngineType::Vocoder;
+        else if (button == &psolaEngineToggle && psolaEngineToggle.getToggleState())
+            picked = SynthesisEngineType::Psola;
+
+        // Clicking the active one toggles it off; put it back rather than
+        // leaving the group with nothing selected.
+        if (picked != synthesisEngine)
+            setSynthesisEngineInternal(picked, true);
+        else
+            refreshSynthesisToggles();
         return;
     }
 
@@ -657,6 +711,28 @@ void ParameterPanel::refreshModeToggles()
 
     chromaticToggle.setToggleState(isChromatic, juce::dontSendNotification);
     scaleToggle.setToggleState(isScale, juce::dontSendNotification);
+}
+
+void ParameterPanel::setSynthesisEngine(SynthesisEngineType type)
+{
+    setSynthesisEngineInternal(type, false);
+}
+
+void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool notify)
+{
+    synthesisEngine = type;
+    refreshSynthesisToggles();
+
+    if (notify && onSynthesisEngineChanged)
+        onSynthesisEngineChanged(synthesisEngine);
+}
+
+void ParameterPanel::refreshSynthesisToggles()
+{
+    vocoderEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Vocoder,
+                                       juce::dontSendNotification);
+    psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
+                                     juce::dontSendNotification);
 }
 
 void ParameterPanel::refreshTimelineModeToggles()

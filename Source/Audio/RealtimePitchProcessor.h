@@ -2,15 +2,19 @@
 
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
-#include "Vocoder.h"
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <thread>
 
 /**
- * Real-time pitch correction processor
- * Pre-computes processed audio in background, provides real-time playback
+ * Real-time playback of the edited waveform.
+ *
+ * Does no synthesis of its own. IncrementalSynthesizer commits its render into
+ * the project's composite waveform, and invalidate() snapshots that, resampling
+ * to the host rate when they differ. Keeping the synthesis in one place is what
+ * makes plugin playback agree with standalone, and with whichever engine
+ * produced the composite.
  */
 class RealtimePitchProcessor {
 public:
@@ -18,7 +22,6 @@ public:
     ~RealtimePitchProcessor();
 
     void setProject(Project* proj);
-    void setVocoder(Vocoder* voc);
     void prepareToPlay(double sampleRate, int samplesPerBlock);
 
     /**
@@ -39,16 +42,12 @@ public:
     void setPosition(double positionSeconds) { position.store(positionSeconds); }
 
 private:
-    void startComputation();
-    void computeInBackground();
-
     /// Install a newly built cache. Keeps the outgoing buffer alive so
     /// processBlock() can ramp between the two instead of cutting.
     /// Caller must hold bufferLock.
     void publishProcessedBuffer(juce::AudioBuffer<float>&& buffer);
 
     Project* project = nullptr;
-    Vocoder* vocoder = nullptr;
     double sampleRate = 44100.0;
 
     // Length of the ramp between an outgoing and an incoming cache. A
@@ -61,8 +60,6 @@ private:
     juce::AudioBuffer<float> previousProcessedBuffer;
     int swapFadeRemaining = 0;
     std::atomic<bool> ready{false};
-    std::atomic<bool> computing{false};
-    std::atomic<bool> cancelCompute{false};
     std::atomic<std::uint64_t> invalidateGeneration{0};
     std::atomic<double> position{0.0};
 
