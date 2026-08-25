@@ -803,6 +803,18 @@ void EditorController::analyzeAudio(
           LOG("Vocoder failed to reload after DirectML-to-CPU fallback");
       }
 
+      // Move the synthesis engine at the same moment. On the CPU provider a
+      // vocoder render costs orders of magnitude more than PSOLA, which runs
+      // no model and no FFT at all, so leaving the engine behind just makes
+      // the user's next edit the slow one. Only reached through the DirectML
+      // fallback, which exists on Windows alone - the Core ML path never gets
+      // here and keeps the vocoder.
+      if (synthesisEngineType == SynthesisEngineType::Vocoder)
+      {
+        setSynthesisEngineType(SynthesisEngineType::Psola);
+        LOG("Synthesis engine switched to PSOLA for CPU inference");
+      }
+
       // GAME will run later in this analysis. Give it a fresh CPU session as
       // well, but keep the existing detector if the optional reload fails.
       if (gameModelDir.isDirectory())

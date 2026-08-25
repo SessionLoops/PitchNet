@@ -1557,6 +1557,13 @@ void MainComponent::analyzeAudio()
         safeThis->pianoRollView.setProject(&projectRef);
         safeThis->fitAnalyzedPitchRangeToView(projectRef);
         safeThis->pianoRoll.repaint();
+
+        // Analysis may have fallen back to CPU inference and taken the
+        // synthesis engine with it. Keep the Synthesis card showing whatever
+        // is actually rendering.
+        if (safeThis->editorController != nullptr)
+          safeThis->parameterPanel.setSynthesisEngine(
+              safeThis->editorController->getSynthesisEngineType());
       },
       [safeThis]()
       {
