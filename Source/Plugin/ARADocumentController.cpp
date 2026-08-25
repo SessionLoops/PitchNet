@@ -721,16 +721,20 @@ void PitchNetEditorRenderer::writePreviewOnce(
     return;
   }
 
-  const int channelsToCopy =
-      std::min(buffer.getNumChannels(), previewBuffer->getNumChannels());
+  const int sourceChannels = previewBuffer->getNumChannels();
+  const int channelsToCopy = sourceChannels == 1
+                                 ? buffer.getNumChannels()
+                                 : std::min(buffer.getNumChannels(), sourceChannels);
   int written = 0;
   while (written < buffer.getNumSamples()) {
     const int available =
         static_cast<int>(previewLoopRange.getEnd() - previewLoopPosition);
     const int toCopy = std::min(buffer.getNumSamples() - written, available);
-    for (int ch = 0; ch < channelsToCopy; ++ch)
-      buffer.copyFrom(ch, written, *previewBuffer, ch,
+    for (int ch = 0; ch < channelsToCopy; ++ch) {
+      const int sourceChannel = sourceChannels == 1 ? 0 : ch;
+      buffer.copyFrom(ch, written, *previewBuffer, sourceChannel,
                       static_cast<int>(previewLoopPosition), toCopy);
+    }
     written += toCopy;
     previewLoopPosition += toCopy;
     if (previewLoopPosition >= previewLoopRange.getEnd()) {
@@ -748,8 +752,10 @@ void PitchNetEditorRenderer::writePreviewLoop(
   if (!previewBuffer || previewLoopRange.isEmpty())
     return;
 
-  const int channelsToCopy =
-      std::min(buffer.getNumChannels(), previewBuffer->getNumChannels());
+  const int sourceChannels = previewBuffer->getNumChannels();
+  const int channelsToCopy = sourceChannels == 1
+                                 ? buffer.getNumChannels()
+                                 : std::min(buffer.getNumChannels(), sourceChannels);
   const int loopStart = static_cast<int>(previewLoopRange.getStart());
   const int loopEnd = static_cast<int>(previewLoopRange.getEnd());
   const int loopLength = loopEnd - loopStart;
@@ -798,15 +804,21 @@ void PitchNetEditorRenderer::writePreviewLoop(
     const float tailGain = std::cos(t * juce::MathConstants<float>::halfPi);
     const float headGain = std::sin(t * juce::MathConstants<float>::halfPi);
     for (int ch = 0; ch < channelsToCopy; ++ch) {
-      float value = previewBuffer->getSample(ch, position);
+      const int sourceChannel = sourceChannels == 1 ? 0 : ch;
+      float value = previewBuffer->getSample(sourceChannel, position);
       if (inCrossfade)
         value = value * tailGain +
-                previewBuffer->getSample(ch, loopStart + position - crossfadeStart) *
+                previewBuffer->getSample(sourceChannel,
+                                         loopStart + position - crossfadeStart) *
                     headGain;
       if (previewTransitionRemaining > 0 && previousPreviewBuffer &&
-          ch < previousPreviewBuffer->getNumChannels()) {
+          (previousPreviewBuffer->getNumChannels() == 1 ||
+           ch < previousPreviewBuffer->getNumChannels())) {
+        const int previousSourceChannel =
+            previousPreviewBuffer->getNumChannels() == 1 ? 0 : ch;
         const float oldValue = renderLoopSample(*previousPreviewBuffer,
-                                                previousPreviewLoopPosition, ch);
+                                                previousPreviewLoopPosition,
+                                                previousSourceChannel);
         const float handoff = 1.0f - static_cast<float>(previewTransitionRemaining) /
                                            static_cast<float>(previewTransitionTotal);
         value = oldValue * std::cos(handoff * juce::MathConstants<float>::halfPi) +

@@ -1036,10 +1036,16 @@ bool PitchNetAudioProcessor::processPluginPreview(
     }
 
     const int sourceSamples = activePluginAuditionBuffer->getNumSamples();
-    const int channels =
-        std::min(numChannels, activePluginAuditionBuffer->getNumChannels());
-    if (sourceSamples <= 0 || channels <= 0)
+    const int sourceChannels = activePluginAuditionBuffer->getNumChannels();
+    if (sourceSamples <= 0 || sourceChannels <= 0)
       return true;
+
+    // Audition snippets are normally mono.  A host still supplies a stereo
+    // (or wider) output buffer, so mirror a mono snippet to every output
+    // channel instead of leaving everything after channel 0 silent.
+    const int channels = sourceChannels == 1
+                             ? numChannels
+                             : std::min(numChannels, sourceChannels);
 
     auto renderLoopSample = [](const juce::AudioBuffer<float> &source,
                                juce::int64 cursor, int channel) {
@@ -1066,12 +1072,18 @@ bool PitchNetAudioProcessor::processPluginPreview(
 
     for (int sample = 0; sample < numSamples; ++sample) {
       for (int ch = 0; ch < channels; ++ch) {
+        const int sourceChannel = sourceChannels == 1 ? 0 : ch;
         float value = renderLoopSample(*activePluginAuditionBuffer,
-                                       pluginAuditionCursor, ch);
+                                       pluginAuditionCursor, sourceChannel);
         if (pluginAuditionTransitionRemaining > 0 &&
-            previousPluginAuditionBuffer) {
-          const float oldValue = renderLoopSample(*previousPluginAuditionBuffer,
-                                                  previousPluginAuditionCursor, ch);
+            previousPluginAuditionBuffer &&
+            (previousPluginAuditionBuffer->getNumChannels() == 1 ||
+             ch < previousPluginAuditionBuffer->getNumChannels())) {
+          const int previousSourceChannel =
+              previousPluginAuditionBuffer->getNumChannels() == 1 ? 0 : ch;
+          const float oldValue = renderLoopSample(
+              *previousPluginAuditionBuffer, previousPluginAuditionCursor,
+              previousSourceChannel);
           const float t = 1.0f - static_cast<float>(pluginAuditionTransitionRemaining) /
                                       static_cast<float>(pluginAuditionTransitionTotal);
           value = oldValue * std::cos(t * juce::MathConstants<float>::halfPi) +
