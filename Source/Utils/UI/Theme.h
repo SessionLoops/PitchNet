@@ -39,3 +39,15 @@ extern const juce::Colour APP_COLOR_TITLEBAR_CLOSE_MAC;
 extern const juce::Colour APP_COLOR_TITLEBAR_MINIMIZE_MAC;
 extern const juce::Colour APP_COLOR_TITLEBAR_MAXIMIZE_MAC;
 extern const juce::Colour APP_COLOR_TITLEBAR_CLOSE_HOVER;
+
+// ── Scrollbars ────────────────────────────────────────────────────
+// One look for every scrollbar in the app: a dim grey rounded thumb over a
+// recessed gutter. The piano-roll canvas set the look; styleCanvasScrollBar()
+// is how everything else adopts it, so the side panel and the canvas cannot
+// drift apart. The default JUCE renderer draws the thumb only - whoever hosts
+// the bar fills APP_COLOR_SCROLLBAR_TRACK behind it.
+extern const juce::Colour APP_COLOR_SCROLLBAR_THUMB;
+extern const juce::Colour APP_COLOR_SCROLLBAR_TRACK;
+constexpr int APP_SCROLLBAR_THICKNESS = 8;
+
+void styleCanvasScrollBar(juce::ScrollBar& scrollBar);

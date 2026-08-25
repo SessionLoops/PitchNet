@@ -295,15 +295,8 @@ PianoRollComponent::PianoRollComponent()
   verticalScrollBar.addListener(this);
 
   // Style scrollbars to match theme
-  auto thumbColor = juce::Colour(0xFF565656u);
-  auto trackColor = juce::Colour(0xFF0D0B0Bu);
-
-  horizontalScrollBar.setColour(juce::ScrollBar::thumbColourId, thumbColor);
-  horizontalScrollBar.setColour(juce::ScrollBar::trackColourId, trackColor);
-  horizontalScrollBar.setColour(juce::ScrollBar::backgroundColourId, trackColor);
-  verticalScrollBar.setColour(juce::ScrollBar::thumbColourId, thumbColor);
-  verticalScrollBar.setColour(juce::ScrollBar::trackColourId, trackColor);
-  verticalScrollBar.setColour(juce::ScrollBar::backgroundColourId, trackColor);
+  styleCanvasScrollBar(horizontalScrollBar);
+  styleCanvasScrollBar(verticalScrollBar);
 
   // Set initial scroll range
   verticalScrollBar.setRangeLimits(0, (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) *
@@ -385,13 +378,13 @@ PianoRollComponent::~PianoRollComponent()
 
 int PianoRollComponent::getVisibleContentWidth() const
 {
-  constexpr int verticalScrollBarSize = 8;
+  constexpr int verticalScrollBarSize = APP_SCROLLBAR_THICKNESS;
   return std::max(0, getWidth() - pianoKeysWidth - verticalScrollBarSize);
 }
 
 int PianoRollComponent::getVisibleContentHeight() const
 {
-  constexpr int horizontalScrollBarSize = 8;
+  constexpr int horizontalScrollBarSize = APP_SCROLLBAR_THICKNESS;
   return std::max(0, getHeight() - headerHeight -
                          (showHorizontalScrollBar ? horizontalScrollBarSize : 0));
 }
@@ -416,11 +409,12 @@ void PianoRollComponent::paint(juce::Graphics &g)
   g.setColour(juce::Colour(0xFF232323u));
   g.fillRect(0, 0, getWidth(), headerHeight);
 
-  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
-  constexpr int verticalScrollBarSize = 8;
+  const int horizontalScrollBarSize =
+      showHorizontalScrollBar ? APP_SCROLLBAR_THICKNESS : 0;
+  constexpr int verticalScrollBarSize = APP_SCROLLBAR_THICKNESS;
   auto contentBounds = getLocalBounds();
 
-  g.setColour(juce::Colour(0xFF0D0B0Bu));
+  g.setColour(APP_COLOR_SCROLLBAR_TRACK);
   g.fillRect(getWidth() - verticalScrollBarSize, 0, verticalScrollBarSize,
              headerHeight);
   g.fillRect(getWidth() - verticalScrollBarSize, headerHeight,
@@ -528,8 +522,9 @@ void PianoRollComponent::paint(juce::Graphics &g)
 void PianoRollComponent::resized()
 {
   auto bounds = getLocalBounds();
-  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
-  constexpr int verticalScrollBarSize = 8;
+  const int horizontalScrollBarSize =
+      showHorizontalScrollBar ? APP_SCROLLBAR_THICKNESS : 0;
+  constexpr int verticalScrollBarSize = APP_SCROLLBAR_THICKNESS;
 
   if (showHorizontalScrollBar)
   {
@@ -1031,7 +1026,8 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g)
     activeScaleMode = previewScaleMode.value_or(preferredMode);
   }
   const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
-  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
+  const int horizontalScrollBarSize =
+      showHorizontalScrollBar ? APP_SCROLLBAR_THICKNESS : 0;
   pianoKeysRenderer->draw(g, getHeight(), horizontalScrollBarSize,
                           activeScaleMode, activeScaleRootNote,
                           ScaleUtils::getReferenceOffsetSemitones(
@@ -2840,8 +2836,9 @@ void PianoRollComponent::updatePreviewButtonBounds()
 
   const auto previewBounds = getPreviewButtonLocalBounds(*hoveredNote);
   const auto resetBounds = getResetButtonLocalBounds(*hoveredNote);
-  const int horizontalScrollBarSize = showHorizontalScrollBar ? 8 : 0;
-  constexpr int verticalScrollBarSize = 8;
+  const int horizontalScrollBarSize =
+      showHorizontalScrollBar ? APP_SCROLLBAR_THICKNESS : 0;
+  constexpr int verticalScrollBarSize = APP_SCROLLBAR_THICKNESS;
   const auto mainArea = getLocalBounds()
                             .withTrimmedLeft(pianoKeysWidth)
                             .withTrimmedTop(headerHeight)

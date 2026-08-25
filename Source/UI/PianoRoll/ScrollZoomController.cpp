@@ -5,15 +5,8 @@ ScrollZoomController::ScrollZoomController() {
     horizontalScrollBar.addListener(this);
     verticalScrollBar.addListener(this);
 
-    auto thumbColor = juce::Colour(0xFF565656u);
-    auto trackColor = juce::Colour(0xFF0D0B0Bu);
-
-    horizontalScrollBar.setColour(juce::ScrollBar::thumbColourId, thumbColor);
-    horizontalScrollBar.setColour(juce::ScrollBar::trackColourId, trackColor);
-    horizontalScrollBar.setColour(juce::ScrollBar::backgroundColourId, trackColor);
-    verticalScrollBar.setColour(juce::ScrollBar::thumbColourId, thumbColor);
-    verticalScrollBar.setColour(juce::ScrollBar::trackColourId, trackColor);
-    verticalScrollBar.setColour(juce::ScrollBar::backgroundColourId, trackColor);
+    styleCanvasScrollBar(horizontalScrollBar);
+    styleCanvasScrollBar(verticalScrollBar);
 
     verticalScrollBar.setRangeLimits(0, (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * DEFAULT_PIXELS_PER_SEMITONE);
     verticalScrollBar.setCurrentRange(0, 500);

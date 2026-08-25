@@ -7,6 +7,45 @@ namespace
 {
 constexpr bool kShowPitchCard = true;
 
+// =========================================================================
+// LAYOUT METRICS
+//
+// resized() lays the cards out strictly top down at these fixed sizes, so the
+// height the panel needs is a sum of them rather than a function of the space
+// it is given. kPreferredPanelHeight is that sum; the hosting panel uses it to
+// decide when to scroll. resized() asserts the two agree, so changing a row
+// height here without updating the sum is caught in a debug build.
+// =========================================================================
+constexpr int kCardPadX = 5;   // horizontal padding outside cards
+constexpr int kCardPadY = 6;   // vertical padding outside cards
+constexpr int kCardGap = 6;    // gap between cards
+constexpr int kInnerPadX = 10; // padding inside each card
+constexpr int kInnerPadY = 8;  // padding inside each card
+constexpr int kRowGap = 5;
+constexpr int kColumnGap = 6;
+
+constexpr int kSectionLabelHeight = 20;
+constexpr int kSectionLabelGap = kRowGap + 2;
+constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
+constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
+constexpr int kControlRowHeight = 26;       // label + control rows
+constexpr int kBrightnessRowHeight = 28;
+
+constexpr int kSynthesisCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
+constexpr int kTimeCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kTimelineModeRowHeight +
+    (kRowGap + 1) + kControlRowHeight + kRowGap + kControlRowHeight + kInnerPadY;
+constexpr int kPitchCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
+    (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight + kInnerPadY;
+constexpr int kBrightnessCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kBrightnessRowHeight + kInnerPadY;
+
+constexpr int kPreferredPanelHeight =
+    kCardPadY * 2 + kCardGap * 3 + kSynthesisCardHeight + kTimeCardHeight +
+    kPitchCardHeight + kBrightnessCardHeight;
+
 struct TimelineBeatOption
 {
     int numerator = 4;
@@ -378,15 +417,15 @@ void ParameterPanel::resized()
 {
     auto outerBounds = getLocalBounds();
 
-    constexpr int cardPadX = 5;    // horizontal padding outside cards
-    constexpr int cardPadY = 6;    // vertical padding outside cards
-    constexpr int cardGap = 6;     // gap between cards
-    constexpr int innerPadX = 10;  // padding inside each card
-    constexpr int innerPadY = 8;   // padding inside each card
-    constexpr int rowGap = 5;
-    constexpr int columnGap = 6;
+    // Metrics live at the top of this file so getPreferredHeight() can sum them.
+    constexpr int cardPadY = kCardPadY;
+    constexpr int cardGap = kCardGap;
+    constexpr int innerPadX = kInnerPadX;
+    constexpr int innerPadY = kInnerPadY;
+    constexpr int rowGap = kRowGap;
+    constexpr int columnGap = kColumnGap;
 
-    auto cardArea = outerBounds.reduced(cardPadX, cardPadY);
+    auto cardArea = outerBounds.reduced(kCardPadX, cardPadY);
     // =========================================================================
     // SYNTHESIS CARD
     // =========================================================================
@@ -396,8 +435,8 @@ void ParameterPanel::resized()
                                        cardArea.getWidth() - innerPadX * 2,
                                        cardArea.getBottom() - synthesisCardStart - innerPadY * 2);
 
-    synthesisSectionLabel.setBounds(bounds.removeFromTop(20));
-    bounds.removeFromTop(rowGap + 2);
+    synthesisSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
 
     // Both options stay on one row, sharing it in proportion to how wide each
     // label actually is rather than in half. Measured with GlyphArrangement
@@ -410,7 +449,7 @@ void ParameterPanel::resized()
     // they shrink together instead of the long one being squashed while the
     // short one keeps its size. RadioButton paints through drawFittedText,
     // which only ever shrinks, so any slack simply renders at full size.
-    auto engineRow = bounds.removeFromTop(22);
+    auto engineRow = bounds.removeFromTop(kRadioRowHeight);
     const auto engineFont = AppFont::getFont(15.0f);
     constexpr int radioInset = 30; // circle plus gap, as paintButton trims
 
@@ -442,11 +481,11 @@ void ParameterPanel::resized()
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
-    timeSectionLabel.setBounds(bounds.removeFromTop(20));
-    bounds.removeFromTop(rowGap + 2);
+    timeSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
 
     // Timeline mode: Beats | Time
-    auto timelineModeRow = bounds.removeFromTop(32);
+    auto timelineModeRow = bounds.removeFromTop(kTimelineModeRowHeight);
     constexpr int radioButtonWidth = 82;
     beatsTimelineToggle.setBounds(timelineModeRow.removeFromLeft(radioButtonWidth));
     timelineModeRow.removeFromLeft(columnGap);
@@ -455,7 +494,7 @@ void ParameterPanel::resized()
     bounds.removeFromTop(rowGap + 1);
 
     // Beat / Tempo row
-    auto beatTempoRow = bounds.removeFromTop(26);
+    auto beatTempoRow = bounds.removeFromTop(kControlRowHeight);
     timelineBeatLabel.setBounds(beatTempoRow.removeFromLeft(38));
     auto beatButtonArea = beatTempoRow.removeFromLeft(44);
     timelineBeatButton.setBounds(beatButtonArea.withSizeKeepingCentre(40, 22));
@@ -466,7 +505,7 @@ void ParameterPanel::resized()
     bounds.removeFromTop(rowGap);
 
     // Grid / Snap Cycle row
-    auto gridRow = bounds.removeFromTop(26);
+    auto gridRow = bounds.removeFromTop(kControlRowHeight);
     timelineGridLabel.setBounds(gridRow.removeFromLeft(38));
     timelineGridButton.setBounds(
         gridRow.removeFromLeft(44).withSizeKeepingCentre(40, 22));
@@ -485,11 +524,11 @@ void ParameterPanel::resized()
                                   cardArea.getWidth() - innerPadX * 2,
                                   cardArea.getBottom() - pitchCardStart - innerPadY * 2);
 
-    pitchSectionLabel.setBounds(bounds.removeFromTop(20));
-    bounds.removeFromTop(rowGap + 2);
+    pitchSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
 
     // Mode toggles: Chromatic | Scale
-    auto modeRow = bounds.removeFromTop(22);
+    auto modeRow = bounds.removeFromTop(kRadioRowHeight);
     auto chromaticArea = modeRow.removeFromLeft((modeRow.getWidth() - columnGap) / 2);
     modeRow.removeFromLeft(columnGap);
     chromaticToggle.setBounds(chromaticArea);
@@ -498,12 +537,12 @@ void ParameterPanel::resized()
     bounds.removeFromTop(rowGap + 1);
 
     // Reference row
-    auto referenceRow = bounds.removeFromTop(26);
+    auto referenceRow = bounds.removeFromTop(kControlRowHeight);
     referenceLabel.setBounds(referenceRow.removeFromLeft(110));
     referenceSlider.setBounds(referenceRow.removeFromLeft(70).reduced(0, 2));
 
     bounds.removeFromTop(rowGap + 1);
-    auto dragSnapRow = bounds.removeFromTop(26);
+    auto dragSnapRow = bounds.removeFromTop(kControlRowHeight);
     snapToSemitonesToggle.setBounds(dragSnapRow.removeFromLeft(110));
     dragSnapRow.removeFromLeft(columnGap);
     dragSnapModeButton.setBounds(dragSnapRow.translated(-4, 0));
@@ -523,14 +562,28 @@ void ParameterPanel::resized()
                                   cardArea.getWidth() - innerPadX * 2,
                                   cardArea.getBottom() - brightnessCardStart - innerPadY * 2);
 
-    brightnessSectionLabel.setBounds(bounds.removeFromTop(20));
-    bounds.removeFromTop(rowGap + 2);
-    brightnessSlider.setBounds(bounds.removeFromTop(28));
+    brightnessSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
+    brightnessSlider.setBounds(bounds.removeFromTop(kBrightnessRowHeight));
 
     const int brightnessCardBottom = bounds.getY() + innerPadY;
     brightnessCardBounds = juce::Rectangle<int>(
         cardArea.getX(), brightnessCardStart, cardArea.getWidth(),
         brightnessCardBottom - brightnessCardStart);
+
+    // The stack is laid out at fixed sizes, so given at least the height it
+    // asks for its bottom edge must land exactly where getPreferredHeight()
+    // says it will - that value is what the hosting panel scrolls against. A
+    // shorter panel is not checked: removeFromTop clamps once the space runs
+    // out, which is the very case the scrolling exists to avoid.
+    jassert(outerBounds.getHeight() < kPreferredPanelHeight ||
+            brightnessCardBottom + cardPadY - outerBounds.getY() ==
+                kPreferredPanelHeight);
+}
+
+int ParameterPanel::getPreferredHeight() const
+{
+    return kPreferredPanelHeight;
 }
 
 void ParameterPanel::buttonClicked(juce::Button* button)

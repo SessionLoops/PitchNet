@@ -8,10 +8,12 @@
 #include "../Utils/UI/Theme.h"
 #include "StyledComponents.h"
 #include "Sliders.h"
+#include "Workspace/PanelContent.h"
 #include <optional>
 
 class ParameterPanel : public juce::Component,
-                       public juce::Button::Listener
+                       public juce::Button::Listener,
+                       public PanelContent
 {
 public:
     ParameterPanel();
@@ -34,7 +36,9 @@ public:
     void updateGlobalSliders();
     std::function<void(Project*)> onProjectBound;
 
-    int getPreferredHeight() const { return 545; }
+    // Height the four cards need at full size. The hosting panel scrolls the
+    // content when it has less room than this instead of squeezing the cards.
+    int getPreferredHeight() const override;
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;

@@ -3,6 +3,7 @@
 #include "../../JuceHeader.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
+#include "PanelContent.h"
 
 class PanelContainer;
 
@@ -35,14 +36,29 @@ public:
 
     int getPreferredHeight() const;
     static constexpr int headerHeight = 0;
+    static constexpr int contentMargin = 10;
+
+    // The scrollbar sits in the panel's right margin instead of taking width
+    // from the content, so the cards keep their full width whether or not it
+    // is showing. Whatever the bar does not use stays as an edge inset.
+    static_assert(contentMargin >= APP_SCROLLBAR_THICKNESS,
+                  "the right margin must be wide enough to hold the scrollbar");
+    static constexpr int scrollBarEdgeInset = contentMargin - APP_SCROLLBAR_THICKNESS;
 
 protected:
     virtual void paintContent(juce::Graphics& g, juce::Rectangle<int> contentArea);
 
 private:
+    int getPreferredContentHeight() const;
+
     juce::String panelId;
     juce::String title;
+
+    // The content lives inside the viewport, so a panel shorter than the
+    // content scrolls instead of clipping it.
+    juce::Viewport contentViewport;
     juce::Component* contentComponent = nullptr;
+    int contentPreferredHeight = 400;
     PanelContainer* panelContainer = nullptr;
     bool collapsed = false;
     bool isDragging = false;
