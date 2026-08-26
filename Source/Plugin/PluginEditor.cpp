@@ -141,6 +141,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 
   mainView->setRecordControlVisible(false);
   mainView->setOnRecordArmChanged(nullptr);
+  // ARA gives us a host link: transport controls and cycle editing are live.
+  mainView->setHostTransportControlAvailable(true);
 
   // Listen for host selection changes to switch the canvas to the clicked
   // region (per-region Projects).
@@ -456,6 +458,10 @@ void PitchNetAudioProcessorEditor::onNewSelection(
 #endif
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
+  // Without ARA the plugin cannot drive the host transport, so play / stop /
+  // cycle and cycle-range editing are disabled - capture is the only transport
+  // action available here.
+  mainView->setHostTransportControlAvailable(false);
   mainView->setRecordControlVisible(true);
   mainView->updateRecordArmState(audioProcessor.isCaptureArmed());
   mainView->setOnRecordArmChanged([this](bool armed) {

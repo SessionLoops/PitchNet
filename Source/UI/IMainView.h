@@ -60,6 +60,12 @@ public:
       std::function<void(double, double, bool, bool)> callback) = 0;
   virtual void setOnRecordArmChanged(std::function<void(bool)> callback) = 0;
   virtual void setRecordControlVisible(bool visible) = 0;
+  /**
+   * Tell the view whether the host transport can be driven from here.
+   * False in non-ARA plugin mode: play / stop / cycle controls and cycle-range
+   * editing are disabled, leaving capture as the only transport action.
+   */
+  virtual void setHostTransportControlAvailable(bool available) = 0;
   virtual void updateRecordArmState(bool armed) = 0;
   virtual void beginLiveRecording(double sampleRate,
                                   double timelineOffsetSeconds) = 0;

@@ -72,6 +72,10 @@ public:
 
     void setPlaying(bool playing);
     void setTransportEnabled(bool enabled);
+    // False when the plugin cannot drive the host transport (non-ARA plugin
+    // mode): play / stop / cycle stay disabled, only capture remains usable.
+    void setHostTransportAvailable(bool available);
+    bool isHostTransportAvailable() const { return hostTransportAvailable; }
     void setToolGroupEnabled(bool enabled);
     void setCurrentTime(double time);
     void setTotalTime(double time);
@@ -127,6 +131,8 @@ private:
     juce::Image logoImage;
 
     bool pluginMode = false;
+    bool hostTransportAvailable = true;
+    bool transportEnabled = false;
     // Note: Removed renderButton - Melodyne-style: automatic real-time processing
 
     // Edit mode buttons

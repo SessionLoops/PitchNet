@@ -8,6 +8,11 @@ bool LoopDragHandler::mouseDown(const juce::MouseEvent &e, float worldX,
                                 float worldY) {
   juce::ignoreUnused(worldY);
 
+  // Cycle editing is disabled when the plugin cannot drive the host transport
+  // (non-ARA plugin mode): the range would be purely cosmetic.
+  if (!owner_.viewState.cycleEditEnabled)
+    return false;
+
   // Only handle clicks in the loop timeline area
   if (e.y < PianoRollComponent::timelineHeight ||
       e.y >= PianoRollComponent::headerHeight ||
@@ -73,7 +78,7 @@ bool LoopDragHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
                                 float worldY) {
   juce::ignoreUnused(worldY);
 
-  if (loopDragMode == LoopDragMode::None)
+  if (!owner_.viewState.cycleEditEnabled || loopDragMode == LoopDragMode::None)
     return false;
 
   float adjustedX =
@@ -132,6 +137,13 @@ bool LoopDragHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (loopDragMode == LoopDragMode::None)
     return false;
 
+  if (!owner_.viewState.cycleEditEnabled)
+  {
+    loopDragMode = LoopDragMode::None;
+    owner_.repaint();
+    return false;
+  }
+
   constexpr float minDragDistance = 4.0f;
   const bool isCreate = loopDragMode == LoopDragMode::Create;
   loopDragMode = LoopDragMode::None;
@@ -156,6 +168,9 @@ void LoopDragHandler::mouseMove(const juce::MouseEvent &e, float worldX,
   juce::ignoreUnused(worldX, worldY);
 
   hoveringHandle = false;
+  if (!owner_.viewState.cycleEditEnabled)
+    return;
+
   if (!owner_.project || e.y < PianoRollComponent::timelineHeight ||
       e.y >= PianoRollComponent::headerHeight ||
       e.x < PianoRollComponent::pianoKeysWidth) {

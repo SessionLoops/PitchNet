@@ -2064,6 +2064,18 @@ void PianoRollComponent::setTimelineSnapCycle(bool enabled)
     project->setTimelineSnapCycle(enabled);
 }
 
+void PianoRollComponent::setCycleEditEnabled(bool enabled)
+{
+  if (cycleEditEnabled == enabled)
+    return;
+
+  cycleEditEnabled = enabled;
+  if (!enabled && loopDragHandler_)
+    loopDragHandler_->cancel();
+  setMouseCursor(juce::MouseCursor::NormalCursor);
+  repaint();
+}
+
 void PianoRollComponent::setUndoManager(PitchUndoManager *manager)
 {
   undoManager = manager;

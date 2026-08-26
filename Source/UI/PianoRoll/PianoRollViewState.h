@@ -47,6 +47,10 @@ struct PianoRollViewState
   TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
   bool timelineSnapCycle = false;
 
+  // Cycle (loop) range editing on the timeline. Disabled when the plugin
+  // cannot drive the host transport (non-ARA plugin mode).
+  bool cycleEditEnabled = true;
+
   ScaleMode selectedScaleMode = ScaleMode::Chromatic;
   int selectedScaleRootNote = 0;
   std::optional<int> previewScaleRootNote;

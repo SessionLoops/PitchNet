@@ -425,10 +425,34 @@ void ToolbarComponent::setPlaying(bool playing)
 
 void ToolbarComponent::setTransportEnabled(bool enabled)
 {
+    transportEnabled = enabled;
+
+    // Capture is driven by the plugin itself, so it only follows `enabled`.
     recordButton.setEnabled(enabled);
-    stopButton.setEnabled(enabled);
-    playButton.setEnabled(enabled);
-    loopButton.setEnabled(enabled);
+
+    // Play / stop / cycle command the host transport. Without a host link
+    // (non-ARA plugin mode) they cannot do anything, so keep them disabled.
+    const bool hostControls = enabled && hostTransportAvailable;
+    stopButton.setEnabled(hostControls);
+    playButton.setEnabled(hostControls);
+    loopButton.setEnabled(hostControls);
+}
+
+void ToolbarComponent::setHostTransportAvailable(bool available)
+{
+    if (hostTransportAvailable == available)
+        return;
+
+    hostTransportAvailable = available;
+
+    if (!available)
+    {
+        isPlaying = false;
+        playButton.setToggleState(false, juce::dontSendNotification);
+    }
+
+    setTransportEnabled(transportEnabled);
+    repaint();
 }
 
 void ToolbarComponent::setToolGroupEnabled(bool enabled)

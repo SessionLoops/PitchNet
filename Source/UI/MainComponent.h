@@ -185,6 +185,10 @@ public:
   void setRecordControlVisible(bool visible) override {
     toolbar.setRecordControlVisible(visible);
   }
+  void setHostTransportControlAvailable(bool available) override;
+  bool isHostTransportControlAvailable() const {
+    return hostTransportControlAvailable;
+  }
   void updateRecordArmState(bool armed) override {
     toolbar.setRecordArmed(armed);
   }
@@ -352,6 +356,7 @@ private:
   juce::StringArray recentFiles;
 
   bool isPlaying = false;
+  bool hostTransportControlAvailable = true;
   bool liveRecordingActive = false;
   bool pianoKeyAuditionActive = false;
   bool pianoKeyAuditionWasPlaying = false;

@@ -3244,6 +3244,26 @@ void MainComponent::triggerResynthesis()
     onPitchEditFinished();
 }
 
+void MainComponent::setHostTransportControlAvailable(bool available)
+{
+  hostTransportControlAvailable = available;
+
+  // Play / stop / cycle only make sense when the host transport is reachable
+  // (ARA). In non-ARA plugin mode the plugin cannot move the host playhead, so
+  // those controls - and cycle-range editing on the timeline - stay inert.
+  toolbar.setHostTransportAvailable(available);
+  pianoRoll.setCycleEditEnabled(available);
+
+  if (!available)
+  {
+    isPlaying = false;
+    toolbar.setPlaying(false);
+  }
+
+  if (commandManager)
+    commandManager->commandStatusChanged();
+}
+
 bool MainComponent::isARAModeActive() const
 {
   // Check if we're in plugin mode and have project data from ARA
@@ -3410,13 +3430,15 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo(TR("command.play_pause"), TR("command.play_pause.desp"), "Transport", 0);
     if (!isPluginMode())
       result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr);
+    // Non-ARA plugin mode has no host transport to drive.
+    result.setActive(project != nullptr && hostTransportControlAvailable);
     break;
 
   case CommandIDs::stop:
     result.setInfo(TR("command.stop"), TR("command.stop.desp"), "Transport", 0);
     result.addDefaultKeypress(juce::KeyPress::escapeKey, juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr && isPlaying);
+    result.setActive(project != nullptr && isPlaying &&
+                     hostTransportControlAvailable);
     break;
 
   case CommandIDs::goToStart:

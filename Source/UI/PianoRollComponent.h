@@ -134,6 +134,12 @@ public:
   void setTimelineGridDivision(TimelineGridDivision division);
   void setTimelineSnapCycle(bool enabled);
 
+  // Enable/disable cycle (loop) range editing on the timeline strip.
+  // Turned off in non-ARA plugin mode, where the host transport is not ours
+  // to drive.
+  void setCycleEditEnabled(bool enabled);
+  bool isCycleEditEnabled() const { return cycleEditEnabled; }
+
   // Scroll
   void setScrollX(double x);
   double getScrollX() const { return scrollX; }
@@ -361,6 +367,7 @@ private:
   double &timelineTempoBpm = viewState.timelineTempoBpm;
   TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
   bool &timelineSnapCycle = viewState.timelineSnapCycle;
+  bool &cycleEditEnabled = viewState.cycleEditEnabled;
   ScaleMode &selectedScaleMode = viewState.selectedScaleMode;
   int &selectedScaleRootNote = viewState.selectedScaleRootNote;
   std::optional<int> &previewScaleRootNote = viewState.previewScaleRootNote;
