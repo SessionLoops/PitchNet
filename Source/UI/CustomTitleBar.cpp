@@ -173,6 +173,9 @@ void CustomTitleBar::resized()
 
 void CustomTitleBar::mouseDown(const juce::MouseEvent& e)
 {
+    // Standalone-only component: getTopLevelComponent() must be the app window.
+    // Do not reuse this in the plugin editor - there it resolves to the
+    // AudioProcessorEditor and dragging it corrupts the host's view layout.
     if (auto* window = getTopLevelComponent())
         dragger.startDraggingComponent(window, e.getEventRelativeTo(window));
 }

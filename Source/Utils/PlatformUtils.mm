@@ -1,6 +1,12 @@
 #include "PlatformUtils.h"
 
-#if JUCE_MAC
+// NOTE: use __APPLE__, not JUCE_MAC. This translation unit only includes
+// PlatformUtils.h, which pulls in no JUCE headers, so JUCE_MAC is undefined
+// here and the whole macOS implementation used to compile out to the no-op
+// stubs below - leaving the standalone window with stock light title bar
+// chrome. This file is Objective-C++ and is only ever compiled on Apple
+// platforms, so __APPLE__ is the correct guard.
+#if defined(__APPLE__)
 #import <Cocoa/Cocoa.h>
 
 namespace PlatformUtils

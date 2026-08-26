@@ -550,8 +550,19 @@ juce::String ToolbarComponent::formatTime(double seconds)
 void ToolbarComponent::mouseDown(const juce::MouseEvent &e)
 {
 #if JUCE_MAC
-    if (auto *window = getTopLevelComponent())
-        dragger.startDraggingComponent(window, e.getEventRelativeTo(window));
+    // Standalone only: the toolbar doubles as the window's drag handle.
+    // In plugin mode getTopLevelComponent() is the AudioProcessorEditor itself,
+    // which lives inside the host's view - dragging it would move the editor
+    // component within that view and leave the UI clipped/offset.
+    if (!pluginMode)
+    {
+        if (auto *window = getTopLevelComponent())
+            dragger.startDraggingComponent(window, e.getEventRelativeTo(window));
+    }
+    else
+    {
+        juce::ignoreUnused(e);
+    }
 #else
     juce::ignoreUnused(e);
 #endif
@@ -560,8 +571,16 @@ void ToolbarComponent::mouseDown(const juce::MouseEvent &e)
 void ToolbarComponent::mouseDrag(const juce::MouseEvent &e)
 {
 #if JUCE_MAC
-    if (auto *window = getTopLevelComponent())
-        dragger.dragComponent(window, e.getEventRelativeTo(window), nullptr);
+    // See mouseDown(): never drag the top-level component in plugin mode.
+    if (!pluginMode)
+    {
+        if (auto *window = getTopLevelComponent())
+            dragger.dragComponent(window, e.getEventRelativeTo(window), nullptr);
+    }
+    else
+    {
+        juce::ignoreUnused(e);
+    }
 #else
     juce::ignoreUnused(e);
 #endif
