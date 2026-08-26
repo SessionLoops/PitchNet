@@ -1,3 +1,7 @@
+// Must precede every include: JuceHeader.h pulls in <cmath> transitively,
+// and MSVC only declares M_PI when this is defined beforehand.
+#define _USE_MATH_DEFINES
+
 #include "PsolaSynthesizer.h"
 
 #include <algorithm>
@@ -510,7 +514,8 @@ PsolaSynthesizer::render(const Request &request,
       const double phase =
           (static_cast<double>(offset + grainHalf) + 0.5) /
           static_cast<double>(2 * grainHalf);
-      const float window = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * M_PI * phase));
+      const float window =
+          static_cast<float>(0.5 - 0.5 * std::cos(2.0 * M_PI * phase));
 
       padded[static_cast<size_t>(destination)] +=
           x[static_cast<size_t>(sourceIndex)] * window;
