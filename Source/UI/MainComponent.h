@@ -185,6 +185,13 @@ public:
   void setRecordControlVisible(bool visible) override {
     toolbar.setRecordControlVisible(visible);
   }
+  void setRegionListVisible(bool visible) override;
+  void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
+                        const juce::String &activeKey) override;
+  void setOnRegionSelected(
+      std::function<void(const juce::String &)> callback) override {
+    parameterPanel.onRegionSelected = std::move(callback);
+  }
   void setHostTransportControlAvailable(bool available) override;
   bool isHostTransportControlAvailable() const {
     return hostTransportControlAvailable;

@@ -6,10 +6,12 @@
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
 #include "../Utils/UI/Theme.h"
+#include "IMainView.h"
 #include "StyledComponents.h"
 #include "Sliders.h"
 #include "Workspace/PanelContent.h"
 #include <optional>
+#include <vector>
 
 class ParameterPanel : public juce::Component,
                        public juce::Button::Listener,
@@ -26,6 +28,15 @@ public:
 
     void setProject(Project* proj);
     void setPluginMode(bool pluginMode);
+
+    // ===== Tracks card =====
+    // Only ARA plugin mode has playback regions, so the card is off by default
+    // and the hosting panel is told to re-measure whenever it appears or goes
+    // away - the card stack's natural height is what the panel scrolls against.
+    void setTracksCardVisible(bool visible);
+    bool isTracksCardVisible() const { return tracksCardVisible; }
+    void setRegionList(const std::vector<MainViewRegionEntry>& regions,
+                       const juce::String& activeKey);
     void setUiBrightness(double brightnessPercent);
     void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
@@ -41,6 +52,8 @@ public:
     int getPreferredHeight() const override;
 
     std::function<void()> onParameterChanged;
+    std::function<void(const juce::String&)> onRegionSelected;
+    std::function<void()> onPreferredHeightChanged;
     std::function<void()> onParameterEditFinished;
     std::function<void(int)> onScaleRootChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
@@ -57,6 +70,8 @@ public:
 
 private:
     void setupTextButton(juce::TextButton& button);
+    void showTracksMenu();
+    void refreshTracksButtonText();
     void showDragSnapModeMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
@@ -80,6 +95,8 @@ private:
     Note* selectedNote = nullptr;
     bool isUpdating = false;
 
+    juce::Label tracksSectionLabel { {}, "Tracks" };
+    juce::Rectangle<int> tracksCardBounds;
     juce::Label pitchSectionLabel { {}, "Pitch" };
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel { {}, "Time" };
@@ -88,6 +105,8 @@ private:
     juce::Rectangle<int> synthesisCardBounds;
     juce::Label brightnessSectionLabel { {}, "UI Brightness" };
     juce::Rectangle<int> brightnessCardBounds;
+
+    ComboSelectionButton tracksSelectorButton { "No regions" };
 
     RadioButton chromaticToggle { "Chromatic" };
     RadioButton scaleToggle { "Scale" };
@@ -120,6 +139,10 @@ private:
     CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle { "Snap Cycle" };
     MacroSlider brightnessSlider;
+
+    std::vector<MainViewRegionEntry> regionEntries;
+    juce::String activeRegionKey;
+    bool tracksCardVisible = false;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;

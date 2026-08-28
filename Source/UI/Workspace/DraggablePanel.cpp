@@ -155,6 +155,17 @@ void DraggablePanel::setCollapsed(bool newCollapsed)
     }
 }
 
+void DraggablePanel::refreshContentPreferredHeight()
+{
+    if (auto* panelContent = dynamic_cast<PanelContent*>(contentComponent))
+        contentPreferredHeight = juce::jmax(1, panelContent->getPreferredHeight());
+
+    resized();
+
+    if (panelContainer != nullptr)
+        panelContainer->updateLayout();
+}
+
 int DraggablePanel::getPreferredContentHeight() const
 {
     return contentPreferredHeight;

@@ -96,6 +96,12 @@ void WorkspaceComponent::addPanel(const juce::String& id, const juce::String& ti
     }
 }
 
+void WorkspaceComponent::refreshPanelContentHeight(const juce::String& id)
+{
+    if (auto* panel = panelContainer.getPanel(id))
+        panel->refreshContentPreferredHeight();
+}
+
 void WorkspaceComponent::showPanel(const juce::String& id, bool show)
 {
     requestedPanelVisibility[id] = show;

@@ -35,6 +35,12 @@ public:
     void setPanelContainer(PanelContainer* container) { panelContainer = container; }
 
     int getPreferredHeight() const;
+    /**
+     * Re-read the content's natural height. The height is cached at attach
+     * time (reading it back later would be circular), so content whose layout
+     * grows or shrinks - a card appearing - has to say so.
+     */
+    void refreshContentPreferredHeight();
     static constexpr int headerHeight = 0;
     static constexpr int contentMargin = 10;
 

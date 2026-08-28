@@ -3,6 +3,7 @@
 #include "../JuceHeader.h"
 #include <functional>
 #include <memory>
+#include <vector>
 
 class Project;
 class Vocoder;
@@ -17,6 +18,18 @@ struct MainViewViewportState
   float pixelsPerSecond = 100.0f;
   float pixelsPerSemitone = 12.0f;
   bool valid = false;
+};
+
+/**
+ * One selectable region, as the side panel sees it.
+ *
+ * The UI must not depend on the ARA SDK, so regions reach it as a stable key
+ * (the plug-in's persistent region key) plus the name to display. The key is
+ * what comes back when the user picks an entry.
+ */
+struct MainViewRegionEntry {
+  juce::String key;
+  juce::String name;
 };
 
 class IMainView {
@@ -60,6 +73,20 @@ public:
       std::function<void(double, double, bool, bool)> callback) = 0;
   virtual void setOnRecordArmChanged(std::function<void(bool)> callback) = 0;
   virtual void setRecordControlVisible(bool visible) = 0;
+  /**
+   * Show or hide the Tracks card in the side panel. Only ARA plugin mode has
+   * playback regions to list, so only that mode turns it on.
+   */
+  virtual void setRegionListVisible(bool visible) = 0;
+  /**
+   * Replace the regions the Tracks card lists and mark which one the canvas is
+   * currently showing (an empty key means none of them).
+   */
+  virtual void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
+                                const juce::String &activeKey) = 0;
+  /** Called with a region key when the user picks one in the Tracks card. */
+  virtual void setOnRegionSelected(
+      std::function<void(const juce::String &)> callback) = 0;
   /**
    * Tell the view whether the host transport can be driven from here.
    * False in non-ARA plugin mode: play / stop / cycle controls and cycle-range

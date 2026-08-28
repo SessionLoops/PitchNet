@@ -261,6 +261,13 @@ public:
   juce::ARAPlaybackRegion *getCurrentPlaybackRegion() const {
     return currentPlaybackRegion;
   }
+  // Every region this document controller has discovered for the current
+  // sequence. Used by the editor to list selectable regions when the plugin
+  // instance's playback renderer has none assigned yet.
+  const std::vector<juce::ARAPlaybackRegion *> &
+  getCurrentPlaybackRegions() const {
+    return currentPlaybackRegions;
+  }
   void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
   void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRate);

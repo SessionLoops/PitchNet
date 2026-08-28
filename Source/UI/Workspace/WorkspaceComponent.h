@@ -26,6 +26,8 @@ public:
                   bool initiallyVisible = false);
 
     void showPanel(const juce::String& id, bool show);
+    /** Re-measure one panel's content after its natural height changed. */
+    void refreshPanelContentHeight(const juce::String& id);
     bool isPanelVisible(const juce::String& id) const;
 
     PanelContainer& getPanelContainer() { return panelContainer; }

@@ -390,6 +390,62 @@ public:
 };
 
 /**
+ * Full-width selector that reads as a combo box: the current value on the
+ * left, a chevron on the right. Same surface and hover response as
+ * CompactSelectionButton, but sized for names rather than short values.
+ */
+class ComboSelectionButton : public juce::TextButton
+{
+public:
+    explicit ComboSelectionButton(const juce::String& buttonText = {})
+        : juce::TextButton(buttonText)
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    void setEnabled(bool shouldBeEnabled)
+    {
+        juce::TextButton::setEnabled(shouldBeEnabled);
+        setMouseCursor(shouldBeEnabled ? juce::MouseCursor::PointingHandCursor
+                                       : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+    {
+        auto colour = juce::Colour(0xFF30302Eu);
+        if (down)
+            colour = colour.brighter(0.10f);
+        else if (highlighted)
+            colour = colour.brighter(0.05f);
+
+        const auto bounds = getLocalBounds().toFloat();
+        g.setColour(colour);
+        g.fillRoundedRectangle(bounds, 5.0f);
+
+        const float alpha = isEnabled() ? 1.0f : 0.5f;
+
+        constexpr float chevronWidth = 8.0f;
+        constexpr float chevronHeight = 4.5f;
+        const float chevronX = bounds.getRight() - 9.0f - chevronWidth;
+        const float chevronY = bounds.getCentreY() - chevronHeight * 0.5f;
+        juce::Path chevron;
+        chevron.startNewSubPath(chevronX, chevronY);
+        chevron.lineTo(chevronX + chevronWidth * 0.5f, chevronY + chevronHeight);
+        chevron.lineTo(chevronX + chevronWidth, chevronY);
+        g.setColour(juce::Colour(0xFF9B9B9Bu).withMultipliedAlpha(alpha));
+        g.strokePath(chevron, juce::PathStrokeType(1.2f));
+
+        g.setColour(juce::Colour(0xFFE6E6E6u).withMultipliedAlpha(alpha));
+        g.setFont(AppFont::getFont(13.0f));
+        g.drawFittedText(getButtonText(),
+                         getLocalBounds().withTrimmedLeft(9).withTrimmedRight(
+                             static_cast<int>(chevronWidth) + 16),
+                         juce::Justification::centredLeft, 1);
+    }
+};
+
+/**
  * Pre-styled label — muted secondary text.
  */
 class StyledLabel : public juce::Label

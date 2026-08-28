@@ -575,6 +575,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     toolbar.setProject(project);
   };
+  // The Tracks card changes the panel's natural height when it appears, and
+  // that height is what the side panel scrolls against.
+  parameterPanel.onPreferredHeightChanged = [this]()
+  {
+    workspace.refreshPanelContentHeight("parameters");
+  };
   parameterPanel.onUiBrightnessChanged = [this](double brightnessPercent)
   {
     settingsManager->setUiBrightnessPercent(brightnessPercent);
@@ -3242,6 +3248,16 @@ void MainComponent::triggerResynthesis()
   notifyProjectDataChanged();
   if (onPitchEditFinished)
     onPitchEditFinished();
+}
+
+void MainComponent::setRegionListVisible(bool visible) {
+  parameterPanel.setTracksCardVisible(visible);
+}
+
+void MainComponent::updateRegionList(
+    const std::vector<MainViewRegionEntry> &regions,
+    const juce::String &activeKey) {
+  parameterPanel.setRegionList(regions, activeKey);
 }
 
 void MainComponent::setHostTransportControlAvailable(bool available)
