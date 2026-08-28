@@ -29,12 +29,12 @@ public:
     void setProject(Project* proj);
     void setPluginMode(bool pluginMode);
 
-    // ===== Tracks card =====
+    // ===== Regions card =====
     // Only ARA plugin mode has playback regions, so the card is off by default
     // and the hosting panel is told to re-measure whenever it appears or goes
     // away - the card stack's natural height is what the panel scrolls against.
-    void setTracksCardVisible(bool visible);
-    bool isTracksCardVisible() const { return tracksCardVisible; }
+    void setRegionsCardVisible(bool visible);
+    bool isRegionsCardVisible() const { return regionsCardVisible; }
     void setRegionList(const std::vector<MainViewRegionEntry>& regions,
                        const juce::String& activeKey);
     void setUiBrightness(double brightnessPercent);
@@ -70,8 +70,8 @@ public:
 
 private:
     void setupTextButton(juce::TextButton& button);
-    void showTracksMenu();
-    void refreshTracksButtonText();
+    void showRegionsMenu();
+    void refreshRegionsButtonText();
     void showDragSnapModeMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
@@ -95,8 +95,8 @@ private:
     Note* selectedNote = nullptr;
     bool isUpdating = false;
 
-    juce::Label tracksSectionLabel { {}, "Tracks" };
-    juce::Rectangle<int> tracksCardBounds;
+    juce::Label regionsSectionLabel { {}, "Regions" };
+    juce::Rectangle<int> regionsCardBounds;
     juce::Label pitchSectionLabel { {}, "Pitch" };
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel { {}, "Time" };
@@ -106,7 +106,7 @@ private:
     juce::Label brightnessSectionLabel { {}, "UI Brightness" };
     juce::Rectangle<int> brightnessCardBounds;
 
-    ComboSelectionButton tracksSelectorButton { "No regions" };
+    ComboSelectionButton regionsSelectorButton { "No regions" };
 
     RadioButton chromaticToggle { "Chromatic" };
     RadioButton scaleToggle { "Scale" };
@@ -142,7 +142,7 @@ private:
 
     std::vector<MainViewRegionEntry> regionEntries;
     juce::String activeRegionKey;
-    bool tracksCardVisible = false;
+    bool regionsCardVisible = false;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;

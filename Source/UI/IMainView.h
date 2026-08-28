@@ -74,17 +74,17 @@ public:
   virtual void setOnRecordArmChanged(std::function<void(bool)> callback) = 0;
   virtual void setRecordControlVisible(bool visible) = 0;
   /**
-   * Show or hide the Tracks card in the side panel. Only ARA plugin mode has
+   * Show or hide the Regions card in the side panel. Only ARA plugin mode has
    * playback regions to list, so only that mode turns it on.
    */
   virtual void setRegionListVisible(bool visible) = 0;
   /**
-   * Replace the regions the Tracks card lists and mark which one the canvas is
+   * Replace the regions the Regions card lists and mark which one the canvas is
    * currently showing (an empty key means none of them).
    */
   virtual void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
                                 const juce::String &activeKey) = 0;
-  /** Called with a region key when the user picks one in the Tracks card. */
+  /** Called with a region key when the user picks one in the Regions card. */
   virtual void setOnRegionSelected(
       std::function<void(const juce::String &)> callback) = 0;
   /**

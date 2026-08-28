@@ -30,7 +30,7 @@ constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
-constexpr int kTracksRowHeight = 26;           // region selector row
+constexpr int kRegionsRowHeight = 26;           // region selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
@@ -42,16 +42,16 @@ constexpr int kPitchCardHeight =
     (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight + kInnerPadY;
 constexpr int kBrightnessCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kBrightnessRowHeight + kInnerPadY;
-constexpr int kTracksCardHeight =
-    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kTracksRowHeight + kInnerPadY;
+constexpr int kRegionsCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRegionsRowHeight + kInnerPadY;
 
 constexpr int kPreferredPanelHeight =
     kCardPadY * 2 + kCardGap * 3 + kSynthesisCardHeight + kTimeCardHeight +
     kPitchCardHeight + kBrightnessCardHeight;
 
-// The Tracks card only exists in ARA plugin mode, so it is not part of the
+// The Regions card only exists in ARA plugin mode, so it is not part of the
 // base sum - it adds itself, gap included, when it is showing.
-constexpr int kTracksCardExtraHeight = kCardGap + kTracksCardHeight;
+constexpr int kRegionsCardExtraHeight = kCardGap + kRegionsCardHeight;
 
 constexpr const char* kNoRegionsText = "No regions";
 constexpr const char* kNoRegionSelectedText = "Select region";
@@ -237,15 +237,15 @@ ParameterPanel::ParameterPanel()
                                      juce::Colour(0xFF9B9B9Bu));
     brightnessSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
-    // Tracks card: added but not shown. Standalone and non-ARA plugin mode
+    // Regions card: added but not shown. Standalone and non-ARA plugin mode
     // have no playback regions, so the card only appears once a host tells us
-    // otherwise (see setTracksCardVisible).
-    addChildComponent(tracksSectionLabel);
-    tracksSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
-    tracksSectionLabel.setFont(AppFont::getBoldFont(16.0f));
-    addChildComponent(tracksSelectorButton);
-    tracksSelectorButton.addListener(this);
-    tracksSelectorButton.setEnabled(false);
+    // otherwise (see setRegionsCardVisible).
+    addChildComponent(regionsSectionLabel);
+    regionsSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    regionsSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addChildComponent(regionsSelectorButton);
+    regionsSelectorButton.addListener(this);
+    regionsSelectorButton.setEnabled(false);
 
     for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
@@ -423,13 +423,13 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.drawRoundedRectangle(synthesisRect.reduced(0.5f), radius, 0.75f);
     }
 
-    if (tracksCardVisible && !tracksCardBounds.isEmpty())
+    if (regionsCardVisible && !regionsCardBounds.isEmpty())
     {
-        auto tracksRect = tracksCardBounds.toFloat();
+        auto regionsRect = regionsCardBounds.toFloat();
         g.setColour(juce::Colour(0xFF171717u));
-        g.fillRoundedRectangle(tracksRect, radius);
+        g.fillRoundedRectangle(regionsRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
-        g.drawRoundedRectangle(tracksRect.reduced(0.5f), radius, 0.75f);
+        g.drawRoundedRectangle(regionsRect.reduced(0.5f), radius, 0.75f);
     }
 
     if (!brightnessCardBounds.isEmpty())
@@ -504,32 +504,32 @@ void ParameterPanel::resized()
         synthesisCardBottom - synthesisCardStart);
 
     // =========================================================================
-    // TRACKS CARD (ARA plugin mode only)
+    // REGIONS CARD (ARA plugin mode only)
     //
     // Sits directly below Rendering. When hidden it contributes nothing: no
     // bounds, no gap, and no height in getPreferredHeight().
     // =========================================================================
     int stackBottom = synthesisCardBottom;
-    if (tracksCardVisible)
+    if (regionsCardVisible)
     {
-        const int tracksCardStart = synthesisCardBottom + cardGap;
+        const int regionsCardStart = synthesisCardBottom + cardGap;
         bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
-                                      tracksCardStart + innerPadY,
+                                      regionsCardStart + innerPadY,
                                       cardArea.getWidth() - innerPadX * 2,
-                                      cardArea.getBottom() - tracksCardStart - innerPadY * 2);
+                                      cardArea.getBottom() - regionsCardStart - innerPadY * 2);
 
-        tracksSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+        regionsSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
         bounds.removeFromTop(kSectionLabelGap);
-        tracksSelectorButton.setBounds(bounds.removeFromTop(kTracksRowHeight));
+        regionsSelectorButton.setBounds(bounds.removeFromTop(kRegionsRowHeight));
 
         stackBottom = bounds.getY() + innerPadY;
-        tracksCardBounds = juce::Rectangle<int>(cardArea.getX(), tracksCardStart,
+        regionsCardBounds = juce::Rectangle<int>(cardArea.getX(), regionsCardStart,
                                                 cardArea.getWidth(),
-                                                stackBottom - tracksCardStart);
+                                                stackBottom - regionsCardStart);
     }
     else
     {
-        tracksCardBounds = {};
+        regionsCardBounds = {};
     }
 
     // =========================================================================
@@ -644,7 +644,7 @@ void ParameterPanel::resized()
 int ParameterPanel::getPreferredHeight() const
 {
     return kPreferredPanelHeight +
-           (tracksCardVisible ? kTracksCardExtraHeight : 0);
+           (regionsCardVisible ? kRegionsCardExtraHeight : 0);
 }
 
 void ParameterPanel::buttonClicked(juce::Button* button)
@@ -667,9 +667,9 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         showDragSnapModeMenu();
         return;
     }
-    if (button == &tracksSelectorButton)
+    if (button == &regionsSelectorButton)
     {
-        showTracksMenu();
+        showRegionsMenu();
         return;
     }
     if (button == &timelineSnapCycleToggle)
@@ -769,16 +769,16 @@ void ParameterPanel::setProject(Project* proj)
         onProjectBound(project);
 }
 
-void ParameterPanel::setTracksCardVisible(bool visible)
+void ParameterPanel::setRegionsCardVisible(bool visible)
 {
-    if (tracksCardVisible == visible)
+    if (regionsCardVisible == visible)
         return;
 
-    tracksCardVisible = visible;
-    tracksSectionLabel.setVisible(visible);
-    tracksSelectorButton.setVisible(visible);
+    regionsCardVisible = visible;
+    regionsSectionLabel.setVisible(visible);
+    regionsSelectorButton.setVisible(visible);
     if (!visible)
-        tracksCardBounds = {};
+        regionsCardBounds = {};
 
     resized();
     repaint();
@@ -794,10 +794,10 @@ void ParameterPanel::setRegionList(const std::vector<MainViewRegionEntry>& regio
 {
     regionEntries = regions;
     activeRegionKey = activeKey;
-    refreshTracksButtonText();
+    refreshRegionsButtonText();
 }
 
-void ParameterPanel::refreshTracksButtonText()
+void ParameterPanel::refreshRegionsButtonText()
 {
     juce::String text;
     for (const auto& entry : regionEntries)
@@ -812,11 +812,11 @@ void ParameterPanel::refreshTracksButtonText()
     if (text.isEmpty())
         text = regionEntries.empty() ? kNoRegionsText : kNoRegionSelectedText;
 
-    tracksSelectorButton.setButtonText(text);
-    tracksSelectorButton.setEnabled(!regionEntries.empty());
+    regionsSelectorButton.setButtonText(text);
+    regionsSelectorButton.setEnabled(!regionEntries.empty());
 }
 
-void ParameterPanel::showTracksMenu()
+void ParameterPanel::showRegionsMenu()
 {
     if (regionEntries.empty())
         return;
@@ -835,9 +835,9 @@ void ParameterPanel::showTracksMenu()
 
     menu.showMenuAsync(
         juce::PopupMenu::Options()
-            .withTargetComponent(&tracksSelectorButton)
+            .withTargetComponent(&regionsSelectorButton)
             .withParentComponent(this)
-            .withMinimumWidth(tracksSelectorButton.getWidth()),
+            .withMinimumWidth(regionsSelectorButton.getWidth()),
         [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
         {
             if (safeThis == nullptr || result < baseId)
@@ -854,7 +854,7 @@ void ParameterPanel::showTracksMenu()
             // Show the pick straight away; the host round-trip that actually
             // switches the canvas confirms it on the next region-list update.
             safeThis->activeRegionKey = key;
-            safeThis->refreshTracksButtonText();
+            safeThis->refreshRegionsButtonText();
             if (safeThis->onRegionSelected)
                 safeThis->onRegionSelected(key);
         });

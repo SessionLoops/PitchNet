@@ -575,7 +575,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     toolbar.setProject(project);
   };
-  // The Tracks card changes the panel's natural height when it appears, and
+  // The Regions card changes the panel's natural height when it appears, and
   // that height is what the side panel scrolls against.
   parameterPanel.onPreferredHeightChanged = [this]()
   {
@@ -3251,7 +3251,7 @@ void MainComponent::triggerResynthesis()
 }
 
 void MainComponent::setRegionListVisible(bool visible) {
-  parameterPanel.setTracksCardVisible(visible);
+  parameterPanel.setRegionsCardVisible(visible);
 }
 
 void MainComponent::updateRegionList(

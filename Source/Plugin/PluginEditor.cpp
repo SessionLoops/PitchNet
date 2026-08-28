@@ -13,7 +13,7 @@
 namespace
 {
 #if JucePlugin_Enable_ARA
-// How often the Tracks card re-reads the host's region list.
+// How often the Regions card re-reads the host's region list.
 constexpr int kRegionListRefreshHz = 8;
 #endif
 
@@ -155,7 +155,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   // region (per-region Projects).
   editorView->addListener(this);
 
-  // ARA is the only mode with playback regions, so the Tracks card lives here.
+  // ARA is the only mode with playback regions, so the Regions card lives here.
   // Picking an entry takes the same path as a host selection change.
   mainView->setRegionListVisible(true);
   mainView->setOnRegionSelected([this](const juce::String &regionKey) {
@@ -285,7 +285,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     startTimerHz(60);
   else
     // Hosts announce region add/remove through the document controller, not to
-    // the editor, so the Tracks card polls for its list. Slow enough to be
+    // the editor, so the Regions card polls for its list. Slow enough to be
     // free, fast enough that dropping a region in feels immediate.
     startTimerHz(kRegionListRefreshHz);
 
@@ -724,7 +724,7 @@ void PitchNetAudioProcessorEditor::onNewSelection(
   }
 
   // The selection is also what tells us which track's regions to list, so
-  // update the Tracks card now instead of waiting for the next poll.
+  // update the Regions card now instead of waiting for the next poll.
   refreshAraRegionList();
 }
 #endif

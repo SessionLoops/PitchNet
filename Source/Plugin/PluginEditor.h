@@ -51,10 +51,10 @@ private:
     // Diagnostics for the "No regions" case: how many regions each lookup sees.
     size_t documentControllerRegionCount() const;
     size_t documentRegionCount() const;
-    // Rebuild the Tracks card's region list and push it to the UI, but only
+    // Rebuild the Regions card's region list and push it to the UI, but only
     // when it actually differs from what the card already shows.
     void refreshAraRegionList();
-    // Switch the canvas to a region the user picked in the Tracks card.
+    // Switch the canvas to a region the user picked in the Regions card.
     void activateAraRegionByKey(const juce::String& regionKey);
     // ARAEditorView::Listener. When the host selection changes, switch the
     // canvas to the selected region's per-region Project (each region/track is
