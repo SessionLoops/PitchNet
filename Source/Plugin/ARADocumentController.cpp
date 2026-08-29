@@ -2062,12 +2062,15 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
                                            playbackRegion),
                                currentPlaybackRegions.end());
 
-  // With persistent-ID/index keys, compute the key before the host removes the
-  // The processor keeps each region's Project and undo manager together, so
-  // both must be released when the host destroys the playback region.
-  if (auto *processor = getRegionCanvasProcessor())
-    processor->removeAraRegion(pitchnetRegionKey(*playbackRegion));
-
+  // Deliberately NOT releasing the region's Project/undo state here. This
+  // callback fires on any unbind from this modification, including a
+  // reversible Reaper take-cycle - confirmed empirically (2026-08-29) that
+  // both the modification pointer and this region's host-ref are byte-for-
+  // byte identical when cycling back to the same take, so pitchnetRegionKey()
+  // stays valid and araRegions[key] is correctly rediscovered on return.
+  // Eagerly erasing it here destroyed live undo history on every take-cycle.
+  // Real cleanup now happens in willDestroyPlaybackRegion(), which fires only
+  // when the host is actually deallocating this region object.
   currentDocument = audioSource->getDocument();
 }
 
@@ -2119,6 +2122,16 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
     previewState.previewedRegion.store(nullptr);
     currentPlaybackRegion = nullptr;
   }
+
+  // The region's Project and undo manager are released here, not in
+  // willRemovePlaybackRegionFromAudioModification - this callback fires only
+  // when the host is actually deallocating the region, not on a reversible
+  // unbind (e.g. a Reaper take-cycle), so this is the correct point to
+  // discard state that can no longer come back under the same key.
+  if (playbackRegion == nullptr || !shouldProcessPlaybackRegion(playbackRegion))
+    return;
+  if (auto *processor = getRegionCanvasProcessor())
+    processor->removeAraRegion(pitchnetRegionKey(*playbackRegion));
 }
 
 void PitchNetDocumentController::reanalyze() {
