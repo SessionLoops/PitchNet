@@ -401,6 +401,7 @@ private:
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;
   bool pianoKeyAuditionMouseDown = false;
+  bool middleButtonScrubActive = false;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollComponent)
 };

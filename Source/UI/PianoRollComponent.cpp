@@ -1188,6 +1188,20 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  // Middle-mouse scrub: click-and-drag anywhere in the timeline/canvas
+  // (ruler or note area) to move the playback cursor, mirroring Reaper's
+  // own middle-button scrub. Takes priority over every other gesture so
+  // held modifier keys never redirect it into zoom/pan.
+  if (e.mods.isMiddleButtonDown() && e.x >= pianoKeysWidth)
+  {
+    middleButtonScrubActive = true;
+    double time = std::max(0.0, xToTime(adjustedX));
+    setCursorTime(time);
+    if (onSeek)
+      onSeek(time);
+    return;
+  }
+
   if (isCanvasPoint(e) && isModifierZoomDrag(e))
   {
     modifierZoomDragActive = true;
@@ -1265,6 +1279,16 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
+  if (middleButtonScrubActive)
+  {
+    float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+    double time = std::max(0.0, xToTime(adjustedX));
+    setCursorTime(time);
+    if (onSeek)
+      onSeek(time);
+    return;
+  }
+
   if (modifierZoomDragActive)
   {
     applyModifierZoomDrag(e);
@@ -1310,6 +1334,12 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
+  if (middleButtonScrubActive)
+  {
+    middleButtonScrubActive = false;
+    return;
+  }
+
   if (pianoKeyAuditionMouseDown)
   {
     pianoKeyAuditionMouseDown = false;
