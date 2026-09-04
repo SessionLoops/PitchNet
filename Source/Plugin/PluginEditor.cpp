@@ -62,7 +62,9 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
 
   setupCallbacks();
 
-  auto size = getDefaultMainViewSize(this);
+  auto size = audioProcessor.getLastEditorSize();
+  if (size.x <= 0 || size.y <= 0)
+    size = getDefaultMainViewSize(this);
   setSize(size.x, size.y);
   setResizable(true, true);
 
@@ -883,6 +885,7 @@ void PitchNetAudioProcessorEditor::paint(juce::Graphics &) {
 }
 
 void PitchNetAudioProcessorEditor::resized() {
+  audioProcessor.setLastEditorSize(getWidth(), getHeight());
   mainView->getComponent()->setBounds(getLocalBounds());
   requestMainViewKeyboardFocusAsync();
 }
