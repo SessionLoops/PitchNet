@@ -157,7 +157,7 @@ private:
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
     bool timelineSnapCycle = false;
     double uiBrightnessPercent = 100.0;
-    SynthesisEngineType synthesisEngine = SynthesisEngineType::Vocoder;
+    SynthesisEngineType synthesisEngine = defaultSynthesisEngineType();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

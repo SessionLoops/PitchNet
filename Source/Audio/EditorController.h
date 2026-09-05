@@ -125,7 +125,7 @@ private:
   juce::File rmvpeModelPath;
   juce::File gameModelDir;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
-  SynthesisEngineType synthesisEngineType = SynthesisEngineType::Vocoder;
+  SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   juce::String device = "CPU";
   int deviceId = 0;
 

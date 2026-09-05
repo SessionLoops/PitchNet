@@ -112,7 +112,7 @@ private:
   bool hasStoredDeviceSetting = false;
   int threads = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
-  SynthesisEngineType synthesisEngineType = SynthesisEngineType::Vocoder;
+  SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   int gpuDeviceId = 0;
   juce::String language = "en";
 
