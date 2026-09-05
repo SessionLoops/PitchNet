@@ -1,6 +1,7 @@
 # Build directories
 build/
 cmake-build-*/
+dist/
 
 # JUCE is now a git submodule in third_party/
 

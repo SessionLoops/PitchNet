@@ -285,6 +285,9 @@ file(GLOB_RECURSE PITCHNET_CORE_SOURCES
     "Source/JuceHeader.h")
 
 list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
+if(NOT APPLE)
+    list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "\\.mm$")
+endif()
 list(APPEND PITCHNET_CORE_SOURCES
     "Source/Utils/OnnxRuntimeLoader.cpp"
     "Source/Utils/OnnxRuntimeLoader.h"
@@ -302,6 +305,9 @@ list(APPEND PITCHNET_UI_SOURCES
     "Source/UI/PianoRoll/PianoRollInteractionContext.cpp"
     "Source/UI/PianoRoll/PianoRollInteractionContext.h"
     "Source/UI/PianoRoll/PianoRollViewState.h")
+if(NOT APPLE)
+    list(FILTER PITCHNET_UI_SOURCES EXCLUDE REGEX "\\.mm$")
+endif()
 
 file(GLOB PLUGIN_SOURCES
     "Source/Plugin/PluginProcessor.cpp" "Source/Plugin/PluginProcessor.h"
