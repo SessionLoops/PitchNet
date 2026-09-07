@@ -781,6 +781,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int hopSize = (vocoder != nullptr && vocoder->isLoaded())
                           ? vocoder->getHopSize()
                           : HOP_SIZE;
+  // Kept deliberately, not leftover debugging. Four lines and roughly 250
+  // bytes per pass, against a log already dominated by model loading and
+  // detection - cheap enough to leave on, and it turns "editing one note
+  // rewrote the region" from a discussion into a question a user's debug log
+  // answers directly. That is how the commit-range bug in 717ad6f was found.
+  //
   // One line per synthesis pass. Two ranges matter and they are easy to
   // confuse: `commit` is what actually replaces waveform, `render` is only
   // the context handed to the engine and is expected to be far wider. If a
