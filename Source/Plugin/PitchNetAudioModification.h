@@ -4,8 +4,6 @@
 
 #if JucePlugin_Enable_ARA
 
-#include <algorithm>
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <vector>
@@ -76,95 +74,7 @@ public:
         processedRegions[regionID] = std::move(copy);
       }
       regionProjectArchives = sourceModification->regionProjectArchives;
-
-      // ARA clones an AudioModification before the host creates the clone's
-      // PlaybackRegions.  The copied maps above are keyed with the source
-      // modification's persistent ID/live host refs, so remember each source
-      // region's keys and re-home its state when the corresponding cloned
-      // region is subsequently added.  Without this, hosts such as Cubase can
-      // create a track version successfully but the new region only sees its
-      // unedited source audio.
-      const auto sourcePersistentID =
-          juce::String(sourceModification->getPersistentID());
-      const auto &sourceRegions =
-          sourceModification->getPlaybackRegions<juce::ARAPlaybackRegion>();
-      clonedSourceRegionKeys.reserve(sourceRegions.size());
-      for (size_t index = 0; index < sourceRegions.size(); ++index) {
-        const auto *region = sourceRegions[index];
-        const auto sourceRegionHostRef =
-            region != nullptr
-                ? reinterpret_cast<std::uintptr_t>(region->getHostRef())
-                : 0;
-        const auto objectRef = reinterpret_cast<std::uintptr_t>(region);
-        const auto liveRef =
-            sourceRegionHostRef != 0 ? sourceRegionHostRef : objectRef;
-        clonedSourceRegionKeys.push_back(
-            {sourcePersistentID + ":live:" +
-                 juce::String::toHexString(static_cast<juce::int64>(liveRef)),
-             sourcePersistentID + ":" +
-                 juce::String(static_cast<int>(index))});
-      }
     }
-  }
-
-  // Complete ARA clone-state transfer once the host has created a playback
-  // region on this new modification.  State is placed under the clone's stable
-  // archive key; all readers already fall back from the live key to that key.
-  void materializeClonedStateForRegion(juce::ARAPlaybackRegion &region) {
-    const auto &regions = getPlaybackRegions<juce::ARAPlaybackRegion>();
-    const auto regionIt = std::find(regions.begin(), regions.end(), &region);
-    if (regionIt == regions.end())
-      return;
-
-    const auto index = static_cast<size_t>(
-        std::distance(regions.begin(), regionIt));
-    if (index >= clonedSourceRegionKeys.size())
-      return;
-
-    const auto destinationPersistentID = juce::String(getPersistentID());
-    if (destinationPersistentID.isEmpty())
-      return;
-
-    const auto destinationKey =
-        destinationPersistentID + ":" +
-        juce::String(static_cast<int>(index));
-    const auto sourceKeys = clonedSourceRegionKeys[index];
-
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-
-    auto moveProcessedAudio = [&](const juce::String &sourceKey) {
-      const auto sourceIt = processedRegions.find(sourceKey);
-      if (sourceIt == processedRegions.end() || sourceIt->second == nullptr)
-        return false;
-      processedRegions[destinationKey] = std::move(sourceIt->second);
-      processedRegions.erase(sourceIt);
-      return true;
-    };
-    if (!moveProcessedAudio(sourceKeys.liveKey))
-      moveProcessedAudio(sourceKeys.archivedKey);
-
-    auto moveProjectArchive = [&](const juce::String &sourceKey) {
-      const auto sourceIt = regionProjectArchives.find(sourceKey);
-      if (sourceIt == regionProjectArchives.end() ||
-          sourceIt->second.getSize() == 0)
-        return false;
-      regionProjectArchives[destinationKey] = std::move(sourceIt->second);
-      regionProjectArchives.erase(sourceIt);
-      return true;
-    };
-    if (!moveProjectArchive(sourceKeys.liveKey))
-      moveProjectArchive(sourceKeys.archivedKey);
-
-    // A live and an indexed source entry can coexist after a project reload.
-    // The live entry above is newer; discard its stale copied counterpart.
-    if (sourceKeys.liveKey != destinationKey)
-      processedRegions.erase(sourceKeys.liveKey);
-    if (sourceKeys.archivedKey != destinationKey)
-      processedRegions.erase(sourceKeys.archivedKey);
-    if (sourceKeys.liveKey != destinationKey)
-      regionProjectArchives.erase(sourceKeys.liveKey);
-    if (sourceKeys.archivedKey != destinationKey)
-      regionProjectArchives.erase(sourceKeys.archivedKey);
   }
 
   //============================================================================
@@ -348,15 +258,9 @@ public:
   }
 
 private:
-  struct ClonedSourceRegionKeys {
-    juce::String liveKey;
-    juce::String archivedKey;
-  };
-
   mutable juce::SpinLock processedAudioLock;
   std::map<juce::String, std::unique_ptr<ProcessedRegionData>> processedRegions;
   mutable std::map<juce::String, juce::MemoryBlock> regionProjectArchives;
-  std::vector<ClonedSourceRegionKeys> clonedSourceRegionKeys;
 };
 
 #endif // JucePlugin_Enable_ARA
