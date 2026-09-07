@@ -739,6 +739,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
 
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
+  const int rawDirtyStart = dirtyStart;
+  const int rawDirtyEnd = dirtyEnd;
   if (dirtyStart < 0 || dirtyEnd < 0) {
     if (onComplete)
       onComplete(false);
@@ -779,6 +781,73 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int hopSize = (vocoder != nullptr && vocoder->isLoaded())
                           ? vocoder->getHopSize()
                           : HOP_SIZE;
+  // One line per synthesis pass. Two ranges matter and they are easy to
+  // confuse: `commit` is what actually replaces waveform, `render` is only
+  // the context handed to the engine and is expected to be far wider. If a
+  // single note edit ever shows a commit spanning more than that note, the
+  // discriminator is `noteAnchors` - `no` means the F0 branch of
+  // collectCommitFrameRanges fired and committed the whole edited curve
+  // range instead of one note.
+  {
+    const double framesToSeconds =
+        static_cast<double>(hopSize) /
+        static_cast<double>(std::max(1, audioData.sampleRate));
+
+    int dirtyNoteCount = 0;
+    for (const auto &note : project->getNotes())
+      if (!note.isRest() && note.isDirty())
+        ++dirtyNoteCount;
+
+    juce::String commitText;
+    int committedFrames = 0;
+    for (const auto &range : commitFrameRanges) {
+      commitText << "[" << range.start << "," << range.end << ") ";
+      committedFrames += range.end - range.start;
+    }
+    if (commitText.isEmpty())
+      commitText = "(none)";
+
+    LOG(juce::String("synthesizeRegion: engine=") +
+        (usePsola ? "PSOLA" : "Vocoder") +
+        "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
+        "  dirtyNotes=" + juce::String(dirtyNoteCount) +
+        "  f0Dirty=[" + juce::String(f0DirtyStart) + "," +
+        juce::String(f0DirtyEnd) + ")");
+    LOG(juce::String("  dirty=[") + juce::String(rawDirtyStart) + "," +
+        juce::String(rawDirtyEnd) + ")  cluster=[" +
+        juce::String(editedClusters.startFrame) + "," +
+        juce::String(editedClusters.endFrame) + ")  render=[" +
+        juce::String(startFrame) + "," + juce::String(endFrame) + ") " +
+        juce::String(static_cast<double>(endFrame - startFrame) *
+                         framesToSeconds,
+                     2) + "s");
+    LOG(juce::String("  commit=") + commitText + " " +
+        juce::String(static_cast<double>(committedFrames) * framesToSeconds,
+                     2) + "s");
+
+    // The exact inputs to collectCommitFrameRanges' branch, per dirty note.
+    // pendingTiming=YES on an edit that moved nothing is the false positive
+    // that promotes the commit from one note to the whole F0 dirty range.
+    const auto &allNotes = project->getNotes();
+    for (size_t i = 0; i < allNotes.size(); ++i) {
+      const auto &note = allNotes[i];
+      if (note.isRest() || !note.isDirty())
+        continue;
+      LOG(juce::String("  dirtyNote[") + juce::String(static_cast<int>(i)) +
+          "] cur=[" + juce::String(note.getStartFrame()) + "," +
+          juce::String(note.getEndFrame()) + ")  src=[" +
+          juce::String(note.getSrcStartFrame()) + "," +
+          juce::String(note.getSrcEndFrame()) + ")  rendered=[" +
+          juce::String(note.getRenderedStartFrame()) + "," +
+          juce::String(note.getRenderedEndFrame()) + ")" +
+          "  hasRenderedEdit=" + (note.hasRenderedEdit() ? "yes" : "no") +
+          "  pendingTiming=" +
+          (hasPendingTimingPositionChange(note) ? "YES" : "no") +
+          "  neutral=" +
+          (note.isNeutralForOriginalWaveform() ? "yes" : "no"));
+    }
+  }
+
   std::vector<float> blendMask = generateBlendMask(startFrame, endFrame, hopSize);
 
   // Timing edits cannot be mixed with pristine samples at their destination
