@@ -1,4 +1,5 @@
 #include "IncrementalSynthesizer.h"
+#include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/Localization.h"
 #include "../../Utils/TimingRegionUtils.h"
@@ -301,6 +302,37 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
     }
   }
   return merged;
+}
+
+/// Local pitch period in samples at an absolute frame.
+///
+/// Sizes the window a splice point is searched for. A phase-aligned join can
+/// only be found if the search can reach a full cycle away from the nominal
+/// boundary; a radius fixed in samples cannot, because the cycle it has to
+/// cover is four times longer for a bass than for a soprano.
+///
+/// This deliberately does not size the fade itself. A fade long enough to
+/// span a period comb-filters whenever the two sides disagree, which is the
+/// artifact the short transition was chosen to avoid in the first place.
+///
+/// denseF0 is the log-interpolated curve, so it still reads sensibly across
+/// unvoiced gaps, which is where several of these boundaries land.
+int localPeriodSamples(const std::vector<float> &denseF0, int frame,
+                       int sampleRate) {
+  constexpr float kMinHz = 60.0f;
+  constexpr float kMaxHz = 1000.0f;
+  constexpr float kFallbackHz = 220.0f;
+
+  float hz = kFallbackHz;
+  if (frame >= 0 && frame < static_cast<int>(denseF0.size())) {
+    const float value = denseF0[static_cast<size_t>(frame)];
+    if (value >= kMinHz && value <= kMaxHz)
+      hz = value;
+  }
+
+  const int period = static_cast<int>(
+      std::lround(static_cast<double>(sampleRate) / static_cast<double>(hz)));
+  return std::max(1, period);
 }
 
 int findBestSpliceCenter(const float *existing,
@@ -1181,8 +1213,46 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             return;
           }
 
-          // Resize synthesized audio to match expected
-          synthesizedAudio.resize(static_cast<size_t>(expectedSamples), 0.0f);
+          // Back a short render with the original, never with silence.
+          //
+          // A render that returns fewer samples than the frame count asks for
+          // used to be zero-filled to length. Those samples land where the
+          // blend mask reads 1.0 - fully synthesized - so the hole is
+          // committed with no fade on either side and reads as a dropout.
+          // Continuing with the original samples degrades to leaving that
+          // stretch unedited, which is what the blend already does for every
+          // unvoiced frame. The short fade keeps the handover from being a
+          // step in its own right.
+          //
+          // Whether this ever fires is unknown, hence the log line: if the
+          // model is truncating, that is worth finding out from a user's
+          // debug log rather than by inference.
+          {
+            const size_t target = static_cast<size_t>(expectedSamples);
+            const size_t rendered = std::min(synthesizedAudio.size(), target);
+            if (rendered < target) {
+              LOG("IncrementalSynthesizer: short render, " +
+                  juce::String(static_cast<int>(rendered)) + " of " +
+                  juce::String(expectedSamples) +
+                  " samples; padding from original");
+            }
+            synthesizedAudio.resize(target, 0.0f);
+            for (size_t i = rendered; i < target; ++i)
+              synthesizedAudio[i] =
+                  i < originalSegment.size() ? originalSegment[i] : 0.0f;
+
+            const size_t fade = std::min<size_t>(128, rendered);
+            if (rendered < target && fade > 0) {
+              for (size_t i = rendered - fade; i < rendered; ++i) {
+                if (i >= originalSegment.size())
+                  break;
+                const float t = static_cast<float>(i - (rendered - fade)) /
+                                static_cast<float>(fade);
+                synthesizedAudio[i] +=
+                    t * (originalSegment[i] - synthesizedAudio[i]);
+              }
+            }
+          }
 
           int samplesToWrite =
               std::min(expectedSamples, totalSamples - startSample);
@@ -1332,7 +1402,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // transition there to avoid both clicks and long phasey overlaps.
           constexpr int kCommitBoundaryMarginSamples = 512;
           constexpr int kAdaptiveFadeHalfSamples = 128;
-          constexpr int kSpliceAnalysisHalfSamples = 128;
+          constexpr int kMinAnalysisHalfSamples = 128;
+          constexpr int kMaxAnalysisHalfSamples = 512;
+          const auto &spliceF0 =
+              audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+          const int spliceSampleRate = audioData.sampleRate;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
           const float *existingSamples =
@@ -1349,19 +1423,42 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (bodySamples <= 0)
               continue;
 
+            // Search a full pitch period either side of the nominal edge.
+            //
+            // The fade stays short on purpose - a long crossfade between two
+            // signals that disagree trades a click for a stretch of comb
+            // filtering, which is why this transition was written short in
+            // the first place. What was actually too small is the window the
+            // splice point is chosen from: at 100 Hz the old radius of 384
+            // samples was under one 441-sample period, so a phase-aligned
+            // candidate need not have existed inside it at all and
+            // findBestSpliceCenter had to settle for the least-bad mismatch.
+            //
+            // One period is the right radius rather than merely a safer one.
+            // It puts every phase of the cycle in the candidate set exactly
+            // once; more radius only repeats phases already considered, at
+            // the cost of letting the join drift further from the note edge.
+            // The lower of the two ends governs, so a range spanning a
+            // register change is sized for the note needing the most room.
+            const int period = std::max(
+                localPeriodSamples(spliceF0, range.start, spliceSampleRate),
+                localPeriodSamples(spliceF0, range.end, spliceSampleRate));
             const int fadeHalf =
                 std::min(kAdaptiveFadeHalfSamples,
                          std::max(1, bodySamples / 4));
             const bool fadeLeft = range.start > 0;
             const bool fadeRight = range.end * hopSize < totalSamples;
-            const int availableSearchRadius = std::max(
-                0, kCommitBoundaryMarginSamples - fadeHalf);
+            const int boundaryMargin =
+                std::max(kCommitBoundaryMarginSamples, fadeHalf + period);
+            const int availableSearchRadius =
+                std::max(0, boundaryMargin - fadeHalf);
             const int nonOverlappingSearchRadius =
                 std::max(0, bodySamples / 2 - fadeHalf);
             const int searchRadius =
                 std::min(availableSearchRadius, nonOverlappingSearchRadius);
             const int analysisHalf = std::min(
-                kSpliceAnalysisHalfSamples,
+                std::clamp(period, kMinAnalysisHalfSamples,
+                           kMaxAnalysisHalfSamples),
                 std::max(1, samplesToWrite / 2 - 1));
 
             const int leftCenter = fadeLeft
