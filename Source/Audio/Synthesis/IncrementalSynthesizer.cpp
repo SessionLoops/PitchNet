@@ -1471,9 +1471,20 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // cycle. The search is kept: choosing a better splice point can
           // only help, and it is the length that was doing the damage.
           constexpr int kCommitFadeHalfSamples = 512;
-          // The radius a789d83 worked out to in practice (512 - 128), stated
-          // directly so it no longer shrinks as the fade grows.
-          constexpr int kSpliceSearchRadiusSamples = 384;
+          // Splice displacement, in samples either side of the note edge.
+          //
+          // Set to 0, which pins the crossfade to the nominal boundary and so
+          // reproduces the pre-a789d83 geometry exactly - the configuration
+          // that predates the click reports. Restoring the fade length alone
+          // left this as the last remaining difference from it: the search
+          // could still move the join up to 384 samples (8.7 ms) away from
+          // the note edge, and on a 162 ms note that is a meaningful fraction
+          // of its length.
+          //
+          // Raise it back to 384 to re-enable the search. Doing so is only
+          // worth it if a moved splice measurably beats a fixed one; the
+          // bisect says the fixed one was already clean.
+          constexpr int kSpliceSearchRadiusSamples = 0;
           constexpr int kSpliceAnalysisHalfSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
