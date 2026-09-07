@@ -49,8 +49,31 @@ bool hasTimingEdit(const Note &note) {
 // A note can remain timing-edited after that render, so comparing against the
 // immutable source bounds here would incorrectly broaden later pitch commits.
 bool hasPendingTimingPositionChange(const Note &note) {
-  return note.getStartFrame() != note.getRenderedStartFrame() ||
-         note.getEndFrame() != note.getRenderedEndFrame();
+  // Which position this note's audio currently occupies in the composite.
+  //
+  // The rendered frames only mean anything once something has actually been
+  // rendered: they are stamped at construction and are not maintained by
+  // setStartFrame, so on a note that has never been rendered they are a
+  // stale snapshot of wherever the note was first created. Measured on a
+  // freshly detected take: cur=[12,41) src=[12,41) rendered=[14,41) - two
+  // frames of drift, no timing edit anywhere, yet the naive comparison
+  // reported a pending move. That false positive sets needsF0RangeCommit,
+  // which replaces the commit range for one note with the entire F0 dirty
+  // range: a single pitch edit rewriting 1.74 s of a 2.4 s region.
+  //
+  // Before the first render the note's audio is still sitting at its source
+  // position, so that is what a move has to be measured against. This keeps
+  // the case the expansion exists for - a note retimed but not yet rendered
+  // still reports the move, and both its old and new positions get
+  // committed - while a pitch-only edit correctly reports none.
+  const bool rendered = note.hasRenderedEdit();
+  const int occupiedStart =
+      rendered ? note.getRenderedStartFrame() : note.getSrcStartFrame();
+  const int occupiedEnd =
+      rendered ? note.getRenderedEndFrame() : note.getSrcEndFrame();
+
+  return note.getStartFrame() != occupiedStart ||
+         note.getEndFrame() != occupiedEnd;
 }
 
 std::vector<PreservedTimingSpan>
