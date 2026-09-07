@@ -562,7 +562,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       }
       else
       {
-        const float deltaSemitones = note.getPitchOffset();
+        const float deltaSemitones =
+            note.getAdjustedMidiNote() - note.getOriginalMidiNote();
         const juce::String prefix = deltaSemitones > 0.0f ? "+" : "";
         label = prefix + juce::String(deltaSemitones, 1) + " st";
       }
