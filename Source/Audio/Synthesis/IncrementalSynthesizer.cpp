@@ -327,37 +327,6 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
   return merged;
 }
 
-/// Local pitch period in samples at an absolute frame.
-///
-/// Sizes the window a splice point is searched for. A phase-aligned join can
-/// only be found if the search can reach a full cycle away from the nominal
-/// boundary; a radius fixed in samples cannot, because the cycle it has to
-/// cover is four times longer for a bass than for a soprano.
-///
-/// This deliberately does not size the fade itself. A fade long enough to
-/// span a period comb-filters whenever the two sides disagree, which is the
-/// artifact the short transition was chosen to avoid in the first place.
-///
-/// denseF0 is the log-interpolated curve, so it still reads sensibly across
-/// unvoiced gaps, which is where several of these boundaries land.
-int localPeriodSamples(const std::vector<float> &denseF0, int frame,
-                       int sampleRate) {
-  constexpr float kMinHz = 60.0f;
-  constexpr float kMaxHz = 1000.0f;
-  constexpr float kFallbackHz = 220.0f;
-
-  float hz = kFallbackHz;
-  if (frame >= 0 && frame < static_cast<int>(denseF0.size())) {
-    const float value = denseF0[static_cast<size_t>(frame)];
-    if (value >= kMinHz && value <= kMaxHz)
-      hz = value;
-  }
-
-  const int period = static_cast<int>(
-      std::lround(static_cast<double>(sampleRate) / static_cast<double>(hz)));
-  return std::max(1, period);
-}
-
 int findBestSpliceCenter(const float *existing,
                          const std::vector<float> &rendered,
                          int nominalCenter, int searchRadius,
@@ -1423,13 +1392,20 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // the existing boundary allowance for the point where the current
           // composite and new render best agree, then use a short smoothstep
           // transition there to avoid both clicks and long phasey overlaps.
-          constexpr int kCommitBoundaryMarginSamples = 512;
-          constexpr int kAdaptiveFadeHalfSamples = 128;
-          constexpr int kMinAnalysisHalfSamples = 128;
-          constexpr int kMaxAnalysisHalfSamples = 512;
-          const auto &spliceF0 =
-              audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
-          const int spliceSampleRate = audioData.sampleRate;
+          // Half-fade restored to its pre-a789d83 length. That commit is
+          // titled "make the crossfade position adaptable", but alongside the
+          // splice search it also cut this constant from 512 to 128 - a
+          // 23 ms crossfade down to 5.8 ms - and the shortening is what the
+          // click reports bisect to. 1024 samples of fade spans a full pitch
+          // period for anything above 43 Hz; 256 samples only above 172 Hz,
+          // which leaves most male singing with a join shorter than one
+          // cycle. The search is kept: choosing a better splice point can
+          // only help, and it is the length that was doing the damage.
+          constexpr int kCommitFadeHalfSamples = 512;
+          // The radius a789d83 worked out to in practice (512 - 128), stated
+          // directly so it no longer shrinks as the fade grows.
+          constexpr int kSpliceSearchRadiusSamples = 384;
+          constexpr int kSpliceAnalysisHalfSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
           const float *existingSamples =
@@ -1446,42 +1422,20 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (bodySamples <= 0)
               continue;
 
-            // Search a full pitch period either side of the nominal edge.
-            //
-            // The fade stays short on purpose - a long crossfade between two
-            // signals that disagree trades a click for a stretch of comb
-            // filtering, which is why this transition was written short in
-            // the first place. What was actually too small is the window the
-            // splice point is chosen from: at 100 Hz the old radius of 384
-            // samples was under one 441-sample period, so a phase-aligned
-            // candidate need not have existed inside it at all and
-            // findBestSpliceCenter had to settle for the least-bad mismatch.
-            //
-            // One period is the right radius rather than merely a safer one.
-            // It puts every phase of the cycle in the candidate set exactly
-            // once; more radius only repeats phases already considered, at
-            // the cost of letting the join drift further from the note edge.
-            // The lower of the two ends governs, so a range spanning a
-            // register change is sized for the note needing the most room.
-            const int period = std::max(
-                localPeriodSamples(spliceF0, range.start, spliceSampleRate),
-                localPeriodSamples(spliceF0, range.end, spliceSampleRate));
+            // Quarter of the body rather than a half: the fade is centred on
+            // a searched point, not on the boundary, so it needs room to be
+            // displaced into without colliding with the fade at the far end.
             const int fadeHalf =
-                std::min(kAdaptiveFadeHalfSamples,
+                std::min(kCommitFadeHalfSamples,
                          std::max(1, bodySamples / 4));
             const bool fadeLeft = range.start > 0;
             const bool fadeRight = range.end * hopSize < totalSamples;
-            const int boundaryMargin =
-                std::max(kCommitBoundaryMarginSamples, fadeHalf + period);
-            const int availableSearchRadius =
-                std::max(0, boundaryMargin - fadeHalf);
             const int nonOverlappingSearchRadius =
                 std::max(0, bodySamples / 2 - fadeHalf);
             const int searchRadius =
-                std::min(availableSearchRadius, nonOverlappingSearchRadius);
+                std::min(kSpliceSearchRadiusSamples, nonOverlappingSearchRadius);
             const int analysisHalf = std::min(
-                std::clamp(period, kMinAnalysisHalfSamples,
-                           kMaxAnalysisHalfSamples),
+                kSpliceAnalysisHalfSamples,
                 std::max(1, samplesToWrite / 2 - 1));
 
             const int leftCenter = fadeLeft
