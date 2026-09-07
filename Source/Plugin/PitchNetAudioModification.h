@@ -15,8 +15,8 @@
 // playback renderer mixes each region's processed audio from here, both of which
 // work with the UI closed.
 //
-// Regions are keyed by pitchnetRegionKey() (modification persistent ID + current
-// region index), computed by the caller and passed in as regionID.
+// Live regions use pitchnetRegionKey(); archived slots use the modification
+// persistent ID plus region index. Callers supply the appropriate regionID.
 class PitchNetAudioModification final : public juce::ARAAudioModification {
 public:
   struct ProcessedRegionData {
@@ -74,7 +74,31 @@ public:
         processedRegions[regionID] = std::move(copy);
       }
       regionProjectArchives = sourceModification->regionProjectArchives;
+      clonedPersistentID = sourceModification->getPersistentID();
     }
+  }
+
+  // The host assigns the clone's persistent ID after construction. Rebase
+  // archived slots before the first playback region can request its state.
+  void adoptClonedRegionState() {
+    if (clonedPersistentID.isEmpty())
+      return;
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const auto oldPrefix = clonedPersistentID + ":";
+    const auto newPrefix = juce::String(getPersistentID()) + ":";
+    decltype(processedRegions) audio;
+    for (auto &[key, value] : processedRegions)
+      if (key.startsWith(oldPrefix) &&
+          !key.substring(oldPrefix.length()).startsWith("live:"))
+        audio[newPrefix + key.substring(oldPrefix.length())] = std::move(value);
+    processedRegions = std::move(audio);
+    decltype(regionProjectArchives) archives;
+    for (auto &[key, value] : regionProjectArchives)
+      if (key.startsWith(oldPrefix) &&
+          !key.substring(oldPrefix.length()).startsWith("live:"))
+        archives[newPrefix + key.substring(oldPrefix.length())] = std::move(value);
+    regionProjectArchives = std::move(archives);
+    clonedPersistentID.clear();
   }
 
   //============================================================================
@@ -118,6 +142,15 @@ public:
 
     dest = it->second;
     return true;
+  }
+
+  std::vector<juce::String> getProjectArchiveRegionIDs() const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    std::vector<juce::String> ids;
+    for (const auto &[key, archive] : regionProjectArchives)
+      if (archive.getSize() > 0)
+        ids.push_back(key);
+    return ids;
   }
 
   bool hasProjectArchiveForRegion(const juce::String &regionID) const {
@@ -258,6 +291,7 @@ public:
   }
 
 private:
+  juce::String clonedPersistentID;
   mutable juce::SpinLock processedAudioLock;
   std::map<juce::String, std::unique_ptr<ProcessedRegionData>> processedRegions;
   mutable std::map<juce::String, juce::MemoryBlock> regionProjectArchives;
