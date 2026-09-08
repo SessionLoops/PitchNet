@@ -29,11 +29,21 @@ option(USE_DIRECTML "Enable DirectML execution provider (Windows only)" ${PITCHN
 option(USE_BUNDLED_CUDA_RUNTIME "Bundle minimal CUDA runtime DLLs (Windows only)" OFF)
 option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)" OFF)
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
+option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OFF)
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
 set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
 set(GAME_MODELS_VERSION "v1.0.3" CACHE STRING "GAME release tag used to download model assets")
 set(GAME_MODELS_URL "" CACHE STRING "Optional URL to download GAME model zip")
+
+set(PITCHNET_PRODUCT_NAME "PitchNet")
+set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet")
+set(PITCHNET_PLUGIN_CODE PTE1)
+if(PITCHNET_DEV_BUILD)
+    set(PITCHNET_PRODUCT_NAME "PitchNet Dev")
+    set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet.dev")
+    set(PITCHNET_PLUGIN_CODE PTD1)
+endif()
 
 if(APPLE)
     list(FIND CMAKE_OSX_ARCHITECTURES "arm64" PITCHNET_ARM64_ARCH_INDEX)
@@ -195,10 +205,10 @@ endif()
 
 # Create GUI application
 juce_add_gui_app(PitchNet
-    PRODUCT_NAME "PitchNet"
+    PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
     COMPANY_NAME "Session Loops"
     COMPANY_WEBSITE "https://sessionloops.com"
-    BUNDLE_ID "com.sessionloops.pitchnet"
+    BUNDLE_ID "${PITCHNET_BUNDLE_ID}"
     COMPANY_COPYRIGHT "Copyright 2026"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
@@ -247,12 +257,12 @@ endif()
 
 # Create VST3 plugin
 juce_add_plugin(PitchNetPlugin
-    PRODUCT_NAME "PitchNet"
+    PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
     COMPANY_NAME "Session Loops"
     COMPANY_WEBSITE "https://sessionloops.com"
-    BUNDLE_ID "com.sessionloops.pitchnet"
+    BUNDLE_ID "${PITCHNET_BUNDLE_ID}"
     PLUGIN_MANUFACTURER_CODE SLPS
-    PLUGIN_CODE PTE1
+    PLUGIN_CODE ${PITCHNET_PLUGIN_CODE}
     FORMATS ${PITCHNET_PLUGIN_FORMATS}
     AAX_CATEGORY AAX_ePlugInCategory_PitchShift
     IS_SYNTH FALSE

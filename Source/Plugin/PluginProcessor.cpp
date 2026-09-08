@@ -40,35 +40,7 @@ juce::String readStateString(juce::InputStream &in) {
       static_cast<size_t>(bytes));
 }
 
-juce::AudioBuffer<float> copyTimelineSlice(const juce::AudioBuffer<float> &src,
-                                           double sampleRate,
-                                           double startSeconds,
-                                           double endSeconds) {
-  if (src.getNumSamples() <= 0 || sampleRate <= 0.0 ||
-      endSeconds <= startSeconds)
-    return {};
-
-  const auto startSample64 = static_cast<juce::int64>(
-      std::llround(std::max(0.0, startSeconds) * sampleRate));
-  const auto endSample64 = static_cast<juce::int64>(
-      std::llround(std::max(startSeconds, endSeconds) * sampleRate));
-  const int startSample = static_cast<int>(
-      juce::jlimit<juce::int64>(0, src.getNumSamples(), startSample64));
-  const int endSample = static_cast<int>(
-      juce::jlimit<juce::int64>(startSample, src.getNumSamples(),
-                                endSample64));
-  const int numSamples = endSample - startSample;
-  if (numSamples <= 0)
-    return {};
-
-  juce::AudioBuffer<float> slice(src.getNumChannels(), numSamples);
-  for (int ch = 0; ch < src.getNumChannels(); ++ch)
-    slice.copyFrom(ch, 0, src, ch, startSample, numSamples);
-  return slice;
-}
-
 #if JucePlugin_Enable_ARA
-using SampleRange = juce::Range<int>;
 
 // Seed a timeline-anchored Project waveform from a region-local processed
 // render. processed[0] corresponds to processedStartInModification; account
@@ -168,6 +140,169 @@ bool replaceTimelineRegionWithProcessedAudio(
   return true;
 }
 
+// The UI's timeline (and its live playhead, driven from raw host transport
+// time) is PLAYBACK-time anchored, so MainComponent::updateHostAudioTimelineOffset
+// re-pads the whole displayed Project's buffers/frames to whatever region is
+// active. The persistent per-modification master Project and the processed-
+// audio render cache must instead stay MODIFICATION-time anchored (offset 0)
+// so they mean the same thing regardless of which region is on screen. These
+// two helpers convert between those coordinate systems -- ported from (and
+// must stay behaviorally identical to) MainComponent::updateHostAudioTimelineOffset's
+// repad, since PluginProcessor cannot call that UI method on an arbitrary,
+// off-screen Project without disturbing what is actually being displayed.
+
+// Small mirror of the repad below, for just a waveform buffer -- used right
+// before caching audio for the renderer, which always expects modification-
+// time (see mixProcessedRegionAudio() in ARADocumentController.cpp).
+// shiftSeconds is how much leading padding is currently baked into
+// shiftedBuffer beyond true modification-sample 0.
+juce::AudioBuffer<float> unshiftWaveformToModificationTime(
+    const juce::AudioBuffer<float> &shiftedBuffer, double shiftSeconds,
+    double sampleRate) {
+  if (shiftedBuffer.getNumSamples() <= 0 || sampleRate <= 0.0)
+    return {};
+  // Negative shift (a region whose modification-time start is LATER than its
+  // playback-time start) is a known residual limitation: the forward re-pad
+  // in MainComponent also clamps to 0, so there is no leading padding to
+  // remove in that case either -- content stays where the forward pass left
+  // it. Typical single-take audio has modification-start near 0, so this is
+  // rarely hit in practice.
+  const int shiftSamples =
+      std::max(0, static_cast<int>(std::llround(shiftSeconds * sampleRate)));
+  const int contentStart =
+      std::min(shiftSamples, shiftedBuffer.getNumSamples());
+  const int contentSamples = shiftedBuffer.getNumSamples() - contentStart;
+  if (contentSamples <= 0)
+    return {};
+  juce::AudioBuffer<float> unshifted(shiftedBuffer.getNumChannels(),
+                                     contentSamples);
+  for (int ch = 0; ch < shiftedBuffer.getNumChannels(); ++ch)
+    unshifted.copyFrom(ch, 0, shiftedBuffer, ch, contentStart, contentSamples);
+  return unshifted;
+}
+
+// Full project re-pad (waveform, mel, every F0 variant, masks, notes, segment
+// debug data), ported field-for-field from
+// MainComponent::updateHostAudioTimelineOffset so a project can be moved
+// between the modification-time master anchor (0) and a region's playback-
+// time display anchor without touching the live UI. Used when persisting an
+// edited display copy back into the per-modification master cache.
+void repadProjectTimeline(Project &project, double oldOffsetSeconds,
+                          double newOffsetSeconds) {
+  auto &audioData = project.getAudioData();
+  if (std::abs(newOffsetSeconds - oldOffsetSeconds) < 0.000001)
+    return;
+
+  const int sampleRate = audioData.sampleRate;
+  if (sampleRate <= 0)
+    return;
+  const int oldOffsetSamples = std::max(
+      0, static_cast<int>(std::llround(oldOffsetSeconds * sampleRate)));
+  const int newOffsetSamples = std::max(
+      0, static_cast<int>(std::llround(newOffsetSeconds * sampleRate)));
+  const int oldOffsetFrames = std::max(
+      0, static_cast<int>(std::llround(oldOffsetSeconds * sampleRate /
+                                       static_cast<double>(HOP_SIZE))));
+  const int newOffsetFrames = std::max(
+      0, static_cast<int>(std::llround(newOffsetSeconds * sampleRate /
+                                       static_cast<double>(HOP_SIZE))));
+  const int frameDelta = newOffsetFrames - oldOffsetFrames;
+
+  auto repadBuffer = [&](juce::AudioBuffer<float> &buffer) {
+    const int oldSamples = buffer.getNumSamples();
+    if (oldSamples <= 0)
+      return;
+    const int contentStart = std::min(oldOffsetSamples, oldSamples);
+    const int contentSamples = oldSamples - contentStart;
+    const int newSamples = newOffsetSamples + contentSamples;
+    juce::AudioBuffer<float> shifted(buffer.getNumChannels(), newSamples);
+    shifted.clear();
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+      shifted.copyFrom(ch, newOffsetSamples, buffer, ch, contentStart,
+                       contentSamples);
+    buffer = std::move(shifted);
+  };
+
+  auto repadFloatVector = [&](std::vector<float> &values) {
+    const int oldSize = static_cast<int>(values.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    std::vector<float> shifted(static_cast<size_t>(
+        newOffsetFrames + std::max(0, oldSize - contentStart)));
+    std::copy(values.begin() + contentStart, values.end(),
+              shifted.begin() + newOffsetFrames);
+    values = std::move(shifted);
+  };
+
+  auto repadBoolVector = [&](std::vector<bool> &values) {
+    const int oldSize = static_cast<int>(values.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    std::vector<bool> shifted(static_cast<size_t>(
+        newOffsetFrames + std::max(0, oldSize - contentStart)), false);
+    for (int i = contentStart; i < oldSize; ++i)
+      shifted[static_cast<size_t>(newOffsetFrames + i - contentStart)] =
+          values[static_cast<size_t>(i)];
+    values = std::move(shifted);
+  };
+
+  auto repadMel = [&](std::vector<std::vector<float>> &frames) {
+    const int oldSize = static_cast<int>(frames.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    const size_t numMels =
+        oldSize > 0
+            ? frames[static_cast<size_t>(std::min(contentStart, oldSize - 1))]
+                  .size()
+            : 0;
+    std::vector<std::vector<float>> shifted(
+        static_cast<size_t>(newOffsetFrames +
+                            std::max(0, oldSize - contentStart)),
+        std::vector<float>(numMels, 0.0f));
+    std::move(frames.begin() + contentStart, frames.end(),
+              shifted.begin() + newOffsetFrames);
+    frames = std::move(shifted);
+  };
+
+  repadBuffer(audioData.waveform);
+  repadBuffer(audioData.originalWaveform);
+  repadMel(audioData.melSpectrogram);
+  repadFloatVector(audioData.rawF0);
+  repadFloatVector(audioData.cleanedF0);
+  repadFloatVector(audioData.denseF0);
+  repadFloatVector(audioData.f0);
+  repadFloatVector(audioData.baseF0);
+  repadFloatVector(audioData.basePitch);
+  repadFloatVector(audioData.deltaPitch);
+  repadBoolVector(audioData.voicedMask);
+  repadBoolVector(audioData.vadMask);
+
+  auto shiftFrame = [frameDelta](int frame) {
+    return std::max(0, frame + frameDelta);
+  };
+
+  for (auto &note : project.getNotes()) {
+    note.setStartFrame(shiftFrame(note.getStartFrame()));
+    note.setEndFrame(shiftFrame(note.getEndFrame()));
+    note.setSrcStartFrame(shiftFrame(note.getSrcStartFrame()));
+    note.setSrcEndFrame(shiftFrame(note.getSrcEndFrame()));
+  }
+
+  for (auto &range : audioData.segmentChunkRanges) {
+    range.first = shiftFrame(range.first);
+    range.second = shiftFrame(range.second);
+  }
+
+  for (auto &chunk : audioData.segmentDebugChunks) {
+    chunk.startFrame = shiftFrame(chunk.startFrame);
+    chunk.endFrame = shiftFrame(chunk.endFrame);
+    for (auto &event : chunk.events) {
+      event.startFrame = shiftFrame(event.startFrame);
+      event.endFrame = shiftFrame(event.endFrame);
+      event.attachedStartFrame = shiftFrame(event.attachedStartFrame);
+    }
+  }
+
+  audioData.timelineOffsetSeconds = newOffsetSeconds;
+}
+
 // Bring synthesized output back to the persistent region Project without
 // replacing the Project, its note vector, or the F0 vectors referenced by undo
 // actions. Analysis/edit data remains authoritative in the persistent object.
@@ -204,22 +339,16 @@ void sanitiseARAOutput(juce::AudioBuffer<float> &buffer) noexcept {
   }
 }
 
+// STEP 5: under the whole-source model (Step 1), a project that has been
+// analyzed at all (has f0 data) covers EVERY region built from that
+// modification -- there is no more "this region's own slice" to check for,
+// since the buffer is never truncated to one region's span. regionStart/End
+// are kept as parameters so call sites don't need to change, but coverage no
+// longer depends on them.
 bool projectAppearsToCoverRegion(const Project &project, double regionStart,
                                  double regionEnd) {
-  const auto &audioData = project.getAudioData();
-  if (audioData.f0.empty())
-    return false;
-
-  constexpr double epsilon = 1.0e-3;
-  if (std::abs(audioData.timelineOffsetSeconds - regionStart) <= epsilon)
-    return true;
-
-  for (const auto &[start, end] : audioData.playbackRegionRanges)
-    if (std::abs(start - regionStart) <= epsilon &&
-        std::abs(end - regionEnd) <= epsilon)
-      return true;
-
-  return false;
+  juce::ignoreUnused(regionStart, regionEnd);
+  return !project.getAudioData().f0.empty();
 }
 
 bool projectHasRestorableAnalysisData(const Project &project) {
@@ -239,6 +368,17 @@ bool projectHasRestorableAnalysisData(const Project &project) {
   return true;
 }
 
+void setPlaybackRegionRangeToMaterialExtent(Project &project) {
+  auto &audioData = project.getAudioData();
+  const double start = std::max(0.0, audioData.timelineOffsetSeconds);
+  const double end = static_cast<double>(audioData.getDuration());
+
+  if (end > start)
+    audioData.playbackRegionRanges = {{start, end}};
+  else
+    audioData.playbackRegionRanges.clear();
+}
+
 juce::String archivedRegionKeyForLiveKey(
     PitchNetAudioModification *modification, const juce::String &liveKey) {
   if (modification == nullptr || liveKey.isEmpty())
@@ -250,98 +390,6 @@ juce::String archivedRegionKeyForLiveKey(
       return pitchnetArchivedRegionKey(*region);
 
   return {};
-}
-
-std::vector<SampleRange> collectDirtyRegionSampleRanges(
-    const Project &project, double sampleRate, double regionStartSeconds) {
-  std::vector<SampleRange> ranges;
-  if (sampleRate <= 0.0)
-    return ranges;
-
-  const auto toRegionSample = [sampleRate, regionStartSeconds](int frame) {
-    const double absoluteSeconds =
-        static_cast<double>(frame) * static_cast<double>(HOP_SIZE) / sampleRate;
-    double regionSeconds = absoluteSeconds - regionStartSeconds;
-    if (regionSeconds < 0.0)
-      regionSeconds = absoluteSeconds;
-    return static_cast<int>(std::llround(std::max(0.0, regionSeconds) *
-                                         sampleRate));
-  };
-
-  for (const auto &note : project.getNotes()) {
-    if (!note.isDirty())
-      continue;
-    const int start = toRegionSample(note.getStartFrame());
-    const int end = toRegionSample(note.getEndFrame());
-    if (end > start)
-      ranges.emplace_back(start, end);
-  }
-
-  if (project.hasF0DirtyRange()) {
-    const auto [startFrame, endFrame] = project.getF0DirtyRange();
-    const int start = toRegionSample(startFrame);
-    const int end = toRegionSample(endFrame);
-    if (end > start)
-      ranges.emplace_back(start, end);
-  }
-
-  std::sort(ranges.begin(), ranges.end(),
-            [](const auto &a, const auto &b) {
-              return a.getStart() < b.getStart();
-            });
-
-  std::vector<SampleRange> merged;
-  for (const auto &range : ranges) {
-    if (merged.empty() || range.getStart() > merged.back().getEnd()) {
-      merged.push_back(range);
-      continue;
-    }
-    merged.back() = merged.back().getUnionWith(range);
-  }
-
-  return merged;
-}
-
-void preserveProcessedAudioOutsideRanges(
-    juce::AudioBuffer<float> &replacement, double replacementRate,
-    juce::int64 replacementStartInModification,
-    const juce::AudioBuffer<float> &previous, double previousRate,
-    juce::int64 previousStartInModification,
-    const std::vector<SampleRange> &changedRanges) {
-  if (replacement.getNumSamples() <= 0 || previous.getNumSamples() <= 0 ||
-      replacementRate <= 0.0 || previousRate <= 0.0 || changedRanges.empty())
-    return;
-
-  const int channels =
-      std::min(replacement.getNumChannels(), previous.getNumChannels());
-  if (channels <= 0)
-    return;
-
-  const auto isChanged = [&changedRanges](int replacementSample) {
-    for (const auto &range : changedRanges)
-      if (range.contains(replacementSample))
-        return true;
-    return false;
-  };
-
-  const double rateRatio = previousRate / replacementRate;
-  for (int dst = 0; dst < replacement.getNumSamples(); ++dst) {
-    if (isChanged(dst))
-      continue;
-
-    const auto modificationSample =
-        replacementStartInModification + static_cast<juce::int64>(dst);
-    const double previousSamplePosition =
-        static_cast<double>(modificationSample - previousStartInModification) *
-        rateRatio;
-    const int previousSample =
-        static_cast<int>(std::llround(previousSamplePosition));
-    if (previousSample < 0 || previousSample >= previous.getNumSamples())
-      continue;
-
-    for (int ch = 0; ch < channels; ++ch)
-      replacement.setSample(ch, dst, previous.getSample(ch, previousSample));
-  }
 }
 
 bool clearProcessedRegionAudio(PitchNetAudioModification *modification,
@@ -728,8 +776,8 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
   // Non-ARA mode
   juce::AudioPlayHead::PositionInfo posInfo;
-  if (auto *playHead = getPlayHead()) {
-    if (auto info = playHead->getPosition())
+  if (auto *hostPlayHead = getPlayHead()) {
+    if (auto info = hostPlayHead->getPosition())
       posInfo = *info;
   }
 
@@ -739,7 +787,7 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
 void PitchNetAudioProcessor::processBlockBypassed(
     juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
-  juce::ignoreUnused(midiMessages);
+  juce::ignoreUnused(buffer, midiMessages);
 
   // Transport sync still runs when bypassed so cursor stays in sync
   transportController.processBlock(getPlayHead(), hostSampleRate);
@@ -1906,25 +1954,19 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       mainComponent ? mainComponent->getComponent() : nullptr);
 
   const auto renderRegionKey = activeRegionKey;
+  const auto renderPlaybackRegionKey = activePlaybackRegionKey;
   auto *renderModification = activeModification;
-  const auto renderArchivedRegionKey =
-      renderActiveAraRegion
-          ? archivedRegionKeyForLiveKey(renderModification, renderRegionKey)
-          : juce::String{};
-  const auto renderStartSampleInModification = activeStartSampleInModification;
   const double renderRegionStartSeconds = activeRegionStartSeconds;
   const double renderRegionEndSeconds = activeRegionEndSeconds;
-  std::vector<juce::Range<int>> renderChangedSampleRanges;
-#if JucePlugin_Enable_ARA
-  if (renderActiveAraRegion) {
-    const auto &audioData = projectToRender.getAudioData();
-    const double renderRate =
-        audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
-                                 : hostSampleRate;
-    renderChangedSampleRanges = collectDirtyRegionSampleRanges(
-        projectToRender, renderRate, renderRegionStartSeconds);
-  }
-#endif
+  // The Project being rendered (projectToRender/backendProject) is whatever
+  // the UI currently has loaded, which is playback-time shifted by this
+  // amount (see updateActiveRegionTiming()). The renderer/master storage need
+  // it back at modification-time (shift -> 0); the live display stays as-is.
+  const double renderRegionTimelineShiftSeconds =
+      activeRegionTimelineShiftSeconds;
+  // STEP 3: no per-region dirty-range slicing anymore -- the resynthesised
+  // waveform is published to the modification whole, at offset 0, so the
+  // old changed-sample-range/merge machinery is no longer needed here.
   auto &pendingRerun =
       renderActiveAraRegion ? regionCanvasRenderPendingRerun
                             : araRenderPendingRerun;
@@ -1938,79 +1980,100 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         });
       },
       [this, controller, renderActiveAraRegion, renderRegionKey,
-       renderArchivedRegionKey, renderModification,
-       renderStartSampleInModification,
+       renderPlaybackRegionKey, renderModification,
        renderRegionStartSeconds, renderRegionEndSeconds,
-       renderChangedSampleRanges](bool success) {
+       renderRegionTimelineShiftSeconds](bool success) {
         auto *renderedProject = controller != nullptr ? controller->getProject()
                                                      : nullptr;
 
         if (success && renderedProject) {
 #if JucePlugin_Enable_ARA
           if (renderActiveAraRegion && renderRegionKey.isNotEmpty()) {
-            auto &audioData = renderedProject->getAudioData();
-            audioData.timelineOffsetSeconds = renderRegionStartSeconds;
-            if (renderRegionEndSeconds > renderRegionStartSeconds)
-              audioData.playbackRegionRanges = {
-                  {renderRegionStartSeconds, renderRegionEndSeconds}};
+            // renderedProject mirrors whatever the UI had loaded, so its
+            // audioData is already playback-time shifted by
+            // renderRegionTimelineShiftSeconds -- do NOT relabel
+            // timelineOffsetSeconds here, that would mismatch label vs.
+            // content. The editor highlight should cover the loaded material,
+            // not the selected host slice that happened to trigger rendering.
+            setPlaybackRegionRangeToMaterialExtent(*renderedProject);
 
-            Project *persistentProject = nullptr;
-            if (renderRegionKey == activeRegionKey &&
-                canvasShowsActiveAraRegion && mainComponent != nullptr)
-              persistentProject = mainComponent->getProject();
-            if (persistentProject == nullptr)
-              persistentProject = araRegions[renderRegionKey].project.get();
+            // renderRegionKey alone is not enough: sibling regions from a
+            // slice/track-version-duplicate share it (it's modification/
+            // source-scoped), so it stays equal to activeRegionKey even
+            // after the user has switched to a DIFFERENT sibling region
+            // while this async render was in flight. A plain slice doesn't
+            // move or restretch audio, so its two halves share the exact
+            // same playback-vs-modification-time shift -- comparing the
+            // ACTUAL REGION OBJECT (juce::ARAPlaybackRegion*) would also
+            // reject that harmless case if the host ever recreates the
+            // region's wrapper object for unrelated reasons between dispatch
+            // and completion, silently skipping the merge below even though
+            // nothing unsafe happened. Comparing the shift itself instead
+            // only rejects the genuinely unsafe case -- a sibling at a
+            // materially different timeline position (e.g. a track-version
+            // duplicate placed elsewhere) -- without being sensitive to
+            // object identity that isn't actually load-bearing here.
+            const bool targetIsLiveDisplay =
+                renderRegionKey == activeRegionKey &&
+                renderPlaybackRegionKey == activePlaybackRegionKey &&
+                juce::approximatelyEqual(activeRegionTimelineShiftSeconds,
+                                         renderRegionTimelineShiftSeconds) &&
+                canvasShowsActiveAraRegion && mainComponent != nullptr;
 
-            if (persistentProject != nullptr)
-              mergeRenderedState(*persistentProject, *renderedProject);
-            else
-              araRegions[renderRegionKey].project =
-                  std::make_unique<Project>(*renderedProject);
-            publishPersistentProjectSnapshot(*renderedProject);
+            Project storageProject(*renderedProject);
+            repadProjectTimeline(storageProject, renderRegionTimelineShiftSeconds,
+                                 0.0);
+
+            if (targetIsLiveDisplay && mainComponent->getProject() != nullptr) {
+              // Live display: target is in the SAME playback-time-shifted
+              // coordinates as renderedProject -- merge directly.
+              mergeRenderedState(*mainComponent->getProject(), *renderedProject);
+            }
+
+            // ARA storage/rendering must stay anchored in audio-modification
+            // time. The live UI project may be playback-time shifted, so never
+            // publish or archive that display copy as persistent ARA state.
+            auto &storedState = araRegions[renderRegionKey];
+            storedState.project = std::make_unique<Project>(storageProject);
+
+            Project &storedProject = storageProject;
+            publishPersistentProjectSnapshot(storedProject);
 
             if (renderModification != nullptr) {
               juce::MemoryBlock projectArchive;
-              if (serializeAraRegionProject(renderRegionKey, projectArchive))
+              if (ProjectSerializer::toBinaryArchive(
+                      storedProject, projectArchive,
+                      ProjectSerializer::BinaryArchiveMode::hostBackedARA) &&
+                  projectArchive.getSize() > 0)
                 renderModification->setProjectArchiveForRegion(
                     renderRegionKey, projectArchive.getData(),
                     projectArchive.getSize());
             }
 
+            // Publish the WHOLE rendered material under the SHARED
+            // modification/source key (renderRegionKey), not
+            // renderPlaybackRegionKey (a per-region identity). This buffer is
+            // the whole-source, modification-time-anchored project; every
+            // sibling region shares it and finds its own portion via
+            // mixProcessedRegionAudio()'s offset math -- publishing it under
+            // a per-region key instead means only the one sibling whose own
+            // key happens to match would ever find it, leaving edits made
+            // while any OTHER sibling was active silently unheard until that
+            // specific region was reselected. This storage project is
+            // modification-time anchored; the composite publisher expects
+            // timeline-anchored data, so do not route this path through
+            // publishCompositeEditsToRegions().
+            auto &storedAudioData = storedProject.getAudioData();
             if (renderModification != nullptr &&
-                projectHasRegionEdits(*renderedProject) &&
-                audioData.waveform.getNumSamples() > 0) {
+                projectHasRegionEdits(storedProject) &&
+                storedAudioData.waveform.getNumSamples() > 0) {
               const double processedRate =
-                  audioData.sampleRate > 0
-                      ? static_cast<double>(audioData.sampleRate)
+                  storedAudioData.sampleRate > 0
+                      ? static_cast<double>(storedAudioData.sampleRate)
                       : hostSampleRate;
-              auto processedSlice = copyTimelineSlice(
-                  audioData.waveform, processedRate, renderRegionStartSeconds,
-                  renderRegionEndSeconds);
-              if (processedSlice.getNumSamples() <= 0)
-                processedSlice.makeCopyOf(audioData.waveform);
-              if (!renderChangedSampleRanges.empty()) {
-                juce::AudioBuffer<float> previousProcessed;
-                double previousRate = 0.0;
-                juce::int64 previousStart = 0;
-                bool hasPrevious =
-                    renderModification->copyProcessedAudioForRegion(
-                        renderRegionKey, previousProcessed, previousRate,
-                        previousStart);
-                if (!hasPrevious && renderArchivedRegionKey.isNotEmpty() &&
-                    renderArchivedRegionKey != renderRegionKey)
-                  hasPrevious =
-                      renderModification->copyProcessedAudioForRegion(
-                          renderArchivedRegionKey, previousProcessed,
-                          previousRate, previousStart);
-                if (hasPrevious)
-                  preserveProcessedAudioOutsideRanges(
-                      processedSlice, processedRate,
-                      renderStartSampleInModification, previousProcessed,
-                      previousRate, previousStart, renderChangedSampleRanges);
-              }
               renderModification->setProcessedAudioForRegion(
-                  renderRegionKey, processedSlice, processedRate,
-                  renderStartSampleInModification);
+                  renderRegionKey, storedAudioData.waveform, processedRate,
+                  0);
               renderModification->notifyContentChanged(
                   juce::ARAContentUpdateScopes::samplesAreAffected(), true);
               for (auto *region : renderModification->getPlaybackRegions())
@@ -2019,7 +2082,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                       juce::ARAContentUpdateScopes::samplesAreAffected(), true);
             } else if (clearProcessedRegionAudio(
                            renderModification, renderRegionKey,
-                           renderArchivedRegionKey)) {
+                           juce::String{})) {
               renderModification->notifyContentChanged(
                   juce::ARAContentUpdateScopes::samplesAreAffected(), true);
               for (auto *region : renderModification->getPlaybackRegions())
@@ -2045,14 +2108,32 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         juce::Component::SafePointer<juce::Component> renderSafeMain(
             mainComponent ? mainComponent->getComponent() : nullptr);
         juce::MessageManager::callAsync(
-            [this, renderSafeMain, success, renderActiveAraRegion,
-             renderRegionStartSeconds]() {
+          [this, renderSafeMain, success, renderActiveAraRegion,
+             renderRegionKey, renderPlaybackRegionKey,
+             renderRegionTimelineShiftSeconds]() {
               if (auto *view =
                       dynamic_cast<IMainView *>(renderSafeMain.getComponent())) {
                 if (success) {
-                  view->updateHostAudioTimelineOffset(
-                      renderActiveAraRegion ? renderRegionStartSeconds
-                                            : araAnalysisTimelineOffsetSeconds);
+                  // Only re-pad the display if this render's region is still
+                  // the one on screen (same guard as targetIsLiveDisplay
+                  // above -- a track-version duplicate elsewhere on the
+                  // timeline has a materially different shift and must not
+                  // be applied to whatever the user has since switched to).
+                  // This must pass the SHIFT, not renderRegionStartSeconds
+                  // (raw playback time) -- passing playback time here mis-
+                  // pads the display for any region whose modification-time
+                  // start isn't near zero, i.e. most regions past the first.
+                  const bool stillLiveDisplay =
+                      !renderActiveAraRegion ||
+                      (renderRegionKey == activeRegionKey &&
+                       renderPlaybackRegionKey == activePlaybackRegionKey &&
+                       juce::approximatelyEqual(
+                           activeRegionTimelineShiftSeconds,
+                           renderRegionTimelineShiftSeconds));
+                  if (stillLiveDisplay)
+                    view->updateHostAudioTimelineOffset(
+                        renderActiveAraRegion ? renderRegionTimelineShiftSeconds
+                                              : araAnalysisTimelineOffsetSeconds);
                   view->bindRealtimeProcessor(realtimeProcessor);
                 }
                 view->finishBackendRender(success);
@@ -2074,20 +2155,21 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
   std::unique_ptr<Project> araRegionScopedProject;
 #if JucePlugin_Enable_ARA
   if (canvasShowsActiveAraRegion && activeRegionKey.isNotEmpty()) {
+    // `project` mirrors the live UI canvas, which is playback-time shifted by
+    // activeRegionTimelineShiftSeconds. Build a SEPARATE, properly re-padded
+    // copy anchored back at modification-time (0) for caching/persistence --
+    // do NOT force timelineOffsetSeconds to 0 without moving the content, and
+    // do NOT touch the live uiProject's own data here at all: it is already
+    // correctly shifted by updateHostAudioTimelineOffset(), and stomping its
+    // label without repadding its content corrupts the very state that
+    // function relies on for every subsequent region switch.
     araRegionScopedProject = std::make_unique<Project>(project);
-    auto &audioData = araRegionScopedProject->getAudioData();
-    audioData.timelineOffsetSeconds = activeRegionStartSeconds;
-    if (activeRegionEndSeconds > activeRegionStartSeconds)
-      audioData.playbackRegionRanges = {
-          {activeRegionStartSeconds, activeRegionEndSeconds}};
+    repadProjectTimeline(*araRegionScopedProject,
+                         activeRegionTimelineShiftSeconds, 0.0);
 
     if (mainComponent != nullptr) {
       if (auto *uiProject = mainComponent->getProject()) {
-        auto &uiAudioData = uiProject->getAudioData();
-        uiAudioData.timelineOffsetSeconds = activeRegionStartSeconds;
-        if (activeRegionEndSeconds > activeRegionStartSeconds)
-          uiAudioData.playbackRegionRanges = {
-              {activeRegionStartSeconds, activeRegionEndSeconds}};
+        setPlaybackRegionRangeToMaterialExtent(*uiProject);
         if (auto *component = mainComponent->getComponent())
           component->repaint();
       }
@@ -2110,11 +2192,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
 
 #if JucePlugin_Enable_ARA
   // Publish per-region state only when the canvas actually holds the ACTIVE
-  // REGION's own project. This callback also fires when the composite/document
-  // analysis lands in the canvas; caching or publishing that project under the
-  // region's key stored the whole-timeline waveform as the region's processed
-  // audio, so the renderer played the composite's leading silence at the
-  // region position (the old realtime-processor safety net masked this).
+  // REGION's own project.
   if (canvasShowsActiveAraRegion && activeRegionKey.isNotEmpty()) {
     if (activeModification != nullptr) {
       juce::MemoryBlock projectArchive;
@@ -2129,6 +2207,10 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
     // persistence, timeline clips) reflects the edit instead of the
     // analysis-time audio. Only for regions that were actually CHANGED —
     // an unedited region stores nothing and keeps playing its original source.
+    // stateProject is already the modification-time-anchored (offset 0) copy
+    // built above, so its waveform can be published as-is: every sibling
+    // region sharing this modification finds its own portion inside this same
+    // buffer via mixProcessedRegionAudio()'s offset math.
     if (activeModification != nullptr && projectHasRegionEdits(stateProject)) {
       const auto &processed = stateProject.getAudioData().waveform;
       const double processedRate =
@@ -2136,14 +2218,16 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
               ? static_cast<double>(stateProject.getAudioData().sampleRate)
               : hostSampleRate;
       if (processed.getNumSamples() > 0) {
-        auto processedSlice =
-            copyTimelineSlice(processed, processedRate, activeRegionStartSeconds,
-                              activeRegionEndSeconds);
-        if (processedSlice.getNumSamples() <= 0)
-          processedSlice.makeCopyOf(processed);
+        // Publish under the SHARED modification/source key (activeRegionKey),
+        // not activePlaybackRegionKey (a per-region identity). `processed` is
+        // the whole-source, modification-time-anchored buffer -- storing it
+        // under a per-region key means only that one sibling's lookup (which
+        // checks its own per-region key as a fallback) would ever find it;
+        // every other sibling reading via the shared key would miss it and
+        // silently fall back to raw/unedited audio. See the (still-accurate)
+        // comment above this block: every sibling must find this same entry.
         activeModification->setProcessedAudioForRegion(
-            activeRegionKey, processedSlice, processedRate,
-            activeStartSampleInModification);
+            activeRegionKey, processed, processedRate, 0);
 
         // Tell the host the rendered samples changed (ARAPluginDemo pattern).
         // ARA hosts prefetch/pre-render playback-renderer output ahead of the
@@ -2158,10 +2242,9 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
                 juce::ARAContentUpdateScopes::samplesAreAffected(), true);
       }
     } else if (activeModification != nullptr) {
-      const auto archivedKey =
-          archivedRegionKeyForLiveKey(activeModification, activeRegionKey);
+      // Clear the same shared key the write path above publishes to.
       if (clearProcessedRegionAudio(activeModification, activeRegionKey,
-                                    archivedKey)) {
+                                    juce::String{})) {
         activeModification->notifyContentChanged(
             juce::ARAContentUpdateScopes::samplesAreAffected(), true);
         for (auto *region : activeModification->getPlaybackRegions())
@@ -2528,6 +2611,8 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
     araRegions.clear();
 #if JucePlugin_Enable_ARA
     activeRegionKey.clear();
+    activePlaybackRegionKey.clear();
+    activePlaybackRegion = nullptr;
     activeModification = nullptr;
     canvasShowsActiveAraRegion = false;
 #endif
@@ -2653,8 +2738,10 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   const auto key = pitchnetRegionKey(*region);
   if (key.isEmpty())
     return;
+  const auto playbackRegionKey = pitchnetProcessedRegionKey(*region);
 
-  if (key == activeRegionKey) {
+  if (key == activeRegionKey && playbackRegionKey == activePlaybackRegionKey) {
+    updateActiveAraRegionProperties(region);
     // Studio One Event FX can bind and select the playback region before the
     // editor exists. That headless call records activeRegionKey but cannot
     // attach a Project or request region-canvas analysis. When the editor later
@@ -2675,22 +2762,32 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       canvasShowsActiveAraRegion) {
     auto outgoing = mainComponent->exchangeProject(nullptr);
     if (outgoing) {
-      auto &audioData = outgoing->getAudioData();
-      audioData.timelineOffsetSeconds = activeRegionStartSeconds;
+      // outgoing IS the retained, undo-tracked object (undo actions hold
+      // pointers into its notes/F0 vectors per the comment above) -- it must
+      // NOT be repadded/reallocated here. Its timelineOffsetSeconds is
+      // already kept correct by updateHostAudioTimelineOffset() (called
+      // whenever this region was activated/updated), so leave it alone;
+      // only playbackRegionRanges (a plain label, not referenced by undo) is
+      // safe to refresh directly. Whichever region reactivates this cached
+      // entry next -- same region or a sibling at a different playback
+      // position -- goes through updateHostAudioTimelineOffset() again,
+      // which re-pads correctly from whatever offset is actually stored here.
       if (activeRegionEndSeconds > activeRegionStartSeconds)
-        audioData.playbackRegionRanges = {
-            {activeRegionStartSeconds, activeRegionEndSeconds}};
+        setPlaybackRegionRangeToMaterialExtent(*outgoing);
       araRegions[activeRegionKey].project = std::move(outgoing);
     }
   }
 
   activeRegionKey = key;
+  activePlaybackRegionKey = playbackRegionKey;
+  activePlaybackRegion = region;
   activeModification = region->getAudioModification<PitchNetAudioModification>();
-  activeRegionStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
-  activeRegionEndSeconds = std::max(activeRegionStartSeconds,
-                                    region->getEndInPlaybackTime());
-  activeStartSampleInModification =
-      region->getStartInAudioModificationSamples();
+  // activeRegionStartSeconds/EndSeconds are PLAYBACK time (arrangement
+  // position) -- what the UI's timeline ruler and live playhead use.
+  // activeRegionTimelineShiftSeconds is the separate playback-vs-modification
+  // shift needed to re-anchor the shared (modification-time) buffer for
+  // display. See updateActiveRegionTiming().
+  updateActiveRegionTiming(region);
 
   auto &incomingState = araRegions[key];
   auto *incomingUndoManager = incomingState.ensureUndoManager();
@@ -2756,10 +2853,10 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       auto displaced =
           mainComponent->exchangeProject(std::move(it->second.project));
       juce::ignoreUnused(displaced);
-      mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+      mainComponent->updateHostAudioTimelineOffset(
+          activeRegionTimelineShiftSeconds);
       if (auto *project = mainComponent->getProject()) {
-        project->getAudioData().playbackRegionRanges = {
-            {activeRegionStartSeconds, activeRegionEndSeconds}};
+        setPlaybackRegionRangeToMaterialExtent(*project);
       }
       mainComponent->bindRealtimeProcessor(realtimeProcessor);
       canvasShowsActiveAraRegion = true;
@@ -2784,31 +2881,60 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   }
 }
 
+void PitchNetAudioProcessor::updateActiveRegionTiming(
+    juce::ARAPlaybackRegion *region) {
+  if (region == nullptr)
+    return;
+
+  activeStartSampleInModification =
+      region->getStartInAudioModificationSamples();
+  activeRegionStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
+  activeRegionEndSeconds =
+      std::max(activeRegionStartSeconds, region->getEndInPlaybackTime());
+
+  auto *modification =
+      region->getAudioModification<PitchNetAudioModification>();
+  auto *rateSource = modification ? modification->getAudioSource() : nullptr;
+  const double modRate = rateSource ? rateSource->getSampleRate() : 0.0;
+  const double modificationStartSeconds =
+      modRate > 0.0
+          ? static_cast<double>(activeStartSampleInModification) / modRate
+          : activeRegionStartSeconds;
+  activeRegionTimelineShiftSeconds =
+      activeRegionStartSeconds - modificationStartSeconds;
+}
+
 void PitchNetAudioProcessor::updateActiveAraRegionProperties(
     juce::ARAPlaybackRegion *region) {
   if (region == nullptr)
     return;
 
   const auto key = pitchnetRegionKey(*region);
-  const auto newStart = std::max(0.0, region->getStartInPlaybackTime());
-  if (key.isEmpty() || key != activeRegionKey)
+  const auto playbackRegionKey = pitchnetProcessedRegionKey(*region);
+  if (key.isEmpty() || key != activeRegionKey ||
+      (region != activePlaybackRegion &&
+       playbackRegionKey != activePlaybackRegionKey))
     return;
 
+  activePlaybackRegionKey = playbackRegionKey;
+  activePlaybackRegion = region;
   activeModification = region->getAudioModification<PitchNetAudioModification>();
-  activeRegionStartSeconds = newStart;
-  activeRegionEndSeconds =
-      std::max(activeRegionStartSeconds, region->getEndInPlaybackTime());
-  activeStartSampleInModification =
-      region->getStartInAudioModificationSamples();
+  // This runs when a DIFFERENT ARAPlaybackRegion object shares the active key
+  // (e.g. the sibling region a slice creates) -- recompute timing for THIS
+  // region instead of leaving the previous region's timing in place.
+  updateActiveRegionTiming(region);
 
   if (mainComponent != nullptr && canvasShowsActiveAraRegion) {
-    mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+    // Re-pads the shared (modification-time-anchored) buffer to this
+    // region's playback-time shift; also sets audioData.timelineOffsetSeconds
+    // to the shift internally, so it must NOT be set again below.
+    mainComponent->updateHostAudioTimelineOffset(
+        activeRegionTimelineShiftSeconds);
 
     if (auto *project = mainComponent->getProject()) {
-      auto &audioData = project->getAudioData();
-      audioData.timelineOffsetSeconds = activeRegionStartSeconds;
-      audioData.playbackRegionRanges = {
-          {activeRegionStartSeconds, activeRegionEndSeconds}};
+      // Keep the editor highlight tied to the loaded source/material, not to
+      // the current Cubase slice wrapper.
+      setPlaybackRegionRangeToMaterialExtent(*project);
 
       publishPersistentProjectSnapshot(*project);
 
@@ -2817,10 +2943,10 @@ void PitchNetAudioProcessor::updateActiveAraRegionProperties(
     }
   } else if (auto it = araRegions.find(key);
              it != araRegions.end() && it->second.project) {
-    auto &audioData = it->second.project->getAudioData();
-    audioData.timelineOffsetSeconds = activeRegionStartSeconds;
-    audioData.playbackRegionRanges = {
-        {activeRegionStartSeconds, activeRegionEndSeconds}};
+    // Stored-but-not-displayed: leave timelineOffsetSeconds as whatever it
+    // actually is (its content is not being moved here); only the label-only
+    // playbackRegionRanges is safe to refresh without a repad.
+    setPlaybackRegionRangeToMaterialExtent(*it->second.project);
   }
 }
 
@@ -2881,11 +3007,7 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
 
         project->getAudioData().timelineOffsetSeconds =
             std::max(0.0, timelineOffsetSeconds);
-        if (project->getAudioData().getDuration() >
-            std::max(0.0, timelineOffsetSeconds))
-          project->getAudioData().playbackRegionRanges = {
-              {std::max(0.0, timelineOffsetSeconds),
-               project->getAudioData().getDuration()}};
+        setPlaybackRegionRangeToMaterialExtent(*project);
 
         attachMacroParameters(*project);
 
@@ -2905,9 +3027,16 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
         if (completedPendingRegion && activeRegionKey.isEmpty()) {
           activeRegionKey = regionKey;
           activeModification = modification;
+          // Rare recovery path (editor was torn down mid-analysis): no actual
+          // ARAPlaybackRegion object is available here to read real
+          // playback-time placement from, so fall back to "no shift" rather
+          // than reusing a stale value from whatever region was active
+          // before. The canvas will show the whole buffer at its own anchor
+          // until a real selection event calls updateActiveRegionTiming().
           activeRegionStartSeconds = std::max(0.0, timelineOffsetSeconds);
           activeRegionEndSeconds = project->getAudioData().getDuration();
           activeStartSampleInModification = startSampleInModification;
+          activeRegionTimelineShiftSeconds = 0.0;
         }
 
         // Paint it onto the canvas if it is still the active region.
@@ -2919,13 +3048,14 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
           juce::ignoreUnused(displaced);
           mainComponent->bindUndoManager(regionUndoManager);
           // The host may move the region while analysis is running. The
-          // analyzed Project is anchored at the position captured at launch;
-          // repad every waveform/F0/note array to the latest host position
-          // before exposing it, so content and boundary move together.
-          mainComponent->updateHostAudioTimelineOffset(latestStart);
+          // analyzed Project is anchored at modification sample 0; re-pad it
+          // to the active region's CURRENT playback-time shift (kept fresh by
+          // updateActiveRegionTiming()) before exposing it, so content and
+          // boundary move together.
+          mainComponent->updateHostAudioTimelineOffset(
+              activeRegionTimelineShiftSeconds);
           if (auto *positionedProject = mainComponent->getProject())
-            positionedProject->getAudioData().playbackRegionRanges = {
-                {latestStart, latestEnd}};
+            setPlaybackRegionRangeToMaterialExtent(*positionedProject);
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
           canvasShowsActiveAraRegion = true;
 
@@ -2969,6 +3099,8 @@ void PitchNetAudioProcessor::removeAraRegion(
     }
     activeModification = nullptr;
     activeRegionKey.clear();
+    activePlaybackRegionKey.clear();
+    activePlaybackRegion = nullptr;
     canvasShowsActiveAraRegion = false;
   }
 
@@ -3069,15 +3201,19 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
     hydratedSource = &resampledSource;
   }
 
-  double archivedRegionEnd = 0.0;
-  for (const auto &range : audioData.playbackRegionRanges)
-    archivedRegionEnd = std::max(archivedRegionEnd, range.second);
-  if (archivedRegionEnd > 0.0) {
-    const auto expectedSamples = static_cast<juce::int64>(
-        std::llround(archivedRegionEnd * projectSampleRate));
+  // STEP 1 follow-up: hydratedSource is now the WHOLE audio source (Step 1),
+  // not a per-region padded buffer, so the old check (does this match the
+  // archived region's OWN end in playbackRegionRanges) no longer applies --
+  // playbackRegionRanges is just the focus window now, usually far shorter
+  // than the source. Sanity-check against the analyzed frame count instead:
+  // f0 was computed from this same whole-source waveform originally.
+  if (!audioData.f0.empty()) {
+    const auto expectedSamples = static_cast<juce::int64>(audioData.f0.size()) *
+                                 static_cast<juce::int64>(HOP_SIZE);
     const auto actualSamples =
         static_cast<juce::int64>(hydratedSource->getNumSamples());
-    if (std::abs(expectedSamples - actualSamples) > 2)
+    if (std::abs(expectedSamples - actualSamples) >
+        static_cast<juce::int64>(HOP_SIZE))
       return false;
   }
 
@@ -3194,10 +3330,10 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
       mainComponent->exchangeProject(std::move(it->second.project));
   juce::ignoreUnused(displaced);
   mainComponent->bindUndoManager(regionUndoManager);
-  mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+  mainComponent->updateHostAudioTimelineOffset(
+      activeRegionTimelineShiftSeconds);
   if (auto *project = mainComponent->getProject())
-    project->getAudioData().playbackRegionRanges = {
-        {activeRegionStartSeconds, activeRegionEndSeconds}};
+    setPlaybackRegionRangeToMaterialExtent(*project);
   mainComponent->bindRealtimeProcessor(realtimeProcessor);
   canvasShowsActiveAraRegion = true;
   mainComponent->hideAnalysisProgress();
@@ -3298,10 +3434,10 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
         mainComponent->exchangeProject(std::move(liveState.project));
     juce::ignoreUnused(displaced);
     mainComponent->bindUndoManager(liveUndoManager);
-    mainComponent->updateHostAudioTimelineOffset(activeRegionStartSeconds);
+    mainComponent->updateHostAudioTimelineOffset(
+        activeRegionTimelineShiftSeconds);
     if (auto *positionedProject = mainComponent->getProject())
-      positionedProject->getAudioData().playbackRegionRanges = {
-          {activeRegionStartSeconds, activeRegionEndSeconds}};
+      setPlaybackRegionRangeToMaterialExtent(*positionedProject);
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
     canvasShowsActiveAraRegion = true;
     mainComponent->hideAnalysisProgress();
