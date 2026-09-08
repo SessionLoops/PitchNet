@@ -838,7 +838,7 @@ void ParameterPanel::showRegionsMenu()
             .withTargetComponent(&regionsSelectorButton)
             .withParentComponent(this)
             .withMinimumWidth(regionsSelectorButton.getWidth()),
-        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this), baseId](int result)
         {
             if (safeThis == nullptr || result < baseId)
                 return;

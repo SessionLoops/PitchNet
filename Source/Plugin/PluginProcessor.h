@@ -161,7 +161,19 @@ public:
   // timeline). Safe to call with a region that has no analysis yet.
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
   void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);
+  // Shared by setActiveAraRegion/updateActiveAraRegionProperties: recomputes
+  // activeStartSampleInModification, activeRegionStartSeconds/EndSeconds
+  // (playback time -- what the UI's timeline and playhead use), and
+  // activeRegionTimelineShiftSeconds (the playback-vs-modification-time shift
+  // for THIS region) from the given region's current ARA placement.
+  void updateActiveRegionTiming(juce::ARAPlaybackRegion *region);
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
+  juce::String getActiveAraPlaybackRegionKey() const {
+    return activePlaybackRegionKey;
+  }
+  bool isActiveAraPlaybackRegion(juce::ARAPlaybackRegion *region) const {
+    return region != nullptr && region == activePlaybackRegion;
+  }
   bool isAraRegionCanvasAnalysisPending() const {
     return regionCanvasAnalysisPending.load();
   }
@@ -367,6 +379,8 @@ private:
   // raw pointers retained by that region's undo actions.
   std::map<juce::String, AraRegionState> araRegions;
   juce::String activeRegionKey;
+  juce::String activePlaybackRegionKey;
+  juce::ARAPlaybackRegion *activePlaybackRegion = nullptr;
   // True only while the canvas is showing the ACTIVE REGION's own (region-local)
   // project. onProjectDataChanged fires for every project change — including
   // completion of the composite/document analysis, whose waveform is anchored to
@@ -382,6 +396,16 @@ private:
   juce::int64 activeStartSampleInModification = 0;
   double activeRegionStartSeconds = 0.0;
   double activeRegionEndSeconds = 0.0;
+  // The persistent per-modification canvas buffer is anchored at modification
+  // sample 0 (source-file position), but the UI's timeline (and its live
+  // playhead cursor, driven straight from host transport time) is anchored at
+  // PLAYBACK time (arrangement position). This is the constant shift between
+  // those two coordinate systems for the CURRENTLY ACTIVE region --
+  // activeRegionStartSeconds (playback time) minus activeStartSampleInModification
+  // converted to seconds (modification time). Pass this, not
+  // activeRegionStartSeconds, to updateHostAudioTimelineOffset() so its
+  // built-in re-pad aligns the shared buffer to this region's real position.
+  double activeRegionTimelineShiftSeconds = 0.0;
   // Dedicated controller for per-region canvas analysis, kept separate from the
   // composite araAnalysisController so the two never interfere.
   std::unique_ptr<EditorController> regionCanvasController;

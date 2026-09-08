@@ -8,15 +8,10 @@
 #include <memory>
 #include <vector>
 
-// Per-region PROCESSED audio stored on the ARA audio modification, so that each
-// playback region/track carries its own analysed/processed result independent of
-// the editor. This mirrors VocalNet's ARADemoPluginAudioModification /
-// ConvertedRegionData model: the timeline draws each clip from here and the
-// playback renderer mixes each region's processed audio from here, both of which
-// work with the UI closed.
-//
-// Live regions use pitchnetRegionKey(); archived slots use the modification
-// persistent ID plus region index. Callers supply the appropriate regionID.
+// Processed audio stored on the ARA audio modification. New ARA builds key this
+// data by the modification identity so Cubase event operations can recreate
+// playback regions without making PitchNet lose the user's edits. Legacy
+// archives may still contain modification/index keys during import.
 class PitchNetAudioModification final : public juce::ARAAudioModification {
 public:
   struct ProcessedRegionData {
