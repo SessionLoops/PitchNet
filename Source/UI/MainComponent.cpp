@@ -14,6 +14,7 @@
 #include "../Utils/PlatformPaths.h"
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/UI/WindowSizing.h"
+#include "BinaryData.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -26,6 +27,7 @@
 namespace
 {
 constexpr float updateSubtitleFontSize = 14.0f;
+constexpr float aboutNoticesFontSize = 12.0f;
 const juce::Colour updateLogScrollbarTrack(0xFF0D0B0Bu);
 const juce::Colour updateLogScrollbarThumb(0xFF565656u);
 
@@ -318,6 +320,118 @@ public:
 private:
   std::function<void()> skipCallback;
   std::function<void()> downloadCallback;
+};
+
+class AboutContent : public juce::Component
+{
+public:
+  AboutContent()
+      : closeButton("Close")
+  {
+    noticesEditor.setMultiLine(true);
+    noticesEditor.setReadOnly(true);
+    noticesEditor.setScrollbarsShown(true);
+    noticesEditor.setScrollBarThickness(8);
+    noticesEditor.setCaretVisible(false);
+    noticesEditor.setPopupMenuEnabled(false);
+    noticesEditor.setText(
+        juce::String::fromUTF8(BinaryData::THIRD_PARTY_NOTICES_txt,
+                               BinaryData::THIRD_PARTY_NOTICES_txtSize),
+        juce::dontSendNotification);
+    noticesEditor.applyFontToAllText(AppFont::getFont(aboutNoticesFontSize));
+    noticesEditor.setColour(juce::TextEditor::backgroundColourId,
+                            juce::Colour(0xFF191717u));
+    noticesEditor.setColour(juce::TextEditor::textColourId,
+                            APP_COLOR_TEXT_PRIMARY);
+    noticesEditor.setColour(juce::TextEditor::outlineColourId,
+                            juce::Colours::transparentBlack);
+    noticesEditor.setColour(juce::TextEditor::focusedOutlineColourId,
+                            juce::Colours::transparentBlack);
+    noticesEditor.setColour(juce::TextEditor::shadowColourId,
+                            juce::Colours::transparentBlack);
+    noticesEditor.setColour(juce::ScrollBar::backgroundColourId,
+                            updateLogScrollbarTrack);
+    noticesEditor.setColour(juce::ScrollBar::trackColourId,
+                            updateLogScrollbarTrack);
+    noticesEditor.setColour(juce::ScrollBar::thumbColourId,
+                            updateLogScrollbarThumb);
+    noticesEditor.setLookAndFeel(&DarkLookAndFeel::getInstance());
+    styleUpdateLogScrollBars(noticesEditor);
+    addAndMakeVisible(noticesEditor);
+
+    styleUpdateButton(closeButton);
+    addAndMakeVisible(closeButton);
+
+    setSize(550, 386);
+  }
+
+  ~AboutContent() override
+  {
+    noticesEditor.setLookAndFeel(nullptr);
+    closeButton.setLookAndFeel(nullptr);
+  }
+
+  void resized() override
+  {
+    auto bounds = getLocalBounds().reduced(24, 20);
+    noticesEditor.setBounds(bounds.removeFromTop(311));
+    styleUpdateLogScrollBars(noticesEditor);
+
+    auto buttonRow = getLocalBounds().removeFromBottom(46);
+    const int buttonW = 150;
+    const int buttonH = 26;
+    closeButton.setBounds((getWidth() - buttonW) / 2, buttonRow.getY() + 5,
+                          buttonW, buttonH);
+  }
+
+  void paint(juce::Graphics &g) override
+  {
+    auto bounds = getLocalBounds().toFloat();
+    g.setColour(juce::Colour(0xFF333333u));
+    g.fillRoundedRectangle(bounds, 7.0f);
+  }
+
+  std::function<void()> onClose;
+  juce::TextButton closeButton;
+
+private:
+  juce::TextEditor noticesEditor;
+};
+
+class AboutDialog : public juce::DialogWindow
+{
+public:
+  explicit AboutDialog(juce::Component *parent)
+      : juce::DialogWindow("", APP_COLOR_BACKGROUND, true)
+  {
+    setOpaque(false);
+    setUsingNativeTitleBar(false);
+    setTitleBarHeight(0);
+    setResizable(false, false);
+    setTitleBarButtonsRequired(0, false);
+
+    auto *content = new AboutContent();
+    content->onClose = [this] { closeButtonPressed(); };
+    content->closeButton.onClick = content->onClose;
+
+    setContentOwned(content, true);
+    setSize(550, 386);
+
+    if (parent != nullptr)
+      centreAroundComponent(parent, getWidth(), getHeight());
+    else
+      centreWithSize(getWidth(), getHeight());
+  }
+
+  void closeButtonPressed() override
+  {
+    exitModalState(0);
+  }
+
+  void paint(juce::Graphics &g) override
+  {
+    juce::ignoreUnused(g);
+  }
 };
 } // namespace
 
@@ -952,6 +1066,14 @@ void MainComponent::showUpdateAvailablePopup(const juce::String &latestVersion,
         juce::Process::openDocument("https://sessionloops.com/pitchnet#downloads", "");
       });
 
+  dialog->setVisible(true);
+  dialog->toFront(true);
+  dialog->enterModalState(true, nullptr, true);
+}
+
+void MainComponent::showAboutPopup()
+{
+  auto *dialog = new AboutDialog(this);
   dialog->setVisible(true);
   dialog->toFront(true);
   dialog->enterModalState(true, nullptr, true);
@@ -3329,6 +3451,7 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
 
       // View commands
       CommandIDs::showSettings,
+      CommandIDs::showAbout,
       CommandIDs::showDeltaPitch,
       CommandIDs::showBasePitch,
 
@@ -3427,6 +3550,10 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   case CommandIDs::showSettings:
     result.setInfo(TR("command.settings"), TR("command.settings.desp"), "View", 0);
     result.addDefaultKeypress(',', primaryModifier);
+    break;
+
+  case CommandIDs::showAbout:
+    result.setInfo(TR("command.about"), TR("command.about.desp"), "View", 0);
     break;
 
   case CommandIDs::showDeltaPitch:
@@ -3578,6 +3705,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
   // View commands
   case CommandIDs::showSettings:
     showSettings();
+    return true;
+
+  case CommandIDs::showAbout:
+    showAboutPopup();
     return true;
 
   case CommandIDs::showDeltaPitch:

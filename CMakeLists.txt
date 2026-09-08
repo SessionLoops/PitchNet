@@ -339,6 +339,10 @@ set(EMBED_EN_LANG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/en.json")
 if(EXISTS "${EMBED_EN_LANG_FILE}")
     list(APPEND BINARY_DATA_FILES "${EMBED_EN_LANG_FILE}")
 endif()
+set(EMBED_NOTICES_FILE "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.txt")
+if(EXISTS "${EMBED_NOTICES_FILE}")
+    list(APPEND BINARY_DATA_FILES "${EMBED_NOTICES_FILE}")
+endif()
 juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 
 target_link_libraries(pitchnet_core PUBLIC

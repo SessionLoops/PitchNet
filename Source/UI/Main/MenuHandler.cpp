@@ -64,6 +64,8 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
 #if !JUCE_MAC
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::showSettings);
+                menu.addSeparator();
+                menu.addCommandItem(commandManager, CommandIDs::showAbout);
 #endif
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::quit);
@@ -88,8 +90,11 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
 juce::PopupMenu MenuHandler::getMacExtraAppleMenu() const {
     juce::PopupMenu menu;
 
-    if (commandManager)
+    if (commandManager) {
+        menu.addCommandItem(commandManager, CommandIDs::showAbout);
+        menu.addSeparator();
         menu.addCommandItem(commandManager, CommandIDs::showSettings);
+    }
 
     return menu;
 }

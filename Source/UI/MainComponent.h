@@ -286,6 +286,7 @@ private:
   void showUpdateAvailablePopup(const juce::String &latestVersion,
                                 const juce::String &releaseNotes);
   void skipUpdateVersion(const juce::String &version);
+  void showAboutPopup();
 
   void loadAudioFile(const juce::File &file);
   void clearProjectForNewLoad();
