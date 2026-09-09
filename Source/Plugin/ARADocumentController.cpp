@@ -1996,6 +1996,35 @@ void PitchNetDocumentController::willDestroyRegionSequence(
   currentPlaybackRegion = nullptr;
 }
 
+void PitchNetDocumentController::snapshotRegionState(
+    juce::ARAPlaybackRegion &region) {
+  auto *modification = region.getAudioModification<PitchNetAudioModification>();
+  if (modification == nullptr)
+    return;
+  const auto liveKey = pitchnetRegionKey(region);
+  const auto archiveKey = pitchnetArchivedRegionKey(region);
+  if (archiveKey.isEmpty())
+    return;
+  juce::MemoryBlock archive;
+  auto *processor = getRegionCanvasProcessor();
+  if ((processor && processor->serializeAraRegionProject(liveKey, archive)) ||
+      modification->copyProjectArchiveForRegion(liveKey, archive))
+    modification->setProjectArchiveForRegion(archiveKey, archive.getData(),
+                                             archive.getSize());
+  juce::AudioBuffer<float> audio;
+  double rate = 0.0;
+  juce::int64 start = 0;
+  if (modification->copyProcessedAudioForRegion(liveKey, audio, rate, start))
+    modification->setProcessedAudioForRegion(archiveKey, audio, rate, start);
+}
+
+void PitchNetDocumentController::didUpdateAudioModificationProperties(
+    juce::ARAAudioModification *audioModification) {
+  if (auto *modification =
+          dynamic_cast<PitchNetAudioModification *>(audioModification))
+    modification->adoptClonedRegionState();
+}
+
 void PitchNetDocumentController::didAddPlaybackRegionToAudioModification(
     juce::ARAAudioModification *audioModification,
     juce::ARAPlaybackRegion *playbackRegion) {
@@ -2046,6 +2075,8 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
   if (!audioModification || !playbackRegion)
     return;
 
+  snapshotRegionState(*playbackRegion);
+
   if (!shouldProcessPlaybackRegion(playbackRegion))
     return;
 
@@ -2062,15 +2093,8 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
                                            playbackRegion),
                                currentPlaybackRegions.end());
 
-  // Deliberately NOT releasing the region's Project/undo state here. This
-  // callback fires on any unbind from this modification, including a
-  // reversible Reaper take-cycle - confirmed empirically (2026-08-29) that
-  // both the modification pointer and this region's host-ref are byte-for-
-  // byte identical when cycling back to the same take, so pitchnetRegionKey()
-  // stays valid and araRegions[key] is correctly rediscovered on return.
-  // Eagerly erasing it here destroyed live undo history on every take-cycle.
-  // Real cleanup now happens in willDestroyPlaybackRegion(), which fires only
-  // when the host is actually deallocating this region object.
+  // snapshotRegionState() preserves an archive for version reactivation.
+  // Release the live Project and undo manager in willDestroyPlaybackRegion().
   currentDocument = audioSource->getDocument();
 }
 
@@ -2123,12 +2147,10 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
     currentPlaybackRegion = nullptr;
   }
 
-  // The region's Project and undo manager are released here, not in
-  // willRemovePlaybackRegionFromAudioModification - this callback fires only
-  // when the host is actually deallocating the region, not on a reversible
-  // unbind (e.g. a Reaper take-cycle), so this is the correct point to
-  // discard state that can no longer come back under the same key.
-  if (playbackRegion == nullptr || !shouldProcessPlaybackRegion(playbackRegion))
+  // The removal callback has already cleared this region from the tracked
+  // selection. Destruction must release its Project and undo manager even
+  // when other regions remain selected.
+  if (playbackRegion == nullptr)
     return;
   if (auto *processor = getRegionCanvasProcessor())
     processor->removeAraRegion(pitchnetRegionKey(*playbackRegion));
@@ -2233,6 +2255,12 @@ juce::ARAAudioModification *PitchNetDocumentController::doCreateAudioModificatio
     juce::ARAAudioSource *audioSource,
     ARA::ARAAudioModificationHostRef hostRef,
     const juce::ARAAudioModification *optionalModificationToClone) {
+  if (optionalModificationToClone != nullptr)
+    for (auto *region : optionalModificationToClone
+                            ->getPlaybackRegions<juce::ARAPlaybackRegion>())
+      if (region != nullptr)
+        snapshotRegionState(*region);
+
   return new PitchNetAudioModification(audioSource, hostRef,
                                        optionalModificationToClone);
 }
@@ -2308,10 +2336,15 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
         const int hasAudio = input.readInt();
 
         const auto regionKey =
-            pitchnetRegionKeyForIndex(persistentID, regionIndex);
+            pitchnetRegionKeyForIndex(
+                audioModification != nullptr
+                    ? juce::String(audioModification->getPersistentID())
+                    : persistentID,
+                regionIndex);
 
-        restoreAraRegionProjectOrPend(regionKey, json.getData(),
-                                      json.getSize());
+        if (audioModification != nullptr)
+          restoreAraRegionProjectOrPend(regionKey, json.getData(),
+                                        json.getSize());
         if (pitchModification != nullptr && regionKey.isNotEmpty() &&
             json.getSize() > 0)
           pitchModification->setProjectArchiveForRegion(
@@ -2382,11 +2415,6 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
     auto jsonString = mainComponent->serializeProjectJson();
     archiveData.append(jsonString.toRawUTF8(),
                        jsonString.getNumBytesAsUTF8());
-  }
-
-  if (archiveData.getSize() == 0) {
-    output.writeInt64(0);
-    return true;
   }
 
   if (filter) {
@@ -2460,6 +2488,24 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
           if (json.getSize() > 0)
             regionEntries.push_back(
                 {static_cast<int>(r), key, liveKey, std::move(json)});
+        }
+
+        // Inactive track versions can keep their modification while the host
+        // removes all playback regions. Persist the saved slots in that case.
+        if (regions.empty() && pitchModification != nullptr) {
+          const auto prefix =
+              juce::String(audioModification->getPersistentID()) + ":";
+          for (const auto &key : pitchModification->getProjectArchiveRegionIDs()) {
+            if (!key.startsWith(prefix))
+              continue;
+            const auto suffix = key.substring(prefix.length());
+            if (suffix.isEmpty() || !suffix.containsOnly("0123456789"))
+              continue;
+            juce::MemoryBlock json;
+            if (pitchModification->copyProjectArchiveForRegion(key, json))
+              regionEntries.push_back(
+                  {suffix.getIntValue(), key, key, std::move(json)});
+          }
         }
 
         if (!output.writeInt(static_cast<int>(regionEntries.size())))

@@ -1,4 +1,5 @@
 #include "IncrementalSynthesizer.h"
+#include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/Localization.h"
 #include "../../Utils/TimingRegionUtils.h"
@@ -48,8 +49,31 @@ bool hasTimingEdit(const Note &note) {
 // A note can remain timing-edited after that render, so comparing against the
 // immutable source bounds here would incorrectly broaden later pitch commits.
 bool hasPendingTimingPositionChange(const Note &note) {
-  return note.getStartFrame() != note.getRenderedStartFrame() ||
-         note.getEndFrame() != note.getRenderedEndFrame();
+  // Which position this note's audio currently occupies in the composite.
+  //
+  // The rendered frames only mean anything once something has actually been
+  // rendered: they are stamped at construction and are not maintained by
+  // setStartFrame, so on a note that has never been rendered they are a
+  // stale snapshot of wherever the note was first created. Measured on a
+  // freshly detected take: cur=[12,41) src=[12,41) rendered=[14,41) - two
+  // frames of drift, no timing edit anywhere, yet the naive comparison
+  // reported a pending move. That false positive sets needsF0RangeCommit,
+  // which replaces the commit range for one note with the entire F0 dirty
+  // range: a single pitch edit rewriting 1.74 s of a 2.4 s region.
+  //
+  // Before the first render the note's audio is still sitting at its source
+  // position, so that is what a move has to be measured against. This keeps
+  // the case the expansion exists for - a note retimed but not yet rendered
+  // still reports the move, and both its old and new positions get
+  // committed - while a pitch-only edit correctly reports none.
+  const bool rendered = note.hasRenderedEdit();
+  const int occupiedStart =
+      rendered ? note.getRenderedStartFrame() : note.getSrcStartFrame();
+  const int occupiedEnd =
+      rendered ? note.getRenderedEndFrame() : note.getSrcEndFrame();
+
+  return note.getStartFrame() != occupiedStart ||
+         note.getEndFrame() != occupiedEnd;
 }
 
 std::vector<PreservedTimingSpan>
@@ -715,6 +739,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
 
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
+  const int rawDirtyStart = dirtyStart;
+  const int rawDirtyEnd = dirtyEnd;
   if (dirtyStart < 0 || dirtyEnd < 0) {
     if (onComplete)
       onComplete(false);
@@ -755,6 +781,79 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int hopSize = (vocoder != nullptr && vocoder->isLoaded())
                           ? vocoder->getHopSize()
                           : HOP_SIZE;
+  // Kept deliberately, not leftover debugging. Four lines and roughly 250
+  // bytes per pass, against a log already dominated by model loading and
+  // detection - cheap enough to leave on, and it turns "editing one note
+  // rewrote the region" from a discussion into a question a user's debug log
+  // answers directly. That is how the commit-range bug in 717ad6f was found.
+  //
+  // One line per synthesis pass. Two ranges matter and they are easy to
+  // confuse: `commit` is what actually replaces waveform, `render` is only
+  // the context handed to the engine and is expected to be far wider. If a
+  // single note edit ever shows a commit spanning more than that note, the
+  // discriminator is `noteAnchors` - `no` means the F0 branch of
+  // collectCommitFrameRanges fired and committed the whole edited curve
+  // range instead of one note.
+  {
+    const double framesToSeconds =
+        static_cast<double>(hopSize) /
+        static_cast<double>(std::max(1, audioData.sampleRate));
+
+    int dirtyNoteCount = 0;
+    for (const auto &note : project->getNotes())
+      if (!note.isRest() && note.isDirty())
+        ++dirtyNoteCount;
+
+    juce::String commitText;
+    int committedFrames = 0;
+    for (const auto &range : commitFrameRanges) {
+      commitText << "[" << range.start << "," << range.end << ") ";
+      committedFrames += range.end - range.start;
+    }
+    if (commitText.isEmpty())
+      commitText = "(none)";
+
+    LOG(juce::String("synthesizeRegion: engine=") +
+        (usePsola ? "PSOLA" : "Vocoder") +
+        "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
+        "  dirtyNotes=" + juce::String(dirtyNoteCount) +
+        "  f0Dirty=[" + juce::String(f0DirtyStart) + "," +
+        juce::String(f0DirtyEnd) + ")");
+    LOG(juce::String("  dirty=[") + juce::String(rawDirtyStart) + "," +
+        juce::String(rawDirtyEnd) + ")  cluster=[" +
+        juce::String(editedClusters.startFrame) + "," +
+        juce::String(editedClusters.endFrame) + ")  render=[" +
+        juce::String(startFrame) + "," + juce::String(endFrame) + ") " +
+        juce::String(static_cast<double>(endFrame - startFrame) *
+                         framesToSeconds,
+                     2) + "s");
+    LOG(juce::String("  commit=") + commitText + " " +
+        juce::String(static_cast<double>(committedFrames) * framesToSeconds,
+                     2) + "s");
+
+    // The exact inputs to collectCommitFrameRanges' branch, per dirty note.
+    // pendingTiming=YES on an edit that moved nothing is the false positive
+    // that promotes the commit from one note to the whole F0 dirty range.
+    const auto &allNotes = project->getNotes();
+    for (size_t i = 0; i < allNotes.size(); ++i) {
+      const auto &note = allNotes[i];
+      if (note.isRest() || !note.isDirty())
+        continue;
+      LOG(juce::String("  dirtyNote[") + juce::String(static_cast<int>(i)) +
+          "] cur=[" + juce::String(note.getStartFrame()) + "," +
+          juce::String(note.getEndFrame()) + ")  src=[" +
+          juce::String(note.getSrcStartFrame()) + "," +
+          juce::String(note.getSrcEndFrame()) + ")  rendered=[" +
+          juce::String(note.getRenderedStartFrame()) + "," +
+          juce::String(note.getRenderedEndFrame()) + ")" +
+          "  hasRenderedEdit=" + (note.hasRenderedEdit() ? "yes" : "no") +
+          "  pendingTiming=" +
+          (hasPendingTimingPositionChange(note) ? "YES" : "no") +
+          "  neutral=" +
+          (note.isNeutralForOriginalWaveform() ? "yes" : "no"));
+    }
+  }
+
   std::vector<float> blendMask = generateBlendMask(startFrame, endFrame, hopSize);
 
   // Timing edits cannot be mixed with pristine samples at their destination
@@ -1181,8 +1280,46 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             return;
           }
 
-          // Resize synthesized audio to match expected
-          synthesizedAudio.resize(static_cast<size_t>(expectedSamples), 0.0f);
+          // Back a short render with the original, never with silence.
+          //
+          // A render that returns fewer samples than the frame count asks for
+          // used to be zero-filled to length. Those samples land where the
+          // blend mask reads 1.0 - fully synthesized - so the hole is
+          // committed with no fade on either side and reads as a dropout.
+          // Continuing with the original samples degrades to leaving that
+          // stretch unedited, which is what the blend already does for every
+          // unvoiced frame. The short fade keeps the handover from being a
+          // step in its own right.
+          //
+          // Whether this ever fires is unknown, hence the log line: if the
+          // model is truncating, that is worth finding out from a user's
+          // debug log rather than by inference.
+          {
+            const size_t target = static_cast<size_t>(expectedSamples);
+            const size_t rendered = std::min(synthesizedAudio.size(), target);
+            if (rendered < target) {
+              LOG("IncrementalSynthesizer: short render, " +
+                  juce::String(static_cast<int>(rendered)) + " of " +
+                  juce::String(expectedSamples) +
+                  " samples; padding from original");
+            }
+            synthesizedAudio.resize(target, 0.0f);
+            for (size_t i = rendered; i < target; ++i)
+              synthesizedAudio[i] =
+                  i < originalSegment.size() ? originalSegment[i] : 0.0f;
+
+            const size_t fade = std::min<size_t>(128, rendered);
+            if (rendered < target && fade > 0) {
+              for (size_t i = rendered - fade; i < rendered; ++i) {
+                if (i >= originalSegment.size())
+                  break;
+                const float t = static_cast<float>(i - (rendered - fade)) /
+                                static_cast<float>(fade);
+                synthesizedAudio[i] +=
+                    t * (originalSegment[i] - synthesizedAudio[i]);
+              }
+            }
+          }
 
           int samplesToWrite =
               std::min(expectedSamples, totalSamples - startSample);
@@ -1330,8 +1467,30 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // the existing boundary allowance for the point where the current
           // composite and new render best agree, then use a short smoothstep
           // transition there to avoid both clicks and long phasey overlaps.
-          constexpr int kCommitBoundaryMarginSamples = 512;
-          constexpr int kAdaptiveFadeHalfSamples = 128;
+          // Half-fade restored to its pre-a789d83 length. That commit is
+          // titled "make the crossfade position adaptable", but alongside the
+          // splice search it also cut this constant from 512 to 128 - a
+          // 23 ms crossfade down to 5.8 ms - and the shortening is what the
+          // click reports bisect to. 1024 samples of fade spans a full pitch
+          // period for anything above 43 Hz; 256 samples only above 172 Hz,
+          // which leaves most male singing with a join shorter than one
+          // cycle. The search is kept: choosing a better splice point can
+          // only help, and it is the length that was doing the damage.
+          constexpr int kCommitFadeHalfSamples = 512;
+          // Splice displacement, in samples either side of the note edge.
+          //
+          // Set to 0, which pins the crossfade to the nominal boundary and so
+          // reproduces the pre-a789d83 geometry exactly - the configuration
+          // that predates the click reports. Restoring the fade length alone
+          // left this as the last remaining difference from it: the search
+          // could still move the join up to 384 samples (8.7 ms) away from
+          // the note edge, and on a 162 ms note that is a meaningful fraction
+          // of its length.
+          //
+          // Raise it back to 384 to re-enable the search. Doing so is only
+          // worth it if a moved splice measurably beats a fixed one; the
+          // bisect says the fixed one was already clean.
+          constexpr int kSpliceSearchRadiusSamples = 0;
           constexpr int kSpliceAnalysisHalfSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
@@ -1349,17 +1508,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (bodySamples <= 0)
               continue;
 
+            // Quarter of the body rather than a half: the fade is centred on
+            // a searched point, not on the boundary, so it needs room to be
+            // displaced into without colliding with the fade at the far end.
             const int fadeHalf =
-                std::min(kAdaptiveFadeHalfSamples,
+                std::min(kCommitFadeHalfSamples,
                          std::max(1, bodySamples / 4));
             const bool fadeLeft = range.start > 0;
             const bool fadeRight = range.end * hopSize < totalSamples;
-            const int availableSearchRadius = std::max(
-                0, kCommitBoundaryMarginSamples - fadeHalf);
             const int nonOverlappingSearchRadius =
                 std::max(0, bodySamples / 2 - fadeHalf);
             const int searchRadius =
-                std::min(availableSearchRadius, nonOverlappingSearchRadius);
+                std::min(kSpliceSearchRadiusSamples, nonOverlappingSearchRadius);
             const int analysisHalf = std::min(
                 kSpliceAnalysisHalfSamples,
                 std::max(1, samplesToWrite / 2 - 1));

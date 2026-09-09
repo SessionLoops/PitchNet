@@ -198,6 +198,8 @@ public:
       juce::ARAPlaybackRegion *playbackRegion) override;
   void willDestroyRegionSequence(juce::ARARegionSequence *regionSequence)
       override;
+  void didUpdateAudioModificationProperties(
+      juce::ARAAudioModification *audioModification) override;
   void didAddPlaybackRegionToAudioModification(
       juce::ARAAudioModification *audioModification,
       juce::ARAPlaybackRegion *playbackRegion) override;
@@ -305,6 +307,7 @@ private:
   void restoreAraRegionProjectOrPend(const juce::String &regionKey,
                                      const void *data, size_t sizeInBytes);
   void flushPendingAraRegionProjects();
+  void snapshotRegionState(juce::ARAPlaybackRegion &region);
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
   void stopAnalysisThread();

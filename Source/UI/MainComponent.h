@@ -281,11 +281,15 @@ private:
 
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;
+  // Keeps the Rendering card's device row in step with the execution provider
+  // chosen in Settings - the list is per-provider, and so is the default.
+  void refreshRenderDeviceOptions();
   void applyCachedHostLoopRange();
   void checkForUpdatesOnLaunch();
   void showUpdateAvailablePopup(const juce::String &latestVersion,
                                 const juce::String &releaseNotes);
   void skipUpdateVersion(const juce::String &version);
+  void showAboutPopup();
 
   void loadAudioFile(const juce::File &file);
   void clearProjectForNewLoad();

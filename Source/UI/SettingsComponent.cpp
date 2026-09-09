@@ -1,15 +1,11 @@
 #include "SettingsComponent.h"
+#include "GpuDeviceList.h"
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
 
 #ifdef HAVE_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
-#endif
-
-#ifdef _WIN32
-#include <dxgi1_2.h>
-#include <windows.h>
 #endif
 
 namespace
@@ -42,42 +38,6 @@ namespace
     return {};
   }
 
-#ifdef _WIN32
-  juce::StringArray getDxgiAdapterNames()
-  {
-    juce::StringArray names;
-    IDXGIFactory1 *factory = nullptr;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
-                                  reinterpret_cast<void **>(&factory))) ||
-        factory == nullptr)
-    {
-      return names;
-    }
-
-    for (UINT i = 0;; ++i)
-    {
-      IDXGIAdapter1 *adapter = nullptr;
-      const auto hr = factory->EnumAdapters1(i, &adapter);
-      if (hr == DXGI_ERROR_NOT_FOUND)
-        break;
-      if (FAILED(hr) || adapter == nullptr)
-        continue;
-
-      DXGI_ADAPTER_DESC1 desc{};
-      if (SUCCEEDED(adapter->GetDesc1(&desc)))
-      {
-        if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0)
-        {
-          names.add(juce::String(desc.Description));
-        }
-      }
-      adapter->Release();
-    }
-
-    factory->Release();
-    return names;
-  }
-#endif
 } // namespace
 
 //==============================================================================
@@ -853,7 +813,7 @@ void SettingsComponent::updateDeviceList()
       {
         selectedIndex = i;
         currentDevice = devices[i];
-        gpuDeviceId = 0;
+        gpuDeviceId = GpuDeviceList::getDefaultDeviceIndex(currentDevice);
         break;
       }
     }
@@ -891,169 +851,35 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType)
 {
   gpuDeviceComboBox.clear();
 
-  if (deviceType == "CPU")
+  const auto deviceNames = GpuDeviceList::getDeviceNames(deviceType);
+  for (int i = 0; i < deviceNames.size(); ++i)
+    gpuDeviceComboBox.addItem(deviceNames[i], i + 1);
+
+  if (gpuDeviceComboBox.getNumItems() == 0)
   {
-    // No GPU devices for CPU
-    return;
-  }
+    if (deviceType == "CPU")
+      return;
 
-#ifdef HAVE_ONNXRUNTIME
-  if (deviceType == "CUDA")
-  {
-#ifdef USE_CUDA
-    int deviceCount = 0;
-    bool devicesDetected = false;
-    juce::StringArray cudaDeviceNames;
-
-    // Try to load CUDA runtime library to get actual device count and names
-#ifdef _WIN32
-    const char *cudaDllNames[] = {
-        "cudart64_12.dll", // CUDA 12.x
-        "cudart64_11.dll", // CUDA 11.x
-        "cudart64_10.dll", // CUDA 10.x
-        "cudart64.dll"     // Generic
-    };
-
-    HMODULE cudaLib = nullptr;
-    for (const char *dllName : cudaDllNames)
-    {
-      cudaLib = LoadLibraryA(dllName);
-      if (cudaLib)
-      {
-        break;
-      }
-    }
-
-    if (cudaLib)
-    {
-      typedef int (*cudaGetDeviceCountFunc)(int *);
-      typedef int (*cudaGetDevicePropertiesFunc)(void *, int);
-
-      auto cudaGetDeviceCount =
-          (cudaGetDeviceCountFunc)GetProcAddress(cudaLib, "cudaGetDeviceCount");
-
-      if (cudaGetDeviceCount)
-      {
-        int result = cudaGetDeviceCount(&deviceCount);
-        if (result == 0 && deviceCount > 0)
-        {
-
-          // Try to get device properties for names
-          auto cudaGetDeviceProperties =
-              (cudaGetDevicePropertiesFunc)GetProcAddress(
-                  cudaLib, "cudaGetDeviceProperties");
-
-          for (int deviceId = 0; deviceId < deviceCount; ++deviceId)
-          {
-            juce::String deviceName = "GPU " + juce::String(deviceId);
-
-            // Try to get device name from properties
-            if (cudaGetDeviceProperties)
-            {
-              // Allocate full cudaDeviceProp structure (it's large, ~1KB)
-              // We can't use the actual struct without CUDA headers, so
-              // allocate enough space
-              char propBuffer[2048]; // Large enough for cudaDeviceProp
-              memset(propBuffer, 0, sizeof(propBuffer));
-
-              if (cudaGetDeviceProperties(propBuffer, deviceId) == 0)
-              {
-                // Device name is at the start of the structure
-                char *name = propBuffer;
-                if (name[0] != '\0')
-                {
-                  deviceName = juce::String(name);
-                }
-              }
-            }
-
-            cudaDeviceNames.add(deviceName + " (CUDA)");
-          }
-          devicesDetected = true;
-        }
-        else
-        {
-        }
-      }
-      FreeLibrary(cudaLib);
-    }
-    else
-    {
-    }
-#endif
-
-    if (devicesDetected && cudaDeviceNames.size() > 0)
-    {
-      for (int i = 0; i < cudaDeviceNames.size(); ++i)
-        gpuDeviceComboBox.addItem(cudaDeviceNames[i], i + 1);
-    }
-    else
-    {
-#ifdef _WIN32
-      auto dxgiNames = getDxgiAdapterNames();
-      if (dxgiNames.size() > 0)
-      {
-        for (int i = 0; i < dxgiNames.size(); ++i)
-          gpuDeviceComboBox.addItem(dxgiNames[i] + " (DXGI)", i + 1);
-      }
-#endif
-    }
-
-    // If no devices detected, add default
-    if (gpuDeviceComboBox.getNumItems() == 0)
-    {
-      gpuDeviceComboBox.addItem("GPU 0 (CUDA)", 1);
-    }
-#else
-    // CUDA not compiled in, but provider is available
-    // This shouldn't happen, but add default option
-    gpuDeviceComboBox.addItem("GPU 0 (CUDA)", 1);
-#endif
-  }
-  else if (deviceType == "DirectML")
-  {
-#ifdef USE_DIRECTML
-    bool addedFromDxgi = false;
-#ifdef _WIN32
-    auto dxgiNames = getDxgiAdapterNames();
-    if (dxgiNames.size() > 0)
-    {
-      for (int i = 0; i < dxgiNames.size(); ++i)
-        gpuDeviceComboBox.addItem(dxgiNames[i] + " (DirectML)", i + 1);
-      addedFromDxgi = true;
-    }
-#endif
-    if (!addedFromDxgi)
-    {
-      // DirectML fallback: provide a small default list
-      for (int deviceId = 0; deviceId < 4; ++deviceId)
-      {
-        gpuDeviceComboBox.addItem(
-            "GPU " + juce::String(deviceId) + " (DirectML)", deviceId + 1);
-      }
-    }
-#else
-    // DirectML not compiled in
-    gpuDeviceComboBox.addItem("GPU 0 (DirectML)", 1);
-#endif
-  }
-  else
-  {
-    // Other GPU providers (CoreML, TensorRT) - use default device
+    // A provider that picks its own device still gets a row, so the control
+    // does not vanish and leave the user wondering what it is running on.
     gpuDeviceComboBox.addItem(TR("settings.default_gpu"), 1);
   }
 
-  // Set default selection
-  if (gpuDeviceComboBox.getNumItems() > 0)
-  {
-    // Try to restore saved selection, or use first device
-    int savedId = gpuDeviceId + 1;
-    if (savedId > 0 && savedId <= gpuDeviceComboBox.getNumItems())
-      gpuDeviceComboBox.setSelectedId(savedId, juce::dontSendNotification);
-    else
-      gpuDeviceComboBox.setSelectedId(1, juce::dontSendNotification);
-  }
-#endif
+  const int defaultIndex = GpuDeviceList::getDefaultDeviceIndex(deviceType);
+  const bool hasStoredId =
+      settingsManager != nullptr && settingsManager->hasStoredGpuDeviceId();
+
+  // An id the user chose wins, as long as this provider still has that device.
+  // Anything else - never chosen, or carried over from a provider that
+  // enumerated more devices - falls back to the provider's own default.
+  int index = hasStoredId ? gpuDeviceId : defaultIndex;
+  if (!juce::isPositiveAndBelow(index, gpuDeviceComboBox.getNumItems()))
+    index = defaultIndex;
+  if (!juce::isPositiveAndBelow(index, gpuDeviceComboBox.getNumItems()))
+    index = 0;
+
+  gpuDeviceId = index;
+  gpuDeviceComboBox.setSelectedId(index + 1, juce::dontSendNotification);
 }
 
 juce::StringArray SettingsComponent::getAvailableDevices()
@@ -1092,7 +918,7 @@ juce::StringArray SettingsComponent::getAvailableDevices()
 #ifdef USE_DIRECTML
     if (hasDml
 #ifdef _WIN32
-        && !getDxgiAdapterNames().isEmpty()
+        && !GpuDeviceList::getDisplayAdapterNames().isEmpty()
 #endif
     )
     {

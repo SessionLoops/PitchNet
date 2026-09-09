@@ -285,6 +285,9 @@ file(GLOB_RECURSE PITCHNET_CORE_SOURCES
     "Source/JuceHeader.h")
 
 list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "Source/Utils/UI/")
+if(NOT APPLE)
+    list(FILTER PITCHNET_CORE_SOURCES EXCLUDE REGEX "\\.mm$")
+endif()
 list(APPEND PITCHNET_CORE_SOURCES
     "Source/Utils/OnnxRuntimeLoader.cpp"
     "Source/Utils/OnnxRuntimeLoader.h"
@@ -302,6 +305,9 @@ list(APPEND PITCHNET_UI_SOURCES
     "Source/UI/PianoRoll/PianoRollInteractionContext.cpp"
     "Source/UI/PianoRoll/PianoRollInteractionContext.h"
     "Source/UI/PianoRoll/PianoRollViewState.h")
+if(NOT APPLE)
+    list(FILTER PITCHNET_UI_SOURCES EXCLUDE REGEX "\\.mm$")
+endif()
 
 file(GLOB PLUGIN_SOURCES
     "Source/Plugin/PluginProcessor.cpp" "Source/Plugin/PluginProcessor.h"
@@ -332,6 +338,10 @@ set(BINARY_DATA_FILES ${IMAGE_FILES})
 set(EMBED_EN_LANG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/en.json")
 if(EXISTS "${EMBED_EN_LANG_FILE}")
     list(APPEND BINARY_DATA_FILES "${EMBED_EN_LANG_FILE}")
+endif()
+set(EMBED_NOTICES_FILE "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.txt")
+if(EXISTS "${EMBED_NOTICES_FILE}")
+    list(APPEND BINARY_DATA_FILES "${EMBED_NOTICES_FILE}")
 endif()
 juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 

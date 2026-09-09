@@ -78,6 +78,15 @@ public:
   // Editor connection
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
+  juce::Point<int> getLastEditorSize() const noexcept {
+    return {lastEditorWidth, lastEditorHeight};
+  }
+  void setLastEditorSize(int width, int height) noexcept {
+    if (width > 0 && height > 0) {
+      lastEditorWidth = width;
+      lastEditorHeight = height;
+    }
+  }
   bool attachCachedAraAnalysis(std::uintptr_t sourceKey,
                                double timelineOffsetSeconds,
                                const std::vector<std::pair<double, double>> &
@@ -319,6 +328,11 @@ private:
   PitchNetDocumentController *araDocumentController = nullptr;
 #endif
   IMainView *mainComponent = nullptr;
+  // Hosts commonly destroy the editor when its window closes while retaining
+  // the processor instance. Keep the most recent editor dimensions here so a
+  // subsequently created editor can resume at the same size.
+  int lastEditorWidth = 0;
+  int lastEditorHeight = 0;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
   double hostSampleRate = 44100.0;

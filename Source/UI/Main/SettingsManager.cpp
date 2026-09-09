@@ -1,5 +1,6 @@
 #include "SettingsManager.h"
 #include "../../Utils/AppLogger.h"
+#include "../GpuDeviceList.h"
 
 SettingsManager::SettingsManager()
 {
@@ -49,10 +50,25 @@ void SettingsManager::loadSettings()
       "synthesisEngine", synthesisEngineTypeToString(synthesisEngineType));
   synthesisEngineType = stringToSynthesisEngineType(synthesisEngineStr);
 
-  gpuDeviceId = xml->getIntAttribute("gpuDeviceId", gpuDeviceId);
+  if (xml->hasAttribute("gpuDeviceId"))
+  {
+    gpuDeviceId = xml->getIntAttribute("gpuDeviceId", gpuDeviceId);
+    hasStoredGpuDeviceIdSetting = true;
+  }
   language = xml->getStringAttribute("language", language);
 
   saveConfig();
+}
+
+int SettingsManager::getGPUDeviceId() const
+{
+  // Until the user picks a device, follow the provider's own default. Doing it
+  // here rather than at load time keeps it correct when the execution device
+  // changes, and keeps "unset" out of the config file.
+  if (hasStoredGpuDeviceIdSetting)
+    return gpuDeviceId;
+
+  return GpuDeviceList::getDefaultDeviceIndex(device);
 }
 
 void SettingsManager::applySettings()
@@ -62,7 +78,7 @@ void SettingsManager::applySettings()
   if (vocoder)
   {
     vocoder->setExecutionDevice(device);
-    vocoder->setExecutionDeviceId(gpuDeviceId);
+    vocoder->setExecutionDeviceId(getGPUDeviceId());
     if (vocoder->isLoaded())
       vocoder->reloadModel();
   }
@@ -109,7 +125,10 @@ void SettingsManager::loadConfig()
         }
 
         if (configObj->hasProperty("gpuDeviceId"))
+        {
           gpuDeviceId = static_cast<int>(configObj->getProperty("gpuDeviceId"));
+          hasStoredGpuDeviceIdSetting = true;
+        }
 
         if (configObj->hasProperty("language"))
           language = configObj->getProperty("language").toString();
@@ -202,7 +221,8 @@ void SettingsManager::saveConfig()
                       pitchDetectorTypeToString(pitchDetectorType));
   config->setProperty("synthesisEngine",
                       synthesisEngineTypeToString(synthesisEngineType));
-  config->setProperty("gpuDeviceId", gpuDeviceId);
+  if (hasStoredGpuDeviceIdSetting)
+    config->setProperty("gpuDeviceId", gpuDeviceId);
   config->setProperty("language", language);
 
   if (lastFilePath.existsAsFile())

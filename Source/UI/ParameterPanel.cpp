@@ -34,6 +34,10 @@ constexpr int kRegionsRowHeight = 26;           // region selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
+
+// The inference device row is optional in the same way the Regions card is: it
+// adds itself, leading gap included, only while it is showing.
+constexpr int kRenderDeviceRowExtraHeight = (kRowGap + 1) + kControlRowHeight;
 constexpr int kTimeCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kTimelineModeRowHeight +
     (kRowGap + 1) + kControlRowHeight + kRowGap + kControlRowHeight + kInnerPadY;
@@ -52,6 +56,9 @@ constexpr int kPreferredPanelHeight =
 // The Regions card only exists in ARA plugin mode, so it is not part of the
 // base sum - it adds itself, gap included, when it is showing.
 constexpr int kRegionsCardExtraHeight = kCardGap + kRegionsCardHeight;
+
+constexpr int kRegionMenuBaseId = 7401;
+constexpr int kRenderDeviceMenuBaseId = 7501;
 
 constexpr const char* kNoRegionsText = "No regions";
 constexpr const char* kNoRegionSelectedText = "Select region";
@@ -117,6 +124,18 @@ juce::String getTimelineGridLabel(TimelineGridDivision division)
 juce::String getDragSnapModeLabel(DragSnapMode mode)
 {
     return mode == DragSnapMode::Scale ? "Scale" : "Chromatic";
+}
+
+// Device names arrive provider-tagged ("Radeon RX 7900 XT (DirectML)") because
+// the Settings list mixes providers. In this card they never do - the provider
+// is fixed - so the tag is dead weight in a 150px button. Strip it here rather
+// than at the source, so Settings keeps the disambiguation it needs.
+juce::String getRenderDeviceLabel(const juce::String& deviceName)
+{
+    const int suffixStart = deviceName.lastIndexOfChar('(');
+    if (suffixStart > 0 && deviceName.trimEnd().endsWithChar(')'))
+        return deviceName.substring(0, suffixStart).trimEnd();
+    return deviceName;
 }
 
 class PitchPopupLookAndFeel final : public juce::LookAndFeel_V4
@@ -274,6 +293,15 @@ ParameterPanel::ParameterPanel()
         "Shifts the original recording itself. Leaves untouched audio "
         "identical and needs no model, so it is far faster on CPU. Large "
         "pitch moves are rougher.");
+
+    // Device row: added hidden. It appears only once the host tells us the
+    // engine is AI Resynthesis and there is more than one device to run it on
+    // (see setRenderDeviceOptions).
+    addChildComponent(renderDeviceLabel);
+    renderDeviceLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
+    renderDeviceLabel.setFont(AppFont::getFont(15.0f));
+    addChildComponent(renderDeviceButton);
+    renderDeviceButton.addListener(this);
 
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel })
@@ -498,6 +526,14 @@ void ParameterPanel::resized()
     vocoderEngineToggle.setBounds(vocoderArea);
     psolaEngineToggle.setBounds(engineRow);
 
+    if (renderDeviceRowVisible)
+    {
+        bounds.removeFromTop(rowGap + 1);
+        auto deviceRow = bounds.removeFromTop(kControlRowHeight);
+        renderDeviceLabel.setBounds(deviceRow.removeFromLeft(52));
+        renderDeviceButton.setBounds(deviceRow.reduced(0, 2));
+    }
+
     const int synthesisCardBottom = bounds.getY() + innerPadY;
     synthesisCardBounds = juce::Rectangle<int>(
         cardArea.getX(), synthesisCardStart, cardArea.getWidth(),
@@ -644,7 +680,8 @@ void ParameterPanel::resized()
 int ParameterPanel::getPreferredHeight() const
 {
     return kPreferredPanelHeight +
-           (regionsCardVisible ? kRegionsCardExtraHeight : 0);
+           (regionsCardVisible ? kRegionsCardExtraHeight : 0) +
+           (renderDeviceRowVisible ? kRenderDeviceRowExtraHeight : 0);
 }
 
 void ParameterPanel::buttonClicked(juce::Button* button)
@@ -670,6 +707,11 @@ void ParameterPanel::buttonClicked(juce::Button* button)
     if (button == &regionsSelectorButton)
     {
         showRegionsMenu();
+        return;
+    }
+    if (button == &renderDeviceButton)
+    {
+        showRenderDeviceMenu();
         return;
     }
     if (button == &timelineSnapCycleToggle)
@@ -821,13 +863,12 @@ void ParameterPanel::showRegionsMenu()
     if (regionEntries.empty())
         return;
 
-    constexpr int baseId = 7401;
     juce::PopupMenu menu;
     menu.setLookAndFeel(&getPitchPopupLookAndFeel());
     for (size_t i = 0; i < regionEntries.size(); ++i)
     {
         const auto& entry = regionEntries[i];
-        menu.addCustomItem(baseId + static_cast<int>(i),
+        menu.addCustomItem(kRegionMenuBaseId + static_cast<int>(i),
                            std::make_unique<HoverMenuItemComponent>(
                                entry.name, entry.key == activeRegionKey),
                            nullptr, entry.name);
@@ -840,10 +881,10 @@ void ParameterPanel::showRegionsMenu()
             .withMinimumWidth(regionsSelectorButton.getWidth()),
         [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
         {
-            if (safeThis == nullptr || result < baseId)
+            if (safeThis == nullptr || result < kRegionMenuBaseId)
                 return;
 
-            const auto index = static_cast<size_t>(result - baseId);
+            const auto index = static_cast<size_t>(result - kRegionMenuBaseId);
             if (index >= safeThis->regionEntries.size())
                 return;
 
@@ -980,6 +1021,86 @@ void ParameterPanel::refreshSynthesisToggles()
                                        juce::dontSendNotification);
     psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
                                      juce::dontSendNotification);
+    refreshRenderDeviceRow();
+}
+
+void ParameterPanel::setRenderDeviceOptions(const juce::StringArray& deviceNames,
+                                            int selectedIndex)
+{
+    renderDeviceNames = deviceNames;
+    renderDeviceIndex = juce::jlimit(0, juce::jmax(0, renderDeviceNames.size() - 1),
+                                     selectedIndex);
+    refreshRenderDeviceRow();
+}
+
+void ParameterPanel::refreshRenderDeviceRow()
+{
+    // Only PSOLA's counterpart runs a model, and a single-device machine has
+    // nothing to pick between, so anything else leaves the row out entirely.
+    const bool shouldShow = synthesisEngine == SynthesisEngineType::Vocoder &&
+                            renderDeviceNames.size() > 1;
+
+    renderDeviceButton.setButtonText(
+        juce::isPositiveAndBelow(renderDeviceIndex, renderDeviceNames.size())
+            ? getRenderDeviceLabel(renderDeviceNames[renderDeviceIndex])
+            : juce::String("Default"));
+
+    if (shouldShow == renderDeviceRowVisible)
+    {
+        renderDeviceButton.repaint();
+        return;
+    }
+
+    renderDeviceRowVisible = shouldShow;
+    renderDeviceLabel.setVisible(shouldShow);
+    renderDeviceButton.setVisible(shouldShow);
+
+    resized();
+    repaint();
+
+    // The Rendering card just grew or shrank, and the hosting panel caches the
+    // stack height to decide when to scroll.
+    if (onPreferredHeightChanged)
+        onPreferredHeightChanged();
+}
+
+void ParameterPanel::showRenderDeviceMenu()
+{
+    if (renderDeviceNames.size() < 2)
+        return;
+
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+    for (int i = 0; i < renderDeviceNames.size(); ++i)
+    {
+        const auto label = getRenderDeviceLabel(renderDeviceNames[i]);
+        menu.addCustomItem(kRenderDeviceMenuBaseId + i,
+                           std::make_unique<HoverMenuItemComponent>(
+                               label, i == renderDeviceIndex),
+                           nullptr, label);
+    }
+
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetComponent(&renderDeviceButton)
+            .withParentComponent(this)
+            .withMinimumWidth(renderDeviceButton.getWidth()),
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
+        {
+            if (safeThis == nullptr || result < kRenderDeviceMenuBaseId)
+                return;
+
+            const int index = result - kRenderDeviceMenuBaseId;
+            if (!juce::isPositiveAndBelow(index, safeThis->renderDeviceNames.size()))
+                return;
+            if (index == safeThis->renderDeviceIndex)
+                return;
+
+            safeThis->renderDeviceIndex = index;
+            safeThis->refreshRenderDeviceRow();
+            if (safeThis->onRenderDeviceChanged)
+                safeThis->onRenderDeviceChanged(index);
+        });
 }
 
 void ParameterPanel::refreshTimelineModeToggles()
