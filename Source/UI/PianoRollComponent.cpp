@@ -1615,6 +1615,11 @@ juce::String PianoRollComponent::getTooltip()
 
 void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 {
+  // JUCE dispatches double-clicks after mouseUp clears the scrub state.
+  // Keep repeated middle clicks from triggering transport or edit actions.
+  if (e.mods.isMiddleButtonDown())
+    return;
+
   if (!project)
     return;
 
