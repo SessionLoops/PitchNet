@@ -184,7 +184,7 @@ chmod +x "$STAGE/install.sh"
 
 echo "==> Packaging with makeself"
 mkdir -p "$ROOT_DIR/dist"
-OUT="$ROOT_DIR/dist/PitchNet-${VERSION}-Linux-${ARCH}.run"
+OUT="$ROOT_DIR/dist/PitchNet-Linux-${ARCH}.run"
 makeself --gzip "$STAGE" "$OUT" "PitchNet ${VERSION} Installer" ./install.sh
 
 echo ""
