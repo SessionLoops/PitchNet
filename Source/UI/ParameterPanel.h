@@ -43,6 +43,13 @@ public:
     void setSelectedNote(Note* note);
     void setSynthesisEngine(SynthesisEngineType type);
     SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
+
+    // ===== Rendering card: inference device =====
+    // The row only earns its space when there is a choice to make, so it shows
+    // only while AI Resynthesis is the engine and the execution provider
+    // exposes more than one device. Pass a list of one - or none - to hide it.
+    void setRenderDeviceOptions(const juce::StringArray& deviceNames,
+                                int selectedIndex);
     void updateFromNote();
     void updateGlobalSliders();
     std::function<void(Project*)> onProjectBound;
@@ -67,6 +74,7 @@ public:
     std::function<void(bool)> onTimelineSnapCycleChanged;
     std::function<void(double)> onUiBrightnessChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
+    std::function<void(int)> onRenderDeviceChanged;
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -83,6 +91,8 @@ private:
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
+    void refreshRenderDeviceRow();
+    void showRenderDeviceMenu();
     void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);
     void refreshTimelineModeToggles();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
@@ -123,6 +133,9 @@ private:
     RadioButton vocoderEngineToggle { "AI Resynthesis" };
     RadioButton psolaEngineToggle { "Classic" };
 
+    juce::Label renderDeviceLabel { {}, "Device" };
+    ComboSelectionButton renderDeviceButton { "Default" };
+
     juce::Label referenceLabel { {}, "Reference (A4)" };
     SliderBox referenceSlider { "Pitch Reference" };
 
@@ -158,6 +171,10 @@ private:
     bool timelineSnapCycle = false;
     double uiBrightnessPercent = 100.0;
     SynthesisEngineType synthesisEngine = defaultSynthesisEngineType();
+
+    juce::StringArray renderDeviceNames;
+    int renderDeviceIndex = 0;
+    bool renderDeviceRowVisible = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "GpuDeviceList.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
@@ -708,6 +709,31 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (editorController)
       editorController->setSynthesisEngineType(type);
   };
+  refreshRenderDeviceOptions();
+  parameterPanel.onRenderDeviceChanged = [this](int deviceId)
+  {
+    if (settingsManager == nullptr)
+      return;
+
+    // Same rule the Settings dialog enforces: swapping the device out from
+    // under a running inference is what the guard is there to prevent. Put the
+    // button back on the device still in use.
+    if (isInferenceBusy())
+    {
+      refreshRenderDeviceOptions();
+      return;
+    }
+
+    settingsManager->setGPUDeviceId(deviceId);
+    settingsManager->saveConfig();
+    settingsManager->applySettings();
+    reloadInferenceModels(true);
+
+    // The Settings dialog, if it has been opened, is showing the old device.
+    if (settingsOverlay != nullptr &&
+        settingsOverlay->getSettingsComponent() != nullptr)
+      settingsOverlay->getSettingsComponent()->loadSettings();
+  };
 
   // Setup toolbar callbacks
   toolbar.onPlay = [this]()
@@ -1111,6 +1137,7 @@ void MainComponent::bindBackendController(EditorController *controller)
       if (!editorController->isSelectedPitchDetectorLoaded())
         editorController->reloadInferenceModels(false);
       settingsManager->applySettings();
+      refreshRenderDeviceOptions();
     }
   }
 
@@ -1219,6 +1246,17 @@ void MainComponent::reloadInferenceModels(bool async)
   editorController->setDeviceConfig(settingsManager->getDevice(),
                                     settingsManager->getGPUDeviceId());
   editorController->reloadInferenceModels(async);
+}
+
+void MainComponent::refreshRenderDeviceOptions()
+{
+  if (settingsManager == nullptr)
+    return;
+
+  const auto executionDevice = settingsManager->getDevice();
+  parameterPanel.setRenderDeviceOptions(
+      GpuDeviceList::getDeviceNames(executionDevice),
+      settingsManager->getGPUDeviceId());
 }
 
 bool MainComponent::isInferenceBusy() const
@@ -2759,6 +2797,9 @@ void MainComponent::showSettings()
     {
       settingsManager->applySettings();
       reloadInferenceModels(true);
+      // Execution provider or device may have changed; both decide what the
+      // Rendering card's device row offers.
+      refreshRenderDeviceOptions();
     };
     settingsOverlay->getSettingsComponent()->canChangeDevice = [this]()
     {

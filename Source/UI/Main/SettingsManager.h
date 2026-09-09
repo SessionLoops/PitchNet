@@ -33,8 +33,15 @@ public:
   void setPitchDetectorType(PitchDetectorType t) { pitchDetectorType = t; }
   SynthesisEngineType getSynthesisEngineType() const { return synthesisEngineType; }
   void setSynthesisEngineType(SynthesisEngineType t) { synthesisEngineType = t; }
-  int getGPUDeviceId() const { return gpuDeviceId; }
-  void setGPUDeviceId(int id) { gpuDeviceId = id; }
+  // Resolved, not raw: with nothing stored this is the provider's default
+  // device, which is not always device 0 (see GpuDeviceList).
+  int getGPUDeviceId() const;
+  void setGPUDeviceId(int id)
+  {
+    gpuDeviceId = id;
+    hasStoredGpuDeviceIdSetting = true;
+  }
+  bool hasStoredGpuDeviceId() const { return hasStoredGpuDeviceIdSetting; }
   juce::String getLanguage() const { return language; }
   void setLanguage(const juce::String &lang) { language = lang; }
 
@@ -114,6 +121,7 @@ private:
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   int gpuDeviceId = 0;
+  bool hasStoredGpuDeviceIdSetting = false;
   juce::String language = "en";
 
   // Config
