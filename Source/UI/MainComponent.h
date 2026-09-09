@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cmath>
+#include <thread>
 #include <vector>
 
 class UiBrightnessEffect;
@@ -375,6 +376,11 @@ private:
 
   // Sync flag to prevent infinite loops
   bool isSyncingZoom = false;
+
+  // The update worker must finish before networking shuts down.
+  std::unique_ptr<juce::WebInputStream> updateRequest;
+  std::thread updateCheckThread;
+  std::atomic<bool> stoppingUpdateCheck{false};
 
   // Async load state
   std::atomic<bool> isLoadingAudio{false};

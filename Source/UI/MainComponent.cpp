@@ -85,12 +85,8 @@ int compareVersions(const juce::String &lhs, const juce::String &rhs)
   return 0;
 }
 
-std::optional<UpdateInfo> fetchLatestUpdateInfo()
+std::optional<UpdateInfo> fetchLatestUpdateInfo(juce::WebInputStream &request)
 {
-  juce::WebInputStream request(
-      juce::URL("https://sessionloops.com/api/app/getApps"), false);
-  request.withConnectionTimeout(3000);
-
   if (!request.connect(nullptr))
     return std::nullopt;
 
@@ -1050,15 +1046,22 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
 void MainComponent::checkForUpdatesOnLaunch()
 {
+  if (updateCheckThread.joinable())
+    return;
+
   const auto skippedVersion = settingsManager
                                   ? settingsManager->getSkippedUpdateVersion()
                                   : juce::String();
   juce::Component::SafePointer<MainComponent> safeThis(this);
 
-  std::thread([safeThis, skippedVersion]
+  updateRequest = std::make_unique<juce::WebInputStream>(
+      juce::URL("https://sessionloops.com/api/app/getApps"), false);
+  updateRequest->withConnectionTimeout(3000);
+
+  updateCheckThread = std::thread([this, safeThis, skippedVersion]
   {
-    auto updateInfo = fetchLatestUpdateInfo();
-    if (!updateInfo.has_value())
+    auto updateInfo = fetchLatestUpdateInfo(*updateRequest);
+    if (stoppingUpdateCheck.load() || !updateInfo.has_value())
       return;
 
     if (updateInfo->version == skippedVersion)
@@ -1071,7 +1074,7 @@ void MainComponent::checkForUpdatesOnLaunch()
       if (safeThis != nullptr)
         safeThis->showUpdateAvailablePopup(latestVersion, releaseNotes);
     });
-  }).detach();
+  });
 }
 
 void MainComponent::showUpdateAvailablePopup(const juce::String &latestVersion,
@@ -1272,6 +1275,14 @@ bool MainComponent::isInferenceBusy() const
 
 MainComponent::~MainComponent()
 {
+  // Finish the network worker before JUCE tears down its networking state.
+  stoppingUpdateCheck.store(true);
+  if (updateRequest != nullptr)
+    updateRequest->cancel();
+  if (updateCheckThread.joinable())
+    updateCheckThread.join();
+  updateRequest.reset();
+
   setComponentEffect(nullptr);
   noteDragAuditionActive = false;
   resampledLoopAudition.reset();
