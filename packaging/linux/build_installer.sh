@@ -37,7 +37,7 @@ PAYLOAD="$STAGE/payload"
 APP_DIR="$PAYLOAD/opt/${COMPANY_DIR}/${APP_NAME}"
 
 mkdir -p "$APP_DIR/lib"
-mkdir -p "$PAYLOAD/usr/lib/vst3"
+mkdir -p "$PAYLOAD/vst3"
 mkdir -p "$PAYLOAD/usr/share/applications"
 mkdir -p "$PAYLOAD/usr/share/icons/hicolor/512x512/apps"
 
@@ -59,8 +59,8 @@ echo "==> Fixing standalone RPATH"
 patchelf --set-rpath '$ORIGIN/lib' "$APP_DIR/PitchNet"
 
 echo "==> Staging VST3 plugin"
-cp -r "$VST3_BUNDLE" "$PAYLOAD/usr/lib/vst3/PitchNet.vst3"
-PLUGIN_SO="$PAYLOAD/usr/lib/vst3/PitchNet.vst3/Contents/x86_64-linux/PitchNet.so"
+cp -r "$VST3_BUNDLE" "$PAYLOAD/vst3/PitchNet.vst3"
+PLUGIN_SO="$PAYLOAD/vst3/PitchNet.vst3/Contents/x86_64-linux/PitchNet.so"
 patchelf --set-rpath "${INSTALL_PREFIX}/lib" "$PLUGIN_SO"
 
 echo "==> Staging desktop integration"
@@ -106,11 +106,22 @@ cp -r "$PAYLOAD/opt/${COMPANY_DIR}/${APP_NAME}" "${INSTALL_PREFIX}"
 chmod -R a+rX "${INSTALL_PREFIX}"
 chmod 755 "${INSTALL_PREFIX}/PitchNet"
 
-mkdir -p /usr/lib/vst3
-chmod 755 /usr/lib/vst3
-rm -rf /usr/lib/vst3/PitchNet.vst3
-cp -r "$PAYLOAD/usr/lib/vst3/PitchNet.vst3" /usr/lib/vst3/PitchNet.vst3
-chmod -R a+rX /usr/lib/vst3/PitchNet.vst3
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    VST3_USER="${SUDO_USER}"
+else
+    VST3_USER="$(logname 2>/dev/null || echo root)"
+fi
+VST3_HOME="$(getent passwd "${VST3_USER}" | cut -d: -f6)"
+if [ -z "${VST3_HOME}" ]; then
+    echo "Warning: could not resolve home directory for user '${VST3_USER}'; skipping VST3 install." >&2
+else
+    VST3_DIR="${VST3_HOME}/.vst3"
+    mkdir -p "${VST3_DIR}"
+    rm -rf "${VST3_DIR}/PitchNet.vst3"
+    cp -r "$PAYLOAD/vst3/PitchNet.vst3" "${VST3_DIR}/PitchNet.vst3"
+    chown -R "${VST3_USER}:$(id -gn "${VST3_USER}")" "${VST3_DIR}/PitchNet.vst3"
+    chmod -R u+rwX,go+rX "${VST3_DIR}/PitchNet.vst3"
+fi
 
 mkdir -p /usr/share/applications /usr/share/icons/hicolor/512x512/apps
 chmod 755 /usr/share/applications /usr/share/icons/hicolor/512x512/apps
@@ -128,7 +139,9 @@ if [ "\$(id -u)" -ne 0 ]; then
     exit 1
 fi
 rm -rf "${INSTALL_PREFIX}"
-rm -rf /usr/lib/vst3/PitchNet.vst3
+if [ -n "${VST3_HOME}" ]; then
+    rm -rf "${VST3_HOME}/.vst3/PitchNet.vst3"
+fi
 rm -f /usr/local/bin/pitchnet
 rm -f /usr/share/applications/pitchnet.desktop
 rm -f /usr/share/icons/hicolor/512x512/apps/pitchnet.png
@@ -155,7 +168,9 @@ done
 echo ""
 echo "PitchNet ${VERSION} installed."
 echo "  Standalone: run 'pitchnet' or find PitchNet in your applications menu."
-echo "  VST3 plugin: /usr/lib/vst3/PitchNet.vst3"
+if [ -n "${VST3_HOME}" ]; then
+    echo "  VST3 plugin: ${VST3_HOME}/.vst3/PitchNet.vst3"
+fi
 echo "  Uninstall:   sudo ${INSTALL_PREFIX}/uninstall.sh"
 INSTALL_EOF
 
