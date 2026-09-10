@@ -4,6 +4,7 @@
 #if JucePlugin_Enable_ARA
 
 #include "../Models/ProjectSerializer.h"
+#include "../Models/ProjectRegionSlice.h"
 #include "../Utils/Constants.h"
 #include "PluginProcessor.h"
 #include "PitchNetAudioModification.h"
@@ -1890,6 +1891,8 @@ void PitchNetDocumentController::didEnableAudioSourceSamplesAccess(
 
 void PitchNetDocumentController::requestRegionCanvasAnalysis(
     juce::ARAPlaybackRegion *region) {
+  if (hostEditing)
+    return;
   auto *processor = getRegionCanvasProcessor();
   if (region == nullptr || processor == nullptr)
     return;
@@ -2009,6 +2012,127 @@ void PitchNetDocumentController::willDestroyRegionSequence(
   currentPlaybackRegion = nullptr;
 }
 
+void PitchNetDocumentController::willBeginEditing(juce::ARADocument *document) {
+  hostEditing = true;
+  splitSnapshots.clear();
+  deferredRegionUpdates.clear();
+  auto *processor = getRegionCanvasProcessor();
+  if (!processor || !document)
+    return;
+  for (auto *source : document->getAudioSources<juce::ARAAudioSource>())
+    for (auto *modification : source->getAudioModifications())
+      for (auto *region : modification->getPlaybackRegions()) {
+        auto project = processor->copyAraRegionProject(pitchnetRegionKey(*region));
+        auto *mod = dynamic_cast<PitchNetAudioModification *>(modification);
+        if (!project && mod) {
+          juce::MemoryBlock archive;
+          if (mod->copyProjectArchiveForRegion(pitchnetRegionKey(*region), archive) ||
+              mod->copyProjectArchiveForRegion(pitchnetArchivedRegionKey(*region), archive)) {
+            auto restored = std::make_unique<Project>();
+            if (ProjectSerializer::fromBinaryArchive(*restored, archive.getData(), archive.getSize()))
+              project = std::move(restored);
+          }
+        }
+        if (!project)
+          continue;
+        splitSnapshots.push_back({pitchnetRegionKey(*region), source,
+            region->getRegionSequence(), region->getStartInPlaybackTime(),
+            region->getEndInPlaybackTime(),
+            region->getStartInAudioModificationTime(),
+            region->getDurationInAudioModificationTime(), std::move(project), {}, 0.0, 0});
+        if (mod) {
+          auto &saved = splitSnapshots.back();
+          if (!mod->copyProcessedAudioForRegion(saved.key, saved.processed,
+                  saved.processedRate, saved.processedStart))
+            mod->copyProcessedAudioForRegion(pitchnetArchivedRegionKey(*region),
+                saved.processed, saved.processedRate, saved.processedStart);
+        }
+      }
+}
+
+void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
+  auto *processor = getRegionCanvasProcessor();
+  if (processor && document) {
+    // Inspect the completed transaction: hosts can shrink, create, clone and
+    // delete the original objects in any order within begin/end editing.
+    for (const auto &snapshot : splitSnapshots) {
+      std::vector<juce::ARAPlaybackRegion *> parts;
+      constexpr double epsilon = 1.0e-6;
+      const double duration = snapshot.end - snapshot.start;
+      if (duration <= 0.0)
+        continue;
+      for (auto *source : document->getAudioSources<juce::ARAAudioSource>()) {
+        if (source != snapshot.source)
+          continue;
+        for (auto *modification : source->getAudioModifications())
+          for (auto *region : modification->getPlaybackRegions()) {
+            const double start = region->getStartInPlaybackTime();
+            const double end = region->getEndInPlaybackTime();
+            const double ratio = snapshot.sourceDuration / duration;
+            if (region->getRegionSequence() == snapshot.sequence &&
+                start >= snapshot.start - epsilon && end <= snapshot.end + epsilon &&
+                end > start && end - start < duration - epsilon &&
+                std::abs(region->getStartInAudioModificationTime() -
+                         (snapshot.sourceStart + (start - snapshot.start) * ratio)) < epsilon &&
+                std::abs(region->getDurationInAudioModificationTime() -
+                         (end - start) * ratio) < epsilon)
+              parts.push_back(region);
+          }
+      }
+      std::sort(parts.begin(), parts.end(), [](auto *a, auto *b) {
+        return a->getStartInPlaybackTime() < b->getStartInPlaybackTime();
+      });
+      double next = snapshot.start;
+      bool covers = parts.size() >= 2;
+      for (auto *part : parts) {
+        covers = covers && std::abs(part->getStartInPlaybackTime() - next) < epsilon;
+        next = part->getEndInPlaybackTime();
+      }
+      if (!covers || std::abs(next - snapshot.end) >= epsilon)
+        continue;
+
+      for (auto *part : parts) {
+        auto project = std::make_unique<Project>(*snapshot.project);
+        const double start = part->getStartInPlaybackTime();
+        const double end = part->getEndInPlaybackTime();
+        clipProjectToPlaybackRange(*project, start, end);
+        auto &audio = project->getAudioData();
+        if (auto *mod = part->getAudioModification<PitchNetAudioModification>()) {
+          const auto key = pitchnetRegionKey(*part);
+          if (snapshot.processed.getNumSamples() > 0)
+            mod->setProcessedAudioForRegion(key, snapshot.processed,
+                snapshot.processedRate, snapshot.processedStart);
+          const int begin = juce::roundToInt(start * audio.sampleRate);
+          const int count = audio.waveform.getNumSamples() - begin;
+          if (begin >= 0 && count > 0) {
+            juce::AudioBuffer<float> rendered(audio.waveform.getNumChannels(), count);
+            for (int ch = 0; ch < rendered.getNumChannels(); ++ch)
+              rendered.copyFrom(ch, 0, audio.waveform, ch, begin, count);
+            mod->setProcessedAudioForRegion(key, rendered, audio.sampleRate,
+                                            part->getStartInAudioModificationSamples());
+          }
+          juce::MemoryBlock archive;
+          if (ProjectSerializer::toBinaryArchive(*project, archive,
+                  ProjectSerializer::BinaryArchiveMode::hostBackedARA))
+            mod->setProjectArchiveForRegion(key, archive.getData(), archive.getSize());
+        }
+        processor->installAraSplitProject(part, std::move(project));
+        part->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(), false);
+      }
+    }
+  }
+  hostEditing = false;
+  splitSnapshots.clear();
+  auto updates = std::move(deferredRegionUpdates);
+  deferredRegionUpdates.clear();
+  for (auto *region : updates)
+    didUpdatePlaybackRegionProperties(region);
+  if (processor && processor->getMainComponent() && currentPlaybackRegion) {
+    processor->setActiveAraRegion(currentPlaybackRegion);
+    requestRegionCanvasAnalysis(currentPlaybackRegion);
+  }
+}
+
 void PitchNetDocumentController::snapshotRegionState(
     juce::ARAPlaybackRegion &region) {
   auto *modification = region.getAudioModification<PitchNetAudioModification>();
@@ -2077,7 +2201,7 @@ void PitchNetDocumentController::didAddPlaybackRegionToAudioModification(
   // selection when the editor is constructed, and pre-selecting it here would
   // make that later selection look like a no-op.
   if (auto *processor = getRegionCanvasProcessor();
-      playbackRegion != nullptr && processor != nullptr &&
+      !hostEditing && playbackRegion != nullptr && processor != nullptr &&
       processor->getMainComponent() != nullptr)
     processor->setActiveAraRegion(playbackRegion);
 }
@@ -2097,6 +2221,8 @@ void PitchNetDocumentController::willRemovePlaybackRegionFromAudioModification(
   if (!audioSource)
     return;
 
+  deferredRegionUpdates.erase(std::remove(deferredRegionUpdates.begin(),
+      deferredRegionUpdates.end(), playbackRegion), deferredRegionUpdates.end());
   if (playbackRegion == currentPlaybackRegion) {
     previewState.previewedRegion.store(nullptr);
     currentPlaybackRegion = nullptr;
@@ -2115,6 +2241,11 @@ void PitchNetDocumentController::didUpdatePlaybackRegionProperties(
     juce::ARAPlaybackRegion *playbackRegion) {
   if (!playbackRegion)
     return;
+
+  if (hostEditing) {
+    deferredRegionUpdates.push_back(playbackRegion);
+    return;
+  }
 
   const auto updatedKey = pitchnetRegionKey(*playbackRegion);
   if (!shouldProcessPlaybackRegion(playbackRegion))
@@ -2155,6 +2286,8 @@ void PitchNetDocumentController::didUpdatePlaybackRegionProperties(
 
 void PitchNetDocumentController::willDestroyPlaybackRegion(
     juce::ARAPlaybackRegion *playbackRegion) {
+  deferredRegionUpdates.erase(std::remove(deferredRegionUpdates.begin(),
+      deferredRegionUpdates.end(), playbackRegion), deferredRegionUpdates.end());
   if (playbackRegion == currentPlaybackRegion) {
     previewState.previewedRegion.store(nullptr);
     currentPlaybackRegion = nullptr;

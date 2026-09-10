@@ -1919,6 +1919,8 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       mainComponent ? mainComponent->getComponent() : nullptr);
 
   const auto renderRegionKey = activeRegionKey;
+  const auto renderRegionRevision =
+      renderActiveAraRegion ? araRegions[renderRegionKey].revision : 0;
   auto *renderModification = activeModification;
   const auto renderArchivedRegionKey =
       renderActiveAraRegion
@@ -1950,11 +1952,19 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
             view->setStatusMessage(message);
         });
       },
-      [this, controller, renderActiveAraRegion, renderRegionKey,
+      [this, controller, renderActiveAraRegion, renderRegionKey, renderRegionRevision,
        renderArchivedRegionKey, renderModification,
        renderStartSampleInModification,
        renderRegionStartSeconds, renderRegionEndSeconds,
        renderChangedSampleRanges](bool success) {
+        if (renderActiveAraRegion) {
+          const auto current = araRegions.find(renderRegionKey);
+          if (current == araRegions.end() ||
+              current->second.revision != renderRegionRevision) {
+            regionCanvasRenderPendingRerun.store(false);
+            return; // The host split/replaced this project's note and audio data.
+          }
+        }
         auto *renderedProject = controller != nullptr ? controller->getProject()
                                                      : nullptr;
 
@@ -2656,6 +2666,35 @@ juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
 const ARA::ARAFactory *JUCE_CALLTYPE createARAFactory() {
   return juce::ARADocumentControllerSpecialisation::createARAFactory<
       PitchNetDocumentController>();
+}
+
+std::unique_ptr<Project> PitchNetAudioProcessor::copyAraRegionProject(
+    const juce::String &key) const {
+  if (key == activeRegionKey && canvasShowsActiveAraRegion && mainComponent)
+    if (auto *project = mainComponent->getProject())
+      return std::make_unique<Project>(*project);
+  const auto it = araRegions.find(key);
+  return it != araRegions.end() && it->second.project
+             ? std::make_unique<Project>(*it->second.project) : nullptr;
+}
+
+void PitchNetAudioProcessor::installAraSplitProject(
+    juce::ARAPlaybackRegion *region, std::unique_ptr<Project> project) {
+  const auto key = pitchnetRegionKey(*region);
+  auto &state = araRegions[key];
+  ++state.revision;
+  // Old undo actions hold pointers to the unsplit notes and must not survive
+  // replacement of that project. The host owns undo of the region split.
+  state.ensureUndoManager()->clear();
+  if (key == activeRegionKey && mainComponent && canvasShowsActiveAraRegion) {
+    auto previous = mainComponent->exchangeProject(nullptr);
+    canvasShowsActiveAraRegion = false;
+  }
+  state.project = std::move(project);
+  if (key == activeRegionKey) {
+    updateActiveAraRegionProperties(region);
+    showAraRegionProjectIfActive(key);
+  }
 }
 
 void PitchNetAudioProcessor::setActiveAraRegion(

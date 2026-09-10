@@ -165,6 +165,9 @@ public:
   // region's edits and loads the incoming region's project. Called from the
   // editor when the host selection changes (and, later, from the in-plugin
   // timeline). Safe to call with a region that has no analysis yet.
+  std::unique_ptr<Project> copyAraRegionProject(const juce::String &key) const;
+  void installAraSplitProject(juce::ARAPlaybackRegion *region,
+                              std::unique_ptr<Project> project);
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
   void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
@@ -360,6 +363,7 @@ private:
   std::atomic<bool> araRenderPendingRerun{false};
 
   struct AraRegionState {
+    std::uint64_t revision = 0;
     std::unique_ptr<Project> project;
     std::unique_ptr<PitchUndoManager> undoManager;
 

@@ -182,6 +182,8 @@ public:
       ARADocumentControllerSpecialisation;
 
   ~PitchNetDocumentController() override;
+  void willBeginEditing(juce::ARADocument *document) override;
+  void didEndEditing(juce::ARADocument *document) override;
 
   void didAddAudioSourceToDocument(juce::ARADocument *doc,
                                    juce::ARAAudioSource *audioSource) override;
@@ -310,6 +312,19 @@ private:
   void snapshotRegionState(juce::ARAPlaybackRegion &region);
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
+  struct SplitSnapshot {
+    juce::String key;
+    juce::ARAAudioSource *source = nullptr;
+    juce::ARARegionSequence *sequence = nullptr;
+    double start = 0.0, end = 0.0, sourceStart = 0.0, sourceDuration = 0.0;
+    std::unique_ptr<Project> project;
+    juce::AudioBuffer<float> processed;
+    double processedRate = 0.0;
+    juce::int64 processedStart = 0;
+  };
+  bool hostEditing = false;
+  std::vector<SplitSnapshot> splitSnapshots;
+  std::vector<juce::ARAPlaybackRegion *> deferredRegionUpdates;
   void stopAnalysisThread();
 
   struct AnalysisState {
