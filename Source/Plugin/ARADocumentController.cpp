@@ -544,6 +544,16 @@ void PitchNetEditorRenderer::prepareToPlay(
   numChannels = numChannelsIn;
   previewBuffer = std::make_shared<juce::AudioBuffer<float>>(
       numChannels, static_cast<int>(std::ceil(sampleRate)));
+  previewBuffer->clear();
+  previousPreviewBuffer.reset();
+  lastAuditionBuffer.reset();
+  previousPreviewLoopPosition = 0;
+  previewTransitionRemaining = 0;
+  previewTransitionTotal = 0;
+  lastPreviewStartTime = -1.0;
+  lastPreviewEndTime = -1.0;
+  lastPreviewRegion = nullptr;
+  wasPreviewing = false;
   if (auto *docCtrl = getDocController())
     docCtrl->getPreviewState().editorRendererSampleRate.store(sampleRate);
   previewLoopRange = {};
@@ -901,11 +911,14 @@ bool PitchNetEditorRenderer::processBlock(
         return true;
       }
       if (audition != lastAuditionBuffer) {
-        previousPreviewBuffer = std::move(previewBuffer);
-        previousPreviewLoopPosition =
-            previousPreviewBuffer && !previewLoopRange.isEmpty()
-                ? previewLoopPosition
-                : 0;
+        // Allocated storage is not necessarily rendered audio. Only crossfade
+        // from a preview that is still playing, never the initial scratch
+        // buffer or a completed/stopped preview.
+        const bool hasActivePreview = wasPreviewing && previewBuffer &&
+                                      !previewLoopRange.isEmpty();
+        previousPreviewBuffer = hasActivePreview ? std::move(previewBuffer)
+                                                 : nullptr;
+        previousPreviewLoopPosition = hasActivePreview ? previewLoopPosition : 0;
         previewTransitionTotal = 4096;
         previewTransitionRemaining = previousPreviewBuffer ? previewTransitionTotal : 0;
         previewBuffer = audition;
