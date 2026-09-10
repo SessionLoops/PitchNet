@@ -31,6 +31,9 @@ public:
   Vocoder();
   ~Vocoder();
 
+  // Stop accepting work and let active inference exit at its next chunk.
+  void requestShutdown();
+
   /**
    * Load vocoder model from ONNX file.
    * @param modelPath Path to .onnx model file

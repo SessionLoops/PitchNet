@@ -1070,7 +1070,9 @@ PitchNetDocumentController::~PitchNetDocumentController() {
   editorProcessor = nullptr;
   realtimeProcessor = nullptr;
   currentAudioSource = nullptr;
-  stopAnalysisThread();
+  // Final teardown joins directly instead of starting another joiner thread.
+  if (analysisState)
+    analysisState->cancel.store(true);
   if (analysisThread.joinable())
     analysisThread.join();
   if (analysisJoinerThread.joinable())
@@ -1638,8 +1640,24 @@ void PitchNetDocumentController::processDocument(
                                                  sourceLength);
           sourceBuffer.clear();
           juce::ARAAudioSourceReader reader(region.source);
-          if (!reader.read(&sourceBuffer, 0, sourceLength, sourceStart, true,
-                           region.source->getChannelCount() > 1))
+          // Bound each host read so cancellation can be observed even for
+          // very long regions. Preserve the full buffer for resampler continuity.
+          constexpr int readChunkSamples = 65536;
+          bool readSucceeded = true;
+          for (int offset = 0; offset < sourceLength;) {
+            if (state->cancel.load() || state->jobId.load() != jobId)
+              return;
+            const int count = std::min(readChunkSamples, sourceLength - offset);
+            if (!reader.read(&sourceBuffer, offset, count, sourceStart + offset,
+                             true, region.source->getChannelCount() > 1)) {
+              readSucceeded = false;
+              break;
+            }
+            offset += count;
+          }
+          if (state->cancel.load() || state->jobId.load() != jobId)
+            return;
+          if (!readSucceeded)
             continue;
 
           juce::AudioBuffer<float> rendered(compositeChannels, renderLength);
@@ -1650,6 +1668,9 @@ void PitchNetDocumentController::processDocument(
             rendered = AudioResampler::resample(
                 sourceBuffer, sourceRate, compositeSampleRate, renderLength);
           }
+
+          if (state->cancel.load() || state->jobId.load() != jobId)
+            return;
 
           // Playback regions may overlap, so match the renderer and mix them.
           for (int ch = 0; ch < compositeChannels; ++ch)

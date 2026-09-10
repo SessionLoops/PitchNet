@@ -140,16 +140,20 @@ Vocoder::Vocoder()
     } });
 }
 
-Vocoder::~Vocoder()
+void Vocoder::requestShutdown()
 {
-  // Signal shutdown
-  isShuttingDown.store(true);
-
-  // Wake worker and join
+  // Serialize with enqueue so no request can be accepted after shutdown.
   {
     std::lock_guard<std::mutex> lock(asyncMutex);
-    asyncCondition.notify_all();
+    isShuttingDown.store(true);
   }
+  asyncCondition.notify_all();
+}
+
+Vocoder::~Vocoder()
+{
+  requestShutdown();
+
   if (asyncWorker.joinable())
     asyncWorker.join();
 
@@ -468,6 +472,9 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   // Lock to ensure thread-safe access to ONNX session
   std::lock_guard<std::mutex> lock(inferenceMutex);
 
+  if (isShuttingDown.load())
+    return {};
+
   const size_t numFrames = std::min(mel.size(), f0.size());
   if (numFrames == 0)
     return {};
@@ -502,6 +509,8 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       size_t waveformWriteEnd = 0;
       for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
            ++chunkIdx, frameOff += step) {
+        if (isShuttingDown.load())
+          return std::vector<float>{};
         const size_t chunkEnd =
             std::min(frameOff + maxChunkFrames, numFrames);
         const size_t chunkFrames = chunkEnd - frameOff;
@@ -638,6 +647,8 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
     for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
          ++chunkIdx, frameOff += step)
     {
+      if (isShuttingDown.load())
+        return {};
       const size_t chunkEnd =
           std::min(frameOff + kMaxChunkFrames, numFrames);
       const size_t chunkFrames = chunkEnd - frameOff;
@@ -1000,11 +1011,11 @@ void Vocoder::inferAsync(std::vector<std::vector<float>> mel,
     return;
   }
 
-  // Increment active task count
-  activeAsyncTasks.fetch_add(1);
-
   {
     std::lock_guard<std::mutex> lock(asyncMutex);
+    if (isShuttingDown.load())
+      return;
+    activeAsyncTasks.fetch_add(1);
     asyncQueue.emplace_back(
         AsyncTask{std::move(mel), std::move(f0), std::move(callback),
                   std::move(cancelFlag)});

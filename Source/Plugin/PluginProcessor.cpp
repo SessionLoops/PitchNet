@@ -3445,6 +3445,14 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+  // Cancel every backend before member destruction starts joining workers.
+  if (araAnalysisController)
+    araAnalysisController->requestShutdown();
+  if (araIncrementalAnalysisController)
+    araIncrementalAnalysisController->requestShutdown();
+  if (regionCanvasController)
+    regionCanvasController->requestShutdown();
+
   cancelPendingUpdate();
   // The document controller can outlive this processor while the host releases
   // ARA objects. Drop only the binding that belongs to this processor so later
@@ -3458,5 +3466,13 @@ PitchNetAudioProcessor::~PitchNetAudioProcessor() {
 void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
     const Project &) {}
 
-PitchNetAudioProcessor::~PitchNetAudioProcessor() { cancelPendingUpdate(); }
+PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+  if (araAnalysisController)
+    araAnalysisController->requestShutdown();
+  if (araIncrementalAnalysisController)
+    araIncrementalAnalysisController->requestShutdown();
+  if (regionCanvasController)
+    regionCanvasController->requestShutdown();
+  cancelPendingUpdate();
+}
 #endif

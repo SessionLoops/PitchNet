@@ -48,11 +48,22 @@ EditorController::EditorController(bool enableAudioDevice)
     playbackController->setAudioEngine(audioEngine.get());
 }
 
+void EditorController::requestShutdown()
+{
+  shuttingDown.store(true);
+  cancelLoadingFlag.store(true);
+  hostAnalysisJobId.fetch_add(1);
+  if (incrementalSynth)
+    incrementalSynth->cancel();
+  if (vocoder)
+    vocoder->requestShutdown();
+}
+
 EditorController::~EditorController()
 {
+  requestShutdown();
   if (modelReloadThread.joinable())
     modelReloadThread.join();
-  cancelLoadingFlag = true;
   if (loaderThread.joinable())
     loaderThread.join();
   if (loaderJoinerThread.joinable())
@@ -80,6 +91,8 @@ GPUProvider EditorController::getProviderFromDevice(
 
 void EditorController::reloadInferenceModels(bool async)
 {
+  if (shuttingDown.load())
+    return;
   auto provider = getProviderFromDevice(device);
   int resolvedDeviceId = deviceId < 0 ? 0 : deviceId;
 
@@ -97,7 +110,7 @@ void EditorController::reloadInferenceModels(bool async)
                      rmvpePath,
                      gamePath](EditorController *self)
   {
-    if (!self)
+    if (!self || self->shuttingDown.load())
       return;
 
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
@@ -111,8 +124,10 @@ void EditorController::reloadInferenceModels(bool async)
           getDirectMLModelLoadMutex());
       LOG("EditorController: serializing DirectML model loading");
 
-      if (self->fcpePitchDetector && fcpePath.existsAsFile())
+      if (!self->shuttingDown.load() && self->fcpePitchDetector && fcpePath.existsAsFile())
       {
+        if (self->shuttingDown.load())
+          return;
         LOG("EditorController: loading FCPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
@@ -126,8 +141,10 @@ void EditorController::reloadInferenceModels(bool async)
         LOG("FCPE model not found at: " + fcpePath.getFullPathName());
       }
 
-      if (self->rmvpePitchDetector && rmvpePath.existsAsFile())
+      if (!self->shuttingDown.load() && self->rmvpePitchDetector && rmvpePath.existsAsFile())
       {
+        if (self->shuttingDown.load())
+          return;
         LOG("EditorController: loading RMVPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
@@ -141,8 +158,10 @@ void EditorController::reloadInferenceModels(bool async)
         LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
       }
 
-      if (self->gameDetector && gamePath.isDirectory())
+      if (!self->shuttingDown.load() && self->gameDetector && gamePath.isDirectory())
       {
+        if (self->shuttingDown.load())
+          return;
         LOG("EditorController: loading GAME models from " +
             gamePath.getFullPathName() + " (device " + device + ", id " +
             juce::String(resolvedDeviceId) + ")...");
@@ -175,10 +194,12 @@ void EditorController::reloadInferenceModels(bool async)
     std::thread rmvpeThread;
     std::thread gameThread;
 
-    if (self->fcpePitchDetector && fcpePath.existsAsFile())
+    if (!self->shuttingDown.load() && self->fcpePitchDetector && fcpePath.existsAsFile())
     {
       fcpeThread = std::thread([&]()
                                {
+        if (self->shuttingDown.load())
+          return;
         LOG("EditorController: loading FCPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
@@ -193,10 +214,12 @@ void EditorController::reloadInferenceModels(bool async)
       LOG("FCPE model not found at: " + fcpePath.getFullPathName());
     }
 
-    if (self->rmvpePitchDetector && rmvpePath.existsAsFile())
+    if (!self->shuttingDown.load() && self->rmvpePitchDetector && rmvpePath.existsAsFile())
     {
       rmvpeThread = std::thread([&]()
                                 {
+        if (self->shuttingDown.load())
+          return;
         LOG("EditorController: loading RMVPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
@@ -211,10 +234,12 @@ void EditorController::reloadInferenceModels(bool async)
       LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
     }
 
-    if (self->gameDetector && gamePath.isDirectory())
+    if (!self->shuttingDown.load() && self->gameDetector && gamePath.isDirectory())
     {
       gameThread = std::thread([&]()
                                {
+        if (self->shuttingDown.load())
+          return;
         LOG("EditorController: loading GAME models from " + gamePath.getFullPathName() +
             " (device " + device + ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->gameDetector->loadModels(gamePath, provider,
@@ -635,6 +660,9 @@ void EditorController::analyzeAudio(
     const std::function<void(double, const juce::String &)> &onProgress,
     std::function<void()> onComplete)
 {
+  if (shuttingDown.load())
+    return;
+
   auto &audioData = targetProject.getAudioData();
   if (audioData.waveform.getNumSamples() == 0)
     return;
@@ -667,6 +695,9 @@ void EditorController::analyzeAudio(
   MelSpectrogram melComputer(audioData.sampleRate, N_FFT, HOP_SIZE, NUM_MELS,
                              FMIN, FMAX);
   audioData.melSpectrogram = melComputer.compute(samples, numSamples);
+
+  if (shuttingDown.load())
+    return;
 
   int targetFrames = static_cast<int>(audioData.melSpectrogram.size());
 
@@ -733,6 +764,9 @@ void EditorController::analyzeAudio(
         fcpePitchDetector->extractF0(samples, numSamples, audioData.sampleRate);
     pitchInferenceError = fcpePitchDetector->getLastError();
   }
+
+  if (shuttingDown.load())
+    return;
 
   // A DirectML session can be created successfully even when its adapter or
   // driver later rejects a graph during Run(). Retry with a fresh CPU session
@@ -836,6 +870,9 @@ void EditorController::analyzeAudio(
     }
   }
 
+  if (shuttingDown.load())
+    return;
+
   if (extractedF0.empty() || targetFrames <= 0)
   {
     const auto detail = pitchInferenceError.isNotEmpty()
@@ -928,6 +965,9 @@ void EditorController::analyzeAudio(
     audioData.f0 = audioData.denseF0;
   }
 
+  if (shuttingDown.load())
+    return;
+
   onProgress(0.375, TR("progress.loading_vocoder"));
   auto modelPath = PlatformPaths::getVocoderModelFile();
 
@@ -953,10 +993,16 @@ void EditorController::analyzeAudio(
     }
   }
 
+  if (shuttingDown.load())
+    return;
+
   onProgress(0.50, "Detecting Notes...");
   segmentIntoNotes(targetProject, nullptr, [&](double progress)
                    { onProgress(0.50 + juce::jlimit(0.0, 1.0, progress) * 0.50,
                                 "Detecting Notes..."); });
+
+  if (shuttingDown.load())
+    return;
 
   PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
   ScaleUtils::detectAndApplyScale(targetProject);
@@ -980,6 +1026,8 @@ void EditorController::analyzeAudioAsync(
     auto projectCopy = std::make_shared<Project>(*project);
 
     analyzeAudio(*projectCopy, [](double, const juce::String &) {});
+    if (shuttingDown.load())
+      return;
 
     juce::MessageManager::callAsync([this, projectCopy, onProjectReady,
                                      onProjectChanged]() {

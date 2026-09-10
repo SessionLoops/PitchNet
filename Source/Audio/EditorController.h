@@ -25,6 +25,9 @@ public:
   explicit EditorController(bool enableAudioDevice);
   ~EditorController();
 
+  // Signal cancellation without waiting; safe to repeat before destruction.
+  void requestShutdown();
+
   Project *getProject() const { return project.get(); }
   std::unique_ptr<Project> takeProject() { return std::move(project); }
   void setProject(std::unique_ptr<Project> newProject);
@@ -129,6 +132,7 @@ private:
   juce::String device = "CPU";
   int deviceId = 0;
 
+  std::atomic<bool> shuttingDown{false};
   std::atomic<bool> isReloadingModels{false};
   std::thread modelReloadThread;
 
