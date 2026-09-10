@@ -392,6 +392,60 @@ int findBestSpliceCenter(const float *existing,
   return bestCenter;
 }
 
+// Commit fades use their entire overlap as the comparison window. Keep the
+// nominal boundary unless the improvement is substantial; timing patches keep
+// their existing search policy in findBestSpliceCenter().
+int findBestCommitSpliceCenter(const float *existing,
+                              const std::vector<float> &rendered,
+                              int nominalCenter, int searchRadius,
+                              int fadeHalf) {
+  const int sampleCount = static_cast<int>(rendered.size());
+  // A truncated nominal fade cannot be compared fairly with a full candidate.
+  if (existing == nullptr || fadeHalf <= 0 || searchRadius <= 0 ||
+      nominalCenter < fadeHalf || nominalCenter > sampleCount - fadeHalf)
+    return nominalCenter;
+
+  auto scoreAt = [&](int center) {
+    double error = 0.0;
+    double energy = 0.0;
+    for (int offset = -fadeHalf; offset < fadeHalf; ++offset) {
+      const double t = static_cast<double>(offset + fadeHalf) / (2 * fadeHalf);
+      const double blend = t * t * (3.0 - 2.0 * t);
+      // Emphasize where both signals contribute, for either fade direction.
+      const double weight = 4.0 * blend * (1.0 - blend);
+      const double oldValue = existing[center + offset];
+      const double newValue = rendered[static_cast<size_t>(center + offset)];
+      const double difference = oldValue - newValue;
+      error += weight * difference * difference;
+      energy += weight * (oldValue * oldValue + newValue * newValue);
+    }
+    // Stabilize near-silent windows instead of chasing tiny numerical changes.
+    return error / (energy + 2 * fadeHalf * 1.0e-10);
+  };
+
+  const double nominalScore = scoreAt(nominalCenter);
+  double bestScore = nominalScore;
+  int bestCenter = nominalCenter;
+  const int radius = std::min(searchRadius, fadeHalf);
+  // Visit nearest candidates first so equal scores prefer less displacement.
+  for (int distance = 1; distance <= radius; ++distance) {
+    for (int direction : {-1, 1}) {
+      const int center = nominalCenter + direction * distance;
+      if (center < fadeHalf || center > sampleCount - fadeHalf)
+        continue;
+      const double score = scoreAt(center);
+      if (score < bestScore) {
+        bestScore = score;
+        bestCenter = center;
+      }
+    }
+  }
+  // Require both a 10% relative and 0.01 absolute normalized improvement.
+  return nominalScore - bestScore > std::max(0.01, nominalScore * 0.10)
+             ? bestCenter
+             : nominalCenter;
+}
+
 EditedClusterSelection
 selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
                            int f0DirtyStart, int f0DirtyEnd) {
@@ -1462,36 +1516,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // The vocoder renders a broad, phase-stable context range, but only
-          // commit the notes/F0 interval that actually changed. Search within
-          // the existing boundary allowance for the point where the current
-          // composite and new render best agree, then use a short smoothstep
-          // transition there to avoid both clicks and long phasey overlaps.
-          // Half-fade restored to its pre-a789d83 length. That commit is
-          // titled "make the crossfade position adaptable", but alongside the
-          // splice search it also cut this constant from 512 to 128 - a
-          // 23 ms crossfade down to 5.8 ms - and the shortening is what the
-          // click reports bisect to. 1024 samples of fade spans a full pitch
-          // period for anything above 43 Hz; 256 samples only above 172 Hz,
-          // which leaves most male singing with a join shorter than one
-          // cycle. The search is kept: choosing a better splice point can
-          // only help, and it is the length that was doing the damage.
+          // Commit only the edited interval. Preserve the 1024-sample
+          // smoothstep fade (~23 ms at 44.1 kHz), allowing a conservative
+          // displacement of at most 128 samples (~2.9 ms) when agreement
+          // across the full overlap meaningfully improves.
           constexpr int kCommitFadeHalfSamples = 512;
-          // Splice displacement, in samples either side of the note edge.
-          //
-          // Set to 0, which pins the crossfade to the nominal boundary and so
-          // reproduces the pre-a789d83 geometry exactly - the configuration
-          // that predates the click reports. Restoring the fade length alone
-          // left this as the last remaining difference from it: the search
-          // could still move the join up to 384 samples (8.7 ms) away from
-          // the note edge, and on a 162 ms note that is a meaningful fraction
-          // of its length.
-          //
-          // Raise it back to 384 to re-enable the search. Doing so is only
-          // worth it if a moved splice measurably beats a fixed one; the
-          // bisect says the fixed one was already clean.
-          constexpr int kSpliceSearchRadiusSamples = 0;
-          constexpr int kSpliceAnalysisHalfSamples = 128;
+          constexpr int kSpliceSearchRadiusSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
           const float *existingSamples =
@@ -1520,21 +1550,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 std::max(0, bodySamples / 2 - fadeHalf);
             const int searchRadius =
                 std::min(kSpliceSearchRadiusSamples, nonOverlappingSearchRadius);
-            const int analysisHalf = std::min(
-                kSpliceAnalysisHalfSamples,
-                std::max(1, samplesToWrite / 2 - 1));
-
             const int leftCenter = fadeLeft
-                                       ? findBestSpliceCenter(
+                                       ? findBestCommitSpliceCenter(
                                              existingSamples, targetSegment,
-                                             bodyStart, searchRadius,
-                                             analysisHalf)
+                                             bodyStart, searchRadius, fadeHalf)
                                        : bodyStart;
             const int rightCenter = fadeRight
-                                        ? findBestSpliceCenter(
+                                        ? findBestCommitSpliceCenter(
                                               existingSamples, targetSegment,
-                                              bodyEnd, searchRadius,
-                                              analysisHalf)
+                                              bodyEnd, searchRadius, fadeHalf)
                                         : bodyEnd;
             const int leftFadeStart = leftCenter - fadeHalf;
             const int leftFadeEnd = leftCenter + fadeHalf;
