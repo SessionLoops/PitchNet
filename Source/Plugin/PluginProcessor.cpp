@@ -500,6 +500,7 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   captureController->prepare(sampleRate, getMainBusNumOutputChannels(),
                              MAX_CAPTURE_SECONDS);
   lastCaptureUiState = captureController->getState();
+  triggerAsyncUpdate();
 
   // Preparing the processor is a lifecycle operation, so this is the safe
   // place to rebuild a UI-closed playback buffer for the current host rate.
@@ -922,6 +923,12 @@ void PitchNetAudioProcessor::processNonARAMode(
 // Non-ARA Capture Control
 // ============================================================================
 
+void PitchNetAudioProcessor::handleAsyncUpdate() {
+  if (wrapperType == wrapperType_AudioUnit)
+    updateHostDisplay(juce::AudioProcessorListener::ChangeDetails{}
+                          .withTailLengthChanged(true));
+}
+
 void PitchNetAudioProcessor::startCapture() {
   auto state = liveCaptureUiState;
   state->generation.fetch_add(1);
@@ -931,9 +938,13 @@ void PitchNetAudioProcessor::startCapture() {
   state->timelineOffsetSeconds.store(0.0);
   captureTimelineOffsetSeconds = 0.0;
   captureController->resetToWaiting();
+  handleAsyncUpdate();
 }
 
-void PitchNetAudioProcessor::stopCapture() { captureController->stop(); }
+void PitchNetAudioProcessor::stopCapture() {
+  captureController->stop();
+  handleAsyncUpdate();
+}
 
 void PitchNetAudioProcessor::bindRealtimeProcessorHeadless() {
   if (mainComponent != nullptr)
@@ -1143,6 +1154,8 @@ bool PitchNetAudioProcessor::processPluginPreview(
 }
 
 void PitchNetAudioProcessor::disarmCaptureUi() {
+  // One-shot message-thread notification, not a polling timer.
+  triggerAsyncUpdate();
   if (!mainComponent)
     return;
 
@@ -3393,6 +3406,7 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+  cancelPendingUpdate();
   // The document controller can outlive this processor while the host releases
   // ARA objects. Drop only the binding that belongs to this processor so later
   // callbacks cannot use stale raw pointers or processor-capturing lambdas.
@@ -3405,5 +3419,5 @@ PitchNetAudioProcessor::~PitchNetAudioProcessor() {
 void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
     const Project &) {}
 
-PitchNetAudioProcessor::~PitchNetAudioProcessor() = default;
+PitchNetAudioProcessor::~PitchNetAudioProcessor() { cancelPendingUpdate(); }
 #endif

@@ -9,6 +9,7 @@
 #include "NonAraCaptureController.h"
 #include <atomic>
 #include <map>
+#include <limits>
 #include <memory>
 
 class EditorController;
@@ -31,7 +32,7 @@ class PitchNetAudioModification;
  * - Pitch Offset: global pitch shift in semitones (-24 to +24 st)
  * - Formant Shift: formant preservation shift (-12 to +12 st)
  */
-class PitchNetAudioProcessor : public juce::AudioProcessor
+class PitchNetAudioProcessor : public juce::AudioProcessor, private juce::AsyncUpdater
 #if JucePlugin_Enable_ARA
     ,
                                 public juce::AudioProcessorARAExtension
@@ -59,7 +60,12 @@ public:
   bool acceptsMidi() const override;
   bool producesMidi() const override;
   bool isMidiEffect() const override;
-  double getTailLengthSeconds() const override { return 0.0; }
+  double getTailLengthSeconds() const override {
+    // Keep AU processing alive across silent gaps only while capturing.
+    // Arming/disarming also publishes an AU TailTime property notification.
+    return wrapperType == wrapperType_AudioUnit && isCaptureArmed()
+               ? std::numeric_limits<double>::infinity() : 0.0;
+  }
 
   int getNumPrograms() override { return 1; }
   int getCurrentProgram() override { return 0; }
@@ -250,6 +256,8 @@ public:
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
 
 private:
+  void handleAsyncUpdate() override;
+
   struct HostUiSyncState {
     std::atomic<double> latestSeconds{0.0};
     std::atomic<bool> posPending{false};
