@@ -1516,11 +1516,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // Commit only the edited interval. Preserve the 1024-sample
-          // smoothstep fade (~23 ms at 44.1 kHz), allowing a conservative
+          // Commit only the edited interval. Use a 768-sample
+          // smoothstep fade (~17.4 ms at 44.1 kHz), allowing a conservative
           // displacement of at most 128 samples (~2.9 ms) when agreement
           // across the full overlap meaningfully improves.
-          constexpr int kCommitFadeHalfSamples = 512;
+          constexpr int kCommitFadeHalfSamples = 384;
           constexpr int kSpliceSearchRadiusSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);
