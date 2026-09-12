@@ -193,12 +193,36 @@ if(NOT EXISTS "${R8BRAIN_INCLUDE_DIR}/CDSPResampler.h")
         "r8brain-free-src submodule is missing - run: git submodule update --init --recursive")
 endif()
 
+# Optional side-by-side development build:
+#
+#     cmake -B <build-dir> -DPITCHNET_DEV_BUILD=ON
+#
+# Gives the plugin its own product name, plugin code and bundle ID. JUCE derives
+# the ARA factory ID and the ARA document archive ID from the bundle ID, so this
+# also makes the dev build a distinct ARA plug-in: hosts will not confuse the two,
+# and projects saved with a release build keep resolving to that release build.
+option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OFF)
+
+if(PITCHNET_DEV_BUILD)
+    set(PITCHNET_PRODUCT_NAME "PitchNet Dev")
+    set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet.dev")
+    set(PITCHNET_PLUGIN_CODE PTD1)
+    message(STATUS
+        "PitchNet: side-by-side DEV build "
+        "(product '${PITCHNET_PRODUCT_NAME}', plugin code ${PITCHNET_PLUGIN_CODE}, "
+        "bundle id ${PITCHNET_BUNDLE_ID})")
+else()
+    set(PITCHNET_PRODUCT_NAME "PitchNet")
+    set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet")
+    set(PITCHNET_PLUGIN_CODE PTE1)
+endif()
+
 # Create GUI application
 juce_add_gui_app(PitchNet
-    PRODUCT_NAME "PitchNet"
+    PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
     COMPANY_NAME "Session Loops"
     COMPANY_WEBSITE "https://sessionloops.com"
-    BUNDLE_ID "com.sessionloops.pitchnet"
+    BUNDLE_ID "${PITCHNET_BUNDLE_ID}"
     COMPANY_COPYRIGHT "Copyright 2026"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
@@ -247,12 +271,12 @@ endif()
 
 # Create VST3 plugin
 juce_add_plugin(PitchNetPlugin
-    PRODUCT_NAME "PitchNet"
+    PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
     COMPANY_NAME "Session Loops"
     COMPANY_WEBSITE "https://sessionloops.com"
-    BUNDLE_ID "com.sessionloops.pitchnet"
+    BUNDLE_ID "${PITCHNET_BUNDLE_ID}"
     PLUGIN_MANUFACTURER_CODE SLPS
-    PLUGIN_CODE PTE1
+    PLUGIN_CODE ${PITCHNET_PLUGIN_CODE}
     FORMATS ${PITCHNET_PLUGIN_FORMATS}
     AAX_CATEGORY AAX_ePlugInCategory_PitchShift
     IS_SYNTH FALSE
@@ -736,12 +760,12 @@ if(ONNXRUNTIME_FOUND)
             add_custom_command(TARGET PitchNet POST_BUILD
                 COMMAND install_name_tool -add_rpath "@executable_path/../Frameworks" "$<TARGET_FILE:PitchNet>" 2>/dev/null || true)
             add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/MacOS/PitchNet" 2>/dev/null || true)
+                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/MacOS/${PITCHNET_PRODUCT_NAME}" 2>/dev/null || true)
             add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/MacOS/PitchNet" 2>/dev/null || true)
+                COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/MacOS/${PITCHNET_PRODUCT_NAME}" 2>/dev/null || true)
             if(TARGET PitchNetPlugin_AAX)
                 add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
-                    COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/MacOS/PitchNet" 2>/dev/null || true)
+                    COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/MacOS/${PITCHNET_PRODUCT_NAME}" 2>/dev/null || true)
             endif()
         endif()
     endif()
