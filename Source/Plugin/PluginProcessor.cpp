@@ -2681,6 +2681,15 @@ std::unique_ptr<Project> PitchNetAudioProcessor::copyAraRegionProject(
 void PitchNetAudioProcessor::installAraRegionProject(
     juce::ARAPlaybackRegion *region, std::unique_ptr<Project> project) {
   const auto key = pitchnetRegionKey(*region);
+  if (pendingRegionCanvasAnalysisKey == key) {
+    // Host edits can finish while the editor is closed. Installing preserved
+    // state must retire a pending job even when no canvas can be attached.
+    regionCanvasAnalysisGeneration.fetch_add(1);
+    if (regionCanvasController)
+      regionCanvasController->requestCancelLoading();
+    pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+  }
   auto &state = araRegions[key];
   ++state.revision;
   // Old undo actions hold pointers to the previous notes and must not survive
@@ -2760,6 +2769,12 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       juce::MemoryBlock archive;
       if (activeModification->copyProjectArchiveForRegion(key, archive)) {
         restoreAraRegionProject(key, archive.getData(), archive.getSize());
+        // Restoring the live archive can synchronously hydrate and move the
+        // Project into the canvas. Its map slot is then empty by design, not
+        // evidence that we should load an older modification/index archive.
+        // The surviving left region commonly still has that pre-split slot.
+        if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr)
+          return;
         it = araRegions.find(key);
       }
     }

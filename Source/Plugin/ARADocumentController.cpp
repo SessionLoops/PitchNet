@@ -2216,6 +2216,7 @@ void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
           modification->setProjectArchiveForRegion(key, archive.getData(), archive.getSize());
       }
       processor->installAraRegionProject(joined, std::move(project));
+      snapshotRegionState(*joined);
       joined->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(), false);
     }
 
@@ -2283,6 +2284,10 @@ void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
             mod->setProjectArchiveForRegion(key, archive.getData(), archive.getSize());
         }
         processor->installAraRegionProject(part, std::move(project));
+        // The left half often keeps the original index. Replace its unsplit
+        // archive too, so editor recreation and headless restores see the same
+        // boundaries regardless of which identity the host uses.
+        snapshotRegionState(*part);
         part->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(), false);
       }
     }

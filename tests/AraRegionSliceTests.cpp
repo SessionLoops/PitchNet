@@ -1,4 +1,5 @@
 #include "../Source/Models/ProjectRegionSlice.h"
+#include "../Source/Models/ProjectSerializer.h"
 #include <cassert>
 #include <iostream>
 
@@ -63,5 +64,30 @@ int main() {
   assert(right.getPitchCenter() == 65);
   assert(original.getNoteAtFrame(5)->getEndFrame() == 16);
   assert(original.getAudioData().waveform.getNumSamples() == 20 * HOP_SIZE);
+  // Editor-closed restore uses archives without waveforms/mel. Both halves,
+  // especially the surviving left identity, must retain their new bounds and
+  // edits independently of hydration from the shorter host region.
+  for (const auto *part : {&left, &right}) {
+    juce::MemoryBlock archive;
+    assert(ProjectSerializer::toBinaryArchive(*part, archive,
+        ProjectSerializer::BinaryArchiveMode::hostBackedARA));
+    Project reopened;
+    assert(ProjectSerializer::fromBinaryArchive(reopened, archive.getData(), archive.getSize()));
+    assert(reopened.getAudioData().waveform.getNumSamples() == 0);
+    assert(reopened.getAudioData().melSpectrogram.empty());
+    assert(reopened.getAudioData().playbackRegionRanges.size() == 1);
+    const auto actual = reopened.getAudioData().playbackRegionRanges.front();
+    const auto expected = part->getAudioData().playbackRegionRanges.front();
+    // Timeline metadata is serialized through JSON decimal numbers.
+    assert(std::abs(actual.first - expected.first) < 1.0e-8);
+    assert(std::abs(actual.second - expected.second) < 1.0e-8);
+    assert(reopened.getAudioData().f0 == part->getAudioData().f0);
+    assert(reopened.getNotes().size() == part->getNotes().size());
+    const auto *restored = reopened.getNoteAtFrame(part == &left ? 5 : 11);
+    assert(restored && restored->getLyric() == "word");
+    assert(restored->getPitchOffset() == 2 && restored->getVolumeDb() == -3);
+    assert(restored->getBakedDeltaPitch() == (part == &left ? l : r).getBakedDeltaPitch());
+    assert(restored->getEndFrame() == (part == &left ? 10 : 16));
+  }
   std::cout << "ARA region slice tests passed\n";
 }
