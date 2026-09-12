@@ -196,6 +196,15 @@ public:
   // have the same lifetime and are destroyed together.
   void removeAraRegion(const juce::String &regionKey);
 
+  // Drop the canvas binding if it is showing this modification, without
+  // discarding its cached edit state. Used when the host deactivates a
+  // modification into its undo history, where the object survives and can be
+  // reactivated by redo.
+  void releaseAraModificationCanvas(PitchNetAudioModification *modification);
+  // Release the canvas binding and discard every cached Project and undo
+  // history belonging to this modification. Used when it is destroyed.
+  void forgetAraModification(PitchNetAudioModification *modification);
+
   // Per-region project persistence. ARA archives omit both project waveforms
   // and the global mel spectrogram because they are rebuilt from the host
   // source. The rendered waveform uses the modification's processed-region

@@ -3022,6 +3022,45 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
       });
 }
 
+void PitchNetAudioProcessor::releaseAraModificationCanvas(
+    PitchNetAudioModification *modification) {
+  if (modification == nullptr || activeModification != modification)
+    return;
+
+  if (mainComponent != nullptr && canvasShowsActiveAraRegion &&
+      activeRegionKey.isNotEmpty()) {
+    auto releasedProject = mainComponent->exchangeProject(nullptr);
+    juce::ignoreUnused(releasedProject);
+    mainComponent->bindUndoManager(undoManager.get());
+  }
+
+  activeModification = nullptr;
+  activeRegionKey.clear();
+  canvasShowsActiveAraRegion = false;
+}
+
+void PitchNetAudioProcessor::forgetAraModification(
+    PitchNetAudioModification *modification) {
+  if (modification == nullptr)
+    return;
+
+  releaseAraModificationCanvas(modification);
+
+  // Every region key for this modification is prefixed with its persistent ID,
+  // so the whole family goes in one pass. The object is still alive here, so
+  // the ID is safe to read.
+  const auto prefix = juce::String(modification->getPersistentID()) + ":";
+  for (auto it = araRegions.begin(); it != araRegions.end();) {
+    if (it->first.startsWith(prefix)) {
+      if (it->second.undoManager != nullptr)
+        it->second.undoManager->clear();
+      it = araRegions.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 void PitchNetAudioProcessor::removeAraRegion(
     const juce::String &regionKey) {
   if (regionKey.isEmpty())

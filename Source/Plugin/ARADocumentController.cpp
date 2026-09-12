@@ -2490,6 +2490,48 @@ void PitchNetDocumentController::didUpdateAudioModificationProperties(
     modification->adoptClonedRegionState();
 }
 
+void PitchNetDocumentController::willDeactivateAudioModificationForUndoHistory(
+    juce::ARAAudioModification *audioModification, bool deactivate) {
+  // ARA requires the host to destroy every playback region before deactivating
+  // a modification, and reading or updating a deactivated one is invalid. Drop
+  // the canvas binding but keep the cached state: redo can reactivate this same
+  // object, and the host is not required to re-restore it from an archive.
+  if (!deactivate)
+    return;
+
+  if (auto *modification =
+          dynamic_cast<PitchNetAudioModification *>(audioModification))
+    if (auto *processor = getRegionCanvasProcessor())
+      processor->releaseAraModificationCanvas(modification);
+}
+
+void PitchNetDocumentController::willDestroyAudioModification(
+    juce::ARAAudioModification *audioModification) {
+  auto *modification =
+      dynamic_cast<PitchNetAudioModification *>(audioModification);
+  if (modification == nullptr)
+    return;
+
+  if (currentPlaybackRegion != nullptr &&
+      currentPlaybackRegion->getAudioModification() == audioModification) {
+    if (previewState.previewedRegion.load() == currentPlaybackRegion)
+      previewState.previewedRegion.store(nullptr);
+    currentPlaybackRegion = nullptr;
+  }
+  currentPlaybackRegions.erase(
+      std::remove_if(currentPlaybackRegions.begin(),
+                     currentPlaybackRegions.end(),
+                     [audioModification](auto *region) {
+                       return region == nullptr ||
+                              region->getAudioModification() ==
+                                  audioModification;
+                     }),
+      currentPlaybackRegions.end());
+
+  if (auto *processor = getRegionCanvasProcessor())
+    processor->forgetAraModification(modification);
+}
+
 void PitchNetDocumentController::didAddPlaybackRegionToAudioModification(
     juce::ARAAudioModification *audioModification,
     juce::ARAPlaybackRegion *playbackRegion) {

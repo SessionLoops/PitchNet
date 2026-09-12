@@ -291,6 +291,13 @@ public:
       override;
   void didUpdateAudioModificationProperties(
       juce::ARAAudioModification *audioModification) override;
+  // ARA gives persistent identity to audio modifications, and the processor
+  // holds a raw pointer to the one on the canvas. Track its lifetime so that
+  // pointer cannot outlive the object.
+  void willDeactivateAudioModificationForUndoHistory(
+      juce::ARAAudioModification *audioModification, bool deactivate) override;
+  void willDestroyAudioModification(
+      juce::ARAAudioModification *audioModification) override;
   void didAddPlaybackRegionToAudioModification(
       juce::ARAAudioModification *audioModification,
       juce::ARAPlaybackRegion *playbackRegion) override;
