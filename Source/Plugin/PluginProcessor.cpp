@@ -2678,13 +2678,13 @@ std::unique_ptr<Project> PitchNetAudioProcessor::copyAraRegionProject(
              ? std::make_unique<Project>(*it->second.project) : nullptr;
 }
 
-void PitchNetAudioProcessor::installAraSplitProject(
+void PitchNetAudioProcessor::installAraRegionProject(
     juce::ARAPlaybackRegion *region, std::unique_ptr<Project> project) {
   const auto key = pitchnetRegionKey(*region);
   auto &state = araRegions[key];
   ++state.revision;
-  // Old undo actions hold pointers to the unsplit notes and must not survive
-  // replacement of that project. The host owns undo of the region split.
+  // Old undo actions hold pointers to the previous notes and must not survive
+  // replacement of that project. The host owns undo of region split/glue.
   state.ensureUndoManager()->clear();
   if (key == activeRegionKey && mainComponent && canvasShowsActiveAraRegion) {
     auto previous = mainComponent->exchangeProject(nullptr);

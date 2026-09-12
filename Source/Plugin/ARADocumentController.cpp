@@ -5,6 +5,7 @@
 
 #include "../Models/ProjectSerializer.h"
 #include "../Models/ProjectRegionSlice.h"
+#include "../Models/ProjectRegionMerge.h"
 #include "../Utils/Constants.h"
 #include "PluginProcessor.h"
 #include "PitchNetAudioModification.h"
@@ -2060,7 +2061,7 @@ void PitchNetDocumentController::willBeginEditing(juce::ARADocument *document) {
             region->getRegionSequence(), region->getStartInPlaybackTime(),
             region->getEndInPlaybackTime(),
             region->getStartInAudioModificationTime(),
-            region->getDurationInAudioModificationTime(), std::move(project), {}, 0.0, 0});
+            region->getDurationInAudioModificationTime(), std::move(project), {}, 0.0, 0, source->getSampleRate()});
         if (mod) {
           auto &saved = splitSnapshots.back();
           if (!mod->copyProcessedAudioForRegion(saved.key, saved.processed,
@@ -2068,12 +2069,156 @@ void PitchNetDocumentController::willBeginEditing(juce::ARADocument *document) {
             mod->copyProcessedAudioForRegion(pitchnetArchivedRegionKey(*region),
                 saved.processed, saved.processedRate, saved.processedStart);
         }
+        // Archives omit source buffers. Capture readable source material before
+        // glue can destroy its ARA source, without invoking pitch analysis.
+        auto &saved = splitSnapshots.back();
+        auto &audio = saved.project->getAudioData();
+        if ((audio.waveform.getNumSamples() == 0 ||
+             audio.originalWaveform.getNumSamples() == 0) &&
+            source->isSampleAccessEnabled() && saved.sourceRate > 0 &&
+            saved.start >= 0 && saved.end * saved.sourceRate < std::numeric_limits<int>::max()) {
+          const int first = juce::roundToInt(saved.start * saved.sourceRate);
+          const int last = juce::roundToInt(saved.end * saved.sourceRate);
+          if (last > first) {
+            juce::AudioBuffer<float> raw(1, last - first);
+            juce::ARAAudioSourceReader reader(source);
+            if (readPlaybackRegionIntoBlock(region, reader, saved.sourceRate, first, raw)) {
+              juce::AudioBuffer<float> padded(1, last);
+              padded.clear();
+              padded.copyFrom(0, first, raw, 0, 0, raw.getNumSamples());
+              if (!juce::approximatelyEqual(saved.sourceRate, static_cast<double>(audio.sampleRate)))
+                padded = AudioResampler::resample(padded, saved.sourceRate, audio.sampleRate);
+              if (audio.originalWaveform.getNumSamples() == 0)
+                audio.originalWaveform.makeCopyOf(padded);
+              if (audio.waveform.getNumSamples() == 0) {
+                audio.waveform.makeCopyOf(padded);
+                if (saved.processed.getNumSamples() > 0 && saved.processedRate > 0) {
+                  const int begin = juce::roundToInt(saved.start * audio.sampleRate);
+                  const double offset = (saved.sourceStart - saved.processedStart / saved.sourceRate) * saved.processedRate;
+                  const double step = saved.processedRate / audio.sampleRate;
+                  for (int i = begin; i < audio.waveform.getNumSamples(); ++i) {
+                    const double position = offset + (i - begin) * step;
+                    if (position < 0 || position >= saved.processed.getNumSamples())
+                      continue;
+                    const int a = static_cast<int>(position);
+                    const int b = std::min(a + 1, saved.processed.getNumSamples() - 1);
+                    const auto *input = saved.processed.getReadPointer(0);
+                    audio.waveform.setSample(0, i, input[a] + static_cast<float>(position - a) * (input[b] - input[a]));
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 }
 
 void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
   auto *processor = getRegionCanvasProcessor();
   if (processor && document) {
+    std::vector<juce::ARAPlaybackRegion *> liveRegions;
+    for (auto *source : document->getAudioSources<juce::ARAAudioSource>())
+      for (auto *modification : source->getAudioModifications())
+        for (auto *region : modification->getPlaybackRegions())
+          liveRegions.push_back(region);
+
+    for (auto *joined : liveRegions) {
+      const double start = joined->getStartInPlaybackTime();
+      const double end = joined->getEndInPlaybackTime();
+      const auto key = pitchnetRegionKey(*joined);
+      // An unchanged existing region is not a glue destination, even if other
+      // events on this track happen to occupy the same time range.
+      const auto unchanged = std::find_if(splitSnapshots.begin(), splitSnapshots.end(),
+          [&](const auto &saved) {
+            return saved.key == key && std::abs(saved.start - start) < 1.0e-6 &&
+                   std::abs(saved.end - end) < 1.0e-6;
+          });
+      if (unchanged != splitSnapshots.end())
+        continue;
+      std::vector<const SplitSnapshot *> donors;
+      for (const auto &saved : splitSnapshots) {
+        if (saved.sequence != joined->getRegionSequence() ||
+            saved.start < start - 1.0e-6 || saved.end > end + 1.0e-6)
+          continue;
+        // Glue must consume its inputs (or enlarge one of them). Merely
+        // creating a longer overlapping event must not copy unrelated edits.
+        const bool survives = std::any_of(liveRegions.begin(), liveRegions.end(),
+            [&](auto *region) {
+              return region != joined && pitchnetRegionKey(*region) == saved.key;
+            });
+        if (!survives)
+          donors.push_back(&saved);
+      }
+      std::sort(donors.begin(), donors.end(), [](auto *a, auto *b) {
+        return a->start < b->start;
+      });
+      std::vector<ProjectPlaybackPart> parts;
+      for (auto *donor : donors)
+        parts.push_back({donor->project.get(), donor->start, donor->end});
+      auto project = mergeProjectPlaybackParts(parts, start, end);
+      if (!project)
+        continue;
+
+      auto *modification = joined->getAudioModification<PitchNetAudioModification>();
+      auto &audio = project->getAudioData();
+      if (modification) {
+        // Build one render in playback time. A host may glue into a freshly
+        // bounced source, so donor source offsets cannot be reused on it.
+        const int rate = audio.sampleRate;
+        const int begin = juce::roundToInt(start * rate);
+        const int finish = juce::roundToInt(end * rate);
+        int channels = std::max(1, audio.waveform.getNumChannels());
+        for (auto *donor : donors)
+          channels = std::max(channels, donor->processed.getNumChannels());
+        juce::AudioBuffer<float> rendered(channels, finish - begin);
+        rendered.clear();
+        bool complete = true;
+        for (auto *donor : donors) {
+          const int a = juce::roundToInt(donor->start * rate);
+          const int b = juce::roundToInt(donor->end * rate);
+          const auto &wave = donor->project->getAudioData().waveform;
+          if (wave.getNumSamples() >= b && wave.getNumChannels() > 0) {
+            for (int ch = 0; ch < channels; ++ch)
+              rendered.copyFrom(ch, a - begin, wave,
+                  std::min(ch, wave.getNumChannels() - 1), a, b - a);
+          } else if (donor->processed.getNumSamples() > 0 &&
+                     donor->sourceRate > 0 && donor->processedRate > 0) {
+            const double offset = (donor->sourceStart -
+                donor->processedStart / donor->sourceRate) * donor->processedRate;
+            const double step = donor->processedRate / rate;
+            if (offset < -1.0 || offset + (b - a) * step > donor->processed.getNumSamples() + 1.0) {
+              complete = false;
+              break;
+            }
+            for (int ch = 0; ch < channels; ++ch) {
+              const auto *input = donor->processed.getReadPointer(
+                  std::min(ch, donor->processed.getNumChannels() - 1));
+              for (int i = 0; i < b - a; ++i) {
+                const double position = std::clamp(offset + i * step, 0.0,
+                    static_cast<double>(donor->processed.getNumSamples() - 1));
+                const int left = static_cast<int>(position);
+                const int right = std::min(left + 1, donor->processed.getNumSamples() - 1);
+                rendered.setSample(ch, a - begin + i,
+                    input[left] + static_cast<float>(position - left) * (input[right] - input[left]));
+              }
+            }
+          } else {
+            complete = false;
+            break;
+          }
+        }
+        if (complete)
+          modification->setProcessedAudioForRegion(key, rendered, rate,
+              joined->getStartInAudioModificationSamples());
+        juce::MemoryBlock archive;
+        if (ProjectSerializer::toBinaryArchive(*project, archive,
+                ProjectSerializer::BinaryArchiveMode::hostBackedARA))
+          modification->setProjectArchiveForRegion(key, archive.getData(), archive.getSize());
+      }
+      processor->installAraRegionProject(joined, std::move(project));
+      joined->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(), false);
+    }
+
     // Inspect the completed transaction: hosts can shrink, create, clone and
     // delete the original objects in any order within begin/end editing.
     for (const auto &snapshot : splitSnapshots) {
@@ -2137,7 +2282,7 @@ void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
                   ProjectSerializer::BinaryArchiveMode::hostBackedARA))
             mod->setProjectArchiveForRegion(key, archive.getData(), archive.getSize());
         }
-        processor->installAraSplitProject(part, std::move(project));
+        processor->installAraRegionProject(part, std::move(project));
         part->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(), false);
       }
     }

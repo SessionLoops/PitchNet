@@ -166,7 +166,7 @@ public:
   // editor when the host selection changes (and, later, from the in-plugin
   // timeline). Safe to call with a region that has no analysis yet.
   std::unique_ptr<Project> copyAraRegionProject(const juce::String &key) const;
-  void installAraSplitProject(juce::ARAPlaybackRegion *region,
+  void installAraRegionProject(juce::ARAPlaybackRegion *region,
                               std::unique_ptr<Project> project);
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
   void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);

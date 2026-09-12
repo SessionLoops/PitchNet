@@ -321,6 +321,7 @@ private:
     juce::AudioBuffer<float> processed;
     double processedRate = 0.0;
     juce::int64 processedStart = 0;
+    double sourceRate = 0.0;
   };
   bool hostEditing = false;
   std::vector<SplitSnapshot> splitSnapshots;
