@@ -11,6 +11,7 @@ namespace QuantizePitchDialog {
 void showPopup(juce::Component *parent,
                juce::Rectangle<int> anchorBounds,
                float initialPitchCenter,
+               bool initialSnapToScale,
                std::function<void(float, bool)> onPreview,
                std::function<void(bool)> onComplete);
 

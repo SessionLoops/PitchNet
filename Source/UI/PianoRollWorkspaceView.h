@@ -58,6 +58,7 @@ private:
   Button autoZoomButton;
   ToggleButton overviewToggleButton;
   bool overviewVisible = false;
+  bool pitchCenterSnapToScale = false;
 
   FloatingZoomSliderLookAndFeel floatingZoomSliderLookAndFeel;
   FloatingControlBackground zoomXBackground;

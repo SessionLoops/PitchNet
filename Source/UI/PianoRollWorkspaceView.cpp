@@ -296,9 +296,11 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
 
   const auto popupAnchor = juce::Rectangle<int>(pianoCard.getRight(), pianoCard.getY(), 0, 0);
   QuantizePitchDialog::showPopup(this, popupAnchor, originalPitchCenter,
+      pitchCenterSnapToScale,
       [this, project, centers, originalPitchCenter, previewPitchCenter](float amount,
                                                                           bool snapToScale)
       {
+        pitchCenterSnapToScale = snapToScale;
         *previewPitchCenter = amount;
         const auto selectedScaleMode = project->getScaleMode();
         const auto correctionScaleMode =

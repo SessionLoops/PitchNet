@@ -11,7 +11,8 @@ namespace {
 class Content final : public juce::Component
 {
 public:
-  Content(float initialPitchCenter, std::function<void(float, bool)> preview,
+  Content(float initialPitchCenter, bool initialSnapToScale,
+          std::function<void(float, bool)> preview,
           std::function<void(bool)> completed)
       : onPreview(std::move(preview)), onComplete(std::move(completed))
   {
@@ -24,6 +25,7 @@ public:
     pitchCenter.setValue(initialPitchCenter, juce::dontSendNotification);
     pitchCenter.onValueChange = [this] { previewCorrection(); };
 
+    snapToScale.setToggleState(initialSnapToScale, juce::dontSendNotification);
     snapToScale.onClick = [this] { previewCorrection(); };
 
     setupButton(cancelButton, "Cancel");
@@ -125,7 +127,8 @@ void dismissPopup()
 }
 
 void showPopup(juce::Component *parent, juce::Rectangle<int> anchorBounds,
-               float initialPitchCenter, std::function<void(float, bool)> onPreview,
+               float initialPitchCenter, bool initialSnapToScale,
+               std::function<void(float, bool)> onPreview,
                std::function<void(bool)> onComplete)
 {
   if (parent == nullptr)
@@ -135,7 +138,8 @@ void showPopup(juce::Component *parent, juce::Rectangle<int> anchorBounds,
 
   constexpr int width = 340;
   constexpr int height = 86;
-  auto *content = new Content(initialPitchCenter, std::move(onPreview), std::move(onComplete));
+  auto *content = new Content(initialPitchCenter, initialSnapToScale,
+                              std::move(onPreview), std::move(onComplete));
   content->setSize(width, height);
   const auto bounds = parent->getLocalBounds();
   const int x = juce::jlimit(8, juce::jmax(8, bounds.getWidth() - width - 8),
