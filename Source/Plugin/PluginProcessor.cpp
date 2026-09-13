@@ -40,33 +40,6 @@ juce::String readStateString(juce::InputStream &in) {
       static_cast<size_t>(bytes));
 }
 
-juce::AudioBuffer<float> copyTimelineSlice(const juce::AudioBuffer<float> &src,
-                                           double sampleRate,
-                                           double startSeconds,
-                                           double endSeconds) {
-  if (src.getNumSamples() <= 0 || sampleRate <= 0.0 ||
-      endSeconds <= startSeconds)
-    return {};
-
-  const auto startSample64 = static_cast<juce::int64>(
-      std::llround(std::max(0.0, startSeconds) * sampleRate));
-  const auto endSample64 = static_cast<juce::int64>(
-      std::llround(std::max(startSeconds, endSeconds) * sampleRate));
-  const int startSample = static_cast<int>(
-      juce::jlimit<juce::int64>(0, src.getNumSamples(), startSample64));
-  const int endSample = static_cast<int>(
-      juce::jlimit<juce::int64>(startSample, src.getNumSamples(),
-                                endSample64));
-  const int numSamples = endSample - startSample;
-  if (numSamples <= 0)
-    return {};
-
-  juce::AudioBuffer<float> slice(src.getNumChannels(), numSamples);
-  for (int ch = 0; ch < src.getNumChannels(); ++ch)
-    slice.copyFrom(ch, 0, src, ch, startSample, numSamples);
-  return slice;
-}
-
 #if JucePlugin_Enable_ARA
 using SampleRange = juce::Range<int>;
 
@@ -2006,11 +1979,11 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                   audioData.sampleRate > 0
                       ? static_cast<double>(audioData.sampleRate)
                       : hostSampleRate;
-              auto processedSlice = copyTimelineSlice(
-                  audioData.waveform, processedRate, renderRegionStartSeconds,
-                  renderRegionEndSeconds);
-              if (processedSlice.getNumSamples() <= 0)
-                processedSlice.makeCopyOf(audioData.waveform);
+              // The project is stored in modification time and spans the
+              // whole modification, so publish it whole. Each region maps its
+              // own span out of it via getStartInAudioModificationSamples().
+              juce::AudioBuffer<float> processedSlice;
+              processedSlice.makeCopyOf(audioData.waveform);
               if (!renderChangedSampleRanges.empty()) {
                 juce::AudioBuffer<float> previousProcessed;
                 double previousRate = 0.0;
@@ -2028,12 +2001,12 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                 if (hasPrevious)
                   preserveProcessedAudioOutsideRanges(
                       processedSlice, processedRate,
-                      renderStartSampleInModification, previousProcessed,
+                      /*startSampleInModification*/ 0, previousProcessed,
                       previousRate, previousStart, renderChangedSampleRanges);
               }
               renderModification->setProcessedAudioForRegion(
                   renderRegionKey, processedSlice, processedRate,
-                  renderStartSampleInModification);
+                  /*startSampleInModification*/ 0);
               renderModification->notifyContentChanged(
                   juce::ARAContentUpdateScopes::samplesAreAffected(), true);
               for (auto *region : renderModification->getPlaybackRegions())
@@ -2159,14 +2132,10 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
               ? static_cast<double>(stateProject.getAudioData().sampleRate)
               : hostSampleRate;
       if (processed.getNumSamples() > 0) {
-        auto processedSlice =
-            copyTimelineSlice(processed, processedRate, activeRegionStartSeconds,
-                              activeRegionEndSeconds);
-        if (processedSlice.getNumSamples() <= 0)
-          processedSlice.makeCopyOf(processed);
+        // Modification-scoped project: publish it whole at offset zero.
         activeModification->setProcessedAudioForRegion(
-            activeRegionKey, processedSlice, processedRate,
-            activeStartSampleInModification);
+            activeRegionKey, processed, processedRate,
+            /*startSampleInModification*/ 0);
 
         // Tell the host the rendered samples changed (ARAPluginDemo pattern).
         // ARA hosts prefetch/pre-render playback-renderer output ahead of the
@@ -2193,14 +2162,6 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
                 juce::ARAContentUpdateScopes::samplesAreAffected(), true);
       }
     }
-  } else if (araDocumentController != nullptr &&
-             projectHasRegionEdits(stateProject)) {
-    // The canvas holds the COMPOSITE project (no region selected) and the user
-    // edited it. ARA playback is strictly modification-or-original — there is
-    // no realtime-engine path — so slice the composite waveform per edited
-    // region and store the slices on the modifications; unedited regions stay
-    // unpublished and keep playing their original source.
-    araDocumentController->publishCompositeEditsToRegions(stateProject);
   }
 #endif
 }

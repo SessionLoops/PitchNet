@@ -130,6 +130,9 @@ private:
   std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
       processedResamplingStates;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
+  // TEMPORARY: render-diagnostic log throttle, one entry per region.
+  std::unordered_map<juce::ARAPlaybackRegion *, juce::int64>
+      diagnosticLastLoggedSample;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
   HostLoopState previousLoopState;
@@ -347,13 +350,6 @@ public:
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,
                                   bool notifyHost = true);
-  // Publish the edited parts of a COMPOSITE (timeline-anchored) project onto
-  // the per-region modifications: every playback region overlapping an edited
-  // note gets its slice of the composite waveform stored as processed audio,
-  // so ARA playback (strictly modification-or-original) reflects edits made
-  // without selecting a region. Regions not touching any edit stay unpublished
-  // and keep playing their original source. Message thread only.
-  void publishCompositeEditsToRegions(const Project &project);
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
@@ -415,19 +411,7 @@ private:
   void snapshotRegionState(juce::ARAPlaybackRegion &region);
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
-  struct SplitSnapshot {
-    juce::String key;
-    juce::ARAAudioSource *source = nullptr;
-    juce::ARARegionSequence *sequence = nullptr;
-    double start = 0.0, end = 0.0, sourceStart = 0.0, sourceDuration = 0.0;
-    std::unique_ptr<Project> project;
-    juce::AudioBuffer<float> processed;
-    double processedRate = 0.0;
-    juce::int64 processedStart = 0;
-    double sourceRate = 0.0;
-  };
   bool hostEditing = false;
-  std::vector<SplitSnapshot> splitSnapshots;
   std::vector<juce::ARAPlaybackRegion *> deferredRegionUpdates;
   void stopAnalysisThread();
 

@@ -84,20 +84,26 @@ public:
     if (clonedPersistentID.isEmpty())
       return;
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto oldPrefix = clonedPersistentID + ":";
-    const auto newPrefix = juce::String(getPersistentID()) + ":";
-    decltype(processedRegions) audio;
-    for (auto &[key, value] : processedRegions)
-      if (key.startsWith(oldPrefix) &&
-          !key.substring(oldPrefix.length()).startsWith("live:"))
-        audio[newPrefix + key.substring(oldPrefix.length())] = std::move(value);
-    processedRegions = std::move(audio);
-    decltype(regionProjectArchives) archives;
-    for (auto &[key, value] : regionProjectArchives)
-      if (key.startsWith(oldPrefix) &&
-          !key.substring(oldPrefix.length()).startsWith("live:"))
-        archives[newPrefix + key.substring(oldPrefix.length())] = std::move(value);
-    regionProjectArchives = std::move(archives);
+    const juce::String newKey(getPersistentID());
+    if (newKey.isEmpty() || newKey == clonedPersistentID) {
+      clonedPersistentID.clear();
+      return;
+    }
+
+    // Identity is the modification's persistent ID, so a clone carries exactly
+    // one entry, filed under the ID it was copied from. Re-file that entry
+    // under the ID the host has now assigned. Anything already stored under the
+    // new ID wins and is left alone.
+    const auto refile = [this, &newKey](auto &container) {
+      auto it = container.find(clonedPersistentID);
+      if (it == container.end())
+        return;
+      if (container.find(newKey) == container.end())
+        container[newKey] = std::move(it->second);
+      container.erase(it);
+    };
+    refile(processedRegions);
+    refile(regionProjectArchives);
     clonedPersistentID.clear();
   }
 
