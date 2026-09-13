@@ -112,6 +112,14 @@ private:
                          const juce::AudioPlayHead::PositionInfo &posInfo,
                          bool shouldSyncUi);
 
+  // Region assignment happens on the model thread, so readers and resampler
+  // slots are allocated there rather than lazily inside processBlock().
+  void ensureRenderResourcesFor(juce::ARAPlaybackRegion *region);
+  void didAddPlaybackRegion(
+      ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept override;
+  void willRemovePlaybackRegion(
+      ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept override;
+
   std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
       readers;
   // Persistent resampler state per region, split by source so a failed processed
@@ -153,8 +161,15 @@ private:
                           juce::int64 timeInSamples, int numSamples);
   PitchNetDocumentController *getDocController() const;
 
+  void ensureReaderFor(juce::ARAPlaybackRegion *region);
+  void didAddPlaybackRegion(
+      ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept override;
+
   std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
       readers;
+  // Offline rendering intentionally starts with no readers and does not run on
+  // a realtime thread, so it may still create one on demand mid-render.
+  bool mayCreateReadersWhileRendering = false;
   std::shared_ptr<juce::AudioBuffer<float>> previewBuffer;
   std::shared_ptr<juce::AudioBuffer<float>> previousPreviewBuffer;
   juce::Range<juce::int64> previewLoopRange;
@@ -279,6 +294,13 @@ public:
   AraPreviewState &getPreviewState() { return previewState; }
   const AraPreviewState &getPreviewState() const { return previewState; }
 
+  // Excludes the audio thread while the host mutates the ARA model graph.
+  // Renderers take this for read in processBlock() and produce nothing when it
+  // is unavailable, so a playback region cannot be destroyed out from under a
+  // render that is mid-read. Mirrors the ProcessingLockInterface pattern in
+  // JUCE's ARAPluginDemo.
+  juce::ScopedTryReadLock getProcessingLock();
+
 protected:
   juce::ARAPlaybackRenderer *doCreatePlaybackRenderer() noexcept override;
   juce::ARAEditorRenderer *doCreateEditorRenderer() override;
@@ -333,6 +355,9 @@ private:
     std::atomic<bool> cancel{false};
   };
 
+  // Write-held across the host's editing cycle (willBeginEditing ->
+  // didEndEditing); try-read-held by both renderers' processBlock().
+  juce::ReadWriteLock processBlockLock;
   IMainView *mainComponent = nullptr;
   juce::ARAAudioSource *currentAudioSource = nullptr;
   juce::ARADocument *currentDocument = nullptr;
