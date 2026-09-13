@@ -101,7 +101,6 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
         // closes. The processor detaches them in its destructor.
         if (pitchDocController->getMainComponent() == mainView.get()) {
           pitchDocController->releaseEditorProcessor(&audioProcessor);
-          pitchDocController->setAnalysisCallbacks(nullptr, nullptr);
           pitchDocController->setMainComponent(nullptr);
         }
       }
@@ -170,21 +169,6 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   // ARA playback/bounce must keep working after the UI is closed.
   audioProcessor.setAraDocumentController(pitchDocController);
   pitchDocController->setEditorProcessor(&audioProcessor);
-  pitchDocController->setAnalysisCallbacks(
-      [this](std::uintptr_t sourceKey, double timelineOffsetSeconds,
-             const std::vector<std::pair<double, double>> &regionRanges) {
-        return audioProcessor.attachCachedAraAnalysis(sourceKey,
-                                                      timelineOffsetSeconds,
-                                                      regionRanges);
-      },
-      [this](std::uintptr_t sourceKey,
-             const juce::AudioBuffer<float> &buffer, double sampleRate,
-             double timelineOffsetSeconds,
-             const std::vector<std::pair<double, double>> &regionRanges) {
-        audioProcessor.requestAraSourceAnalysis(sourceKey, buffer, sampleRate,
-                                                timelineOffsetSeconds,
-                                                regionRanges);
-      });
   // Persistence callbacks are owned by the processor (set in didBindToARA) so
   // that saved-project restore works with the UI closed; the editor must not
   // install editor-capturing callbacks that would dangle on close.

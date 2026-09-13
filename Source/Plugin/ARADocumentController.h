@@ -11,6 +11,7 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if JucePlugin_Enable_ARA
@@ -130,9 +131,21 @@ private:
   std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
       processedResamplingStates;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
-  // TEMPORARY: render-diagnostic log throttle, one entry per region.
-  std::unordered_map<juce::ARAPlaybackRegion *, juce::int64>
-      diagnosticLastLoggedSample;
+  // Diagnostics: last reported render outcome per region, so a line is only
+  // emitted when something actually changes (see PITCHNET_ARA_DIAGNOSTICS).
+  struct DiagnosticRenderState {
+    double playbackStart = -1.0;
+    juce::int64 startInModification = -1;
+    int blobSamples = -2;
+    bool rendered = false;
+    bool operator==(const DiagnosticRenderState &o) const {
+      return juce::approximatelyEqual(playbackStart, o.playbackStart) &&
+             startInModification == o.startInModification &&
+             blobSamples == o.blobSamples && rendered == o.rendered;
+    }
+  };
+  std::unordered_map<juce::ARAPlaybackRegion *, DiagnosticRenderState>
+      diagnosticRenderStates;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
   HostLoopState previousLoopState;
@@ -311,7 +324,6 @@ public:
       juce::ARAPlaybackRegion *playbackRegion) override;
   void willDestroyPlaybackRegion(juce::ARAPlaybackRegion *playbackRegion)
       override;
-  void reanalyze();
 
   // Extract a single region's audio and hand it to the processor for per-region
   // analysis (populates that region's persistent Project and, if it is the
@@ -322,15 +334,6 @@ public:
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
-  void setAnalysisCallbacks(
-      std::function<bool(
-          std::uintptr_t, double,
-          const std::vector<std::pair<double, double>> &)>
-          attachCachedAnalysis,
-      std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &,
-                         double, double,
-                         const std::vector<std::pair<double, double>> &)>
-          requestAnalysis);
   void setPersistenceCallbacks(
       std::function<bool(juce::MemoryBlock &)> serializeProjectState,
       std::function<bool(const void *, size_t)> restoreProjectState);
@@ -396,9 +399,6 @@ protected:
       const juce::ARAStoreObjectsFilter *filter) noexcept override;
 
 private:
-  void processDocument(juce::ARADocument *document,
-                       juce::ARAPlaybackRegion *excludedRegion = nullptr,
-                       juce::ARAAudioSource *excludedSource = nullptr);
   void clearStaleRegionSequenceFilter(juce::ARADocument *document);
   bool shouldProcessPlaybackRegion(juce::ARAPlaybackRegion *region) const;
   void clearMainComponentHostAudio();
@@ -436,13 +436,6 @@ private:
   PitchNetAudioProcessor *owningProcessor = nullptr;
   PitchNetAudioProcessor *editorProcessor = nullptr;
   AraPreviewState previewState;
-  std::function<bool(std::uintptr_t, double,
-                     const std::vector<std::pair<double, double>> &)>
-      attachCachedAnalysisCallback;
-  std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
-                     double,
-                     const std::vector<std::pair<double, double>> &)>
-      requestAnalysisCallback;
   std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
   std::function<bool(const void *, size_t)> restoreProjectStateCallback;
   juce::MemoryBlock pendingRestoredProjectData;

@@ -2261,6 +2261,28 @@ void PianoRollComponent::focusGained(FocusChangeType cause)
   // Focus gained - nothing special needed
 }
 
+void PianoRollComponent::setTimelineDisplayOffset(double seconds)
+{
+  if (!coordMapper ||
+      juce::approximatelyEqual(coordMapper->getTimelineDisplayOffset(), seconds))
+    return;
+
+  coordMapper->setTimelineDisplayOffset(seconds);
+  repaint();
+}
+
+double PianoRollComponent::projectToTimeline(double projectSeconds) const
+{
+  return coordMapper ? coordMapper->projectToTimeline(projectSeconds)
+                     : projectSeconds;
+}
+
+double PianoRollComponent::timelineToProject(double timelineSeconds) const
+{
+  return coordMapper ? coordMapper->timelineToProject(timelineSeconds)
+                     : timelineSeconds;
+}
+
 void PianoRollComponent::setCursorTime(double time)
 {
   if (std::abs(cursorTime - time) < 0.0001)

@@ -2203,8 +2203,9 @@ void MainComponent::seek(double time)
   // the UI cursor immediately for responsiveness.
   if (isPluginMode())
   {
+    // 'time' is project time; the host expects its own timeline.
     if (onRequestHostSeek)
-      onRequestHostSeek(time);
+      onRequestHostSeek(pianoRoll.projectToTimeline(time));
     pendingCursorTime.store(time);
     pianoRoll.setCursorTime(time);
     toolbar.setCurrentTime(time);
@@ -3053,6 +3054,11 @@ void MainComponent::appendLiveRecordingAudio(
   pianoRoll.appendLiveRecordingWaveform(buffer);
 }
 
+void MainComponent::setTimelineDisplayOffset(double seconds)
+{
+  pianoRoll.setTimelineDisplayOffset(seconds);
+}
+
 void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
 {
   if (!isPluginMode())
@@ -3238,7 +3244,11 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   if (!isPluginMode())
     return;
 
-  double displayTime = std::max(0.0, timeSeconds);
+  // The host reports transport position on ITS timeline; everything below is
+  // in project time. Convert here, at the boundary. Do not clamp before the
+  // conversion - with a negative display offset a valid host position maps to
+  // a valid project position that a zero clamp would destroy.
+  double displayTime = std::max(0.0, pianoRoll.timelineToProject(timeSeconds));
 
   // The host playhead can continue past the active ARA region. Retain that
   // furthest position as part of the timeline so follow-playback can scroll

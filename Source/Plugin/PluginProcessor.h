@@ -93,32 +93,15 @@ public:
       lastEditorHeight = height;
     }
   }
-  bool attachCachedAraAnalysis(std::uintptr_t sourceKey,
-                               double timelineOffsetSeconds,
-                               const std::vector<std::pair<double, double>> &
-                                   playbackRegionRanges);
-  void requestAraSourceAnalysis(std::uintptr_t sourceKey,
-                               const juce::AudioBuffer<float> &buffer,
-                               double sampleRate, double timelineOffsetSeconds,
-                               const std::vector<std::pair<double, double>> &
-                                   playbackRegionRanges);
   void requestPluginProjectRender(const Project &project);
   void updateProjectStateFromEditor(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);
-  void updateAraTimelineOffset(double timelineOffsetSeconds);
   bool serializePersistentProjectState(juce::MemoryBlock &destData,
                                        bool hostBackedARA = false) const;
   bool restorePersistentProjectState(const void *data, size_t sizeInBytes);
 
-  void removeAraRegionFromProject(
-      std::uintptr_t newSourceKey, const std::pair<double, double> &removedRange,
-      const std::vector<std::pair<double, double>> &remainingRanges);
-  void analyzeAndMergeAraRegion(
-      std::uintptr_t newSourceKey, const juce::AudioBuffer<float> &buffer,
-      double sampleRate, const std::pair<double, double> &addedRange,
-      const std::vector<std::pair<double, double>> &allRanges);
 
   // ========== Host Transport Control ==========
 
@@ -170,6 +153,15 @@ public:
                               std::unique_ptr<Project> project);
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
   void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);
+  // The active region's span expressed in MODIFICATION time. Projects are
+  // modification-scoped, so this is the only coordinate system they use;
+  // timeline placement is applied at render and draw time, never stored.
+  std::pair<double, double> activeRegionSpanInModificationTime() const;
+  void stampActiveRegionSpan(Project &project) const;
+  // Tell the editor where the active region's content sits on the host
+  // timeline, so the ruler and playhead line up with the drawn waveform.
+  // Display only - nothing in the project moves. May be negative.
+  void pushTimelineDisplayOffset() const;
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
   bool isAraRegionCanvasAnalysisPending() const {
     return regionCanvasAnalysisPending.load();
@@ -366,7 +358,6 @@ private:
   bool araAnalysisLoading = false;
   bool araAnalysisReady = false;
   double araAnalysisTimelineOffsetSeconds = 0.0;
-  std::vector<std::pair<double, double>> araPlaybackRegionRanges;
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
   juce::String araAnalysisProjectJson;
   std::atomic<bool> araRenderPendingRerun{false};

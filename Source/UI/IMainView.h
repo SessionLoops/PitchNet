@@ -106,6 +106,9 @@ public:
   virtual void clearHostAudio() = 0;
   virtual void focusTimelineRange(double startSeconds, double endSeconds) = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
+  // Where the drawn project content sits on the host timeline, in seconds.
+  // Display only; may be negative. See CoordinateMapper for the full contract.
+  virtual void setTimelineDisplayOffset(double seconds) = 0;
   virtual void updateHostPlaybackState(bool isPlaying) = 0;
   virtual void updateHostTimelineState(double bpm, int numerator,
                                        int denominator) = 0;

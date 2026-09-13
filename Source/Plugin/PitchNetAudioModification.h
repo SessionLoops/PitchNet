@@ -80,6 +80,10 @@ public:
 
   // The host assigns the clone's persistent ID after construction. Rebase
   // archived slots before the first playback region can request its state.
+  // Non-empty while this modification still holds state filed under the ID of
+  // the modification it was cloned from. Diagnostics only.
+  juce::String getPendingClonedPersistentID() const { return clonedPersistentID; }
+
   void adoptClonedRegionState() {
     if (clonedPersistentID.isEmpty())
       return;
@@ -142,7 +146,9 @@ public:
   bool copyProjectArchiveForRegion(const juce::String &regionID,
                                    juce::MemoryBlock &dest) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = regionProjectArchives.find(regionID);
+    auto it = regionProjectArchives.find(regionID);
+    if (it == regionProjectArchives.end() && clonedPersistentID.isNotEmpty())
+      it = regionProjectArchives.find(clonedPersistentID);
     if (it == regionProjectArchives.end() || it->second.getSize() == 0)
       return false;
 
@@ -211,6 +217,13 @@ public:
     if (const auto it = processedRegions.find(regionID);
         it != processedRegions.end())
       return it->second.get();
+    // A clone still filed under the ID it was copied from: adoptClonedRegionState()
+    // depends on a property-update callback that the host is not obliged to send.
+    // Read-only fallback, so this stays safe on the audio thread.
+    if (clonedPersistentID.isNotEmpty())
+      if (const auto it = processedRegions.find(clonedPersistentID);
+          it != processedRegions.end())
+        return it->second.get();
     return nullptr;
   }
 

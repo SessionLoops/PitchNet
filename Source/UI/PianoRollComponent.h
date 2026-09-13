@@ -129,6 +129,12 @@ public:
   void setDragSnapMode(DragSnapMode mode);
   void setPitchReferenceHz(int hz);
   void setTimelineDisplayMode(TimelineDisplayMode mode);
+
+  // Where the drawn content currently sits on the host timeline. Display only:
+  // nothing in the project moves. May be negative. See CoordinateMapper.
+  void setTimelineDisplayOffset(double seconds);
+  double projectToTimeline(double projectSeconds) const;
+  double timelineToProject(double timelineSeconds) const;
   void setTimelineBeatSignature(int numerator, int denominator);
   void setTimelineTempoBpm(double bpm);
   void setTimelineGridDivision(TimelineGridDivision division);

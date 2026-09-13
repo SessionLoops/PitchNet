@@ -56,17 +56,26 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
       while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
         beatStep *= 2;
 
+      // Beat indices are HOST timeline positions; the view is in project time.
+      const double viewStartTimeline =
+          coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
+      const double viewEndTimeline = coordMapper->projectToTimeline(
+          (scrollX + timelineArea.getWidth()) / pixelsPerSecond);
       const int firstBeat = std::max(
-          0, static_cast<int>(std::floor((scrollX / pixelsPerSecond) / beatSeconds)));
-      const int lastBeat = static_cast<int>(
-                               std::ceil((scrollX + timelineArea.getWidth()) / pixelsPerSecond / beatSeconds)) +
-                           beatStep;
+          0, static_cast<int>(std::floor(viewStartTimeline / beatSeconds)));
+      const int lastBeat =
+          static_cast<int>(std::ceil(viewEndTimeline / beatSeconds)) + beatStep;
 
       for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
       {
-        const double time = static_cast<double>(beatIndex) * beatSeconds;
+        // Where this host beat falls in project time - i.e. over which part
+        // of the audio the DAW's bar line actually sits.
+        const double time = coordMapper->timelineToProject(
+            static_cast<double>(beatIndex) * beatSeconds);
         if (time > duration + beatSeconds)
           break;
+        if (time < -beatSeconds)
+          continue;
 
         const float x =
             pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) -
@@ -107,10 +116,19 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
   else
     secondsPerTick = 10.0f;
 
-  for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick)
+  // Ticks are labelled in HOST time and drawn at the matching project time.
+  const auto firstTick =
+      static_cast<float>(std::floor(coordMapper->projectToTimeline(0.0) /
+                                    secondsPerTick) * secondsPerTick);
+  for (float time = firstTick;
+       time <= static_cast<float>(coordMapper->projectToTimeline(duration)) +
+                   secondsPerTick;
+       time += secondsPerTick)
   {
-    float x =
-        pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
+    const float projectTime =
+        static_cast<float>(coordMapper->timelineToProject(time));
+    float x = pianoKeysWidth + projectTime * pixelsPerSecond -
+              static_cast<float>(scrollX);
 
     if (x < pianoKeysWidth || x > timelineArea.getRight())
       continue;
@@ -230,9 +248,14 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
 
       for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
       {
-        const double time = static_cast<double>(beatIndex) * beatSeconds;
+        // Where this host beat falls in project time - i.e. over which part
+        // of the audio the DAW's bar line actually sits.
+        const double time = coordMapper->timelineToProject(
+            static_cast<double>(beatIndex) * beatSeconds);
         if (time > duration + beatSeconds)
           break;
+        if (time < -beatSeconds)
+          continue;
 
         const float x =
             pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) -
