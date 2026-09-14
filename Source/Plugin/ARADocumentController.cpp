@@ -496,14 +496,24 @@ bool PitchNetPlaybackRenderer::processBlock(
     const juce::AudioPlayHead::PositionInfo &posInfo) noexcept {
   // Get document controller for accessing MainComponent
   auto *docCtrl = getDocController();
-  if (!docCtrl)
+  if (!docCtrl) {
+    buffer.clear();
     return true;
+  }
 
   // Produce nothing while the host is mutating the model graph: any region
   // this block would read may be freed before the block finishes.
+  //
+  // "Nothing" has to mean silence, not passthrough. Every other exit from this
+  // function clears, and neither processBlockForARA() nor the processor's ARA
+  // branch clears afterwards, so returning early without clearing would hand
+  // the host's own input buffer to the output for the length of an editing
+  // cycle.
   const auto processingLock = docCtrl->getProcessingLock();
-  if (!processingLock.isLocked())
+  if (!processingLock.isLocked()) {
+    buffer.clear();
     return true;
+  }
 
   auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
   bool isPlaying = posInfo.getIsPlaying();
