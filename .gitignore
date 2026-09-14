@@ -2,7 +2,7 @@
 build/
 cmake-build-*/
 dist/
-
+_reference/
 # JUCE is now a git submodule in third_party/
 
 # IDE files
