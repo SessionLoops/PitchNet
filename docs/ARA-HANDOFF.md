@@ -176,7 +176,8 @@ higher.
 
 ## Diagnostics
 
-Build with `-DPITCHNET_ARA_DIAGNOSTICS=ON` (off by default). Output:
+On in the `pitchnet-dev` and `pitchnet-dev-debug` presets, off everywhere else
+(the raw option is `-DPITCHNET_ARA_DIAGNOSTICS=ON`). Output:
 
 ```
 %APPDATA%\PitchNet\Logs\debug_<session-timestamp>.log
@@ -202,18 +203,44 @@ each costing a DAW session. Read the log before theorising.
 Steve builds and tests himself; do not run builds for him. A build costs real
 time, so batch fixes rather than spending a build cycle per speculative change.
 
+Build configurations live in `CMakePresets.json` at the repo root, so every
+machine gets the same ones. Visual Studio reads presets natively — pick
+**PitchNet Dev** from the configuration dropdown. From a shell, from the repo
+root:
+
 ```
-cmake --build C:\Users\steve\source\repos\PitchNet\out\build\pitchnet-dev --config Release --target PitchNetPlugin_VST3
+cmake --build --preset pitchnet-dev
 ```
 
-Paths differ on the laptop — ask rather than assume.
+Repo checkout paths differ between machines (`source\repos\PitchNet` at home,
+`source\repos\StevenLeonCooper\PitchNet` on the laptop), which is why the command
+above is relative. The build dir is always `out/build/<preset-name>`.
 
-`-DPITCHNET_DEV_BUILD=ON` (cached in that build dir) produces "PitchNet Dev" with
-its own plugin code and bundle id, so it loads alongside a release build. JUCE
-derives the ARA factory id and document-archive id from the bundle id, which is
-what keeps the two genuinely separate ARA plug-ins. Configure is only needed when
-`CMakeLists.txt` changes or an option is flipped; otherwise the build command
-re-runs it.
+Presets:
+
+| Preset | Type | Identity | Diagnostics |
+|---|---|---|---|
+| `pitchnet-dev` | RelWithDebInfo | PitchNet Dev | on |
+| `pitchnet-dev-debug` | Debug | PitchNet Dev | on |
+| `pitchnet-release` | Release | PitchNet | off |
+
+`pitchnet-dev` is the one to use. RelWithDebInfo is optimized and sets `NDEBUG`,
+so `JUCE_DEBUG=0` and realtime behaviour in the DAW matches a release build —
+but symbols survive, so the VS debugger can still attach to ARA callbacks. **Do
+not diagnose realtime behaviour from `pitchnet-dev-debug`:** an unoptimized
+vocoder will drop out on its own, and those dropouts look exactly like the bugs
+being hunted.
+
+`PITCHNET_DEV_BUILD=ON` produces "PitchNet Dev" with its own plugin code and
+bundle id, so it loads alongside a release build. JUCE derives the ARA factory id
+and document-archive id from the bundle id, which is what keeps the two genuinely
+separate ARA plug-ins. Configure is only needed when `CMakeLists.txt` changes or
+an option is flipped; otherwise the build command re-runs it.
+
+Note on the old command: it named a `--config Release` that a single-config Ninja
+build dir silently ignores. If the home build dir was Ninja, that build was
+whatever `CMAKE_BUILD_TYPE` happened to be cached, not necessarily Release. The
+presets remove the ambiguity.
 
 Test from a fresh, unsaved project with a short clip — never a carried-over
 session. That is why the logs have been clean enough to diagnose from.
