@@ -253,6 +253,20 @@ build dir silently ignores. If the home build dir was Ninja, that build was
 whatever `CMAKE_BUILD_TYPE` happened to be cached, not necessarily Release. The
 presets remove the ambiguity.
 
+### Installing a build for testing
+
+The build does not install itself. Copy the whole bundle — a Windows VST3 is a
+folder, not a file, and `onnxruntime.dll` lives inside it — with Cubase closed:
+
+```
+robocopy "out\build\pitchnet-dev\PitchNetPlugin_artefacts\RelWithDebInfo\VST3\PitchNet Dev.vst3" "C:\Program Files\Common Files\VST3\Session Loops\PitchNet Dev.vst3" /MIR
+```
+
+Needs an elevated shell for `Program Files`. `/MIR` clears stale files from a
+previous build rather than leaving them alongside the new ones. Robocopy exits
+`1` on success. The dev build has its own bundle id, so it sits beside the
+release `PitchNet.vst3` in the same vendor folder and needs no rescan.
+
 Test from a fresh, unsaved project with a short clip — never a carried-over
 session. That is why the logs have been clean enough to diagnose from.
 
