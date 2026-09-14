@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -137,9 +138,54 @@ private:
   int numChannels = 2;
 };
 
-class PitchNetEditorRenderer : public juce::ARAEditorRenderer {
+// Bridges model-thread reconfiguration of the editor renderer to the realtime
+// render thread. ARA explicitly permits a host to assign editor-renderer
+// regions while the plug-in is in render state: see ARAInterface.h,
+// @ref Assigning_ARAEditorRendererInterface_Regions -- "The host can make these
+// calls while the plug-in is in render-state [...] Plug-ins must implement a
+// proper bridging to the concurrent render threads." The document editing lock
+// therefore does NOT cover these calls, because no editing cycle is required
+// for them. Modelled on AsyncConfigurationCallback in JUCE's ARAPluginDemo.
+//
+// (The playback renderer needs no such bridge: its assignment calls "must only
+// be made when the plug-in is not in render-state" -- ARAInterface.h,
+// @ref Assigning_ARAPlaybackRendererInterface_Regions.)
+class AraAsyncConfigurationCallback final : private juce::AsyncUpdater {
+public:
+  explicit AraAsyncConfigurationCallback(std::function<void()> callbackIn)
+      : callback(std::move(callbackIn)) {}
+
+  ~AraAsyncConfigurationCallback() override { cancelPendingUpdate(); }
+
+  // Realtime-safe: never blocks. A failed lock means a reconfiguration is in
+  // flight and this block must not touch the resources it is rebuilding.
+  juce::SpinLock::ScopedTryLockType tryLockForRender() const noexcept {
+    return juce::SpinLock::ScopedTryLockType(processingFlag);
+  }
+
+  // Any thread. Coalesces; the callback runs later on the message thread.
+  void startConfigure() { triggerAsyncUpdate(); }
+
+private:
+  void handleAsyncUpdate() override {
+    const juce::SpinLock::ScopedLockType scope(processingFlag);
+    callback();
+  }
+
+  std::function<void()> callback;
+  mutable juce::SpinLock processingFlag;
+};
+
+class PitchNetEditorRenderer : public juce::ARAEditorRenderer,
+                               private juce::ARARegionSequence::Listener {
 public:
   using ARAEditorRenderer::ARAEditorRenderer;
+  ~PitchNetEditorRenderer() override;
+
+  // Model thread. Asks for the source readers to be rebuilt under the lock that
+  // processBlock() try-holds. Used by the document controller when it selects a
+  // region for preview that the host never assigned to this renderer.
+  void requestReaderConfiguration() { asyncConfigCallback.startConfigure(); }
 
   void prepareToPlay(double sampleRateIn, int maxBlockSize, int numChannelsIn,
                      juce::AudioProcessor::ProcessingPrecision,
@@ -162,11 +208,39 @@ private:
   PitchNetDocumentController *getDocController() const;
 
   void ensureReaderFor(juce::ARAPlaybackRegion *region);
+  void configure();
+
+  // A host assigns editor-renderer regions either one region at a time or a
+  // whole region sequence at a time (ARAEditorRendererInterface offers both,
+  // and hosts are told not to mix them on one instance). Regions assigned by
+  // sequence never appear in getPlaybackRegions(), so both routes must be
+  // walked to see everything this renderer is expected to preview.
+  template <typename Callback>
+  void forEachAssignedPlaybackRegion(Callback &&cb) {
+    for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>())
+      if (!cb(region))
+        return;
+
+    for (auto *sequence : getRegionSequences<juce::ARARegionSequence>())
+      for (auto *region : sequence->getPlaybackRegions<juce::ARAPlaybackRegion>())
+        if (!cb(region))
+          return;
+  }
+
   void didAddPlaybackRegion(
       ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept override;
+  void didAddRegionSequence(
+      ARA::PlugIn::RegionSequence *regionSequence) noexcept override;
+  void willRemoveRegionSequence(
+      ARA::PlugIn::RegionSequence *regionSequence) noexcept override;
+  void didAddPlaybackRegionToRegionSequence(
+      juce::ARARegionSequence *regionSequence,
+      juce::ARAPlaybackRegion *playbackRegion) override;
 
   std::map<juce::ARAAudioSource *, std::unique_ptr<juce::ARAAudioSourceReader>>
       readers;
+  std::set<juce::ARARegionSequence *> listenedRegionSequences;
+  AraAsyncConfigurationCallback asyncConfigCallback{[this] { configure(); }};
   // Offline rendering intentionally starts with no readers and does not run on
   // a realtime thread, so it may still create one on demand mid-render.
   bool mayCreateReadersWhileRendering = false;

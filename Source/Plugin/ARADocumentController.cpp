@@ -583,6 +583,11 @@ PitchNetDocumentController *PitchNetEditorRenderer::getDocController() const {
           docController);
 }
 
+PitchNetEditorRenderer::~PitchNetEditorRenderer() {
+  for (auto *sequence : listenedRegionSequences)
+    sequence->removeListener(this);
+}
+
 void PitchNetEditorRenderer::prepareToPlay(
     double sampleRateIn, int, int numChannelsIn,
     juce::AudioProcessor::ProcessingPrecision,
@@ -627,9 +632,50 @@ void PitchNetEditorRenderer::ensureReaderFor(juce::ARAPlaybackRegion *region) {
 }
 
 void PitchNetEditorRenderer::didAddPlaybackRegion(
-    ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept {
-  if (!mayCreateReadersWhileRendering)
-    ensureReaderFor(static_cast<juce::ARAPlaybackRegion *>(playbackRegion));
+    ARA::PlugIn::PlaybackRegion *) noexcept {
+  // Do not touch the reader map here: this call is allowed while rendering, so
+  // processBlock() may be reading it right now. Defer to configure().
+  asyncConfigCallback.startConfigure();
+}
+
+void PitchNetEditorRenderer::didAddRegionSequence(
+    ARA::PlugIn::RegionSequence *regionSequence) noexcept {
+  auto *sequence = static_cast<juce::ARARegionSequence *>(regionSequence);
+  if (sequence != nullptr && listenedRegionSequences.insert(sequence).second)
+    sequence->addListener(this);
+  asyncConfigCallback.startConfigure();
+}
+
+void PitchNetEditorRenderer::willRemoveRegionSequence(
+    ARA::PlugIn::RegionSequence *regionSequence) noexcept {
+  auto *sequence = static_cast<juce::ARARegionSequence *>(regionSequence);
+  if (sequence != nullptr && listenedRegionSequences.erase(sequence) > 0)
+    sequence->removeListener(this);
+}
+
+void PitchNetEditorRenderer::didAddPlaybackRegionToRegionSequence(
+    juce::ARARegionSequence *, juce::ARAPlaybackRegion *) {
+  // A region appearing in a sequence this renderer already previews needs a
+  // reader too, and arrives without didAddPlaybackRegion() being called.
+  asyncConfigCallback.startConfigure();
+}
+
+void PitchNetEditorRenderer::configure() {
+  // Message thread, holding asyncConfigCallback's lock exclusively, so
+  // processBlock() cannot be inside the reader map while it is rewritten.
+  if (mayCreateReadersWhileRendering)
+    return;
+
+  forEachAssignedPlaybackRegion([this](juce::ARAPlaybackRegion *region) {
+    ensureReaderFor(region);
+    return true;
+  });
+
+  // REAPER can ask for a preview of a region it never assigned to this
+  // renderer, and processBlock() honours that (see previewRegionIsAssigned).
+  // Such a region is in neither list above, so prepare its reader explicitly.
+  if (auto *docCtrl = getDocController())
+    ensureReaderFor(docCtrl->getPreviewState().previewedRegion.load());
 }
 
 void PitchNetEditorRenderer::releaseResources() {
@@ -958,6 +1004,17 @@ bool PitchNetEditorRenderer::processBlock(
   // the same regions and needs the same exclusion during host graph edits.
   const auto processingLock = docCtrl->getProcessingLock();
   if (!processingLock.isLocked())
+    return true;
+
+  // Editor-renderer region assignment is allowed while rendering, so the
+  // editing lock above does not cover it (see AraAsyncConfigurationCallback).
+  // This second try-lock excludes the reader rebuild in configure().
+  //
+  // Deliberately no buffer.clear() on either early return: the playback
+  // renderer has already written this block into the same buffer
+  // (processBlockForARA calls it first), and clearing would silence it.
+  const auto configLock = asyncConfigCallback.tryLockForRender();
+  if (!configLock.isLocked())
     return true;
 
   auto &previewState = docCtrl->getPreviewState();
@@ -2613,6 +2670,14 @@ void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
   previewState.previewEndTime.store(end);
   previewState.previewClaimedRenderer.store(nullptr);
   previewState.previewedRegion.store(previewRegion);
+
+  // Model thread. A host may preview a region it never assigned to an editor
+  // renderer, in which case no assignment callback fires and the renderer has
+  // no reader for it. Ask for one now; the renderer does the thread bridging.
+  for (auto *renderer :
+       getDocumentController()->getEditorRenderers<PitchNetEditorRenderer>())
+    if (renderer != nullptr)
+      renderer->requestReaderConfiguration();
 }
 
 void PitchNetDocumentController::startPreviewAudio(
