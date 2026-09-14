@@ -10,6 +10,25 @@ endif()
 
 project(PitchNet VERSION 0.5.7)
 
+# Fail fast on a 32-bit toolchain. Every ONNX Runtime package selected below is
+# x64/arm64 only, so a 32-bit build cannot link - it dies much later with a wall
+# of unresolved _OrtGetApiBase@0 externals that says nothing about the real
+# cause. On Windows this happens silently whenever a Ninja build is configured
+# from a plain shell instead of an x64 developer environment, because cl.exe
+# then defaults to x86.
+if(CMAKE_SIZEOF_VOID_P AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR
+        "PitchNet requires a 64-bit toolchain, but this one targets "
+        "${CMAKE_SIZEOF_VOID_P}-byte pointers (32-bit).\n"
+        "On Windows with the Ninja generator, configure from an x64 developer "
+        "environment:\n"
+        "  - Visual Studio: pick a configuration from the dropdown, or\n"
+        "  - 'x64 Native Tools Command Prompt for VS', or\n"
+        "  - Developer PowerShell:  Enter-VsDevShell -Arch amd64\n"
+        "Then delete the build directory and configure again - the bad "
+        "compiler is cached.")
+endif()
+
 include(FetchContent)
 include(cmake/Asio.cmake)
 

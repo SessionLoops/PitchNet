@@ -216,6 +216,17 @@ Repo checkout paths differ between machines (`source\repos\PitchNet` at home,
 `source\repos\StevenLeonCooper\PitchNet` on the laptop), which is why the command
 above is relative. The build dir is always `out/build/<preset-name>`.
 
+**Configure from an x64 environment.** These are Ninja presets, and Ninja takes
+the target architecture from whatever `cl.exe` the environment provides. Visual
+Studio sets that up before invoking Ninja, but a plain PowerShell prompt does
+not — `cl.exe` then defaults to x86, and since every vendored ONNX Runtime is
+x64-only, the build dies at link time on unresolved `_OrtGetApiBase@0`. Use the
+VS configuration dropdown, an "x64 Native Tools Command Prompt", or
+`Enter-VsDevShell -Arch amd64`. CMakeLists now hard-fails on a 32-bit toolchain
+rather than letting it reach the linker. If it ever does trip, **delete the
+build directory** — the wrong compiler is cached and switching shells alone will
+not fix it.
+
 Presets:
 
 | Preset | Type | Identity | Diagnostics |
