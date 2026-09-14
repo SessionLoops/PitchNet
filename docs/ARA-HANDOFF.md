@@ -60,11 +60,22 @@ the coordinate drift that used to compound on every edit.
 
 ## Verified host behaviour — do not re-derive these
 
-**Cubase clones the `AudioModification` when you split an event.** Each half gets
-its own modification with its own persistent ID, seeded from the original at the
-moment of the split and diverging afterwards. The halves do **not** share one
-modification. Proven from the diagnostic log (`createMod ... clonedFrom=<ptr>
-cloneSrcId=<id>`), not inferred from the spec. WaveLab behaves identically.
+**CORRECTED 2026-09-14: Cubase does NOT clone the `AudioModification` when you
+split an event.** All slices share one modification and one persistent ID.
+Measured in `debug_20260914_104804.log`: three splits producing four playback
+regions (`b2da4620`, `b2da5160`, `c232fcb0`, `c2328d50`), every one of them
+reporting `mod=96740730 id=CD8ABDCA-F7E7-4309-A452-C26F6EBE6FB1.1`, with no
+`createMod` at any split. The only `createMod` in the session is at load, with
+`clonedFrom=none`. PitchNet consequently holds exactly one `Project` for all
+slices (`footprint ... regions=1` after every split).
+
+This section previously asserted the opposite and told future sessions not to
+re-derive it. The likely origin of that error is that **duplicating** an event
+(copy/paste or drag-copy) does clone the modification, while **splitting**
+shares it — the earlier log was probably of a duplicate, not a split. Treat any
+"verified host behaviour" here as re-checkable; this one cost a planned refactor
+that turned out to address nothing.
+
 VariAudio *does* share one edit layer across split events, but that is the Sample
 Editor and it is **not available through the ARA extension interface** — do not
 chase it. We concluded the opposite twice and burned several build cycles on it.
@@ -132,7 +143,25 @@ edited blob. If the right slice's Project is hydrated from an archive whose
 **Not proven.** Before touching this, add a diagnostic line at hydration
 comparing the hydrated `waveform` against `originalWaveform`. Confirm, then fix.
 
-### 3. Shared analysis — planned, sized, not started
+### 3. Shared analysis — CANCELLED 2026-09-14, measured as a non-problem
+
+**Do not build this.** The plan below was sized on the assumption that each
+split slice gets its own cloned modification, and therefore its own duplicate
+copy of the source-derived analysis. That assumption is false — see the
+corrected host-behaviour section above. All slices share one modification, so
+PitchNet holds one `Project` regardless of slice count (`regions=1` in the
+footprint diagnostic after three splits). There is no per-slice duplication to
+collapse.
+
+If a real memory problem shows up later, measure it first: the footprint
+diagnostic reports retained bytes split into source-derived and
+per-modification. Note that it currently fires during hydration, when the
+buffers are still empty, so it needs moving before its MB figures mean
+anything — only its `regions=` count was informative here.
+
+The original plan is kept below purely as a record of what was considered.
+
+#### Original plan (not applicable)
 
 About **70% of each `Project` is a byte-identical copy** of analysis derived from
 audio that cannot change. Verified by checking every write site: these five

@@ -180,35 +180,43 @@ juce::String archivedRegionKeyForLiveKey(
   return {};
 }
 
-std::vector<SampleRange> collectDirtyRegionSampleRanges(
-    const Project &project, double sampleRate, double regionStartSeconds) {
+// Ranges are in MODIFICATION samples, matching the buffer they are applied to.
+//
+// This previously returned region-relative samples, subtracting the region's
+// timeline start. Its only consumer - preserveProcessedAudioOutsideRanges -
+// walks the published blob, which spans the whole modification at offset zero,
+// so the ranges were displaced by the region's start offset. The result was
+// that a freshly synthesised edit got preserved at a position where nothing
+// had changed while the actual edited samples were overwritten with the
+// previous blob, publishing audio identical to what was already playing.
+//
+// A fallback in the old conversion ("if the region-relative time is negative,
+// use absolute") hid this for every edit BEFORE the region start, which is why
+// only the right-hand slice of a split ever misbehaved.
+std::vector<SampleRange> collectDirtyModificationSampleRanges(
+    const Project &project, double sampleRate) {
   std::vector<SampleRange> ranges;
   if (sampleRate <= 0.0)
     return ranges;
 
-  const auto toRegionSample = [sampleRate, regionStartSeconds](int frame) {
-    const double absoluteSeconds =
-        static_cast<double>(frame) * static_cast<double>(HOP_SIZE) / sampleRate;
-    double regionSeconds = absoluteSeconds - regionStartSeconds;
-    if (regionSeconds < 0.0)
-      regionSeconds = absoluteSeconds;
-    return static_cast<int>(std::llround(std::max(0.0, regionSeconds) *
-                                         sampleRate));
+  const auto toModificationSample = [](int frame) {
+    return static_cast<int>(std::max<juce::int64>(
+        0, static_cast<juce::int64>(frame) * static_cast<juce::int64>(HOP_SIZE)));
   };
 
   for (const auto &note : project.getNotes()) {
     if (!note.isDirty())
       continue;
-    const int start = toRegionSample(note.getStartFrame());
-    const int end = toRegionSample(note.getEndFrame());
+    const int start = toModificationSample(note.getStartFrame());
+    const int end = toModificationSample(note.getEndFrame());
     if (end > start)
       ranges.emplace_back(start, end);
   }
 
   if (project.hasF0DirtyRange()) {
     const auto [startFrame, endFrame] = project.getF0DirtyRange();
-    const int start = toRegionSample(startFrame);
-    const int end = toRegionSample(endFrame);
+    const int start = toModificationSample(startFrame);
+    const int end = toModificationSample(endFrame);
     if (end > start)
       ranges.emplace_back(start, end);
   }
@@ -1406,8 +1414,8 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
     const double renderRate =
         audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
                                  : hostSampleRate;
-    renderChangedSampleRanges = collectDirtyRegionSampleRanges(
-        projectToRender, renderRate, renderRegionStartSeconds);
+    renderChangedSampleRanges =
+        collectDirtyModificationSampleRanges(projectToRender, renderRate);
   }
 #endif
   auto &pendingRerun =
@@ -1508,7 +1516,10 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               ARA_DIAG("publish[render] mod=" + ARA_DIAG_PTR(renderModification) +
                        " key=" + renderRegionKey + " samples=" +
                        juce::String(processedSlice.getNumSamples()) +
-                       " rate=" + juce::String(processedRate, 1) + " offset=0");
+                       " rate=" + juce::String(processedRate, 1) + " offset=0" +
+                       " fp=" + juce::String(araDiagFingerprint(processedSlice), 6) +
+                       " changedRanges=" +
+                       juce::String(static_cast<int>(renderChangedSampleRanges.size())));
               renderModification->setProcessedAudioForRegion(
                   renderRegionKey, processedSlice, processedRate,
                   /*startSampleInModification*/ 0);
@@ -1642,7 +1653,8 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
         ARA_DIAG("publish[edit] mod=" + ARA_DIAG_PTR(activeModification) +
                  " key=" + activeRegionKey + " samples=" +
                  juce::String(processed.getNumSamples()) + " rate=" +
-                 juce::String(processedRate, 1) + " offset=0");
+                 juce::String(processedRate, 1) + " offset=0" +
+                 " fp=" + juce::String(araDiagFingerprint(processed), 6));
         activeModification->setProcessedAudioForRegion(
             activeRegionKey, processed, processedRate,
             /*startSampleInModification*/ 0);

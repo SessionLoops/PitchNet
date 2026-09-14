@@ -517,7 +517,8 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       DiagnosticRenderState now{region->getStartInPlaybackTime(),
                                 region->getStartInAudioModificationSamples(),
                                 rd ? rd->audio.getNumSamples() : -1,
-                                renderedRegion};
+                                renderedRegion,
+                                rd ? araDiagFingerprint(rd->audio) : 0.0f};
       auto previous = diagnosticRenderStates.find(region);
       if (previous != diagnosticRenderStates.end() &&
           !(previous->second == now)) {
@@ -532,7 +533,8 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
                                 : juce::String("none")) +
                  " blobOffset=" + (rd ? juce::String(rd->startSampleInModification)
                                       : juce::String("-")) +
-                 " renderedProcessed=" + juce::String(renderedRegion ? 1 : 0));
+                 " renderedProcessed=" + juce::String(renderedRegion ? 1 : 0) +
+                 " fp=" + juce::String(now.blobFingerprint, 6));
       }
     }
 #endif
