@@ -20,7 +20,7 @@ public:
   };
 
   static constexpr float buttonWidth = 30.0f;
-  static constexpr float buttonHeight = 10.0f;
+  static constexpr float buttonHeight = 12.0f;
   static constexpr float buttonGap = 5.0f;
   static constexpr float buttonGroupWidth =
       buttonWidth * 3.0f + buttonGap * 2.0f;
