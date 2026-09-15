@@ -140,7 +140,7 @@ private:
     ToggleButton splitModeButton;
     ToggleButton anchorModeButton;
     ToggleButton timingModeButton;
-    ToolButton followButton{"Follow"};
+    ToggleButton followButton;
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;
     ToggleButton auditionButton;
