@@ -46,6 +46,12 @@ pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region);
 struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};
   std::atomic<double> previewEndTime{0.0};
+  // Bumped on every explicit audition request. The render path plays a preview
+  // through ONCE and then empties its loop range, so it must re-render to make
+  // a sound again - but it only re-rendered when the range or region changed.
+  // Auditioning the same span twice therefore fell silent until something else
+  // reset the cached range, which is why nudging the transport "fixed" it.
+  std::atomic<std::uint32_t> previewGeneration{0};
   std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
   std::atomic<PitchNetEditorRenderer *> previewClaimedRenderer{nullptr};
   std::shared_ptr<juce::AudioBuffer<float>> auditionBuffer;
@@ -274,6 +280,7 @@ private:
   juce::int64 previousPreviewLoopPosition = 0;
   int previewTransitionRemaining = 0;
   int previewTransitionTotal = 0;
+  std::uint32_t lastPreviewGeneration = 0;
   double lastPreviewStartTime = -1.0;
   double lastPreviewEndTime = -1.0;
   juce::ARAPlaybackRegion *lastPreviewRegion = nullptr;
@@ -374,7 +381,9 @@ public:
   getCurrentPlaybackRegions() const {
     return currentPlaybackRegions;
   }
-  void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
+  // Takes MODIFICATION seconds, matching the Project's coordinate space.
+  void startPreviewRange(double previewStartInModificationSeconds,
+                         double previewEndInModificationSeconds);
   void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRate);
   void stopPreview();

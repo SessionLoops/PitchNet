@@ -1171,12 +1171,16 @@ bool PitchNetEditorRenderer::processBlock(
       }
     }
 
+    const auto previewGeneration =
+        previewState.previewGeneration.load(std::memory_order_acquire);
     const double previewStartTime = previewState.previewStartTime.load();
     const double previewEndTime = previewState.previewEndTime.load();
-    if (!juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
+    if (previewGeneration != lastPreviewGeneration ||
+        !juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
         !juce::approximatelyEqual(previewEndTime, lastPreviewEndTime) ||
         previewRegion != lastPreviewRegion) {
       renderPreviewBuffer(previewRegion, previewStartTime, previewEndTime);
+      lastPreviewGeneration = previewGeneration;
       lastPreviewStartTime = previewStartTime;
       lastPreviewEndTime = previewEndTime;
       lastPreviewRegion = previewRegion;
@@ -2115,51 +2119,100 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
   if (auto *processor = getRegionCanvasProcessor())
     processor->removeAraRegion(pitchnetRegionKey(*playbackRegion));
 }
-void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
-                                                   double previewEndSeconds) {
+// Takes MODIFICATION seconds, because that is the space the Project - and so
+// the piano roll the user is selecting in - lives in. Previously it took
+// playback seconds while its only caller passed modification seconds, so the
+// two agreed only while a region sat at timeline zero. Move the event and
+// auditioning a span before the region start found no region at all (silence),
+// while a span after it played audio offset by the region's timeline position.
+void PitchNetDocumentController::startPreviewRange(
+    double previewStartInModificationSeconds,
+    double previewEndInModificationSeconds) {
   if (!currentDocument)
     return;
 
+  // No time-stretching is supported, so a region's modification span and its
+  // playback span have the same length.
+  const auto regionSpanInModification = [](const juce::ARAPlaybackRegion *r) {
+    const double start = r->getStartInAudioModificationTime();
+    return std::pair<double, double>{
+        start, start + (r->getEndInPlaybackTime() - r->getStartInPlaybackTime())};
+  };
+
+  const auto coversRequestedSpan = [&](const juce::ARAPlaybackRegion *r) {
+    if (r == nullptr)
+      return false;
+    if (currentRegionSequence && r->getRegionSequence() != currentRegionSequence)
+      return false;
+    const auto [startInMod, endInMod] = regionSpanInModification(r);
+    return previewEndInModificationSeconds > startInMod &&
+           previewStartInModificationSeconds < endInMod;
+  };
+
+  // Prefer the region the user actually selected in the host. Splitting an
+  // event produces several playback regions aliasing ONE audio modification,
+  // so they all share a persistent ID and cannot be told apart by key - but the
+  // host reports the selection through ARAViewSelection, and the editor stores
+  // the resolved region here. Without this the search below simply takes the
+  // first region that happens to overlap, which for duplicates means auditioning
+  // through whichever copy the document enumerates first rather than the one
+  // being edited.
   juce::ARAPlaybackRegion *previewRegion = nullptr;
-  for (auto *source : currentDocument->getAudioSources<juce::ARAAudioSource>()) {
-    if (!source)
-      continue;
-    for (auto *modification : source->getAudioModifications()) {
-      if (!modification)
+  if (auto *selected = getCurrentPlaybackRegion(); coversRequestedSpan(selected))
+    previewRegion = selected;
+
+  // Nothing selected, or the selection does not cover the requested span: fall
+  // back to whichever region overlaps it.
+  if (previewRegion == nullptr) {
+    for (auto *source : currentDocument->getAudioSources<juce::ARAAudioSource>()) {
+      if (!source)
         continue;
-      for (auto *region : modification->getPlaybackRegions()) {
-        if (!region ||
-            (currentRegionSequence &&
-             region->getRegionSequence() != currentRegionSequence))
+      for (auto *modification : source->getAudioModifications()) {
+        if (!modification)
           continue;
-        if (previewEndSeconds > region->getStartInPlaybackTime() &&
-            previewStartSeconds < region->getEndInPlaybackTime()) {
-          previewRegion = region;
-          break;
+        for (auto *region : modification->getPlaybackRegions()) {
+          if (!region ||
+              (currentRegionSequence &&
+               region->getRegionSequence() != currentRegionSequence))
+            continue;
+          const auto [regionStartInMod, regionEndInMod] =
+              regionSpanInModification(region);
+          if (previewEndInModificationSeconds > regionStartInMod &&
+              previewStartInModificationSeconds < regionEndInMod) {
+            previewRegion = region;
+            break;
+          }
         }
+        if (previewRegion)
+          break;
       }
       if (previewRegion)
         break;
     }
-    if (previewRegion)
-      break;
   }
 
   if (!previewRegion)
     return;
 
-  const double regionStart = previewRegion->getStartInPlaybackTime();
-  const double regionEnd = previewRegion->getEndInPlaybackTime();
-  const double start =
-      juce::jlimit(regionStart, regionEnd, previewStartSeconds);
-  const double end = juce::jlimit(regionStart, regionEnd, previewEndSeconds);
-  if (end <= start)
+  // Clamp in modification space, then convert to the playback time the render
+  // path downstream expects.
+  const auto [regionStartInMod, regionEndInMod] =
+      regionSpanInModification(previewRegion);
+  const double startInMod = juce::jlimit(regionStartInMod, regionEndInMod,
+                                         previewStartInModificationSeconds);
+  const double endInMod = juce::jlimit(regionStartInMod, regionEndInMod,
+                                       previewEndInModificationSeconds);
+  if (endInMod <= startInMod)
     return;
 
-  previewState.previewStartTime.store(start);
-  previewState.previewEndTime.store(end);
+  const double modificationToPlayback =
+      previewRegion->getStartInPlaybackTime() - regionStartInMod;
+  previewState.previewStartTime.store(startInMod + modificationToPlayback);
+  previewState.previewEndTime.store(endInMod + modificationToPlayback);
   previewState.previewClaimedRenderer.store(nullptr);
   previewState.previewedRegion.store(previewRegion);
+  // Last, so a render thread that observes the bump also sees the new range.
+  previewState.previewGeneration.fetch_add(1, std::memory_order_release);
 
   // Model thread. A host may preview a region it never assigned to an editor
   // renderer, in which case no assignment callback fires and the renderer has
