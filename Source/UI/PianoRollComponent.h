@@ -213,6 +213,7 @@ public:
   std::function<void(Note *)> onNoteSelected;
   std::function<void()> onPitchEdited;
   std::function<void()> onPitchEditFinished; // Called when dragging ends
+  std::function<void()> onAmplitudeEdited; // Gain commit, undo, or redo
   std::function<void()> onPitchPreviewRenderRequested;
   std::function<void()> onPitchEditCommitted;
   std::function<void(const Note &)> onNoteDragAudition;

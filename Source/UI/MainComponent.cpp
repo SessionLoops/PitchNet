@@ -844,6 +844,18 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { onNoteSelected(note); };
   pianoRoll.onPitchEdited = [this]()
   { onPitchEdited(); };
+  pianoRoll.onAmplitudeEdited = [this]()
+  {
+    if (auto* project = getProject())
+    {
+      if (!isPluginMode() && editorController)
+        if (auto* engine = editorController->getAudioEngine())
+          engine->loadWaveform(project->getAudioData().waveform,
+                               project->getAudioData().sampleRate, true);
+      onPitchEdited();
+      notifyProjectDataChanged();
+    }
+  };
   pianoRoll.onPitchEditFinished = [this]()
   {
     resynthesizeIncremental();

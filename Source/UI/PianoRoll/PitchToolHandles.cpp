@@ -20,6 +20,7 @@ PitchToolHandles::PitchToolHandles()
       vibratoIcon(loadIcon("vibrato_png")),
       driftIcon(loadIcon("drift_png")),
       formantIcon(loadIcon("formant_png")),
+      amplitudeIcon(loadIcon("amplitude_png")),
       rightTiltIcon(loadIcon("rtilt_png")) {
   // Initialize (currently empty, but reserve space)
   handles.reserve(20);  // Typical max handles for multi-note selection
@@ -66,30 +67,28 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
       ? centerX - layoutWidth * 0.5f
       : hoverBounds.getX();
   const float groupTop = hoverBounds.isEmpty()
-      ? topY - buttonHeight - 7.0f
+      ? topY - hoverPadding - buttonHeight - 7.0f
       : hoverBounds.getY() - buttonHeight - 7.0f;
-  const float slotWidth = (layoutWidth - buttonGap * 3.0f) / 4.0f;
-  const auto addButtonHandle = [this, targetNote, groupTop](HandleType type,
-                                                             float x, float width)
+  const float slotWidth = (layoutWidth - buttonGap * 2.0f) / 3.0f;
+  const float bottom = hoverBounds.isEmpty()
+      ? topY + mapper.getPixelsPerSemitone() + hoverPadding
+      : hoverBounds.getBottom();
+  const float bottomRowY = bottom + 7.0f;
+  const auto addButtonHandle = [this, targetNote, groupLeft, slotWidth](
+      HandleType type, int column, float y)
   {
-    addHandle(type, x + width * 0.5f, groupTop + buttonHeight * 0.5f,
+    const float x = groupLeft + (slotWidth + buttonGap) * column;
+    addHandle(type, x + slotWidth * 0.5f, y + buttonHeight * 0.5f,
               targetNote);
-    handles.back().bounds = {x, groupTop, width, buttonHeight};
+    handles.back().bounds = {x, y, slotWidth, buttonHeight};
   };
 
-  addButtonHandle(HandleType::TiltLeft, groupLeft, slotWidth);
-  addButtonHandle(HandleType::Vibrato, groupLeft + slotWidth + buttonGap,
-                  slotWidth);
-  addButtonHandle(HandleType::PitchDrift,
-                  groupLeft + (slotWidth + buttonGap) * 2.0f, slotWidth);
-  addButtonHandle(HandleType::TiltRight,
-                  groupLeft + (slotWidth + buttonGap) * 3.0f, slotWidth);
-
-  const float bottom = hoverBounds.isEmpty()
-      ? topY + mapper.getPixelsPerSemitone() : hoverBounds.getBottom();
-  addHandle(HandleType::Formant, centerX, bottom + 15.0f + buttonHeight * 0.5f, targetNote);
-  handles.back().bounds = {centerX - buttonWidth * 0.5f, bottom + 15.0f,
-                          buttonWidth, buttonHeight};
+  addButtonHandle(HandleType::TiltLeft, 0, groupTop);
+  addButtonHandle(HandleType::Vibrato, 1, groupTop);
+  addButtonHandle(HandleType::TiltRight, 2, groupTop);
+  addButtonHandle(HandleType::PitchDrift, 0, bottomRowY);
+  addButtonHandle(HandleType::Amplitude, 1, bottomRowY);
+  addButtonHandle(HandleType::Formant, 2, bottomRowY);
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
@@ -101,46 +100,7 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
                         : juce::Colour(0xFF2E2E2Du));
 
     const auto bounds = handle.bounds;
-    if (handle.type == HandleType::Vibrato || handle.type == HandleType::PitchDrift || handle.type == HandleType::Formant)
-    {
-      g.fillRect(bounds);
-    }
-    else
-    {
-      constexpr float slant = 7.0f;
-      constexpr float radius = 4.0f;
-      juce::Path path;
-      if (handle.type == HandleType::TiltLeft)
-      {
-        path.startNewSubPath(bounds.getX() + slant, bounds.getY());
-        path.lineTo(bounds.getRight() - radius, bounds.getY());
-        path.cubicTo(bounds.getRight() - radius * 0.45f, bounds.getY(),
-                     bounds.getRight(), bounds.getY() + radius * 0.45f,
-                     bounds.getRight(), bounds.getY() + radius);
-        path.lineTo(bounds.getRight(), bounds.getBottom());
-        path.lineTo(bounds.getX(), bounds.getBottom());
-        path.lineTo(bounds.getX(), bounds.getY() + radius);
-        path.cubicTo(bounds.getX(), bounds.getY() + radius * 0.55f,
-                     bounds.getX() + slant * 0.35f, bounds.getY(),
-                     bounds.getX() + slant, bounds.getY());
-      }
-      else
-      {
-        path.startNewSubPath(bounds.getX() + radius, bounds.getY());
-        path.lineTo(bounds.getRight() - slant, bounds.getY());
-        path.cubicTo(bounds.getRight() - slant * 0.35f, bounds.getY(),
-                     bounds.getRight(), bounds.getY() + radius * 0.55f,
-                     bounds.getRight(), bounds.getY() + radius);
-        path.lineTo(bounds.getRight(), bounds.getBottom());
-        path.lineTo(bounds.getX(), bounds.getBottom());
-        path.lineTo(bounds.getX(), bounds.getY() + radius);
-        path.cubicTo(bounds.getX(), bounds.getY() + radius * 0.45f,
-                     bounds.getX() + radius * 0.45f, bounds.getY(),
-                     bounds.getX() + radius, bounds.getY());
-      }
-      path.closeSubPath();
-      g.fillPath(path);
-    }
+    g.fillRect(bounds);
 
     const auto& icon = getIconForType(handle.type);
     if (icon.isValid())
@@ -166,6 +126,8 @@ PitchToolHandles::getIconForType(HandleType type) const {
       return vibratoIcon;
     case HandleType::Formant:
       return formantIcon;
+    case HandleType::Amplitude:
+      return amplitudeIcon;
     case HandleType::TiltRight:
       return rightTiltIcon;
     default:
@@ -184,7 +146,17 @@ int PitchToolHandles::hitTest(float worldX, float worldY, float tolerance) const
 
 bool PitchToolHandles::containsLayoutPoint(float worldX, float worldY) const
 {
-  return getLayoutBounds().contains(worldX, worldY);
+  // Combine handles within each row, not across the note between rows.
+  for (const auto& handle : handles)
+  {
+    auto rowBounds = handle.bounds;
+    for (const auto& other : handles)
+      if (other.bounds.getY() == handle.bounds.getY())
+        rowBounds = rowBounds.getUnion(other.bounds);
+    if (rowBounds.contains(worldX, worldY))
+      return true;
+  }
+  return false;
 }
 
 juce::Rectangle<float> PitchToolHandles::getLayoutBounds() const

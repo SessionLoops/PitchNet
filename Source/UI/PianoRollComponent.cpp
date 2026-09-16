@@ -224,6 +224,7 @@ PianoRollComponent::PianoRollComponent()
   gridRenderer->setCoordinateMapper(coordMapper.get());
   timelineRenderer->setCoordinateMapper(coordMapper.get());
   waveformBackgroundRenderer->setCoordinateMapper(coordMapper.get());
+  waveformBackgroundRenderer->setPitchToolController(pitchToolController.get());
   noteRenderer->setCoordinateMapper(coordMapper.get());
   noteRenderer->setSelectHandler(selectHandler_.get());
   noteRenderer->setSplitHandler(splitHandler_.get());
@@ -276,9 +277,21 @@ PianoRollComponent::PianoRollComponent()
   // Setup pitchToolController callbacks
   pitchToolController->onPitchEdited = [this]()
   {
+    invalidateWaveformCache();
+    updatePitchToolHandlesFromSelection();
+    updatePreviewButtonBounds();
     repaint();
     if (onPitchEdited)
       onPitchEdited();
+  };
+
+  pitchToolController->onAmplitudeEdited = [this]()
+  {
+    invalidateWaveformCache();
+    updatePitchToolHandlesFromSelection();
+    updatePreviewButtonBounds();
+    repaint();
+    if (onAmplitudeEdited) onAmplitudeEdited();
   };
 
   // Setup noteSplitter callbacks
@@ -1402,43 +1415,22 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     return;
   }
 
-  Note *noteUnderMouse = nullptr;
-  bool overCurrentHoverLayout = false;
-  bool overCurrentControl = false;
-  bool withinCurrentNoteEdges = false;
-  if (hoveredNote)
+  // Handle rows (including their gaps) keep their owner. Everywhere else,
+  // a note directly under the pointer takes priority over the old layout.
+  const bool overCurrentHandleArea = hoveredNote && pitchToolHandles &&
+      pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
+  Note *noteUnderMouse = overCurrentHandleArea ? hoveredNote : noteAtPointer;
+  if (!noteUnderMouse && hoveredNote)
   {
     auto hoverLayoutBounds = getPreviewHoverBounds(*hoveredNote);
     if (pitchToolHandles && !pitchToolHandles->isEmpty())
-    {
       hoverLayoutBounds = hoverLayoutBounds.getUnion(
           pitchToolHandles->getLayoutBounds());
-      overCurrentControl =
-          pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
-    }
 
-    const float noteLeft = static_cast<float>(
-        framesToSeconds(hoveredNote->getStartFrame()) * pixelsPerSecond);
-    const float noteRight = noteLeft + static_cast<float>(
-        framesToSeconds(hoveredNote->getDurationFrames()) * pixelsPerSecond);
-    withinCurrentNoteEdges = adjustedX >= noteLeft && adjustedX < noteRight;
-
-    // Keep this note active through the gaps between the top controls, the
-    // note hover background, and the preview/reset controls.
-    overCurrentHoverLayout = hoverLayoutBounds.expanded(4.0f).contains(
-        adjustedX, adjustedY);
+    // Keep controls reachable across empty canvas without masking other notes.
+    if (hoverLayoutBounds.expanded(4.0f).contains(adjustedX, adjustedY))
+      noteUnderMouse = hoveredNote;
   }
-  if (overCurrentHoverLayout)
-  {
-    // The horizontal padding around a note must not block a neighbouring note
-    // from becoming hovered. Controls themselves remain pinned to their owner.
-    noteUnderMouse = !withinCurrentNoteEdges && !overCurrentControl &&
-            noteAtPointer && noteAtPointer != hoveredNote
-        ? noteAtPointer
-        : hoveredNote;
-  }
-  else
-    noteUnderMouse = noteAtPointer;
   if (!noteUnderMouse)
     noteUnderMouse = findPreviewButtonNoteAt(adjustedX, adjustedY);
   if (!noteUnderMouse && hoveredNote && pitchToolHandles &&
@@ -1612,9 +1604,9 @@ juce::String PianoRollComponent::getTooltip()
   {
     case PitchToolHandles::HandleType::TiltLeft: return "Left Slope";
     case PitchToolHandles::HandleType::Vibrato: return "Pitch Modulation";
-    case PitchToolHandles::HandleType::Formant:
-      return "Formant Shift: " + juce::String(
-          pitchToolHandles->getHandle(handleIndex).note->getFormantShift(), 1) + " st";
+    case PitchToolHandles::HandleType::PitchDrift: return "Pitch Drift";
+    case PitchToolHandles::HandleType::Amplitude: return "Amplitude";
+    case PitchToolHandles::HandleType::Formant: return "Formant Shift";
     case PitchToolHandles::HandleType::TiltRight: return "Right Slope";
     default: return {};
   }
@@ -2771,7 +2763,8 @@ PianoRollComponent::getNoteHoverShadowBounds(const Note &note) const
         std::max(2, std::min(512, static_cast<int>(std::ceil(w)) + 1));
     const auto envelope = VisualWaveformEnvelope::build(
         samples, totalSamples, startSample, endSample, pointCount,
-        renderedWidth, audioData.sampleRate, pixelsPerSecond);
+        renderedWidth, audioData.sampleRate, pixelsPerSecond, true,
+        pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
     const float maxSample =
         envelope.empty()
             ? 0.0f
@@ -2803,10 +2796,10 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   const float buttonWidth = static_cast<float>(previewButtonWidth);
   const float buttonHeight = static_cast<float>(previewButtonHeight);
   const float buttonGroupWidth =
-      buttonWidth + buttonGap + static_cast<float>(resetButtonWidth) +
-      (editMode == EditMode::Select ? PitchToolHandles::buttonWidth + buttonGap : 0.0f);
+      buttonWidth + buttonGap + static_cast<float>(resetButtonWidth);
   const float buttonX = shadowBounds.getCentreX() - buttonGroupWidth * 0.5f;
-  const float buttonY = shadowBounds.getBottom() + 7.0f;
+  const float buttonY = shadowBounds.getBottom() + 7.0f +
+      (editMode == EditMode::Select ? PitchToolHandles::buttonHeight + 10.0f : 0.0f);
   return {buttonX, buttonY, buttonWidth, buttonHeight};
 }
 
@@ -2834,9 +2827,7 @@ PianoRollComponent::getResetButtonBounds(const Note &note) const
 {
   constexpr float buttonGap = 4.0f;
   auto bounds = getPreviewButtonBounds(note);
-  const float formantSlot = editMode == EditMode::Select
-      ? PitchToolHandles::buttonWidth + buttonGap : 0.0f;
-  return {bounds.getRight() + buttonGap + formantSlot, bounds.getY(),
+  return {bounds.getRight() + buttonGap, bounds.getY(),
           static_cast<float>(resetButtonWidth),
           static_cast<float>(resetButtonHeight)};
 }

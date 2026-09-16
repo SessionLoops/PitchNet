@@ -48,6 +48,7 @@ public:
    * Check if currently dragging a handle.
    */
   bool isDragging() const { return dragging; }
+  float getAmplitudePreviewGain(const Note& note) const;
   bool isDraggingVibrato() const
   {
     return dragging && activeHandleType == PitchToolHandles::HandleType::Vibrato;
@@ -79,6 +80,7 @@ public:
    * Callback fired when pitch is edited (for triggering repaint).
    */
   std::function<void()> onPitchEdited;
+  std::function<void()> onAmplitudeEdited;
 
 private:
   Project* project = nullptr;

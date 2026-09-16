@@ -385,12 +385,14 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (owner_.pitchToolController &&
       owner_.pitchToolController->isDragging())
   {
+    const bool amplitudeEdit = owner_.pitchToolController->getActiveHandleType() ==
+        PitchToolHandles::HandleType::Amplitude;
     owner_.pitchToolController->mouseUp(e, owner_.undoManager,
                                         nullptr);
     owner_.updatePitchToolHandlesFromSelection();
     if (owner_.onPitchEdited)
       owner_.onPitchEdited();
-    if (owner_.onPitchEditFinished)
+    if (!amplitudeEdit && owner_.onPitchEditFinished)
       owner_.onPitchEditFinished();
     owner_.repaint();
     return true;
