@@ -101,6 +101,7 @@ namespace
     float tiltLeft;
     float tiltRight;
     float vibrato;
+    float pitchDrift;
     int smoothLeftFrames;
     int smoothRightFrames;
     float deltaScale;
@@ -111,7 +112,7 @@ namespace
     static NoteEditState capture(const Note& note)
     {
       return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(), note.getFormantShift(),
-              note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
+              note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
               note.getBakedDeltaPitch(), note.getDeltaPitch()};
@@ -119,7 +120,7 @@ namespace
 
     static NoteEditState defaultsFor(const Note& note)
     {
-      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
               0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch()};
     }
 
@@ -132,6 +133,7 @@ namespace
       note.setTiltLeft(tiltLeft);
       note.setTiltRight(tiltRight);
       note.setVibrato(vibrato);
+      note.setPitchDrift(pitchDrift);
       note.setSmoothLeftFrames(smoothLeftFrames);
       note.setSmoothRightFrames(smoothRightFrames);
       note.setDeltaScale(deltaScale);

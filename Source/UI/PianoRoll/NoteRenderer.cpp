@@ -543,13 +543,20 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const bool isTiltDragged =
         pitchToolController && pitchToolController->isDraggingTilt() &&
         pitchToolController->getActiveHandleNote() == &note;
+    const bool isDriftDragged = pitchToolController && pitchToolController->isDragging() &&
+        pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::PitchDrift &&
+        pitchToolController->getActiveHandleNote() == &note;
     const bool isFormantDragged = pitchToolController && pitchToolController->isDragging() &&
         pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Formant &&
         pitchToolController->getActiveHandleNote() == &note;
-    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged))
+    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged))
     {
       juce::String label;
-      if (isFormantDragged)
+      if (isDriftDragged)
+      {
+        label = "Drift " + juce::String(std::round(note.getPitchDrift() * 100.0f)) + " %";
+      }
+      else if (isFormantDragged)
       {
         label = juce::String(note.getFormantShift(), 1) + " st";
       }
@@ -575,7 +582,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         label = prefix + juce::String(deltaSemitones, 1) + " st";
       }
 
-      constexpr float labelWidth = 60.0f;
+      const float labelWidth = isDriftDragged ? 100.0f : 60.0f;
       constexpr float labelHeight = 20.0f;
       const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
       const auto shadowBounds =

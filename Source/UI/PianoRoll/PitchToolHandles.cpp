@@ -18,6 +18,7 @@ juce::Image loadIcon(const char* resourceName)
 PitchToolHandles::PitchToolHandles()
     : leftTiltIcon(loadIcon("ltilt_png")),
       vibratoIcon(loadIcon("vibrato_png")),
+      driftIcon(loadIcon("drift_png")),
       formantIcon(loadIcon("formant_png")),
       rightTiltIcon(loadIcon("rtilt_png")) {
   // Initialize (currently empty, but reserve space)
@@ -67,7 +68,7 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   const float groupTop = hoverBounds.isEmpty()
       ? topY - buttonHeight - 7.0f
       : hoverBounds.getY() - buttonHeight - 7.0f;
-  const float slotWidth = (layoutWidth - buttonGap * 2.0f) / 3.0f;
+  const float slotWidth = (layoutWidth - buttonGap * 3.0f) / 4.0f;
   const auto addButtonHandle = [this, targetNote, groupTop](HandleType type,
                                                              float x, float width)
   {
@@ -79,8 +80,10 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   addButtonHandle(HandleType::TiltLeft, groupLeft, slotWidth);
   addButtonHandle(HandleType::Vibrato, groupLeft + slotWidth + buttonGap,
                   slotWidth);
-  addButtonHandle(HandleType::TiltRight,
+  addButtonHandle(HandleType::PitchDrift,
                   groupLeft + (slotWidth + buttonGap) * 2.0f, slotWidth);
+  addButtonHandle(HandleType::TiltRight,
+                  groupLeft + (slotWidth + buttonGap) * 3.0f, slotWidth);
 
   const float bottom = hoverBounds.isEmpty()
       ? topY + mapper.getPixelsPerSemitone() : hoverBounds.getBottom();
@@ -98,7 +101,7 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
                         : juce::Colour(0xFF2E2E2Du));
 
     const auto bounds = handle.bounds;
-    if (handle.type == HandleType::Vibrato || handle.type == HandleType::Formant)
+    if (handle.type == HandleType::Vibrato || handle.type == HandleType::PitchDrift || handle.type == HandleType::Formant)
     {
       g.fillRect(bounds);
     }
@@ -157,6 +160,8 @@ PitchToolHandles::getIconForType(HandleType type) const {
   switch (type) {
     case HandleType::TiltLeft:
       return leftTiltIcon;
+    case HandleType::PitchDrift:
+      return driftIcon;
     case HandleType::Vibrato:
       return vibratoIcon;
     case HandleType::Formant:
@@ -210,6 +215,7 @@ juce::Colour PitchToolHandles::getColorForType(HandleType type) const {
     case HandleType::TiltRight:
       return juce::Colours::orange;
       
+    case HandleType::PitchDrift:
     case HandleType::Vibrato:
       return juce::Colours::mediumpurple;
       

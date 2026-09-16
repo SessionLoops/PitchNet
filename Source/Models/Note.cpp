@@ -72,6 +72,7 @@ bool Note::isNeutralForOriginalWaveform() const
            std::abs(tiltLeft) <= kPitchEpsilon &&
            std::abs(tiltRight) <= kPitchEpsilon &&
            std::abs(vibrato - 1.0f) <= kPitchEpsilon &&
+           std::abs(pitchDrift - 1.0f) <= kPitchEpsilon &&
            smoothLeftFrames == 0 &&
            smoothRightFrames == 0 &&
            std::abs(deltaScale - 1.0f) <= kPitchEpsilon &&

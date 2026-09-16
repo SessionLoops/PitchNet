@@ -139,6 +139,9 @@ public:
     // limited to -10.0 through 10.0 (-1000% through 1000%).
     float getVibrato() const { return vibrato; }
     void setVibrato(float scale) { vibrato = juce::jlimit(-10.0f, 10.0f, scale); }
+    // Slow pitch-trend scale: 100% original, 0% removed, negative inverted.
+    float getPitchDrift() const { return pitchDrift; }
+    void setPitchDrift(float scale) { pitchDrift = juce::jlimit(-10.0f, 10.0f, scale); }
     int getSmoothLeftFrames() const { return smoothLeftFrames; }
     void setSmoothLeftFrames(int frames) { smoothLeftFrames = frames; }
     int getSmoothRightFrames() const { return smoothRightFrames; }
@@ -232,6 +235,7 @@ private:
     float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
     float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
     float vibrato = 1.0f;            // 1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert
+    float pitchDrift = 1.0f;
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
 

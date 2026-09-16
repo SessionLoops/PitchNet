@@ -319,7 +319,8 @@ namespace PitchCurveProcessor
                 note.getVibrato(),
                 note.getSmoothLeftFrames(),
                 note.getSmoothRightFrames(),
-                adjacentContext
+                adjacentContext,
+                note.getPitchDrift()
             );
 
             // Apply per-note delta scale/offset (from delta control handles)
@@ -415,7 +416,8 @@ namespace PitchCurveProcessor
                 note->getVibrato(),
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
-                adjacentContext
+                adjacentContext,
+                note->getPitchDrift()
             );
 
             const float dScale = note->getDeltaScale();
@@ -496,7 +498,8 @@ namespace PitchCurveProcessor
                 note->getVibrato(),
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
-                adjacentContext
+                adjacentContext,
+                note->getPitchDrift()
             );
 
             // Apply per-note delta scale/offset

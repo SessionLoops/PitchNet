@@ -14,6 +14,7 @@ public:
     TiltLeft,
     TiltRight,
     Vibrato,
+    PitchDrift,
     Formant,
     SmoothLeft,
     SmoothRight,
@@ -24,7 +25,7 @@ public:
   static constexpr float buttonHeight = 12.0f;
   static constexpr float buttonGap = 5.0f;
   static constexpr float buttonGroupWidth =
-      buttonWidth * 3.0f + buttonGap * 2.0f;
+      buttonWidth * 4.0f + buttonGap * 3.0f;
 
   struct Handle {
     HandleType type;
@@ -57,10 +58,10 @@ public:
    */
   int hitTest(float worldX, float worldY, float tolerance = 12.0f) const;
 
-  /** Whether a point lies inside the full three-control layout, including gaps. */
+  /** Whether a point lies inside the full four-control layout, including gaps. */
   bool containsLayoutPoint(float worldX, float worldY) const;
 
-  /** Bounding box of the full three-control layout. */
+  /** Bounding box of the full four-control layout. */
   juce::Rectangle<float> getLayoutBounds() const;
 
   /**
@@ -96,6 +97,7 @@ private:
   // statics, which can outlive the plug-in editor in Windows hosts.
   juce::Image leftTiltIcon;
   juce::Image vibratoIcon;
+  juce::Image driftIcon;
   juce::Image formantIcon;
   juce::Image rightTiltIcon;
 

@@ -1,4 +1,5 @@
 #include "PitchToolOperations.h"
+#include "Constants.h"
 
 #include <algorithm>
 #include <cmath>
@@ -101,6 +102,36 @@ std::vector<float> smoothBoundary(const std::vector<float>& deltaPitch,
   return result;
 }
 
+std::vector<float> scalePitchDrift(const std::vector<float>& deltaPitch, float factor) {
+  if (deltaPitch.size() < 2 || factor == 1.0f)
+    return deltaPitch;
+
+  // A symmetric Gaussian avoids phase delay. Its -3 dB cutoff is 2 Hz.
+  // Normalize the truncated kernel at note edges instead of padding with zeros.
+  const double sigma = std::sqrt(std::log(2.0)) / (2.0 * 3.141592653589793 * 2.0)
+                     * SAMPLE_RATE / HOP_SIZE;
+  const int radius = static_cast<int>(std::ceil(3.0 * sigma));
+  std::vector<double> weights(static_cast<size_t>(radius + 1));
+  for (int j = 0; j <= radius; ++j)
+    weights[static_cast<size_t>(j)] = std::exp(-0.5 * j * j / (sigma * sigma));
+  std::vector<float> trend(deltaPitch.size());
+  for (int i = 0; i < static_cast<int>(deltaPitch.size()); ++i) {
+    double sum = 0.0, weight = 0.0;
+    for (int j = std::max(0, i - radius);
+         j <= std::min(static_cast<int>(deltaPitch.size()) - 1, i + radius); ++j) {
+      const double w = weights[static_cast<size_t>(std::abs(j - i))];
+      sum += w * deltaPitch[static_cast<size_t>(j)];
+      weight += w;
+    }
+    trend[static_cast<size_t>(i)] = static_cast<float>(sum / weight);
+  }
+  const float mean = computeMean(trend);
+  auto result = deltaPitch;
+  for (size_t i = 0; i < result.size(); ++i)
+    result[i] += (factor - 1.0f) * (trend[i] - mean);
+  return result;
+}
+
 float computeMean(const std::vector<float>& deltaPitch) {
   if (deltaPitch.empty()) {
     return 0.0f;
@@ -117,7 +148,8 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
                                            float vibrato,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
-                                           const AdjacentNoteContext& adjacentContext) {
+                                           const AdjacentNoteContext& adjacentContext,
+                                           float pitchDrift) {
   if (originalDelta.empty()) {
     return {};
   }
@@ -129,6 +161,10 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
   if (std::abs(vibrato - 1.0f) > 0.001f) {
     result = scaleVibrato(result, vibrato);
   }
+
+  // Adjust the slow trend after the existing whole-contour vibrato scaling.
+  // This retains the established 0% vibrato = flat behavior.
+  result = scalePitchDrift(result, pitchDrift);
 
   // 2. Apply tilt transformations (combined left + right)
   // TiltLeft: pivot at right (1.0), negative amount

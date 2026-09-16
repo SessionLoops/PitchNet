@@ -37,6 +37,7 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
       (handle.type == PitchToolHandles::HandleType::TiltLeft ||
        handle.type == PitchToolHandles::HandleType::TiltRight ||
        handle.type == PitchToolHandles::HandleType::Vibrato ||
+       handle.type == PitchToolHandles::HandleType::PitchDrift ||
        handle.type == PitchToolHandles::HandleType::Formant);
   if (isGroupEdit || !handle.note)
     affectedNotes = selectedNotes;
@@ -192,6 +193,12 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       case PitchToolHandles::HandleType::Formant:
       {
         note->setFormantShift(std::round((origParams.formantShift + semitoneDelta) * 10.0f) / 10.0f);
+        note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
+        break;
+      }
+      case PitchToolHandles::HandleType::PitchDrift:
+      {
+        note->setPitchDrift(origParams.pitchDrift - dragDeltaY / 100.0f);
         note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
         break;
       }
