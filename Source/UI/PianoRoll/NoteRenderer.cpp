@@ -543,10 +543,17 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const bool isTiltDragged =
         pitchToolController && pitchToolController->isDraggingTilt() &&
         pitchToolController->getActiveHandleNote() == &note;
-    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged))
+    const bool isFormantDragged = pitchToolController && pitchToolController->isDragging() &&
+        pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Formant &&
+        pitchToolController->getActiveHandleNote() == &note;
+    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged))
     {
       juce::String label;
-      if (isVibratoDragged)
+      if (isFormantDragged)
+      {
+        label = juce::String(note.getFormantShift(), 1) + " st";
+      }
+      else if (isVibratoDragged)
       {
         label = juce::String(std::round(note.getVibrato() * 100.0f)) + " %";
       }

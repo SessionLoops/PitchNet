@@ -10,6 +10,7 @@ struct TransformParams
 {
     float tiltLeft = 0.0f;
     float tiltRight = 0.0f;
+    float formantShift = 0.0f;
     float vibrato = 1.0f;
     int smoothLeftFrames = 0;
     int smoothRightFrames = 0;
@@ -25,6 +26,7 @@ struct TransformParams
         TransformParams p;
         p.tiltLeft = note.getTiltLeft();
         p.tiltRight = note.getTiltRight();
+        p.formantShift = note.getFormantShift();
         p.vibrato = note.getVibrato();
         p.smoothLeftFrames = note.getSmoothLeftFrames();
         p.smoothRightFrames = note.getSmoothRightFrames();
@@ -41,6 +43,7 @@ struct TransformParams
         note.setTiltLeft(tiltLeft);
         note.setTiltRight(tiltRight);
         note.setVibrato(vibrato);
+        note.setFormantShift(formantShift);
         note.setSmoothLeftFrames(smoothLeftFrames);
         note.setSmoothRightFrames(smoothRightFrames);
         note.setDeltaScale(deltaScale);
@@ -51,6 +54,7 @@ struct TransformParams
     {
         return tiltLeft == other.tiltLeft &&
                tiltRight == other.tiltRight &&
+               formantShift == other.formantShift &&
                vibrato == other.vibrato &&
                smoothLeftFrames == other.smoothLeftFrames &&
                smoothRightFrames == other.smoothRightFrames &&
@@ -68,6 +72,7 @@ struct TransformParams
     {
         return tiltLeft == 0.0f &&
                tiltRight == 0.0f &&
+               formantShift == 0.0f &&
                vibrato == 1.0f &&
                smoothLeftFrames == 0 &&
                smoothRightFrames == 0 &&

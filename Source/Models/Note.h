@@ -98,6 +98,8 @@ public:
     float getPitchOffset() const { return pitchOffset; }
     void setPitchOffset(float offset) { pitchOffset = offset; }
     float getAdjustedMidiNote() const { return midiNote + pitchOffset; }
+    float getFormantShift() const { return formantShift; }
+    void setFormantShift(float st) { formantShift = juce::jlimit(-12.0f, 12.0f, st); }
     float getVolumeDb() const { return volumeDb; }
     void setVolumeDb(float db) { volumeDb = db; }
 
@@ -219,6 +221,7 @@ private:
     float lastNonMacroMidiNote = 60.0f;
     float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
+    float formantShift = 0.0f; // Semitones, independent of F0
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones

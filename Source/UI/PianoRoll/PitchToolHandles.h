@@ -14,6 +14,7 @@ public:
     TiltLeft,
     TiltRight,
     Vibrato,
+    Formant,
     SmoothLeft,
     SmoothRight,
     None
@@ -95,6 +96,7 @@ private:
   // statics, which can outlive the plug-in editor in Windows hosts.
   juce::Image leftTiltIcon;
   juce::Image vibratoIcon;
+  juce::Image formantIcon;
   juce::Image rightTiltIcon;
 
   void addHandle(HandleType type, float worldX, float worldY, Note* note = nullptr);

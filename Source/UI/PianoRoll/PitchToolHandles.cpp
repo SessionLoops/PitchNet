@@ -18,6 +18,7 @@ juce::Image loadIcon(const char* resourceName)
 PitchToolHandles::PitchToolHandles()
     : leftTiltIcon(loadIcon("ltilt_png")),
       vibratoIcon(loadIcon("vibrato_png")),
+      formantIcon(loadIcon("formant_png")),
       rightTiltIcon(loadIcon("rtilt_png")) {
   // Initialize (currently empty, but reserve space)
   handles.reserve(20);  // Typical max handles for multi-note selection
@@ -80,6 +81,12 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
                   slotWidth);
   addButtonHandle(HandleType::TiltRight,
                   groupLeft + (slotWidth + buttonGap) * 2.0f, slotWidth);
+
+  const float bottom = hoverBounds.isEmpty()
+      ? topY + mapper.getPixelsPerSemitone() : hoverBounds.getBottom();
+  addHandle(HandleType::Formant, centerX, bottom + 15.0f + buttonHeight * 0.5f, targetNote);
+  handles.back().bounds = {centerX - buttonWidth * 0.5f, bottom + 15.0f,
+                          buttonWidth, buttonHeight};
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
@@ -91,7 +98,7 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
                         : juce::Colour(0xFF2E2E2Du));
 
     const auto bounds = handle.bounds;
-    if (handle.type == HandleType::Vibrato)
+    if (handle.type == HandleType::Vibrato || handle.type == HandleType::Formant)
     {
       g.fillRect(bounds);
     }
@@ -152,6 +159,8 @@ PitchToolHandles::getIconForType(HandleType type) const {
       return leftTiltIcon;
     case HandleType::Vibrato:
       return vibratoIcon;
+    case HandleType::Formant:
+      return formantIcon;
     case HandleType::TiltRight:
       return rightTiltIcon;
     default:

@@ -332,7 +332,7 @@ add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
 target_include_directories(pitchnet_core PRIVATE ${R8BRAIN_INCLUDE_DIR})
 
 # Binary data for toolbar images/icons
-file(GLOB IMAGE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/*")
+file(GLOB IMAGE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/*")
 list(FILTER IMAGE_FILES EXCLUDE REGEX "/\\.DS_Store$")
 set(BINARY_DATA_FILES ${IMAGE_FILES})
 set(EMBED_EN_LANG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/en.json")

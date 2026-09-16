@@ -97,6 +97,7 @@ namespace
     float midiNote;
     float pitchOffset;
     float volumeDb;
+    float formantShift;
     float tiltLeft;
     float tiltRight;
     float vibrato;
@@ -109,7 +110,7 @@ namespace
 
     static NoteEditState capture(const Note& note)
     {
-      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(),
+      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(), note.getFormantShift(),
               note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
@@ -118,7 +119,7 @@ namespace
 
     static NoteEditState defaultsFor(const Note& note)
     {
-      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
               0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch()};
     }
 
@@ -127,6 +128,7 @@ namespace
       note.setMidiNote(midiNote);
       note.setPitchOffset(pitchOffset);
       note.setVolumeDb(volumeDb);
+      note.setFormantShift(formantShift);
       note.setTiltLeft(tiltLeft);
       note.setTiltRight(tiltRight);
       note.setVibrato(vibrato);
@@ -1608,6 +1610,9 @@ juce::String PianoRollComponent::getTooltip()
   {
     case PitchToolHandles::HandleType::TiltLeft: return "Left Slope";
     case PitchToolHandles::HandleType::Vibrato: return "Pitch Modulation";
+    case PitchToolHandles::HandleType::Formant:
+      return "Formant Shift: " + juce::String(
+          pitchToolHandles->getHandle(handleIndex).note->getFormantShift(), 1) + " st";
     case PitchToolHandles::HandleType::TiltRight: return "Right Slope";
     default: return {};
   }
@@ -2796,7 +2801,8 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   const float buttonWidth = static_cast<float>(previewButtonWidth);
   const float buttonHeight = static_cast<float>(previewButtonHeight);
   const float buttonGroupWidth =
-      buttonWidth + buttonGap + static_cast<float>(resetButtonWidth);
+      buttonWidth + buttonGap + static_cast<float>(resetButtonWidth) +
+      (editMode == EditMode::Select ? PitchToolHandles::buttonWidth + buttonGap : 0.0f);
   const float buttonX = shadowBounds.getCentreX() - buttonGroupWidth * 0.5f;
   const float buttonY = shadowBounds.getBottom() + 7.0f;
   return {buttonX, buttonY, buttonWidth, buttonHeight};
@@ -2826,7 +2832,9 @@ PianoRollComponent::getResetButtonBounds(const Note &note) const
 {
   constexpr float buttonGap = 4.0f;
   auto bounds = getPreviewButtonBounds(note);
-  return {bounds.getRight() + buttonGap, bounds.getY(),
+  const float formantSlot = editMode == EditMode::Select
+      ? PitchToolHandles::buttonWidth + buttonGap : 0.0f;
+  return {bounds.getRight() + buttonGap + formantSlot, bounds.getY(),
           static_cast<float>(resetButtonWidth),
           static_cast<float>(resetButtonHeight)};
 }
