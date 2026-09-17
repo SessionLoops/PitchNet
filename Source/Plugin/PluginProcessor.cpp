@@ -2,6 +2,7 @@
 #include "../Utils/AudioResampler.h"
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
+#include "../Models/ProjectModificationRanges.h"
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
@@ -95,7 +96,6 @@ juce::String readStateString(juce::InputStream &in) {
 }
 
 #if JucePlugin_Enable_ARA
-using SampleRange = juce::Range<int>;
 // Bring synthesized output back to the persistent region Project without
 // replacing the Project, its note vector, or the F0 vectors referenced by undo
 // actions. Analysis/edit data remains authoritative in the persistent object.
@@ -178,106 +178,6 @@ juce::String archivedRegionKeyForLiveKey(
       return pitchnetArchivedRegionKey(*region);
 
   return {};
-}
-
-// Ranges are in MODIFICATION samples, matching the buffer they are applied to.
-//
-// This previously returned region-relative samples, subtracting the region's
-// timeline start. Its only consumer - preserveProcessedAudioOutsideRanges -
-// walks the published blob, which spans the whole modification at offset zero,
-// so the ranges were displaced by the region's start offset. The result was
-// that a freshly synthesised edit got preserved at a position where nothing
-// had changed while the actual edited samples were overwritten with the
-// previous blob, publishing audio identical to what was already playing.
-//
-// A fallback in the old conversion ("if the region-relative time is negative,
-// use absolute") hid this for every edit BEFORE the region start, which is why
-// only the right-hand slice of a split ever misbehaved.
-std::vector<SampleRange> collectDirtyModificationSampleRanges(
-    const Project &project, double sampleRate) {
-  std::vector<SampleRange> ranges;
-  if (sampleRate <= 0.0)
-    return ranges;
-
-  const auto toModificationSample = [](int frame) {
-    return static_cast<int>(std::max<juce::int64>(
-        0, static_cast<juce::int64>(frame) * static_cast<juce::int64>(HOP_SIZE)));
-  };
-
-  for (const auto &note : project.getNotes()) {
-    if (!note.isDirty())
-      continue;
-    const int start = toModificationSample(note.getStartFrame());
-    const int end = toModificationSample(note.getEndFrame());
-    if (end > start)
-      ranges.emplace_back(start, end);
-  }
-
-  if (project.hasF0DirtyRange()) {
-    const auto [startFrame, endFrame] = project.getF0DirtyRange();
-    const int start = toModificationSample(startFrame);
-    const int end = toModificationSample(endFrame);
-    if (end > start)
-      ranges.emplace_back(start, end);
-  }
-
-  std::sort(ranges.begin(), ranges.end(),
-            [](const auto &a, const auto &b) {
-              return a.getStart() < b.getStart();
-            });
-
-  std::vector<SampleRange> merged;
-  for (const auto &range : ranges) {
-    if (merged.empty() || range.getStart() > merged.back().getEnd()) {
-      merged.push_back(range);
-      continue;
-    }
-    merged.back() = merged.back().getUnionWith(range);
-  }
-
-  return merged;
-}
-
-void preserveProcessedAudioOutsideRanges(
-    juce::AudioBuffer<float> &replacement, double replacementRate,
-    juce::int64 replacementStartInModification,
-    const juce::AudioBuffer<float> &previous, double previousRate,
-    juce::int64 previousStartInModification,
-    const std::vector<SampleRange> &changedRanges) {
-  if (replacement.getNumSamples() <= 0 || previous.getNumSamples() <= 0 ||
-      replacementRate <= 0.0 || previousRate <= 0.0 || changedRanges.empty())
-    return;
-
-  const int channels =
-      std::min(replacement.getNumChannels(), previous.getNumChannels());
-  if (channels <= 0)
-    return;
-
-  const auto isChanged = [&changedRanges](int replacementSample) {
-    for (const auto &range : changedRanges)
-      if (range.contains(replacementSample))
-        return true;
-    return false;
-  };
-
-  const double rateRatio = previousRate / replacementRate;
-  for (int dst = 0; dst < replacement.getNumSamples(); ++dst) {
-    if (isChanged(dst))
-      continue;
-
-    const auto modificationSample =
-        replacementStartInModification + static_cast<juce::int64>(dst);
-    const double previousSamplePosition =
-        static_cast<double>(modificationSample - previousStartInModification) *
-        rateRatio;
-    const int previousSample =
-        static_cast<int>(std::llround(previousSamplePosition));
-    if (previousSample < 0 || previousSample >= previous.getNumSamples())
-      continue;
-
-    for (int ch = 0; ch < channels; ++ch)
-      replacement.setSample(ch, dst, previous.getSample(ch, previousSample));
-  }
 }
 
 bool clearProcessedRegionAudio(PitchNetAudioModification *modification,
