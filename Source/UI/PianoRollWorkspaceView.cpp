@@ -271,6 +271,7 @@ void PianoRollWorkspaceView::dismissPitchCenterPopup()
 
 void PianoRollWorkspaceView::showPitchCenterPopup()
 {
+  dismissPitchCenterPopup();
   auto *project = pianoRoll.getProject();
   if (project == nullptr)
     return;
@@ -280,6 +281,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
     Note *note;
     float midiNote;
     float sourceMidiNote;
+    float pitchDrift;
   };
   auto centers = std::make_shared<std::vector<NoteCenter>>();
   centers->reserve(project->getNotes().size());
@@ -289,16 +291,17 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
   for (auto &note : project->getNotes())
     if (!note.isRest() && (!hasSelectedNotes || note.isSelected()))
       centers->push_back(
-          { &note, note.getMidiNote(), note.getLastNonMacroMidiNote() });
+          { &note, note.getMidiNote(), note.getLastNonMacroMidiNote(), note.getPitchDrift() });
 
   const float originalPitchCenter = project->getPitchCenter();
   auto previewPitchCenter = std::make_shared<float>(originalPitchCenter);
 
   const auto popupAnchor = juce::Rectangle<int>(pianoCard.getRight(), pianoCard.getY(), 0, 0);
   QuantizePitchDialog::showPopup(this, popupAnchor, originalPitchCenter,
+      centers->empty() ? 0.0f : juce::jlimit(0.0f, 100.0f, (1.0f - centers->front().pitchDrift) * 100.0f),
       pitchCenterSnapToScale,
       [this, project, centers, originalPitchCenter, previewPitchCenter](float amount,
-                                                                          bool snapToScale)
+                                                                          bool snapToScale, float drift, bool driftEdited)
       {
         pitchCenterSnapToScale = snapToScale;
         *previewPitchCenter = amount;
@@ -316,6 +319,8 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         for (const auto &center : *centers)
         {
           if (center.note == nullptr) continue;
+          if (driftEdited)
+            center.note->setPitchDrift(1.0f - drift / 100.0f);
           // Calculate from the latest regular edit, never from an earlier
           // macro result. This lets a lower amount restore that edit without
           // compounding correction or discarding edits made between passes.
@@ -341,6 +346,8 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
           else
             center.note->setMidiNoteFromPitchCorrection(sourceMidi);
         }
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        pianoRoll.invalidateBasePitchCache();
         pianoRoll.repaint();
         refreshOverview();
       },
@@ -352,10 +359,12 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         std::vector<Note *> changedNotes;
         std::vector<float> oldMidis;
         std::vector<float> newMidis;
+        std::vector<float> oldDrifts, newDrifts;
         for (const auto &center : *centers)
         {
           if (center.note == nullptr) continue;
-          if (accepted && std::abs(center.note->getMidiNote() - center.midiNote) > 0.0001f)
+          if (accepted && (std::abs(center.note->getMidiNote() - center.midiNote) > 0.0001f ||
+                           std::abs(center.note->getPitchDrift() - center.pitchDrift) > 0.0001f))
           {
             center.note->markDirty();
             center.note->markSynthDirty();
@@ -364,10 +373,20 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
             changedNotes.push_back(center.note);
             oldMidis.push_back(center.midiNote);
             newMidis.push_back(center.note->getMidiNote());
+            oldDrifts.push_back(center.pitchDrift);
+            newDrifts.push_back(center.note->getPitchDrift());
             changed = true;
           }
           else
+          {
             center.note->setMidiNoteFromPitchCorrection(center.midiNote);
+            center.note->setPitchDrift(center.pitchDrift);
+          }
+        }
+        if (!accepted)
+        {
+          PitchCurveProcessor::rebuildBaseFromNotes(*project);
+          pianoRoll.invalidateBasePitchCache();
         }
         const bool pitchCenterChanged = accepted &&
             std::abs(*previewPitchCenter - originalPitchCenter) > 0.0001f;
@@ -389,7 +408,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
           {
             auto *projectPtr = project;
             undoManager->addAction(std::make_unique<PitchCenterCorrectionAction>(
-                changedNotes, oldMidis, newMidis, originalPitchCenter,
+                changedNotes, oldMidis, newMidis, oldDrifts, newDrifts, originalPitchCenter,
                 *previewPitchCenter,
                 [this, projectPtr, dirtyStart, dirtyEnd](float pitchCenter,
                                                           const std::vector<Note *> &notes)

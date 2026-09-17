@@ -564,7 +564,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       }
       else if (isDriftDragged)
       {
-        label = "Drift " + juce::String(std::round(note.getPitchDrift() * 100.0f)) + " %";
+        label = juce::String(std::round(note.getPitchDrift() * 100.0f)) + " %";
       }
       else if (isFormantDragged)
       {
@@ -592,7 +592,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         label = prefix + juce::String(deltaSemitones, 1) + " st";
       }
 
-      const float labelWidth = isDriftDragged ? 100.0f : 60.0f;
+      constexpr float labelWidth = 60.0f;
       constexpr float labelHeight = 20.0f;
       const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
       const auto shadowBounds =
