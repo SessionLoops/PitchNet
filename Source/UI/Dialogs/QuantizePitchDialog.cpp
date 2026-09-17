@@ -11,8 +11,8 @@ namespace {
 class Content final : public juce::Component
 {
 public:
-  Content(float initialPitchCenter, bool initialSnapToScale,
-          std::function<void(float, bool)> preview,
+  Content(float initialPitchCenter, float initialPitchDrift, bool initialSnapToScale,
+          std::function<void(float, bool, float, bool)> preview,
           std::function<void(bool)> completed)
       : onPreview(std::move(preview)), onComplete(std::move(completed))
   {
@@ -25,6 +25,14 @@ public:
     pitchCenter.setValue(initialPitchCenter, juce::dontSendNotification);
     pitchCenter.onValueChange = [this] { previewCorrection(); };
 
+    pitchDriftLabel.setText("Pitch Drift", juce::dontSendNotification);
+    pitchDriftLabel.setFont(AppFont::getFont(15.0f));
+    pitchDriftLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
+    pitchDrift.setRange(0.0, 100.0, 1.0);
+    pitchDrift.setTextValueSuffix(" %");
+    pitchDrift.setValue(initialPitchDrift, juce::dontSendNotification);
+    pitchDrift.onValueChange = [this] { driftEdited = true; previewCorrection(); };
+
     snapToScale.setToggleState(initialSnapToScale, juce::dontSendNotification);
     snapToScale.onClick = [this] { previewCorrection(); };
 
@@ -35,6 +43,8 @@ public:
 
     addAndMakeVisible(pitchCenterLabel);
     addAndMakeVisible(pitchCenter);
+    addAndMakeVisible(pitchDriftLabel);
+    addAndMakeVisible(pitchDrift);
     addAndMakeVisible(snapToScale);
     addAndMakeVisible(cancelButton);
     addAndMakeVisible(okButton);
@@ -63,6 +73,10 @@ public:
     auto row = area.removeFromTop(32);
     pitchCenterLabel.setBounds(row.removeFromLeft(94));
     pitchCenter.setBounds(row);
+    area.removeFromTop(6);
+    row = area.removeFromTop(32);
+    pitchDriftLabel.setBounds(row.removeFromLeft(94));
+    pitchDrift.setBounds(row);
     area.removeFromTop(10);
     auto actionRow = area.removeFromTop(24);
     snapToScale.setBounds(actionRow.removeFromLeft(148));
@@ -105,13 +119,17 @@ private:
   void previewCorrection()
   {
     if (onPreview)
-      onPreview(static_cast<float>(pitchCenter.getValue()), snapToScale.getToggleState());
+      onPreview(static_cast<float>(pitchCenter.getValue()), snapToScale.getToggleState(),
+                static_cast<float>(pitchDrift.getValue()), driftEdited);
   }
 
-  std::function<void(float, bool)> onPreview;
+  std::function<void(float, bool, float, bool)> onPreview;
   std::function<void(bool)> onComplete;
   juce::Label pitchCenterLabel;
   MacroSlider pitchCenter;
+  juce::Label pitchDriftLabel;
+  MacroSlider pitchDrift;
+  bool driftEdited = false;
   StyledToggleButton snapToScale { "Snap to Scale" };
   juce::TextButton cancelButton, okButton;
   bool finished = false;
@@ -127,8 +145,8 @@ void dismissPopup()
 }
 
 void showPopup(juce::Component *parent, juce::Rectangle<int> anchorBounds,
-               float initialPitchCenter, bool initialSnapToScale,
-               std::function<void(float, bool)> onPreview,
+               float initialPitchCenter, float initialPitchDrift, bool initialSnapToScale,
+               std::function<void(float, bool, float, bool)> onPreview,
                std::function<void(bool)> onComplete)
 {
   if (parent == nullptr)
@@ -137,8 +155,8 @@ void showPopup(juce::Component *parent, juce::Rectangle<int> anchorBounds,
   dismissPopup();
 
   constexpr int width = 340;
-  constexpr int height = 86;
-  auto *content = new Content(initialPitchCenter, initialSnapToScale,
+  constexpr int height = 124;
+  auto *content = new Content(initialPitchCenter, initialPitchDrift, initialSnapToScale,
                               std::move(onPreview), std::move(onComplete));
   content->setSize(width, height);
   const auto bounds = parent->getLocalBounds();

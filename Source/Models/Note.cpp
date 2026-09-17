@@ -67,10 +67,12 @@ bool Note::isNeutralForOriginalWaveform() const
            std::abs(midiNote - originalMidiNote) <= kPitchEpsilon &&
            !hasBakedDeltaPitch() &&
            std::abs(pitchOffset) <= kPitchEpsilon &&
+           std::abs(formantShift) <= kPitchEpsilon &&
            std::abs(volumeDb) <= kGainEpsilon &&
            std::abs(tiltLeft) <= kPitchEpsilon &&
            std::abs(tiltRight) <= kPitchEpsilon &&
            std::abs(vibrato - 1.0f) <= kPitchEpsilon &&
+           std::abs(pitchDrift - 1.0f) <= kPitchEpsilon &&
            smoothLeftFrames == 0 &&
            smoothRightFrames == 0 &&
            std::abs(deltaScale - 1.0f) <= kPitchEpsilon &&

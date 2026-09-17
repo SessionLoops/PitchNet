@@ -1,4 +1,6 @@
 #include "IncrementalSynthesizer.h"
+#include "FormantShifter.h"
+#include "../../Utils/NoteGainCurve.h"
 #include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/Localization.h"
@@ -464,7 +466,8 @@ selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
       return false;
     if (isF0Anchor(note))
       return true;
-    return note.isDirty() && !note.isNeutralForOriginalWaveform();
+    return note.isDirty() && (std::abs(project.getFormantShift()) > 0.001f ||
+                              !note.isNeutralForOriginalWaveform());
   };
   auto isEditedClusterCandidate = [&](const Note &note) {
     if (note.isRest())
@@ -472,11 +475,13 @@ selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
 
     // A dirty neutral note is being reset. It must split the edited cluster
     // instead of pulling its neighbours into the new pass.
-    if (note.isDirty() && note.isNeutralForOriginalWaveform() &&
+    if (std::abs(project.getFormantShift()) <= 0.001f &&
+        note.isDirty() && note.isNeutralForOriginalWaveform() &&
         !isF0Anchor(note))
       return false;
 
-    return isF0Anchor(note) || note.hasRenderedEdit() ||
+    return std::abs(project.getFormantShift()) > 0.001f ||
+           isF0Anchor(note) || note.hasRenderedEdit() ||
            !note.isNeutralForOriginalWaveform();
   };
   auto areAdjacent = [&](size_t leftIndex, size_t rightIndex) {
@@ -1176,6 +1181,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
+  // Snapshot controls before dispatch: workers must not read live note edits.
+  std::vector<float> formantShifts(endFrame - startFrame, project->getFormantShift());
+  for (const auto& note : project->getNotes()) {
+    if (note.isRest()) continue;
+    for (int frame = std::max(startFrame, note.getStartFrame());
+         frame < std::min(endFrame, note.getEndFrame()); ++frame)
+      formantShifts[frame - startFrame] += note.getFormantShift();
+  }
+  const auto formantF0 = adjustedF0Range;
+  const int formantSampleRate = audioData.sampleRate;
+  const bool hasGlobalFormant = std::abs(project->getFormantShift()) > 0.001f;
+
   // Mel is the neural vocoder's input and is not cheap to copy, so the PSOLA
   // path skips building it entirely.
   std::vector<std::vector<float>> melRange;
@@ -1275,6 +1292,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   auto onRendered =
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
+       formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
        capturedNoteCount, commitFrameRanges = std::move(commitFrameRanges),
        blendMask = std::move(blendMask),
@@ -1301,7 +1319,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
                      commitFrameRanges, blendMask, originalSegment,
-                     audioMovePatches,
+                     audioMovePatches, formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
           if (currentJobId != jobId.load())
             return;
@@ -1375,6 +1393,16 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
+          if (!formant::process(synthesizedAudio, formantShifts, formantF0,
+                                hopSize, formantSampleRate, capturedCancelFlag.get())) {
+            if (currentJobId == jobId.load()) {
+              isBusy = false;
+              if (onComplete)
+                juce::MessageManager::callAsync([onComplete]() { onComplete(false); });
+            }
+            return;
+          }
+
           int samplesToWrite =
               std::min(expectedSamples, totalSamples - startSample);
           if (samplesToWrite <= 0) {
@@ -1396,76 +1424,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 b * synth + (1.0f - b) * orig;
           }
 
-          // Apply per-note gain on top of the blended target.
-          std::vector<float> sampleGain(static_cast<size_t>(samplesToWrite),
-                                        1.0f);
-          for (const auto &note : capturedProject->getNotes()) {
-            if (note.isRest())
-              continue;
-            if (std::abs(note.getVolumeDb()) < 0.001f)
-              continue;
-
-            const int noteStart = note.getStartFrame();
-            const int noteEnd = note.getEndFrame();
-            const int overlapStart = std::max(capturedStartFrame, noteStart);
-            const int overlapEnd = std::min(capturedEndFrame, noteEnd);
-            if (overlapEnd <= overlapStart)
-              continue;
-
-            const int localStart = (overlapStart - capturedStartFrame) * hopSize;
-            const int localEnd = (overlapEnd - capturedStartFrame) * hopSize;
-            if (localStart >= samplesToWrite)
-              continue;
-
-            const float gain =
-                juce::Decibels::decibelsToGain(note.getVolumeDb(), -60.0f);
-            const int clampedStart = std::max(0, localStart);
-            const int clampedEnd = std::min(samplesToWrite, localEnd);
-            for (int i = clampedStart; i < clampedEnd; ++i) {
-              sampleGain[static_cast<size_t>(i)] *= gain;
-            }
-          }
-          // Soften the steps between notes.
-          //
-          // sampleGain is piecewise constant, so every note edge where the
-          // volume differs from its neighbour is a discontinuity in the
-          // signal - a click by construction, whichever engine produced the
-          // audio. A centred box filter turns each step into a linear ramp of
-          // the same length, and because it acts on the finished gain curve it
-          // needs no per-edge cases: abutting notes with different volumes
-          // cross over smoothly, an isolated note fades in and out of the
-          // surrounding unity gain, and a constant stretch is returned
-          // unchanged.
-          //
-          // Half a hop is a few milliseconds - long enough to remove the
-          // discontinuity, short enough not to audibly reshape a note's
-          // attack. Indices are clamped rather than zero-padded so the region
-          // edges are not ramped toward silence.
-          {
-            const int rampSamples = std::max(64, hopSize / 2);
-            const int half = rampSamples / 2;
-            const int last = samplesToWrite - 1;
-            if (samplesToWrite > 2 * half + 1) {
-              auto at = [&](int index) {
-                return static_cast<double>(
-                    sampleGain[static_cast<size_t>(std::clamp(index, 0, last))]);
-              };
-
-              double running = 0.0;
-              for (int k = -half; k <= half; ++k)
-                running += at(k);
-
-              const double norm = 1.0 / static_cast<double>(2 * half + 1);
-              std::vector<float> smoothedGain(static_cast<size_t>(samplesToWrite));
-              for (int i = 0; i < samplesToWrite; ++i) {
-                smoothedGain[static_cast<size_t>(i)] =
-                    static_cast<float>(running * norm);
-                running -= at(i - half);
-                running += at(i + half + 1);
-              }
-              sampleGain.swap(smoothedGain);
-            }
-          }
+          // Use the same gain envelope as direct amplitude edits.
+          std::vector<NoteGainCurve::Region> gainRegions;
+          for (const auto& note : capturedProject->getNotes())
+            if (!note.isRest())
+              gainRegions.push_back({note.getStartFrame() * hopSize,
+                                     note.getEndFrame() * hopSize, note.getVolumeDb()});
+          const auto sampleGain = NoteGainCurve::build(
+              gainRegions, startSample, samplesToWrite,
+              audioData.waveform.getNumSamples(), hopSize);
 
           for (int i = 0; i < samplesToWrite; ++i) {
             targetSegment[static_cast<size_t>(i)] *=
@@ -1478,7 +1445,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // adjacent notes that remain in the composite.
           constexpr int kResetFadeSamples = 512;
           for (const auto &note : capturedProject->getNotes()) {
-            if (note.isRest() || !note.isDirty() ||
+            if (hasGlobalFormant || note.isRest() || !note.isDirty() ||
                 !note.isNeutralForOriginalWaveform())
               continue;
 
@@ -1782,7 +1749,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               continue;
 
             const bool isNeutralReset =
-                note.isDirty() && note.isNeutralForOriginalWaveform() &&
+                !hasGlobalFormant && note.isDirty() && note.isNeutralForOriginalWaveform() &&
                 !isF0Anchor;
             note.setRenderedEdit(!isNeutralReset);
             note.setSynthDirty(false);

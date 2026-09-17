@@ -432,9 +432,19 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
     ensureHeadlessAraBinding();
 #endif
 
-  // Non-ARA capture controller
+  // Non-ARA capture controller.
+  //
+  // prepare() resizes the capture buffer and returns the controller to Idle,
+  // which silently disarms a capture the user has already asked for. Hosts
+  // call prepareToPlay whenever they (re)activate the plug-in, and several do
+  // so between arming and the first block of audio - Audacity activates on
+  // play, so an armed capture never saw a single sample there. Arming is the
+  // user's intent, not DSP state, so carry it across.
+  const bool wasArmed = isCaptureArmed();
   captureController->prepare(sampleRate, getMainBusNumOutputChannels(),
                              MAX_CAPTURE_SECONDS);
+  if (wasArmed)
+    captureController->resetToWaiting();
   lastCaptureUiState = captureController->getState();
   triggerAsyncUpdate();
 

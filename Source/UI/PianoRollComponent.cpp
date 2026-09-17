@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "../Undo/AmplitudeAction.h"
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
 #include "../Utils/Constants.h"
@@ -17,6 +18,7 @@
 #include "PianoRoll/States/TimingHandler.h"
 #include "PianoRoll/AnchorConfirmationPanel.h"
 #include "Components/PitchPopupMenu.h"
+#include "Components/CanvasPopupMenu.h"
 #include "BinaryData.h"
 #include <array>
 #include <algorithm>
@@ -97,9 +99,11 @@ namespace
     float midiNote;
     float pitchOffset;
     float volumeDb;
+    float formantShift;
     float tiltLeft;
     float tiltRight;
     float vibrato;
+    float pitchDrift;
     int smoothLeftFrames;
     int smoothRightFrames;
     float deltaScale;
@@ -109,8 +113,8 @@ namespace
 
     static NoteEditState capture(const Note& note)
     {
-      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(),
-              note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
+      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(), note.getFormantShift(),
+              note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
               note.getBakedDeltaPitch(), note.getDeltaPitch()};
@@ -118,7 +122,7 @@ namespace
 
     static NoteEditState defaultsFor(const Note& note)
     {
-      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
               0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch()};
     }
 
@@ -127,9 +131,11 @@ namespace
       note.setMidiNote(midiNote);
       note.setPitchOffset(pitchOffset);
       note.setVolumeDb(volumeDb);
+      note.setFormantShift(formantShift);
       note.setTiltLeft(tiltLeft);
       note.setTiltRight(tiltRight);
       note.setVibrato(vibrato);
+      note.setPitchDrift(pitchDrift);
       note.setSmoothLeftFrames(smoothLeftFrames);
       note.setSmoothRightFrames(smoothRightFrames);
       note.setDeltaScale(deltaScale);
@@ -144,21 +150,27 @@ namespace
   class ResetNoteEditsAction final : public UndoableAction
   {
   public:
-    ResetNoteEditsAction(Project& project, std::vector<Note*> notes)
-        : project(project), notes(std::move(notes))
+    ResetNoteEditsAction(Project& project, std::vector<Note*> notes,
+                         bool pitch, bool formant, bool amplitude,
+                         juce::String name, std::unique_ptr<UndoableAction> timing = {})
+        : project(project), notes(std::move(notes)), name(std::move(name)),
+          timing(std::move(timing))
     {
       before.reserve(this->notes.size());
       after.reserve(this->notes.size());
       for (const auto* note : this->notes)
       {
         before.push_back(NoteEditState::capture(*note));
-        after.push_back(NoteEditState::defaultsFor(*note));
+        auto state = pitch ? NoteEditState::defaultsFor(*note) : before.back();
+        state.formantShift = formant ? 0.0f : before.back().formantShift;
+        state.volumeDb = amplitude ? 0.0f : before.back().volumeDb;
+        after.push_back(std::move(state));
       }
     }
 
-    void undo() override { apply(before); }
-    void redo() override { apply(after); }
-    juce::String getName() const override { return "Restore Pitch"; }
+    void undo() override { if (timing) timing->undo(); apply(before); }
+    void redo() override { apply(after); if (timing) timing->redo(); }
+    juce::String getName() const override { return name; }
 
   private:
     void apply(const std::vector<NoteEditState>& states)
@@ -173,6 +185,7 @@ namespace
         dirtyStart = std::min(dirtyStart, notes[i]->getStartFrame());
         dirtyEnd = std::max(dirtyEnd, notes[i]->getEndFrame());
       }
+      project.setModified(true);
       PitchCurveProcessor::rebuildBaseFromNotes(project);
       if (dirtyStart <= dirtyEnd)
         project.setF0DirtyRange(dirtyStart, dirtyEnd);
@@ -182,6 +195,8 @@ namespace
     std::vector<Note*> notes;
     std::vector<NoteEditState> before;
     std::vector<NoteEditState> after;
+    juce::String name;
+    std::unique_ptr<UndoableAction> timing;
   };
 }
 
@@ -220,6 +235,7 @@ PianoRollComponent::PianoRollComponent()
   gridRenderer->setCoordinateMapper(coordMapper.get());
   timelineRenderer->setCoordinateMapper(coordMapper.get());
   waveformBackgroundRenderer->setCoordinateMapper(coordMapper.get());
+  waveformBackgroundRenderer->setPitchToolController(pitchToolController.get());
   noteRenderer->setCoordinateMapper(coordMapper.get());
   noteRenderer->setSelectHandler(selectHandler_.get());
   noteRenderer->setSplitHandler(splitHandler_.get());
@@ -272,9 +288,21 @@ PianoRollComponent::PianoRollComponent()
   // Setup pitchToolController callbacks
   pitchToolController->onPitchEdited = [this]()
   {
+    invalidateWaveformCache();
+    updatePitchToolHandlesFromSelection();
+    updatePreviewButtonBounds();
     repaint();
     if (onPitchEdited)
       onPitchEdited();
+  };
+
+  pitchToolController->onAmplitudeEdited = [this]()
+  {
+    invalidateWaveformCache();
+    updatePitchToolHandlesFromSelection();
+    updatePreviewButtonBounds();
+    repaint();
+    if (onAmplitudeEdited) onAmplitudeEdited();
   };
 
   // Setup noteSplitter callbacks
@@ -1188,6 +1216,48 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  if (e.mods.isPopupMenu() && isCanvasPoint(e))
+  {
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+    auto choice = std::make_shared<int>(0);
+    menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
+        choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
+        undoManager && undoManager->canRedo() && bool(onRedoRequested)));
+    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+    menu.showMenuAsync(juce::PopupMenu::Options()
+                          .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
+                              e.getScreenPosition()))
+                          .withDeletionCheck(*this),
+                      [safeThis, choice](int result)
+    {
+      if (safeThis == nullptr || !safeThis->project || result == 0)
+        return;
+      if (*choice == 1)
+      {
+        safeThis->project->selectAllNotes();
+        safeThis->updatePitchToolHandlesFromSelection();
+        safeThis->updatePreviewButtonBounds();
+        safeThis->repaint();
+      }
+      else if (*choice == 6 && safeThis->onUndoRequested)
+        safeThis->onUndoRequested();
+      else if (*choice == 7 && safeThis->onRedoRequested)
+        safeThis->onRedoRequested();
+      else if (*choice >= 2 && *choice <= 5)
+      {
+        const EditMode modes[] = { EditMode::Select, EditMode::Split,
+                                   EditMode::Draw, EditMode::Timing };
+        const auto mode = modes[*choice - 2];
+        if (safeThis->onEditModeRequested)
+          safeThis->onEditModeRequested(mode);
+        else
+          safeThis->setEditMode(mode);
+      }
+    });
+    return;
+  }
+
   // Middle-mouse scrub: click-and-drag anywhere in the timeline/canvas
   // (ruler or note area) to move the playback cursor, mirroring Reaper's
   // own middle-button scrub. Takes priority over every other gesture so
@@ -1279,6 +1349,8 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
+  if (e.mods.isPopupMenu())
+    return;
   if (middleButtonScrubActive)
   {
     float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
@@ -1334,6 +1406,8 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
+  if (e.mods.isPopupMenu())
+    return;
   if (middleButtonScrubActive)
   {
     middleButtonScrubActive = false;
@@ -1398,43 +1472,22 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     return;
   }
 
-  Note *noteUnderMouse = nullptr;
-  bool overCurrentHoverLayout = false;
-  bool overCurrentControl = false;
-  bool withinCurrentNoteEdges = false;
-  if (hoveredNote)
+  // Handle rows (including their gaps) keep their owner. Everywhere else,
+  // a note directly under the pointer takes priority over the old layout.
+  const bool overCurrentHandleArea = hoveredNote && pitchToolHandles &&
+      pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
+  Note *noteUnderMouse = overCurrentHandleArea ? hoveredNote : noteAtPointer;
+  if (!noteUnderMouse && hoveredNote)
   {
     auto hoverLayoutBounds = getPreviewHoverBounds(*hoveredNote);
     if (pitchToolHandles && !pitchToolHandles->isEmpty())
-    {
       hoverLayoutBounds = hoverLayoutBounds.getUnion(
           pitchToolHandles->getLayoutBounds());
-      overCurrentControl =
-          pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
-    }
 
-    const float noteLeft = static_cast<float>(
-        framesToSeconds(hoveredNote->getStartFrame()) * pixelsPerSecond);
-    const float noteRight = noteLeft + static_cast<float>(
-        framesToSeconds(hoveredNote->getDurationFrames()) * pixelsPerSecond);
-    withinCurrentNoteEdges = adjustedX >= noteLeft && adjustedX < noteRight;
-
-    // Keep this note active through the gaps between the top controls, the
-    // note hover background, and the preview/reset controls.
-    overCurrentHoverLayout = hoverLayoutBounds.expanded(4.0f).contains(
-        adjustedX, adjustedY);
+    // Keep controls reachable across empty canvas without masking other notes.
+    if (hoverLayoutBounds.expanded(4.0f).contains(adjustedX, adjustedY))
+      noteUnderMouse = hoveredNote;
   }
-  if (overCurrentHoverLayout)
-  {
-    // The horizontal padding around a note must not block a neighbouring note
-    // from becoming hovered. Controls themselves remain pinned to their owner.
-    noteUnderMouse = !withinCurrentNoteEdges && !overCurrentControl &&
-            noteAtPointer && noteAtPointer != hoveredNote
-        ? noteAtPointer
-        : hoveredNote;
-  }
-  else
-    noteUnderMouse = noteAtPointer;
   if (!noteUnderMouse)
     noteUnderMouse = findPreviewButtonNoteAt(adjustedX, adjustedY);
   if (!noteUnderMouse && hoveredNote && pitchToolHandles &&
@@ -1608,6 +1661,9 @@ juce::String PianoRollComponent::getTooltip()
   {
     case PitchToolHandles::HandleType::TiltLeft: return "Left Slope";
     case PitchToolHandles::HandleType::Vibrato: return "Pitch Modulation";
+    case PitchToolHandles::HandleType::PitchDrift: return "Pitch Drift";
+    case PitchToolHandles::HandleType::Amplitude: return "Amplitude";
+    case PitchToolHandles::HandleType::Formant: return "Formant Shift";
     case PitchToolHandles::HandleType::TiltRight: return "Right Slope";
     default: return {};
   }
@@ -1617,7 +1673,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 {
   // JUCE dispatches double-clicks after mouseUp clears the scrub state.
   // Keep repeated middle clicks from triggering transport or edit actions.
-  if (e.mods.isMiddleButtonDown())
+  if (e.mods.isMiddleButtonDown() || e.mods.isPopupMenu())
     return;
 
   if (!project)
@@ -2786,7 +2842,8 @@ PianoRollComponent::getNoteHoverShadowBounds(const Note &note) const
         std::max(2, std::min(512, static_cast<int>(std::ceil(w)) + 1));
     const auto envelope = VisualWaveformEnvelope::build(
         samples, totalSamples, startSample, endSample, pointCount,
-        renderedWidth, audioData.sampleRate, pixelsPerSecond);
+        renderedWidth, audioData.sampleRate, pixelsPerSecond, true,
+        pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
     const float maxSample =
         envelope.empty()
             ? 0.0f
@@ -2820,7 +2877,8 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   const float buttonGroupWidth =
       buttonWidth + buttonGap + static_cast<float>(resetButtonWidth);
   const float buttonX = shadowBounds.getCentreX() - buttonGroupWidth * 0.5f;
-  const float buttonY = shadowBounds.getBottom() + 7.0f;
+  const float buttonY = shadowBounds.getBottom() + 7.0f +
+      (editMode == EditMode::Select ? PitchToolHandles::buttonHeight + 10.0f : 0.0f);
   return {buttonX, buttonY, buttonWidth, buttonHeight};
 }
 
@@ -2941,20 +2999,40 @@ std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
   for (auto &candidate : project->getNotes())
     if (!candidate.isRest() && candidate.isSelected())
       selected.push_back(&candidate);
-  return selected.size() > 1 ? selected : targets;
+  return note.isSelected() && selected.size() > 1 ? selected : targets;
 }
 
-void PianoRollComponent::resetNoteEdits(Note &note)
+void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
 {
   if (!project)
     return;
 
+  const auto targets = getResetTargetNotes(note);
+  if (mode == NoteRestoreMode::Amplitude)
+  {
+    std::vector<float> before, after(targets.size(), 0.0f);
+    for (const auto* target : targets) before.push_back(target->getVolumeDb());
+    if (before == after) return;
+    auto action = std::make_unique<AmplitudeAction>(
+        *project, targets, before, after, pitchToolController->onAmplitudeEdited,
+        "Restore Amplitude");
+    action->redo();
+    if (undoManager) undoManager->addAction(std::move(action));
+    return;
+  }
+
+  const bool all = mode == NoteRestoreMode::All;
   auto action = std::make_unique<ResetNoteEditsAction>(
-      *project, getResetTargetNotes(note));
+      *project, targets, all || mode == NoteRestoreMode::Pitch,
+      all || mode == NoteRestoreMode::Formant, all,
+      all ? "Restore All Edits" : mode == NoteRestoreMode::Formant
+          ? "Restore Formant" : "Restore Pitch",
+      all ? createResetTimingAction(note) : nullptr);
   action->redo();
   if (undoManager)
     undoManager->addAction(std::move(action));
 
+  invalidateBasePitchCache();
   updatePitchToolHandlesFromSelection();
   updatePreviewButtonBounds();
   if (onPitchEdited)
@@ -2968,14 +3046,17 @@ void PianoRollComponent::showResetMenu(Note &note)
 {
   juce::PopupMenu menu;
   menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
-  menu.addCustomItem(
-      1, std::make_unique<pitchPopupMenu::MenuItemComponent>(
-             "Pitch", false, std::function<void()>{}, false),
-      nullptr, "Pitch");
-  menu.addCustomItem(
-      2, std::make_unique<pitchPopupMenu::MenuItemComponent>(
-             "Timing", false, std::function<void()>{}, false),
-      nullptr, "Timing");
+  const auto addItem = [&menu](int id, const juce::String& label)
+  {
+    menu.addCustomItem(id, std::make_unique<pitchPopupMenu::MenuItemComponent>(
+        label, false, std::function<void()>{}, false), nullptr, label);
+  };
+  addItem(1, "Pitch");
+  addItem(3, "Formant");
+  addItem(4, "Amplitude");
+  addItem(2, "Timing");
+  menu.addSeparator();
+  addItem(5, "All Edits");
 
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   Note* notePtr = &note;
@@ -2993,13 +3074,19 @@ void PianoRollComponent::showResetMenu(Note &note)
       safeThis->resetNoteEdits(*notePtr);
     else if (result == 2)
       safeThis->resetNoteTiming(*notePtr);
+    else if (result == 3)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);
+    else if (result == 4)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Amplitude);
+    else if (result == 5)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::All);
   });
 }
 
-void PianoRollComponent::resetNoteTiming(Note &note)
+std::unique_ptr<UndoableAction> PianoRollComponent::createResetTimingAction(Note &note)
 {
   if (!project)
-    return;
+    return {};
 
   auto& notes = project->getNotes();
   const auto targets = getResetTargetNotes(note);
@@ -3058,10 +3145,16 @@ void PianoRollComponent::resetNoteTiming(Note &note)
     after.push_back(targetState);
   }
 
-  applyNoteTimingStates(*project, after);
-  if (undoManager)
-    undoManager->addAction(std::make_unique<TimingAction>(
-        *project, std::move(before), std::move(after), "Restore Timing"));
+  return std::make_unique<TimingAction>(
+      *project, std::move(before), std::move(after), "Restore Timing");
+}
+
+void PianoRollComponent::resetNoteTiming(Note &note)
+{
+  auto action = createResetTimingAction(note);
+  if (!action) return;
+  action->redo();
+  if (undoManager) undoManager->addAction(std::move(action));
 
   invalidateBasePitchCache();
   if (onPitchEdited)

@@ -740,6 +740,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { stop(); };
   toolbar.onZoomChanged = [this](float pps)
   { onZoomChanged(pps); };
+  pianoRoll.onEditModeRequested = [this](EditMode mode)
+  { setEditMode(mode); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
   toolbar.onScaleRootChanged = [this](int rootNote)
@@ -800,6 +802,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     workspace.showPanel("parameters", visible);
   };
+  pianoRoll.onUndoRequested = [this]() { undo(); };
+  pianoRoll.onRedoRequested = [this]() { redo(); };
   toolbar.onUndo = [this]() { undo(); };
   toolbar.onRedo = [this]() { redo(); };
   toolbar.onToggleRecord = [this](bool armed) {
@@ -844,6 +848,18 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { onNoteSelected(note); };
   pianoRoll.onPitchEdited = [this]()
   { onPitchEdited(); };
+  pianoRoll.onAmplitudeEdited = [this]()
+  {
+    if (auto* project = getProject())
+    {
+      if (!isPluginMode() && editorController)
+        if (auto* engine = editorController->getAudioEngine())
+          engine->loadWaveform(project->getAudioData().waveform,
+                               project->getAudioData().sampleRate, true);
+      onPitchEdited();
+      notifyProjectDataChanged();
+    }
+  };
   pianoRoll.onPitchEditFinished = [this]()
   {
     resynthesizeIncremental();
@@ -3633,8 +3649,16 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   // Transport commands
   case CommandIDs::playPause:
     result.setInfo(TR("command.play_pause"), TR("command.play_pause.desp"), "Transport", 0);
+    // In plugin mode space is normally left to the host. JUCE's Windows peer
+    // forwards unhandled keys to the host window, but the Linux X11 peer does
+    // not, so a focused editor would swallow space. Bind it on Linux; the
+    // setActive() guard below keeps it inert without ARA transport control.
+   #if JUCE_LINUX || JUCE_BSD
+    result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
+   #else
     if (!isPluginMode())
       result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
+   #endif
     // Non-ARA plugin mode has no host transport to drive.
     result.setActive(project != nullptr && hostTransportControlAvailable);
     break;

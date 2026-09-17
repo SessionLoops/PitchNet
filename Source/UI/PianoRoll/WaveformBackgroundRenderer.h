@@ -4,6 +4,8 @@
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
 
+class PitchToolController;
+
 /**
  * Draws the time-domain waveform behind the piano roll grid, with an internal
  * Image cache keyed on scroll + zoom + visible bounds. The cache is rebuilt
@@ -14,6 +16,7 @@ class WaveformBackgroundRenderer
 public:
   WaveformBackgroundRenderer() = default;
 
+  void setPitchToolController(PitchToolController* controller) { pitchToolController = controller; }
   void setCoordinateMapper(CoordinateMapper *mapper) { coordMapper = mapper; }
   void setProject(Project *proj)
   {
@@ -40,6 +43,8 @@ public:
 private:
   CoordinateMapper *coordMapper = nullptr;
   Project *project = nullptr;
+  PitchToolController* pitchToolController = nullptr;
+  bool cachedAmplitudePreview = false;
 
   juce::Image waveformCache;
   double cachedScrollX = -1.0;

@@ -1,5 +1,6 @@
 #include "WaveformBackgroundRenderer.h"
 #include "VisualWaveformEnvelope.h"
+#include "PitchToolController.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
 
@@ -55,7 +56,10 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   const double scrollX = coordMapper->getScrollX();
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
 
+  const bool amplitudePreview = pitchToolController && pitchToolController->isDragging() &&
+      pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Amplitude;
   const bool cacheValid = waveformCache.isValid() &&
+                          cachedAmplitudePreview == amplitudePreview &&
                           std::abs(cachedScrollX - scrollX) < 1.0 &&
                           std::abs(cachedPixelsPerSecond - pixelsPerSecond) < 0.01f &&
                           cachedWidth == visibleArea.getWidth() &&
@@ -81,7 +85,7 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
 
   auto drawWaveform = [&](const juce::AudioBuffer<float> &source,
                           int numSamples, double sampleRate,
-                          double timelineOffset) {
+                          double timelineOffset, bool previewGain) {
     if (numSamples <= 0 || sampleRate <= 0.0 || source.getNumChannels() <= 0)
       return;
 
@@ -111,9 +115,21 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
                                    samplesPerPixel)));
     const int pointCount = lastPixel - firstPixel;
 
+    std::vector<VisualWaveformEnvelope::GainRegion> gainRegions;
+    if (previewGain && amplitudePreview && project)
+      for (const auto* note : pitchToolController->getAffectedNotes())
+      {
+        if (!note || note->isRest())
+          continue;
+        gainRegions.push_back({
+            static_cast<int>(framesToSeconds(note->getStartFrame()) * sampleRate),
+            static_cast<int>(framesToSeconds(note->getEndFrame()) * sampleRate),
+            pitchToolController->getAmplitudePreviewGain(*note)});
+      }
+
     const auto displayEnvelope = VisualWaveformEnvelope::build(
         source.getReadPointer(0), numSamples, startSample, endSample, pointCount,
-        static_cast<float>(pointCount), sampleRate, pixelsPerSecond);
+        static_cast<float>(pointCount), sampleRate, pixelsPerSecond, true, 1.0f, gainRegions);
 
     juce::Path waveformPath;
     waveformPath.startNewSubPath(static_cast<float>(firstPixel), centerY);
@@ -145,11 +161,12 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   // Keep completed captures visible while a new region is being recorded.
   if (drawingProject)
     drawWaveform(projectAudio->waveform, projectAudio->waveform.getNumSamples(),
-                 projectAudio->sampleRate, 0.0);
+                 projectAudio->sampleRate, 0.0, true);
   if (drawingLive)
     drawWaveform(liveWaveform, liveNumSamples, liveSampleRate,
-                 liveTimelineOffsetSeconds);
+                 liveTimelineOffsetSeconds, false);
 
+  cachedAmplitudePreview = amplitudePreview;
   cachedScrollX = scrollX;
   cachedPixelsPerSecond = pixelsPerSecond;
   cachedWidth = visibleArea.getWidth();

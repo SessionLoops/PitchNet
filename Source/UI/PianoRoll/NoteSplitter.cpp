@@ -125,6 +125,8 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setTiltLeft(note->getTiltLeft());
     secondNote.setTiltRight(note->getTiltRight());
     secondNote.setVibrato(note->getVibrato());
+    secondNote.setPitchDrift(note->getPitchDrift());
+    secondNote.setFormantShift(note->getFormantShift());
     secondNote.setSmoothLeftFrames(note->getSmoothLeftFrames());
     secondNote.setSmoothRightFrames(note->getSmoothRightFrames());
     secondNote.setDeltaScale(note->getDeltaScale());

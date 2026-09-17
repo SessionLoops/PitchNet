@@ -1,4 +1,5 @@
 #include "PitchToolController.h"
+#include "../../Undo/AmplitudeAction.h"
 #include "../../Utils/PitchCurveProcessor.h"
 
 #include <algorithm>
@@ -6,6 +7,16 @@
 
 PitchToolController::PitchToolController()
 {
+}
+
+float PitchToolController::getAmplitudePreviewGain(const Note& note) const
+{
+  if (!dragging || activeHandleType != PitchToolHandles::HandleType::Amplitude)
+    return 1.0f;
+  for (size_t i = 0; i < affectedNotes.size(); ++i)
+    if (affectedNotes[i] == &note && i < originalParams.size())
+      return std::pow(10.0f, (note.getVolumeDb() - originalParams[i].volumeDb) / 20.0f);
+  return 1.0f;
 }
 
 bool PitchToolController::mouseDown(const juce::MouseEvent& e,
@@ -36,7 +47,10 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
   const bool isGroupEdit = handleIsSelected && selectedNotes.size() > 1 &&
       (handle.type == PitchToolHandles::HandleType::TiltLeft ||
        handle.type == PitchToolHandles::HandleType::TiltRight ||
-       handle.type == PitchToolHandles::HandleType::Vibrato);
+       handle.type == PitchToolHandles::HandleType::Vibrato ||
+       handle.type == PitchToolHandles::HandleType::PitchDrift ||
+       handle.type == PitchToolHandles::HandleType::Formant ||
+       handle.type == PitchToolHandles::HandleType::Amplitude);
   if (isGroupEdit || !handle.note)
     affectedNotes = selectedNotes;
   else
@@ -95,6 +109,29 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
 
   if (!dragging)
     return false;
+
+  if (activeHandleType == PitchToolHandles::HandleType::Amplitude && project)
+  {
+    std::vector<float> before, after;
+    for (size_t i = 0; i < affectedNotes.size(); ++i)
+    {
+      before.push_back(originalParams[i].volumeDb);
+      after.push_back(affectedNotes[i] ? affectedNotes[i]->getVolumeDb() : before.back());
+    }
+    auto action = std::make_unique<AmplitudeAction>(
+        *project, affectedNotes, before, after, onAmplitudeEdited);
+    dragging = false;
+    activeHandleType = PitchToolHandles::HandleType::None;
+    activeHandleNote = nullptr;
+    affectedNotes.clear();
+    originalParams.clear();
+    if (before != after)
+    {
+      action->redo();
+      if (undoManager) undoManager->addAction(std::move(action));
+    }
+    return true;
+  }
 
   // Capture new transformation parameters (not curves)
   std::vector<TransformParams> newParams;
@@ -162,6 +199,13 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
 
     // Restore original parameters before applying new transformation
     const auto& origParams = originalParams[i];
+    if (type == PitchToolHandles::HandleType::Amplitude)
+    {
+      // Ten pixels per dB, independent of pitch zoom. Leave pitch state alone.
+      note->setVolumeDb(juce::jlimit(-60.0f, 24.0f,
+          std::round((origParams.volumeDb - dragDeltaY / 10.0f) * 10.0f) / 10.0f));
+      continue;
+    }
     origParams.applyToNote(*note);
 
     // Apply new transformation by updating the appropriate parameter
@@ -186,6 +230,18 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         note->setMidiNote(origParams.midiNote + newTiltMean);
+        break;
+      }
+      case PitchToolHandles::HandleType::Formant:
+      {
+        note->setFormantShift(std::round((origParams.formantShift + semitoneDelta) * 10.0f) / 10.0f);
+        note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
+        break;
+      }
+      case PitchToolHandles::HandleType::PitchDrift:
+      {
+        note->setPitchDrift(origParams.pitchDrift - dragDeltaY / 100.0f);
+        note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
         break;
       }
       case PitchToolHandles::HandleType::Vibrato:
@@ -231,6 +287,12 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     }
 
     note->markDirty();
+  }
+
+  if (type == PitchToolHandles::HandleType::Amplitude)
+  {
+    if (onPitchEdited) onPitchEdited();
+    return;
   }
 
   // NON-DESTRUCTIVE: Recompose only the affected notes' delta + f0

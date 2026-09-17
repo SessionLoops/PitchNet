@@ -6,6 +6,13 @@
 
 namespace VisualWaveformEnvelope
 {
+struct GainRegion
+{
+  int startSample;
+  int endSample;
+  float gain;
+};
+
 inline float calculateRms(const std::vector<double> &sumSquares,
                           int prefixStartSample, int startSample,
                           int endSample)
@@ -66,7 +73,9 @@ inline std::vector<float> build(const float *samples, int totalSamples,
                                 int startSample, int endSample, int pointCount,
                                 float displayWidthPixels, double sampleRate,
                                 float pixelsPerSecond,
-                                bool adaptWindowToPixels = true)
+                                bool adaptWindowToPixels = true,
+                                float gain = 1.0f,
+                                const std::vector<GainRegion>& gainRegions = {})
 {
   std::vector<float> values(static_cast<size_t>(std::max(0, pointCount)), 0.0f);
   if (!samples || totalSamples <= 0 || pointCount <= 0 || endSample <= startSample ||
@@ -91,7 +100,10 @@ inline std::vector<float> build(const float *samples, int totalSamples,
       static_cast<size_t>(prefixEndSample - prefixStartSample + 1), 0.0);
   for (int sample = prefixStartSample; sample < prefixEndSample; ++sample)
   {
-    const double value = static_cast<double>(samples[sample]);
+    double value = static_cast<double>(samples[sample]) * gain;
+    for (const auto& region : gainRegions)
+      if (sample >= region.startSample && sample < region.endSample)
+        value *= region.gain;
     const auto localIndex = static_cast<size_t>(sample - prefixStartSample + 1);
     sumSquares[localIndex] = sumSquares[localIndex - 1] + value * value;
   }

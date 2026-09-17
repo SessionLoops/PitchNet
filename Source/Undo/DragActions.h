@@ -197,7 +197,7 @@ private:
 };
 
 /**
- * Undoable pitch-center correction.  Besides the affected note centres, this
+ * Undoable pitch macro, including note centers and drift scales. This
  * preserves the per-project Pitch Center setting shown by the dialog.
  */
 class PitchCenterCorrectionAction : public UndoableAction
@@ -208,24 +208,28 @@ public:
     PitchCenterCorrectionAction(std::vector<Note *> notes,
                                 std::vector<float> oldMidis,
                                 std::vector<float> newMidis,
+                                std::vector<float> oldDrifts,
+                                std::vector<float> newDrifts,
                                 float oldPitchCenter,
                                 float newPitchCenter,
                                 ChangeCallback onChanged = nullptr)
         : notes(std::move(notes)), oldMidis(std::move(oldMidis)),
-          newMidis(std::move(newMidis)), oldPitchCenter(oldPitchCenter),
+          newMidis(std::move(newMidis)), oldDrifts(std::move(oldDrifts)),
+          newDrifts(std::move(newDrifts)), oldPitchCenter(oldPitchCenter),
           newPitchCenter(newPitchCenter), onChanged(std::move(onChanged)) {}
 
-    void undo() override { apply(oldMidis, oldPitchCenter); }
-    void redo() override { apply(newMidis, newPitchCenter); }
-    juce::String getName() const override { return "Correct Pitch Center"; }
+    void undo() override { apply(oldMidis, oldDrifts, oldPitchCenter); }
+    void redo() override { apply(newMidis, newDrifts, newPitchCenter); }
+    juce::String getName() const override { return "Pitch Macro"; }
 
 private:
-    void apply(const std::vector<float> &midis, float pitchCenter)
+    void apply(const std::vector<float> &midis, const std::vector<float> &drifts, float pitchCenter)
     {
         for (size_t i = 0; i < notes.size() && i < midis.size(); ++i)
         {
             if (!notes[i]) continue;
             notes[i]->setMidiNoteFromPitchCorrection(midis[i]);
+            notes[i]->setPitchDrift(drifts[i]);
             notes[i]->markDirty();
             notes[i]->markSynthDirty();
         }
@@ -234,6 +238,7 @@ private:
 
     std::vector<Note *> notes;
     std::vector<float> oldMidis, newMidis;
+    std::vector<float> oldDrifts, newDrifts;
     float oldPitchCenter = 0.0f, newPitchCenter = 0.0f;
     ChangeCallback onChanged;
 };

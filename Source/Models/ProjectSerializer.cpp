@@ -770,6 +770,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
+    obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
 
     // Lyric/Phoneme
@@ -784,6 +785,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("tiltLeft", note.getTiltLeft());
     obj->setProperty("tiltRight", note.getTiltRight());
     obj->setProperty("vibrato", note.getVibrato());
+    obj->setProperty("pitchDrift", note.getPitchDrift());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
 
@@ -834,6 +836,7 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
         json.getProperty("lastNonMacroMidiNote", legacySourceMidi)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
+    note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));
 
     // Lyric/Phoneme
@@ -849,6 +852,7 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setTiltLeft(static_cast<float>(json.getProperty("tiltLeft", 0.0)));
     note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
     note.setVibrato(static_cast<float>(json.getProperty("vibrato", 1.0)));
+    note.setPitchDrift(static_cast<float>(json.getProperty("pitchDrift", 1.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
     note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
 

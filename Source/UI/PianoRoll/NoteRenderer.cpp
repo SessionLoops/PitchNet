@@ -236,7 +236,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           std::max(2, std::min(512, static_cast<int>(std::ceil(noteWidth)) + 1));
       const auto shadowEnvelope = VisualWaveformEnvelope::build(
           samples, totalSamples, startSample, endSample, shadowPointCount,
-          renderedWidth, audioData.sampleRate, pixelsPerSecond);
+          renderedWidth, audioData.sampleRate, pixelsPerSecond, true,
+          pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
       const float maxSample =
           shadowEnvelope.empty()
               ? 0.0f
@@ -345,7 +346,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             std::max(2, std::min(2048, static_cast<int>(std::ceil(w * 2.0f)) + 1));
         waveValues = VisualWaveformEnvelope::build(
             samples, totalSamples, startSample, endSample, pointCount, w,
-            audioData.sampleRate, pixelsPerSecond);
+            audioData.sampleRate, pixelsPerSecond, true,
+            pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
 
         const size_t numPoints = waveValues.size();
         if (numPoints < 2)
@@ -543,10 +545,32 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const bool isTiltDragged =
         pitchToolController && pitchToolController->isDraggingTilt() &&
         pitchToolController->getActiveHandleNote() == &note;
-    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged))
+    const bool isDriftDragged = pitchToolController && pitchToolController->isDragging() &&
+        pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::PitchDrift &&
+        pitchToolController->getActiveHandleNote() == &note;
+    const bool isFormantDragged = pitchToolController && pitchToolController->isDragging() &&
+        pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Formant &&
+        pitchToolController->getActiveHandleNote() == &note;
+    const bool isAmplitudeDragged = pitchToolController && pitchToolController->isDragging() &&
+        pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Amplitude &&
+        pitchToolController->getActiveHandleNote() == &note;
+    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged || isAmplitudeDragged))
     {
       juce::String label;
-      if (isVibratoDragged)
+      if (isAmplitudeDragged)
+      {
+        const juce::String prefix = note.getVolumeDb() > 0.0f ? "+" : "";
+        label = prefix + juce::String(note.getVolumeDb(), 1) + " dB";
+      }
+      else if (isDriftDragged)
+      {
+        label = juce::String(std::round(note.getPitchDrift() * 100.0f)) + " %";
+      }
+      else if (isFormantDragged)
+      {
+        label = juce::String(note.getFormantShift(), 1) + " st";
+      }
+      else if (isVibratoDragged)
       {
         label = juce::String(std::round(note.getVibrato() * 100.0f)) + " %";
       }

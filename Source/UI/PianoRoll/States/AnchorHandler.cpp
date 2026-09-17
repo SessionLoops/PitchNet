@@ -489,6 +489,7 @@ void AnchorHandler::applyPreviewToProject()
     note.setTiltLeft(0.0f);
     note.setTiltRight(0.0f);
     note.setVibrato(1.0f);
+    note.setPitchDrift(1.0f);
     note.setSmoothLeftFrames(0);
     note.setSmoothRightFrames(0);
     note.setDeltaScale(1.0f);

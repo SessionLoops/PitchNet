@@ -98,6 +98,8 @@ public:
     float getPitchOffset() const { return pitchOffset; }
     void setPitchOffset(float offset) { pitchOffset = offset; }
     float getAdjustedMidiNote() const { return midiNote + pitchOffset; }
+    float getFormantShift() const { return formantShift; }
+    void setFormantShift(float st) { formantShift = juce::jlimit(-12.0f, 12.0f, st); }
     float getVolumeDb() const { return volumeDb; }
     void setVolumeDb(float db) { volumeDb = db; }
 
@@ -137,6 +139,9 @@ public:
     // limited to -10.0 through 10.0 (-1000% through 1000%).
     float getVibrato() const { return vibrato; }
     void setVibrato(float scale) { vibrato = juce::jlimit(-10.0f, 10.0f, scale); }
+    // Slow pitch-trend scale: 100% original, 0% removed, negative inverted.
+    float getPitchDrift() const { return pitchDrift; }
+    void setPitchDrift(float scale) { pitchDrift = juce::jlimit(-10.0f, 10.0f, scale); }
     int getSmoothLeftFrames() const { return smoothLeftFrames; }
     void setSmoothLeftFrames(int frames) { smoothLeftFrames = frames; }
     int getSmoothRightFrames() const { return smoothRightFrames; }
@@ -219,6 +224,7 @@ private:
     float lastNonMacroMidiNote = 60.0f;
     float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
+    float formantShift = 0.0f; // Semitones, independent of F0
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
@@ -229,6 +235,7 @@ private:
     float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
     float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
     float vibrato = 1.0f;            // 1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert
+    float pitchDrift = 1.0f;
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
 

@@ -2,7 +2,6 @@
 #include "PianoRollComponent.h" // For EditMode enum
 #include "StyledComponents.h"
 #include "../Utils/Localization.h"
-#include "../Utils/UI/SvgUtils.h"
 #include "../Utils/UI/TimecodeFont.h"
 #include "BinaryData.h"
 
@@ -27,14 +26,8 @@ ToolbarComponent::ToolbarComponent()
     timingModeButton.setImage(loadImage(BinaryData::timing_png, BinaryData::timing_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
 
-    // Load the remaining SVG icon with white tint.
-    auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
+    followButton.setImage(loadImage(BinaryData::scroll_png, BinaryData::scroll_pngSize));
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
-
-    followButton.setImages(followIcon.get());
-
-    // Set edge indent for icon padding (makes icons smaller within button bounds).
-    followButton.setEdgeIndent(6);
 
     // Configure buttons
     addChildComponent(recordButton);
@@ -100,7 +93,7 @@ ToolbarComponent::ToolbarComponent()
     splitModeButton.setTooltip("Note Separation Tool (Shortcut: 2)");
     anchorModeButton.setTooltip("Pitch Drawing Tool (Shortcut: 3)");
     timingModeButton.setTooltip("Timing Tool (Shortcut: 4)");
-    followButton.setTooltip(TR("toolbar.follow"));
+    followButton.setTooltip("Auto Scroll");
     quantizeButton.setTooltip("Correct Pitch Macro");
     auditionButton.setTooltip("Live Audition On/Off");
 #if JUCE_MAC
@@ -115,7 +108,7 @@ ToolbarComponent::ToolbarComponent()
 
     // Set default active states
     selectModeButton.setToggleState(true, juce::dontSendNotification);
-    followButton.setActive(true); // Follow is on by default
+    followButton.setToggleState(followPlayback, juce::dontSendNotification);
     auditionButton.setToggleState(false, juce::dontSendNotification);
     undoButton.setEnabled(false);
     redoButton.setEnabled(false);
@@ -283,7 +276,6 @@ void ToolbarComponent::resized()
 
     // Hide the remaining controls that have been removed from the toolbar.
     timeLabel.setVisible(false);
-    followButton.setVisible(false);
     zoomLabel.setVisible(false);
     zoomSlider.setVisible(false);
     timeCapsuleBounds = {};
@@ -291,16 +283,17 @@ void ToolbarComponent::resized()
     playButton.setVisible(true);
     stopButton.setVisible(true);
     loopButton.setVisible(true);
+    followButton.setVisible(true);
 
     // Keep transport beside the logo. In plugin mode these buttons request
     // host transport changes through MainComponent.
     const int transportSlotSize = 30;
     const int transportPad = 9;
     const int transportSlotStride = 28;
-    const int numTransport = recordButton.isVisible() ? 4 : 3;
+    const int numTransport = recordButton.isVisible() ? 5 : 4;
     const int capsuleW = transportSlotSize
                          + (numTransport - 1) * transportSlotStride
-                         + transportPad * 2;
+                         + transportPad * 2 + 6;
     const int capsuleX = logoRight + 24;
     const int transportCapsuleH = 38;
     const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
@@ -329,6 +322,9 @@ void ToolbarComponent::resized()
     setButtonInSlot(playButton, slotX);
     slotX += transportSlotStride;
     setButtonInSlot(loopButton, slotX);
+    slotX += transportSlotStride;
+    setButtonInSlot(followButton, slotX);
+    followButton.setBounds(followButton.getBounds().translated(5, 0));
 }
 
 void ToolbarComponent::buttonClicked(juce::Button *button)
@@ -386,8 +382,7 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     }
     else if (button == &followButton)
     {
-        followPlayback = !followPlayback;
-        followButton.setActive(followPlayback);
+        followPlayback = followButton.getToggleState();
     }
     else if (button == &auditionButton)
     {
@@ -622,9 +617,6 @@ void ToolbarComponent::setPluginMode(bool isPlugin)
     playButton.setVisible(true);
     stopButton.setVisible(true);
     loopButton.setVisible(true);
-
-    // In plugin mode, hide follow button (host controls playback)
-    followButton.setVisible(!isPlugin);
 
     resized();
 }

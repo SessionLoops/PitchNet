@@ -84,15 +84,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     }
     else
     {
-      // Single note selection and drag
-      owner_.boxSelector->setLastSelectionFromBox(false);
-      project->deselectAllNotes();
-      note->setSelected(true);
-      owner_.updatePitchToolHandlesFromSelection();
-
-      if (owner_.onNoteSelected)
-        owner_.onNoteSelected(note);
-
+      // Edit the note without changing the box selection.
       // Capture delta slice from global dense deltaPitch for this note
       auto &audioData = project->getAudioData();
       int startFrame = note->getStartFrame();
@@ -114,6 +106,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
       // Start single note dragging
       isDragging = true;
       draggedNote = note;
+      owner_.updatePitchToolHandlesFromSelection();
       dragStartY = worldY;
       originalPitchOffset = note->getPitchOffset();
       originalMidiNote = note->getMidiNote();
@@ -385,12 +378,14 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (owner_.pitchToolController &&
       owner_.pitchToolController->isDragging())
   {
+    const bool amplitudeEdit = owner_.pitchToolController->getActiveHandleType() ==
+        PitchToolHandles::HandleType::Amplitude;
     owner_.pitchToolController->mouseUp(e, owner_.undoManager,
                                         nullptr);
     owner_.updatePitchToolHandlesFromSelection();
     if (owner_.onPitchEdited)
       owner_.onPitchEdited();
-    if (owner_.onPitchEditFinished)
+    if (!amplitudeEdit && owner_.onPitchEditFinished)
       owner_.onPitchEditFinished();
     owner_.repaint();
     return true;
@@ -847,14 +842,18 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         }
       }
 
-      // Vibrato: toggle between 0% (flat) and 100% (original).
+      // Vibrato/drift: toggle between 0% and 100% (original).
       if (handle.type ==
-          PitchToolHandles::HandleType::Vibrato)
+          PitchToolHandles::HandleType::Vibrato ||
+          handle.type == PitchToolHandles::HandleType::PitchDrift)
       {
+        const bool drift = handle.type == PitchToolHandles::HandleType::PitchDrift;
+        const auto getter = drift ? &Note::getPitchDrift : &Note::getVibrato;
+        const auto setter = drift ? &Note::setPitchDrift : &Note::setVibrato;
         auto selectedNotes = project->getSelectedNotes();
 
         float currentScale =
-            selectedNotes[0]->getVibrato();
+            (selectedNotes[0]->*getter)();
         float newScale =
             (std::abs(currentScale - 1.0f) < 0.001f) ? 0.0f : 1.0f;
 
@@ -869,14 +868,14 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           {
             if (note)
             {
-              oldScales.push_back(note->getVibrato());
+              oldScales.push_back((note->*getter)());
               newScales.push_back(newScale);
             }
           }
 
           auto action = std::make_unique<MultiNoteFloatPropertyAction>(
               selectedNotes, oldScales, newScales,
-              &Note::setVibrato, "Toggle Vibrato",
+              setter, drift ? "Toggle Pitch Drift" : "Toggle Vibrato",
               [project, selectedNotes]()
               { rebuildProjectForNotes(project, selectedNotes); });
           owner_.undoManager->addAction(std::move(action));
@@ -886,7 +885,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         {
           if (note)
           {
-            note->setVibrato(newScale);
+            (note->*setter)(newScale);
             note->markDirty();
           }
         }

@@ -14,13 +14,16 @@ public:
     TiltLeft,
     TiltRight,
     Vibrato,
+    PitchDrift,
+    Formant,
+    Amplitude,
     SmoothLeft,
     SmoothRight,
     None
   };
 
   static constexpr float buttonWidth = 30.0f;
-  static constexpr float buttonHeight = 10.0f;
+  static constexpr float buttonHeight = 12.0f;
   static constexpr float buttonGap = 5.0f;
   static constexpr float buttonGroupWidth =
       buttonWidth * 3.0f + buttonGap * 2.0f;
@@ -56,10 +59,10 @@ public:
    */
   int hitTest(float worldX, float worldY, float tolerance = 12.0f) const;
 
-  /** Whether a point lies inside the full three-control layout, including gaps. */
+  /** Whether a point lies inside a handle row, including gaps within that row. */
   bool containsLayoutPoint(float worldX, float worldY) const;
 
-  /** Bounding box of the full three-control layout. */
+  /** Bounding box of the full six-control layout. */
   juce::Rectangle<float> getLayoutBounds() const;
 
   /**
@@ -95,6 +98,9 @@ private:
   // statics, which can outlive the plug-in editor in Windows hosts.
   juce::Image leftTiltIcon;
   juce::Image vibratoIcon;
+  juce::Image driftIcon;
+  juce::Image formantIcon;
+  juce::Image amplitudeIcon;
   juce::Image rightTiltIcon;
 
   void addHandle(HandleType type, float worldX, float worldY, Note* note = nullptr);

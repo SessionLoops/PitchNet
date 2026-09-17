@@ -36,6 +36,10 @@ std::vector<float> smoothBoundary(const std::vector<float>& deltaPitch,
                                   int transitionFrames,
                                   float targetPitch);
 
+// Zero-phase Gaussian trend extraction at 2 Hz on the fixed analysis frame grid.
+// Scales only the mean-centered trend; the fast residual is retained.
+std::vector<float> scalePitchDrift(const std::vector<float>& deltaPitch, float factor);
+
 /**
  * Computes the arithmetic mean of a pitch contour.
  * Returns 0 when the input is empty.
@@ -59,8 +63,9 @@ struct AdjacentNoteContext
  * 
  * This function chains multiple transformations in order:
  * 1. Vibrato scaling
- * 2. Tilt (left and right combined)
- * 3. Boundary smoothing (left and right)
+ * 2. Slow pitch-drift scaling
+ * 3. Tilt (left and right combined)
+ * 4. Boundary smoothing (left and right)
  * 
  * @param originalDelta The pristine deltaPitch curve from analysis (never modified)
  * @param tiltLeft Tilt amount at left edge in semitones
@@ -69,6 +74,7 @@ struct AdjacentNoteContext
  * @param smoothLeftFrames Smoothing transition length at left boundary
  * @param smoothRightFrames Smoothing transition length at right boundary
  * @param adjacentContext Context for adjacent notes (for boundary smoothing)
+ * @param pitchDrift Slow-trend factor (1.0=original, 0.0=removed)
  * @return Transformed deltaPitch curve
  */
 std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
@@ -77,6 +83,7 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
                                            float vibrato,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
-                                           const AdjacentNoteContext& adjacentContext = {});
+                                           const AdjacentNoteContext& adjacentContext = {},
+                                           float pitchDrift = 1.0f);
 
 } // namespace PitchToolOperations
