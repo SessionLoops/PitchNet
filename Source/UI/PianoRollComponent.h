@@ -210,6 +210,9 @@ public:
   bool getShowBasePitch() const { return showBasePitch; }
 
   // Callbacks
+  std::function<void(EditMode)> onEditModeRequested;
+  std::function<void()> onUndoRequested;
+  std::function<void()> onRedoRequested;
   std::function<void(Note *)> onNoteSelected;
   std::function<void()> onPitchEdited;
   std::function<void()> onPitchEditFinished; // Called when dragging ends

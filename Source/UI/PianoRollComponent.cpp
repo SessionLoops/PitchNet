@@ -18,6 +18,7 @@
 #include "PianoRoll/States/TimingHandler.h"
 #include "PianoRoll/AnchorConfirmationPanel.h"
 #include "Components/PitchPopupMenu.h"
+#include "Components/CanvasPopupMenu.h"
 #include "BinaryData.h"
 #include <array>
 #include <algorithm>
@@ -1215,6 +1216,48 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  if (e.mods.isPopupMenu() && isCanvasPoint(e))
+  {
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+    auto choice = std::make_shared<int>(0);
+    menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
+        choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
+        undoManager && undoManager->canRedo() && bool(onRedoRequested)));
+    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+    menu.showMenuAsync(juce::PopupMenu::Options()
+                          .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
+                              e.getScreenPosition()))
+                          .withDeletionCheck(*this),
+                      [safeThis, choice](int result)
+    {
+      if (safeThis == nullptr || !safeThis->project || result == 0)
+        return;
+      if (*choice == 1)
+      {
+        safeThis->project->selectAllNotes();
+        safeThis->updatePitchToolHandlesFromSelection();
+        safeThis->updatePreviewButtonBounds();
+        safeThis->repaint();
+      }
+      else if (*choice == 6 && safeThis->onUndoRequested)
+        safeThis->onUndoRequested();
+      else if (*choice == 7 && safeThis->onRedoRequested)
+        safeThis->onRedoRequested();
+      else if (*choice >= 2 && *choice <= 5)
+      {
+        const EditMode modes[] = { EditMode::Select, EditMode::Split,
+                                   EditMode::Draw, EditMode::Timing };
+        const auto mode = modes[*choice - 2];
+        if (safeThis->onEditModeRequested)
+          safeThis->onEditModeRequested(mode);
+        else
+          safeThis->setEditMode(mode);
+      }
+    });
+    return;
+  }
+
   // Middle-mouse scrub: click-and-drag anywhere in the timeline/canvas
   // (ruler or note area) to move the playback cursor, mirroring Reaper's
   // own middle-button scrub. Takes priority over every other gesture so
@@ -1306,6 +1349,8 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
+  if (e.mods.isPopupMenu())
+    return;
   if (middleButtonScrubActive)
   {
     float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
@@ -1361,6 +1406,8 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
+  if (e.mods.isPopupMenu())
+    return;
   if (middleButtonScrubActive)
   {
     middleButtonScrubActive = false;
@@ -1626,7 +1673,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 {
   // JUCE dispatches double-clicks after mouseUp clears the scrub state.
   // Keep repeated middle clicks from triggering transport or edit actions.
-  if (e.mods.isMiddleButtonDown())
+  if (e.mods.isMiddleButtonDown() || e.mods.isPopupMenu())
     return;
 
   if (!project)

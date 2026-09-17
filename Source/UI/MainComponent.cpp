@@ -740,6 +740,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { stop(); };
   toolbar.onZoomChanged = [this](float pps)
   { onZoomChanged(pps); };
+  pianoRoll.onEditModeRequested = [this](EditMode mode)
+  { setEditMode(mode); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
   toolbar.onScaleRootChanged = [this](int rootNote)
@@ -800,6 +802,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     workspace.showPanel("parameters", visible);
   };
+  pianoRoll.onUndoRequested = [this]() { undo(); };
+  pianoRoll.onRedoRequested = [this]() { redo(); };
   toolbar.onUndo = [this]() { undo(); };
   toolbar.onRedo = [this]() { redo(); };
   toolbar.onToggleRecord = [this](bool armed) {
