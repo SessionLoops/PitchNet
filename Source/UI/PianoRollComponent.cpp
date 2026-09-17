@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "../Undo/AmplitudeAction.h"
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
 #include "../Utils/Constants.h"
@@ -148,21 +149,27 @@ namespace
   class ResetNoteEditsAction final : public UndoableAction
   {
   public:
-    ResetNoteEditsAction(Project& project, std::vector<Note*> notes)
-        : project(project), notes(std::move(notes))
+    ResetNoteEditsAction(Project& project, std::vector<Note*> notes,
+                         bool pitch, bool formant, bool amplitude,
+                         juce::String name, std::unique_ptr<UndoableAction> timing = {})
+        : project(project), notes(std::move(notes)), name(std::move(name)),
+          timing(std::move(timing))
     {
       before.reserve(this->notes.size());
       after.reserve(this->notes.size());
       for (const auto* note : this->notes)
       {
         before.push_back(NoteEditState::capture(*note));
-        after.push_back(NoteEditState::defaultsFor(*note));
+        auto state = pitch ? NoteEditState::defaultsFor(*note) : before.back();
+        state.formantShift = formant ? 0.0f : before.back().formantShift;
+        state.volumeDb = amplitude ? 0.0f : before.back().volumeDb;
+        after.push_back(std::move(state));
       }
     }
 
-    void undo() override { apply(before); }
-    void redo() override { apply(after); }
-    juce::String getName() const override { return "Restore Pitch"; }
+    void undo() override { if (timing) timing->undo(); apply(before); }
+    void redo() override { apply(after); if (timing) timing->redo(); }
+    juce::String getName() const override { return name; }
 
   private:
     void apply(const std::vector<NoteEditState>& states)
@@ -177,6 +184,7 @@ namespace
         dirtyStart = std::min(dirtyStart, notes[i]->getStartFrame());
         dirtyEnd = std::max(dirtyEnd, notes[i]->getEndFrame());
       }
+      project.setModified(true);
       PitchCurveProcessor::rebuildBaseFromNotes(project);
       if (dirtyStart <= dirtyEnd)
         project.setF0DirtyRange(dirtyStart, dirtyEnd);
@@ -186,6 +194,8 @@ namespace
     std::vector<Note*> notes;
     std::vector<NoteEditState> before;
     std::vector<NoteEditState> after;
+    juce::String name;
+    std::unique_ptr<UndoableAction> timing;
   };
 }
 
@@ -2920,20 +2930,40 @@ std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
   for (auto &candidate : project->getNotes())
     if (!candidate.isRest() && candidate.isSelected())
       selected.push_back(&candidate);
-  return selected.size() > 1 ? selected : targets;
+  return note.isSelected() && selected.size() > 1 ? selected : targets;
 }
 
-void PianoRollComponent::resetNoteEdits(Note &note)
+void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
 {
   if (!project)
     return;
 
+  const auto targets = getResetTargetNotes(note);
+  if (mode == NoteRestoreMode::Amplitude)
+  {
+    std::vector<float> before, after(targets.size(), 0.0f);
+    for (const auto* target : targets) before.push_back(target->getVolumeDb());
+    if (before == after) return;
+    auto action = std::make_unique<AmplitudeAction>(
+        *project, targets, before, after, pitchToolController->onAmplitudeEdited,
+        "Restore Amplitude");
+    action->redo();
+    if (undoManager) undoManager->addAction(std::move(action));
+    return;
+  }
+
+  const bool all = mode == NoteRestoreMode::All;
   auto action = std::make_unique<ResetNoteEditsAction>(
-      *project, getResetTargetNotes(note));
+      *project, targets, all || mode == NoteRestoreMode::Pitch,
+      all || mode == NoteRestoreMode::Formant, all,
+      all ? "Restore All Edits" : mode == NoteRestoreMode::Formant
+          ? "Restore Formant" : "Restore Pitch",
+      all ? createResetTimingAction(note) : nullptr);
   action->redo();
   if (undoManager)
     undoManager->addAction(std::move(action));
 
+  invalidateBasePitchCache();
   updatePitchToolHandlesFromSelection();
   updatePreviewButtonBounds();
   if (onPitchEdited)
@@ -2947,14 +2977,17 @@ void PianoRollComponent::showResetMenu(Note &note)
 {
   juce::PopupMenu menu;
   menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
-  menu.addCustomItem(
-      1, std::make_unique<pitchPopupMenu::MenuItemComponent>(
-             "Pitch", false, std::function<void()>{}, false),
-      nullptr, "Pitch");
-  menu.addCustomItem(
-      2, std::make_unique<pitchPopupMenu::MenuItemComponent>(
-             "Timing", false, std::function<void()>{}, false),
-      nullptr, "Timing");
+  const auto addItem = [&menu](int id, const juce::String& label)
+  {
+    menu.addCustomItem(id, std::make_unique<pitchPopupMenu::MenuItemComponent>(
+        label, false, std::function<void()>{}, false), nullptr, label);
+  };
+  addItem(1, "Pitch");
+  addItem(3, "Formant");
+  addItem(4, "Amplitude");
+  addItem(2, "Timing");
+  menu.addSeparator();
+  addItem(5, "All Edits");
 
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   Note* notePtr = &note;
@@ -2972,13 +3005,19 @@ void PianoRollComponent::showResetMenu(Note &note)
       safeThis->resetNoteEdits(*notePtr);
     else if (result == 2)
       safeThis->resetNoteTiming(*notePtr);
+    else if (result == 3)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);
+    else if (result == 4)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Amplitude);
+    else if (result == 5)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::All);
   });
 }
 
-void PianoRollComponent::resetNoteTiming(Note &note)
+std::unique_ptr<UndoableAction> PianoRollComponent::createResetTimingAction(Note &note)
 {
   if (!project)
-    return;
+    return {};
 
   auto& notes = project->getNotes();
   const auto targets = getResetTargetNotes(note);
@@ -3037,10 +3076,16 @@ void PianoRollComponent::resetNoteTiming(Note &note)
     after.push_back(targetState);
   }
 
-  applyNoteTimingStates(*project, after);
-  if (undoManager)
-    undoManager->addAction(std::make_unique<TimingAction>(
-        *project, std::move(before), std::move(after), "Restore Timing"));
+  return std::make_unique<TimingAction>(
+      *project, std::move(before), std::move(after), "Restore Timing");
+}
+
+void PianoRollComponent::resetNoteTiming(Note &note)
+{
+  auto action = createResetTimingAction(note);
+  if (!action) return;
+  action->redo();
+  if (undoManager) undoManager->addAction(std::move(action));
 
   invalidateBasePitchCache();
   if (onPitchEdited)

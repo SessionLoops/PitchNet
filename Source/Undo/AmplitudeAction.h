@@ -12,14 +12,14 @@ class AmplitudeAction : public UndoableAction
 public:
     AmplitudeAction(Project& project, std::vector<Note*> notes,
                     std::vector<float> before, std::vector<float> after,
-                    std::function<void()> changed)
+                    std::function<void()> changed, juce::String name = "Change Amplitude")
         : project(project), notes(std::move(notes)), before(std::move(before)),
-          after(std::move(after)), changed(std::move(changed)) {}
+          after(std::move(after)), changed(std::move(changed)), name(std::move(name)) {}
 
     void undo() override { apply(after, before); }
     void redo() override { apply(before, after); }
     bool requiresAudioResynthesis() const override { return false; }
-    juce::String getName() const override { return "Change Amplitude"; }
+    juce::String getName() const override { return name; }
 
 private:
     void apply(const std::vector<float>& from, const std::vector<float>& to)
@@ -62,6 +62,7 @@ private:
                 notes[i]->setVolumeDb(to[i]);
                 notes[i]->setRenderedEdit(!notes[i]->isNeutralForOriginalWaveform());
             }
+        project.setModified(true);
         if (changed) changed();
     }
 
@@ -69,4 +70,5 @@ private:
     std::vector<Note*> notes;
     std::vector<float> before, after;
     std::function<void()> changed;
+    juce::String name;
 };

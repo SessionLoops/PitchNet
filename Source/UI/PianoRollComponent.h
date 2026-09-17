@@ -289,7 +289,9 @@ private:
   void updatePreviewButtonBounds();
   void triggerPreviewForNote(Note &note);
   std::vector<Note *> getResetTargetNotes(Note &note) const;
-  void resetNoteEdits(Note &note);
+  enum class NoteRestoreMode { Pitch, Formant, Amplitude, All };
+  void resetNoteEdits(Note &note, NoteRestoreMode mode = NoteRestoreMode::Pitch);
+  std::unique_ptr<UndoableAction> createResetTimingAction(Note &note);
   void resetNoteTiming(Note &note);
   void showResetMenu(Note &note);
   void setHoveredNote(Note *note);
