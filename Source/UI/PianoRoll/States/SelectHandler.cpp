@@ -84,15 +84,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     }
     else
     {
-      // Single note selection and drag
-      owner_.boxSelector->setLastSelectionFromBox(false);
-      project->deselectAllNotes();
-      note->setSelected(true);
-      owner_.updatePitchToolHandlesFromSelection();
-
-      if (owner_.onNoteSelected)
-        owner_.onNoteSelected(note);
-
+      // Edit the note without changing the box selection.
       // Capture delta slice from global dense deltaPitch for this note
       auto &audioData = project->getAudioData();
       int startFrame = note->getStartFrame();
@@ -114,6 +106,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
       // Start single note dragging
       isDragging = true;
       draggedNote = note;
+      owner_.updatePitchToolHandlesFromSelection();
       dragStartY = worldY;
       originalPitchOffset = note->getPitchOffset();
       originalMidiNote = note->getMidiNote();
