@@ -59,6 +59,16 @@ public:
                                     BinaryArchiveMode::selfContained);
 
     /**
+     * Same archive, written straight into a caller-owned stream. Lets the
+     * plug-in state path emit the archive once instead of building a whole
+     * second copy of it in an intermediate MemoryBlock.
+     */
+    static bool toBinaryArchive(const Project& project,
+                                juce::OutputStream& out,
+                                BinaryArchiveMode mode =
+                                    BinaryArchiveMode::selfContained);
+
+    /**
      * Load a project from toBinaryArchive(). Falls back to false for unknown
      * input so callers can try legacy JSON.
      */

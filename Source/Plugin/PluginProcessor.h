@@ -110,7 +110,20 @@ public:
   void updateAraTimelineOffset(double timelineOffsetSeconds);
   bool serializePersistentProjectState(juce::MemoryBlock &destData,
                                        bool hostBackedARA = false) const;
+  bool serializePersistentProjectState(juce::OutputStream &out,
+                                       bool hostBackedARA = false) const;
   bool restorePersistentProjectState(const void *data, size_t sizeInBytes);
+
+  // The project getStateInformation()/serializePersistentProjectState() would
+  // archive, and a cheap content fingerprint of it used to skip re-archiving
+  // an unchanged project. Returns 0 when there is nothing cacheable.
+  const Project *projectForPersistentState() const;
+  std::uint64_t computePersistentStateKey(const juce::String &parametersXml,
+                                          bool hostBackedARA) const;
+
+  const juce::String &getAraAnalysisProjectJson() const;
+  void invalidateAraAnalysisProjectJson();
+  void setAraAnalysisProjectJson(juce::String json);
 
   void removeAraRegionFromProject(
       std::uintptr_t newSourceKey, const std::pair<double, double> &removedRange,
@@ -359,7 +372,17 @@ private:
   double araAnalysisTimelineOffsetSeconds = 0.0;
   std::vector<std::pair<double, double>> araPlaybackRegionRanges;
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
-  juce::String araAnalysisProjectJson;
+
+  // Built on demand from araAnalysisProjectSnapshot. Serialising a multi-minute
+  // take to JSON text costs tens of MB of string work, and nothing in non-ARA
+  // plug-in mode ever reads it, so only pay for it where it is actually used.
+  mutable juce::String araAnalysisProjectJson;
+  mutable bool araAnalysisProjectJsonValid = false;
+
+  // Last blob handed to the host, keyed by content. Costs one extra resident
+  // copy of the plug-in state in exchange for making repeat host saves free.
+  juce::MemoryBlock cachedPluginStateBlock;
+  std::uint64_t cachedPluginStateKey = 0;
   std::atomic<bool> araRenderPendingRerun{false};
 
   struct AraRegionState {
