@@ -257,6 +257,11 @@ private:
   // running, so this crosses threads and must be atomic; the cached copy below
   // is render-thread only.
   std::atomic<std::uint32_t> readerConfigGeneration{0};
+  // Whether the last renderPreviewBuffer() call produced playable audio.
+  // Render thread only. Recorded at render time because playback clears
+  // previewLoopRange, which would otherwise make a finished preview look like
+  // one that never rendered.
+  bool lastPreviewRenderProducedAudio = false;
   std::uint32_t lastReaderConfigGeneration = 0;
   double lastPreviewStartTime = -1.0;
   double lastPreviewEndTime = -1.0;

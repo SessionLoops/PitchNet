@@ -1128,16 +1128,31 @@ bool PitchNetEditorRenderer::processBlock(
     // configure() creates the reader, an unchanged request would never be
     // retried and would stay silent. Re-rendering when the reader generation
     // moves fixes that without retrying on every block.
+    //
+    // Only a render that PRODUCED NOTHING is worth retrying. configure() runs
+    // on every preview request, so an unconditional retry re-rendered a preview
+    // that had already started, resetting previewLoopPosition and retriggering
+    // it a few milliseconds in.
     const auto readerConfig =
         readerConfigGeneration.load(std::memory_order_acquire);
+    const bool readersChanged = readerConfig != lastReaderConfigGeneration;
+    lastReaderConfigGeneration = readerConfig;
+
+    // The outcome has to be recorded at render time. previewLoopRange cannot
+    // stand in for it here: writePreviewOnce() empties it when playback
+    // finishes, so a completed preview would be indistinguishable from a failed
+    // one and would replay on the next reader-generation change.
+    const bool retryFailedRender =
+        readersChanged && !lastPreviewRenderProducedAudio;
+
     const double previewStartTime = previewState.previewStartTime.load();
     const double previewEndTime = previewState.previewEndTime.load();
-    if (readerConfig != lastReaderConfigGeneration ||
+    if (retryFailedRender ||
         !juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
         !juce::approximatelyEqual(previewEndTime, lastPreviewEndTime) ||
         previewRegion != lastPreviewRegion) {
       renderPreviewBuffer(previewRegion, previewStartTime, previewEndTime);
-      lastReaderConfigGeneration = readerConfig;
+      lastPreviewRenderProducedAudio = !previewLoopRange.isEmpty();
       lastPreviewStartTime = previewStartTime;
       lastPreviewEndTime = previewEndTime;
       lastPreviewRegion = previewRegion;
