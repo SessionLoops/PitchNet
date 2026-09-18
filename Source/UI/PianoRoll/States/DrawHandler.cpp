@@ -163,6 +163,10 @@ void DrawHandler::commitPitchDrawing() {
         if (note.hasDeltaPitch()) {
           note.setDeltaPitch(std::vector<float>());
         }
+        // The drawn curve lives in AudioData::f0, and clearing deltaPitch above
+        // removes the last per-note trace of it. Record the edit on the note so
+        // it is not mistaken for an untouched one and thrown away.
+        note.setDirectF0Edit(true);
       }
     }
   }
