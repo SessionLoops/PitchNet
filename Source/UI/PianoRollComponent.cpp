@@ -108,6 +108,7 @@ namespace
     int smoothRightFrames;
     float deltaScale;
     float deltaOffset;
+    bool directF0Edit;
     std::vector<float> bakedDeltaPitch;
     std::vector<float> deltaPitch;
 
@@ -117,13 +118,16 @@ namespace
               note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
+              note.hasDirectF0Edit(),
               note.getBakedDeltaPitch(), note.getDeltaPitch()};
     }
 
     static NoteEditState defaultsFor(const Note& note)
     {
+      // false for directF0Edit: a reset restores the analysed curve, so any
+      // drawn deviation on this note is gone and it is neutral again.
       return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
-              0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch()};
+              0, 0, 1.0f, 0.0f, false, {}, note.getOriginalDeltaPitch()};
     }
 
     void applyTo(Note& note) const
@@ -140,6 +144,7 @@ namespace
       note.setSmoothRightFrames(smoothRightFrames);
       note.setDeltaScale(deltaScale);
       note.setDeltaOffset(deltaOffset);
+      note.setDirectF0Edit(directF0Edit);
       note.setBakedDeltaPitch(bakedDeltaPitch);
       note.setDeltaPitch(deltaPitch);
       note.markDirty();
