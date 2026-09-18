@@ -615,7 +615,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   if (auto *audioEngine = editorController
                               ? editorController->getAudioEngine()
                               : nullptr)
-    audioEngine->initializeAudio();
+    audioEngine->initializeAudio(
+        settingsManager->getAudioDeviceState(),
+        settingsManager->getFollowSystemAudioOutput());
   LOG("MainComponent: audio initialized");
 
   LOG("MainComponent: setting up callbacks...");

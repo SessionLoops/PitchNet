@@ -370,6 +370,7 @@ void SettingsComponent::changeListenerCallback(
   {
     syncToSystemOutputIfNeeded();
     updateAudioOutputDevices(true);
+    persistAudioDeviceSettings();
   }
 }
 
@@ -623,6 +624,7 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox *comboBox)
       if (currentType == nullptr || currentType->getTypeName() != targetType)
         deviceManager->setCurrentAudioDeviceType(targetType, true);
       updateAudioOutputDevices(true);
+      persistAudioDeviceSettings();
     }
   }
   else if (comboBox == &audioOutputComboBox)
@@ -1299,6 +1301,9 @@ void SettingsComponent::applyAudioSettings()
 
   if (setup == originalSetup)
   {
+    // The device itself is unchanged, but "System Default" vs. a pinned device
+    // may have flipped, so the selection still needs storing.
+    persistAudioDeviceSettings();
     return;
   }
 
@@ -1319,14 +1324,31 @@ void SettingsComponent::applyAudioSettings()
     return;
   }
 
-  if (settingsManager)
-  {
-    settingsManager->setFollowSystemAudioOutput(followSystemAudioOutput);
-    settingsManager->setPreferredAudioOutputDevice(preferredAudioOutputDevice);
-    settingsManager->saveConfig();
-  }
+  persistAudioDeviceSettings();
 
   updateAudioOutputDevices(true);
+}
+
+void SettingsComponent::persistAudioDeviceSettings()
+{
+  // Before loadSettings() the members still hold defaults, which would clobber
+  // the stored selection.
+  if (settingsManager == nullptr || pluginMode || deviceManager == nullptr ||
+      !hasLoadedSettings)
+    return;
+
+  settingsManager->setFollowSystemAudioOutput(followSystemAudioOutput);
+  settingsManager->setPreferredAudioOutputDevice(preferredAudioOutputDevice);
+
+  // Store the selection even when the device failed to open: picking JACK
+  // with no server running is still a deliberate choice, and it should be
+  // honoured on the next launch (when a server may well be up). Recovering
+  // from a driver that cannot open is initializeAudio()'s job, and it leaves
+  // the stored preference alone.
+  if (auto state = deviceManager->createStateXml())
+    settingsManager->setAudioDeviceState(state->toString());
+
+  settingsManager->saveConfig();
 }
 
 void SettingsComponent::syncToSystemOutputIfNeeded()

@@ -125,6 +125,9 @@ private:
   void updateSampleRates();
   void updateBufferSizes();
   void applyAudioSettings();
+  /// Writes the live device selection (including the serialised device-manager
+  /// state) to config.json so it can be restored on the next launch.
+  void persistAudioDeviceSettings();
   void syncToSystemOutputIfNeeded();
   void setActiveTab(SettingsTab tab);
   void updateTabButtonStyles();

@@ -194,6 +194,9 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("preferredAudioOutputDevice"))
           preferredAudioOutputDevice =
               configObj->getProperty("preferredAudioOutputDevice").toString();
+        if (configObj->hasProperty("audioDeviceState"))
+          audioDeviceState =
+              configObj->getProperty("audioDeviceState").toString();
         if (configObj->hasProperty("skippedUpdateVersion"))
           skippedUpdateVersion =
               configObj->getProperty("skippedUpdateVersion").toString();
@@ -249,6 +252,7 @@ void SettingsManager::saveConfig()
   config->setProperty("showVocoderF0Debug", showVocoderF0Debug);
   config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
   config->setProperty("preferredAudioOutputDevice", preferredAudioOutputDevice);
+  config->setProperty("audioDeviceState", audioDeviceState);
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
