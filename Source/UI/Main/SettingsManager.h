@@ -122,7 +122,8 @@ private:
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   int gpuDeviceId = 0;
   bool hasStoredGpuDeviceIdSetting = false;
-  juce::String language = "en";
+  // "auto" follows the system language until the user picks one.
+  juce::String language = "auto";
 
   // Config
   juce::File lastFilePath;

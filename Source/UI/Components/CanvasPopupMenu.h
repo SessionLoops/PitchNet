@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PitchPopupMenu.h"
+#include "../../Utils/Localization.h"
 #include "BinaryData.h"
 #include <array>
 
@@ -71,7 +72,11 @@ public:
     Content(std::shared_ptr<int> result, bool canUndo, bool canRedo)
         : juce::PopupMenu::CustomComponent(false), choice(std::move(result))
     {
-        const char* names[] = { "Select All", "Select", "Split", "Drawing", "Timing", "Undo", "Redo" };
+        const juce::String names[] = {
+            TR("canvas.select_all"), TR("canvas.select"), TR("canvas.split"),
+            TR("canvas.drawing"),    TR("canvas.timing"), TR("command.undo"),
+            TR("command.redo")
+        };
         const void* data[] = { BinaryData::selectmenu_png, BinaryData::splitmenu_png,
                                BinaryData::drawingmenu_png, BinaryData::timingmenu_png };
         const int sizes[] = { BinaryData::selectmenu_pngSize, BinaryData::splitmenu_pngSize,
@@ -90,7 +95,8 @@ public:
         }
         buttons[5]->setEnabled(canUndo);
         buttons[6]->setEnabled(canRedo);
-        topWidth = juce::GlyphArrangement::getStringWidthInt(AppFont::getFont(14), "Select All") + 24;
+        topWidth = juce::GlyphArrangement::getStringWidthInt(
+                      AppFont::getFont(14), names[0]) + 24;
     }
 
     void getIdealSize(int& width, int& height) override

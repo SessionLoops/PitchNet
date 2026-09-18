@@ -1,11 +1,12 @@
 #include "AnchorConfirmationPanel.h"
 #include "../Components/AppFont.h"
+#include "../../Utils/Localization.h"
 #include "../../Utils/UI/Theme.h"
 #include "BinaryData.h"
 
 AnchorConfirmationPanel::AnchorConfirmationPanel()
 {
-    prompt.setText("Apply new pitch curve?", juce::dontSendNotification);
+    prompt.setText(TR("anchor.apply_prompt"), juce::dontSendNotification);
     prompt.setFont(AppFont::getFont(11.0f).withPointHeight(11.0f));
     prompt.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
     prompt.setJustificationType(juce::Justification::centredLeft);
@@ -23,6 +24,11 @@ AnchorConfirmationPanel::AnchorConfirmationPanel()
 }
 
 AnchorConfirmationPanel::~AnchorConfirmationPanel() = default;
+
+void AnchorConfirmationPanel::refreshLocalisedText()
+{
+    prompt.setText(TR("anchor.apply_prompt"), juce::dontSendNotification);
+}
 
 void AnchorConfirmationPanel::paint(juce::Graphics& g)
 {

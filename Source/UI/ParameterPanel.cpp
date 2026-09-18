@@ -31,6 +31,7 @@ constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
 constexpr int kRegionsRowHeight = 26;           // region selector row
+constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
@@ -48,20 +49,26 @@ constexpr int kBrightnessCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kBrightnessRowHeight + kInnerPadY;
 constexpr int kRegionsCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRegionsRowHeight + kInnerPadY;
+constexpr int kLanguageCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
 
+// Five cards are always present - Rendering, Language, Time, Pitch and UI
+// Brightness - so four gaps sit between them.
 constexpr int kPreferredPanelHeight =
-    kCardPadY * 2 + kCardGap * 3 + kSynthesisCardHeight + kTimeCardHeight +
-    kPitchCardHeight + kBrightnessCardHeight;
+    kCardPadY * 2 + kCardGap * 4 + kSynthesisCardHeight + kLanguageCardHeight +
+    kTimeCardHeight + kPitchCardHeight + kBrightnessCardHeight;
 
 // The Regions card only exists in ARA plugin mode, so it is not part of the
 // base sum - it adds itself, gap included, when it is showing.
 constexpr int kRegionsCardExtraHeight = kCardGap + kRegionsCardHeight;
 
 constexpr int kRegionMenuBaseId = 7401;
+// "System default" sits above the real languages in the picker.
+constexpr int kLanguageMenuAutoId = 7601;
+constexpr int kLanguageMenuBaseId = 7602;
 constexpr int kRenderDeviceMenuBaseId = 7501;
 
-constexpr const char* kNoRegionsText = "No regions";
-constexpr const char* kNoRegionSelectedText = "Select region";
+
 
 struct TimelineBeatOption
 {
@@ -123,7 +130,7 @@ juce::String getTimelineGridLabel(TimelineGridDivision division)
 
 juce::String getDragSnapModeLabel(DragSnapMode mode)
 {
-    return mode == DragSnapMode::Scale ? "Scale" : "Chromatic";
+    return mode == DragSnapMode::Scale ? TR("param.scale") : TR("param.chromatic");
 }
 
 // Device names arrive provider-tagged ("Radeon RX 7900 XT (DirectML)") because
@@ -256,6 +263,14 @@ ParameterPanel::ParameterPanel()
                                      juce::Colour(0xFF9B9B9Bu));
     brightnessSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
+    // Language card: always present, directly below Rendering.
+    addAndMakeVisible(languageSectionLabel);
+    languageSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    languageSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(languageSelectorButton);
+    languageSelectorButton.addListener(this);
+    selectedLanguageCode = Localization::getInstance().getPersistedLanguageCode();
+
     // Regions card: added but not shown. Standalone and non-ARA plugin mode
     // have no playback regions, so the card only appears once a host tells us
     // otherwise (see setRegionsCardVisible).
@@ -284,15 +299,8 @@ ParameterPanel::ParameterPanel()
 
     // The button text stays plain language; the algorithm names live here, so
     // they are discoverable without putting "PC-NSF-HiFiGAN" in a 55px label.
-    vocoderEngineToggle.setTooltip(
-        "Neural vocoder (PC-NSF-HiFiGAN)\n"
-        "Rebuilds the voice from its spectrum. Handles large pitch moves best, "
-        "and reshapes tone across the whole edited region.");
-    psolaEngineToggle.setTooltip(
-        "Classic DSP (time-domain PSOLA)\n"
-        "Shifts the original recording itself. Leaves untouched audio "
-        "identical and needs no model, so it is far faster on CPU. Large "
-        "pitch moves are rougher.");
+    vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder"));
+    psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
 
     // Device row: added hidden. It appears only once the host tells us the
     // engine is AI Resynthesis and there is more than one device to run it on
@@ -405,6 +413,9 @@ ParameterPanel::ParameterPanel()
     refreshModeToggles();
     refreshTimelineModeToggles();
     refreshSynthesisToggles();
+
+    // Every caption above is a translated string, applied in one place.
+    refreshLocalisedText();
 }
 
 ParameterPanel::~ParameterPanel()
@@ -449,6 +460,15 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.fillRoundedRectangle(synthesisRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
         g.drawRoundedRectangle(synthesisRect.reduced(0.5f), radius, 0.75f);
+    }
+
+    if (!languageCardBounds.isEmpty())
+    {
+        auto languageRect = languageCardBounds.toFloat();
+        g.setColour(juce::Colour(0xFF171717u));
+        g.fillRoundedRectangle(languageRect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(languageRect.reduced(0.5f), radius, 0.75f);
     }
 
     if (regionsCardVisible && !regionsCardBounds.isEmpty())
@@ -540,15 +560,36 @@ void ParameterPanel::resized()
         synthesisCardBottom - synthesisCardStart);
 
     // =========================================================================
+    // LANGUAGE CARD
+    //
+    // Sits directly below Rendering and is always present, so its height is
+    // part of kPreferredPanelHeight.
+    // =========================================================================
+    const int languageCardStart = synthesisCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
+                                  languageCardStart + innerPadY,
+                                  cardArea.getWidth() - innerPadX * 2,
+                                  cardArea.getBottom() - languageCardStart - innerPadY * 2);
+
+    languageSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
+    languageSelectorButton.setBounds(bounds.removeFromTop(kLanguageRowHeight));
+
+    const int languageCardBottom = bounds.getY() + innerPadY;
+    languageCardBounds = juce::Rectangle<int>(cardArea.getX(), languageCardStart,
+                                              cardArea.getWidth(),
+                                              languageCardBottom - languageCardStart);
+
+    // =========================================================================
     // REGIONS CARD (ARA plugin mode only)
     //
-    // Sits directly below Rendering. When hidden it contributes nothing: no
-    // bounds, no gap, and no height in getPreferredHeight().
+    // Sits below Language. When hidden it contributes nothing: no bounds, no
+    // gap, and no height in getPreferredHeight().
     // =========================================================================
-    int stackBottom = synthesisCardBottom;
+    int stackBottom = languageCardBottom;
     if (regionsCardVisible)
     {
-        const int regionsCardStart = synthesisCardBottom + cardGap;
+        const int regionsCardStart = languageCardBottom + cardGap;
         bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
                                       regionsCardStart + innerPadY,
                                       cardArea.getWidth() - innerPadX * 2,
@@ -709,6 +750,11 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         showRegionsMenu();
         return;
     }
+    if (button == &languageSelectorButton)
+    {
+        showLanguageMenu();
+        return;
+    }
     if (button == &renderDeviceButton)
     {
         showRenderDeviceMenu();
@@ -811,6 +857,47 @@ void ParameterPanel::setProject(Project* proj)
         onProjectBound(project);
 }
 
+void ParameterPanel::refreshLocalisedText()
+{
+    languageSectionLabel.setText(TR("panel.language"), juce::dontSendNotification);
+    refreshLanguageButtonText();
+
+    regionsSectionLabel.setText(TR("panel.regions"), juce::dontSendNotification);
+    pitchSectionLabel.setText(TR("panel.pitch"), juce::dontSendNotification);
+    timeSectionLabel.setText(TR("panel.time"), juce::dontSendNotification);
+    synthesisSectionLabel.setText(TR("panel.rendering"), juce::dontSendNotification);
+    brightnessSectionLabel.setText(TR("panel.ui_brightness"),
+                                   juce::dontSendNotification);
+
+    chromaticToggle.setButtonText(TR("param.chromatic"));
+    scaleToggle.setButtonText(TR("param.scale"));
+
+    vocoderEngineToggle.setButtonText(TR("param.engine_vocoder"));
+    psolaEngineToggle.setButtonText(TR("param.engine_psola"));
+    vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder"));
+    psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
+
+    renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
+
+    referenceLabel.setText(TR("param.reference_a4"), juce::dontSendNotification);
+    referenceSlider.setName(TR("param.pitch_reference"));
+
+    snapToSemitonesToggle.setButtonText(TR("param.drag_snap"));
+
+    beatsTimelineToggle.setButtonText(TR("param.beats"));
+    timeTimelineToggle.setButtonText(TR("param.time_mode"));
+    timelineBeatLabel.setText(TR("param.beat"), juce::dontSendNotification);
+    timelineTempoLabel.setText(TR("param.tempo"), juce::dontSendNotification);
+    timelineTempoSlider.setName(TR("param.tempo"));
+    timelineGridLabel.setText(TR("param.grid"), juce::dontSendNotification);
+    timelineSnapCycleToggle.setButtonText(TR("param.snap_cycle"));
+
+    // Values whose text is itself a translated word.
+    dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
+    refreshRegionsButtonText();
+    refreshRenderDeviceRow();
+}
+
 void ParameterPanel::setRegionsCardVisible(bool visible)
 {
     if (regionsCardVisible == visible)
@@ -852,10 +939,94 @@ void ParameterPanel::refreshRegionsButtonText()
     }
 
     if (text.isEmpty())
-        text = regionEntries.empty() ? kNoRegionsText : kNoRegionSelectedText;
+        text = regionEntries.empty() ? TR("param.no_regions")
+                                     : TR("param.select_region");
 
     regionsSelectorButton.setButtonText(text);
     regionsSelectorButton.setEnabled(!regionEntries.empty());
+}
+
+void ParameterPanel::refreshLanguageButtonText()
+{
+    juce::String text = TR("lang.system_default");
+
+    if (selectedLanguageCode != "auto")
+    {
+        for (const auto& lang : Localization::getInstance().getAvailableLanguages())
+        {
+            if (lang.code == selectedLanguageCode)
+            {
+                text = lang.nativeName;
+                break;
+            }
+        }
+    }
+
+    languageSelectorButton.setButtonText(text);
+}
+
+void ParameterPanel::showLanguageMenu()
+{
+    const auto& langs = Localization::getInstance().getAvailableLanguages();
+
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+
+    const auto autoText = TR("lang.system_default");
+    menu.addCustomItem(kLanguageMenuAutoId,
+                       std::make_unique<HoverMenuItemComponent>(
+                           autoText, selectedLanguageCode == "auto"),
+                       nullptr, autoText);
+
+    for (int i = 0; i < static_cast<int>(langs.size()); ++i)
+    {
+        const auto& lang = langs[static_cast<size_t>(i)];
+        menu.addCustomItem(kLanguageMenuBaseId + i,
+                           std::make_unique<HoverMenuItemComponent>(
+                               lang.nativeName, lang.code == selectedLanguageCode),
+                           nullptr, lang.nativeName);
+    }
+
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetComponent(&languageSelectorButton)
+            .withParentComponent(this)
+            .withMinimumWidth(languageSelectorButton.getWidth()),
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
+        {
+            if (safeThis == nullptr || result == 0)
+                return;
+
+            if (result == kLanguageMenuAutoId)
+            {
+                safeThis->applyLanguageSelection("auto");
+                return;
+            }
+
+            const auto index = static_cast<size_t>(result - kLanguageMenuBaseId);
+            const auto& available =
+                Localization::getInstance().getAvailableLanguages();
+            if (index < available.size())
+                safeThis->applyLanguageSelection(available[index].code);
+        });
+}
+
+void ParameterPanel::applyLanguageSelection(const juce::String& languageCode)
+{
+    if (languageCode == selectedLanguageCode)
+        return;
+
+    selectedLanguageCode = languageCode;
+
+    if (languageCode == "auto")
+        Localization::detectSystemLanguage();
+    else
+        Localization::getInstance().setLanguage(languageCode);
+
+    // Localization broadcasts the change, so this panel and every other
+    // listening component re-read their strings. The owner only persists it.
+    if (onLanguageChanged)
+        onLanguageChanged(languageCode);
 }
 
 void ParameterPanel::showRegionsMenu()
@@ -1043,7 +1214,7 @@ void ParameterPanel::refreshRenderDeviceRow()
     renderDeviceButton.setButtonText(
         juce::isPositiveAndBelow(renderDeviceIndex, renderDeviceNames.size())
             ? getRenderDeviceLabel(renderDeviceNames[renderDeviceIndex])
-            : juce::String("Default"));
+            : TR("param.default_device"));
 
     if (shouldShow == renderDeviceRowVisible)
     {
@@ -1270,16 +1441,18 @@ void ParameterPanel::showDragSnapModeMenu()
     constexpr int scaleId = 7302;
     juce::PopupMenu menu;
     menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+    const auto chromaticText = TR("param.chromatic");
+    const auto scaleText = TR("param.scale");
     menu.addCustomItem(
         chromaticId,
         std::make_unique<HoverMenuItemComponent>(
-            "Chromatic", dragSnapMode == DragSnapMode::Chromatic),
-        nullptr, "Chromatic");
+            chromaticText, dragSnapMode == DragSnapMode::Chromatic),
+        nullptr, chromaticText);
     menu.addCustomItem(
         scaleId,
         std::make_unique<HoverMenuItemComponent>(
-            "Scale", dragSnapMode == DragSnapMode::Scale),
-        nullptr, "Scale");
+            scaleText, dragSnapMode == DragSnapMode::Scale),
+        nullptr, scaleText);
 
     menu.showMenuAsync(
         juce::PopupMenu::Options()

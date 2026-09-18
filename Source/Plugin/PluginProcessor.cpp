@@ -410,6 +410,10 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
     :
 #endif
       apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
+  // The standalone app does this at startup; a plugin instance has no such
+  // entry point, so the saved (or system) language is applied here instead.
+  Localization::loadFromSettings();
+
   OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
 
   juce::String onnxRuntimeError;

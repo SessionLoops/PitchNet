@@ -88,23 +88,9 @@ ToolbarComponent::ToolbarComponent()
         resized();
     };
 
-    // Set localized text (tooltips for icon buttons)
-    selectModeButton.setTooltip("Main Tool (Shortcut: 1)");
-    splitModeButton.setTooltip("Note Separation Tool (Shortcut: 2)");
-    anchorModeButton.setTooltip("Pitch Drawing Tool (Shortcut: 3)");
-    timingModeButton.setTooltip("Timing Tool (Shortcut: 4)");
-    followButton.setTooltip("Auto Scroll");
-    quantizeButton.setTooltip("Correct Pitch Macro");
-    auditionButton.setTooltip("Live Audition On/Off");
-#if JUCE_MAC
-    undoButton.setTooltip(TR("command.undo") + " (⌘Z)");
-    redoButton.setTooltip(TR("command.redo") + " (⇧⌘Z)");
-#else
-    undoButton.setTooltip(TR("command.undo") + " (Ctrl+Z)");
-    redoButton.setTooltip(TR("command.redo") + " (Ctrl+Y)");
-#endif
-    //parametersButton.setTooltip(TR("panel.parameters"));
-    zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
+    // Tooltips and the zoom caption all come from the string table; they are
+    // set here and re-set whenever the language changes.
+    refreshLocalisedText();
 
     // Set default active states
     selectModeButton.setToggleState(true, juce::dontSendNotification);
@@ -325,6 +311,31 @@ void ToolbarComponent::resized()
     slotX += transportSlotStride;
     setButtonInSlot(followButton, slotX);
     followButton.setBounds(followButton.getBounds().translated(5, 0));
+}
+
+void ToolbarComponent::refreshLocalisedText()
+{
+    selectModeButton.setTooltip(TR("tooltip.select_tool"));
+    splitModeButton.setTooltip(TR("tooltip.split_tool"));
+    anchorModeButton.setTooltip(TR("tooltip.draw_tool"));
+    timingModeButton.setTooltip(TR("tooltip.timing_tool"));
+    followButton.setTooltip(TR("tooltip.auto_scroll"));
+    quantizeButton.setTooltip(TR("tooltip.quantize_macro"));
+    auditionButton.setTooltip(TR("tooltip.live_audition"));
+    recordButton.setTooltip(TR("tooltip.capture"));
+    playButton.setTooltip(TR("toolbar.play"));
+    stopButton.setTooltip(TR("toolbar.stop"));
+    loopButton.setTooltip(TR("toolbar.loop"));
+    parametersButton.setTooltip(TR("panel.parameters"));
+#if JUCE_MAC
+    undoButton.setTooltip(TR("command.undo") + " (\u2318Z)");
+    redoButton.setTooltip(TR("command.redo") + " (\u21e7\u2318Z)");
+#else
+    undoButton.setTooltip(TR("command.undo") + " (Ctrl+Z)");
+    redoButton.setTooltip(TR("command.redo") + " (Ctrl+Y)");
+#endif
+
+    zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
 }
 
 void ToolbarComponent::buttonClicked(juce::Button *button)

@@ -351,7 +351,7 @@ void EditorController::loadAudioFileAsync(
 
     juce::AudioBuffer<float> buffer(1, numSamples);
 
-    updateProgress(0.08, "Reading audio...");
+    updateProgress(0.08, TR("progress.reading_audio"));
     if (reader->numChannels == 1) {
       reader->read(&buffer, 0, numSamples, 0, true, false);
     } else {
@@ -374,7 +374,7 @@ void EditorController::loadAudioFileAsync(
     }
 
     if (srcSampleRate != SAMPLE_RATE) {
-      updateProgress(0.14, "Resampling...");
+      updateProgress(0.14, TR("progress.resampling"));
       const double ratio = static_cast<double>(srcSampleRate) / SAMPLE_RATE;
       const int newNumSamples = static_cast<int>(numSamples / ratio);
 
@@ -397,7 +397,7 @@ void EditorController::loadAudioFileAsync(
       buffer = std::move(resampledBuffer);
     }
 
-    updateProgress(0.15, "Preparing project...");
+    updateProgress(0.15, TR("progress.preparing_project"));
     auto newProject = std::make_unique<Project>();
     newProject->setFilePath(file);
     newProject->setAudioSha256(SHA256Utils::fileSHA256(file));
@@ -422,7 +422,7 @@ void EditorController::loadAudioFileAsync(
       return;
     }
 
-    updateProgress(0.95, "Finalizing...");
+    updateProgress(0.95, TR("progress.finalizing"));
 
     // Store pristine original waveform in AudioData for blend-based synthesis
     audioData.originalWaveform.makeCopyOf(audioData.waveform);
@@ -672,26 +672,27 @@ void EditorController::analyzeAudio(
   {
     juce::MessageManager::callAsync([modelName, path]()
                                     { juce::AlertWindow::showMessageBoxAsync(
-                                          juce::AlertWindow::WarningIcon, "Missing model file",
-                                          modelName + " was not found at:\n" + path.getFullPathName() +
-                                              "\n\nPlease install the required model files and try again."); });
+                                          juce::AlertWindow::WarningIcon, TR("error.missing_model"),
+                                          modelName + " " + TR("error.model_not_found_at") + "\n" +
+                                              path.getFullPathName() + "\n\n" +
+                                              TR("error.install_models")); });
   };
   auto showModelLoadFailedAndAbort = [](const juce::String &modelName,
                                         const juce::File &path)
   {
     juce::MessageManager::callAsync([modelName, path]()
                                     { juce::AlertWindow::showMessageBoxAsync(
-                                          juce::AlertWindow::WarningIcon, "Model load failed",
-                                          modelName + " exists but failed to load:\n" + path.getFullPathName() +
-                                              "\n\nPlease check inference device settings (CPU/CUDA/DirectML) "
-                                              "or model compatibility."); });
+                                          juce::AlertWindow::WarningIcon, TR("error.model_load_failed"),
+                                          modelName + " " + TR("error.model_exists_but_failed") + "\n" +
+                                              path.getFullPathName() + "\n\n" +
+                                              TR("error.check_device_settings")); });
   };
 
   // Extract F0
   const float *samples = audioData.waveform.getReadPointer(0);
   int numSamples = audioData.waveform.getNumSamples();
 
-  onProgress(0.175, "Computing mel spectrogram...");
+  onProgress(0.175, TR("progress.mel_spectrogram"));
   MelSpectrogram melComputer(audioData.sampleRate, N_FFT, HOP_SIZE, NUM_MELS,
                              FMIN, FMAX);
   audioData.melSpectrogram = melComputer.compute(samples, numSamples);
@@ -866,7 +867,7 @@ void EditorController::analyzeAudio(
           (cpuRetryError.isNotEmpty() ? cpuRetryError : "unknown error"));
       if (cpuRetryError.isNotEmpty())
         pitchInferenceError +=
-            "\n\nCPU retry also failed:\n" + cpuRetryError;
+            "\n\n" + TR("error.cpu_retry_failed") + "\n" + cpuRetryError;
     }
   }
 
@@ -876,14 +877,13 @@ void EditorController::analyzeAudio(
   if (extractedF0.empty() || targetFrames <= 0)
   {
     const auto detail = pitchInferenceError.isNotEmpty()
-                            ? "\n\nDetails:\n" +
+                            ? "\n\n" + TR("error.details") + "\n" +
                                   pitchInferenceError.substring(0, 1000)
                             : juce::String();
     juce::MessageManager::callAsync([detail]()
                                     { juce::AlertWindow::showMessageBoxAsync(
-                                          juce::AlertWindow::WarningIcon, "Inference failed",
-                                          "Failed to extract pitch (F0). Please try the CPU inference "
-                                          "device or check the application log." + detail); });
+                                          juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                                          TR("error.f0_extraction_failed") + detail); });
     return;
   }
 
@@ -957,7 +957,7 @@ void EditorController::analyzeAudio(
       }
     }
 
-    onProgress(0.325, "Preparing pitch curve...");
+    onProgress(0.325, TR("progress.preparing_pitch"));
     audioData.cleanedF0 =
         F0Smoother::removeOutliers(audioData.rawF0, 1.5f);
     audioData.denseF0 = PitchCurveProcessor::interpolateWithUvMask(
@@ -973,7 +973,7 @@ void EditorController::analyzeAudio(
 
   if (!modelPath.exists() && !vocoder->isLoaded())
   {
-    showMissingModelAndAbort("vocoder model", modelPath);
+    showMissingModelAndAbort(TR("error.vocoder_model_name"), modelPath);
     return;
   }
 
@@ -986,9 +986,10 @@ void EditorController::analyzeAudio(
     {
       juce::MessageManager::callAsync([modelPath]()
                                       { juce::AlertWindow::showMessageBoxAsync(
-                                            juce::AlertWindow::WarningIcon, "Inference failed",
-                                            "Failed to load vocoder model at:\n" + modelPath.getFullPathName() +
-                                                "\n\nPlease check your model installation and try again."); });
+                                            juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                                            TR("error.vocoder_load_failed") + "\n" +
+                                                modelPath.getFullPathName() + "\n\n" +
+                                                TR("error.check_model_install")); });
       return;
     }
   }
@@ -996,10 +997,10 @@ void EditorController::analyzeAudio(
   if (shuttingDown.load())
     return;
 
-  onProgress(0.50, "Detecting Notes...");
+  onProgress(0.50, TR("progress.detecting_notes"));
   segmentIntoNotes(targetProject, nullptr, [&](double progress)
                    { onProgress(0.50 + juce::jlimit(0.0, 1.0, progress) * 0.50,
-                                "Detecting Notes..."); });
+                                TR("progress.detecting_notes")); });
 
   if (shuttingDown.load())
     return;
@@ -1105,8 +1106,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     auto searchedPath = gameModelDir.getFullPathName();
     auto bundlePath = PlatformPaths::getModelsDirectory().getChildFile("GAME").getFullPathName();
 
-    juce::String detail = "GAME models were not found.\n\n"
-                          "Searched path: " +
+    juce::String detail = TR("error.game_models_missing") + "\n\n"
+                                                            "Searched path: " +
                           searchedPath + "\n"
                                          "Bundle path: " +
                           bundlePath + "\n"

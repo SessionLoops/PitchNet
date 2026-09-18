@@ -1,5 +1,6 @@
 #include "ExportHelper.h"
 #include "../../Utils/AudioResampler.h"
+#include "../../Utils/Localization.h"
 #include "../StyledComponents.h"
 #include <cmath>
 
@@ -101,12 +102,13 @@ public:
     setOpaque(false);
 
     addAndMakeVisible(title);
-    title.setText("Export Settings", juce::dontSendNotification);
+    title.setText(TR("export.title"), juce::dontSendNotification);
     title.setJustificationType(juce::Justification::centredLeft);
     title.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
     title.setFont(AppFont::getBoldFont(17.0f));
 
-    setupCombo(formatBox, formatLabel, "Format", {"WAV", "FLAC", "AIFF", "OGG"}, 1);
+    setupCombo(formatBox, formatLabel, TR("export.format"),
+               {"WAV", "FLAC", "AIFF", "OGG"}, 1);
 
     int srId = 3;
     if (inputSampleRate >= 47000)
@@ -117,15 +119,19 @@ public:
       srId = 2;
     else
       srId = 1;
-    setupCombo(sampleRateBox, sampleRateLabel, "Sample Rate",
+    setupCombo(sampleRateBox, sampleRateLabel, TR("settings.sample_rate"),
                {"22050", "32000", "44100", "48000"}, srId);
-    setupCombo(bitDepthBox, bitDepthLabel, "Bit Depth", {"16", "24", "32"}, 1);
-    setupCombo(channelsBox, channelsLabel, "Channels", {"Mono", "Stereo"}, 1);
+    setupCombo(bitDepthBox, bitDepthLabel, TR("export.bit_depth"),
+               {"16", "24", "32"}, 1);
+    const juce::StringArray channelItems{TR("settings.mono"),
+                                        TR("settings.stereo")};
+    setupCombo(channelsBox, channelsLabel, TR("settings.output_channels"),
+               channelItems, 1);
 
     addAndMakeVisible(cancelButton);
     addAndMakeVisible(exportButton);
-    cancelButton.setButtonText("Cancel");
-    exportButton.setButtonText("Export");
+    cancelButton.setButtonText(TR("dialog.cancel"));
+    exportButton.setButtonText(TR("export.export"));
     configureButton(cancelButton);
     configureButton(exportButton);
     cancelButton.addListener(this);
@@ -264,7 +270,7 @@ void showExportSettingsDialogAsync(
 
   juce::DialogWindow::LaunchOptions opts;
   opts.content.setOwned(content);
-  opts.dialogTitle = "Export Settings";
+  opts.dialogTitle = TR("export.title");
   opts.componentToCentreAround = parent;
   opts.dialogBackgroundColour = APP_COLOR_SURFACE;
   opts.escapeKeyTriggersCloseButton = true;

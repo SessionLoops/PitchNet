@@ -3,6 +3,7 @@
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "../Utils/BasePitchPreview.h"
 #include "../Undo/UndoActions.h"
 #include "Commands.h"
@@ -408,6 +409,12 @@ private:
   juce::Point<float> modifierPanLastPosition;
   bool pianoKeyAuditionMouseDown = false;
   bool middleButtonScrubActive = false;
+
+  // Re-applies the hover-button tooltips after a language change; the menus
+  // and handle labels are built on demand, so they need nothing here.
+  void refreshLocalisedText();
+
+  LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollComponent)
 };

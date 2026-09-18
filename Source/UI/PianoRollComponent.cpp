@@ -3,6 +3,7 @@
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/TimecodeFont.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -348,7 +349,7 @@ PianoRollComponent::PianoRollComponent()
     previewButtonWidth = std::max(1, previewButton.getWidth());
     previewButtonHeight = std::max(1, previewButton.getHeight());
   }
-  previewButton.setTooltip("Context Audition");
+  previewButton.setTooltip(TR("tooltip.context_audition"));
   previewButton.setVisible(false);
   previewButton.onClick = [this]()
   {
@@ -366,7 +367,7 @@ PianoRollComponent::PianoRollComponent()
     resetButtonWidth = std::max(1, resetButton.getWidth());
     resetButtonHeight = std::max(1, resetButton.getHeight());
   }
-  resetButton.setTooltip("Restore Original");
+  resetButton.setTooltip(TR("tooltip.restore_original"));
   resetButton.setVisible(false);
   resetButton.onClick = [this]()
   {
@@ -1659,12 +1660,12 @@ juce::String PianoRollComponent::getTooltip()
 
   switch (pitchToolHandles->getHandle(handleIndex).type)
   {
-    case PitchToolHandles::HandleType::TiltLeft: return "Left Slope";
-    case PitchToolHandles::HandleType::Vibrato: return "Pitch Modulation";
-    case PitchToolHandles::HandleType::PitchDrift: return "Pitch Drift";
-    case PitchToolHandles::HandleType::Amplitude: return "Amplitude";
-    case PitchToolHandles::HandleType::Formant: return "Formant Shift";
-    case PitchToolHandles::HandleType::TiltRight: return "Right Slope";
+    case PitchToolHandles::HandleType::TiltLeft: return TR("handle.tilt_left");
+    case PitchToolHandles::HandleType::Vibrato: return TR("handle.vibrato");
+    case PitchToolHandles::HandleType::PitchDrift: return TR("handle.pitch_drift");
+    case PitchToolHandles::HandleType::Amplitude: return TR("handle.amplitude");
+    case PitchToolHandles::HandleType::Formant: return TR("handle.formant");
+    case PitchToolHandles::HandleType::TiltRight: return TR("handle.tilt_right");
     default: return {};
   }
 }
@@ -3020,6 +3021,12 @@ void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
   repaint();
 }
 
+void PianoRollComponent::refreshLocalisedText()
+{
+  previewButton.setTooltip(TR("tooltip.context_audition"));
+  resetButton.setTooltip(TR("tooltip.restore_original"));
+}
+
 void PianoRollComponent::showResetMenu(Note &note)
 {
   juce::PopupMenu menu;
@@ -3029,12 +3036,12 @@ void PianoRollComponent::showResetMenu(Note &note)
     menu.addCustomItem(id, std::make_unique<pitchPopupMenu::MenuItemComponent>(
         label, false, std::function<void()>{}, false), nullptr, label);
   };
-  addItem(1, "Pitch");
-  addItem(3, "Formant");
-  addItem(4, "Amplitude");
-  addItem(2, "Timing");
+  addItem(1, TR("restore.pitch"));
+  addItem(3, TR("restore.formant"));
+  addItem(4, TR("restore.amplitude"));
+  addItem(2, TR("restore.timing"));
   menu.addSeparator();
-  addItem(5, "All Edits");
+  addItem(5, TR("restore.all"));
 
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   Note* notePtr = &note;

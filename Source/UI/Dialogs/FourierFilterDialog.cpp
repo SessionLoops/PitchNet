@@ -1,4 +1,5 @@
 #include "FourierFilterDialog.h"
+#include "../../Utils/Localization.h"
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -35,15 +36,17 @@ FourierFilterDialog::FourierFilterDialog(
   addAndMakeVisible(highpassSlider);
 
   // Labels
-  lowpassLabel.setText("Lowpass (Hz):", juce::dontSendNotification);
+  lowpassLabel.setText(TR("fourier.lowpass"), juce::dontSendNotification);
   lowpassLabel.attachToComponent(&lowpassSlider, true);
   addAndMakeVisible(lowpassLabel);
 
-  highpassLabel.setText("Highpass (Hz):", juce::dontSendNotification);
+  highpassLabel.setText(TR("fourier.highpass"), juce::dontSendNotification);
   highpassLabel.attachToComponent(&highpassSlider, true);
   addAndMakeVisible(highpassLabel);
 
   // Buttons
+  okButton.setButtonText(TR("dialog.ok"));
+  cancelButton.setButtonText(TR("dialog.cancel"));
   okButton.onClick = [this]() { onOkClicked(); };
   addAndMakeVisible(okButton);
 
@@ -198,7 +201,7 @@ bool FourierFilterDialog::showDialog(const std::vector<Note*>& selectedNotes,
 
   juce::DialogWindow::LaunchOptions options;
   options.content.setOwned(dialog);
-  options.dialogTitle = "Fourier Pitch Filter";
+  options.dialogTitle = TR("fourier.title");
   options.resizable = false;
   options.useNativeTitleBar = true;
   options.componentToCentreAround = parent;

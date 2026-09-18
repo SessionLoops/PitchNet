@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Utils/Localization.h"
 
 /**
  * Custom title bar component for frameless window.
@@ -20,6 +21,9 @@ public:
 
     void setTitle(const juce::String& title);
 
+    /** Restores the default, translated window title after a language change. */
+    void refreshLocalisedText();
+
     static constexpr int titleBarHeight = 32;
 
 private:
@@ -38,6 +42,9 @@ private:
     void toggleMaximize();
 
     juce::String title;
+    // True while the title is the app's own default rather than a document
+    // name, which is what makes it safe to re-translate on a language change.
+    bool titleIsDefault = true;
     juce::ComponentDragger dragger;
 
 #if !JUCE_MAC
@@ -48,6 +55,8 @@ private:
 
     bool isMaximized = false;
     juce::Rectangle<int> normalBounds;
+
+    LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CustomTitleBar)
 };
