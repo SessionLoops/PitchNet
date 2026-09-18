@@ -251,6 +251,13 @@ private:
   juce::int64 previousPreviewLoopPosition = 0;
   int previewTransitionRemaining = 0;
   int previewTransitionTotal = 0;
+  // Bumped by configure() once readers exist, so a preview that was requested
+  // before its reader was created gets retried instead of staying silent.
+  // configure() runs on the message thread while processBlock() may be
+  // running, so this crosses threads and must be atomic; the cached copy below
+  // is render-thread only.
+  std::atomic<std::uint32_t> readerConfigGeneration{0};
+  std::uint32_t lastReaderConfigGeneration = 0;
   double lastPreviewStartTime = -1.0;
   double lastPreviewEndTime = -1.0;
   juce::ARAPlaybackRegion *lastPreviewRegion = nullptr;

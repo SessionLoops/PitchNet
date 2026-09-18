@@ -686,6 +686,12 @@ void PitchNetEditorRenderer::configure() {
   // Such a region is in neither list above, so prepare its reader explicitly.
   if (auto *docCtrl = getDocController())
     ensureReaderFor(docCtrl->getPreviewState().previewedRegion.load());
+
+  // Readers may have appeared. Invalidate the render thread's cached preview
+  // request so one that could not be rendered before is tried again. Released
+  // last, after every reader is in place, so a render thread that observes the
+  // new generation also observes the readers.
+  readerConfigGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void PitchNetEditorRenderer::releaseResources() {
@@ -1117,12 +1123,21 @@ bool PitchNetEditorRenderer::processBlock(
       }
     }
 
+    // A preview requested before its reader existed renders nothing and leaves
+    // previewLoopRange empty, yet the request is cached as handled - so once
+    // configure() creates the reader, an unchanged request would never be
+    // retried and would stay silent. Re-rendering when the reader generation
+    // moves fixes that without retrying on every block.
+    const auto readerConfig =
+        readerConfigGeneration.load(std::memory_order_acquire);
     const double previewStartTime = previewState.previewStartTime.load();
     const double previewEndTime = previewState.previewEndTime.load();
-    if (!juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
+    if (readerConfig != lastReaderConfigGeneration ||
+        !juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
         !juce::approximatelyEqual(previewEndTime, lastPreviewEndTime) ||
         previewRegion != lastPreviewRegion) {
       renderPreviewBuffer(previewRegion, previewStartTime, previewEndTime);
+      lastReaderConfigGeneration = readerConfig;
       lastPreviewStartTime = previewStartTime;
       lastPreviewEndTime = previewEndTime;
       lastPreviewRegion = previewRegion;
