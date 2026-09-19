@@ -299,7 +299,7 @@ ParameterPanel::ParameterPanel()
 
     // The button text stays plain language; the algorithm names live here, so
     // they are discoverable without putting "PC-NSF-HiFiGAN" in a 55px label.
-    vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder"));
+    refreshVocoderToggleAvailability();
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
 
     // Device row: added hidden. It appears only once the host tells us the
@@ -874,7 +874,7 @@ void ParameterPanel::refreshLocalisedText()
 
     vocoderEngineToggle.setButtonText(TR("param.engine_vocoder"));
     psolaEngineToggle.setButtonText(TR("param.engine_psola"));
-    vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder"));
+    refreshVocoderToggleAvailability();
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
@@ -1179,6 +1179,15 @@ void ParameterPanel::setSynthesisEngine(SynthesisEngineType type)
 
 void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool notify)
 {
+    // A disabled option can not be the selected one. Whoever asked for the
+    // vocoder (saved settings, the controller) is still holding it, so tell
+    // them about the switch even when the request itself was silent.
+    if (type == SynthesisEngineType::Vocoder && !aiResynthesisAvailable)
+    {
+        type = SynthesisEngineType::Psola;
+        notify = true;
+    }
+
     synthesisEngine = type;
     refreshSynthesisToggles();
 
@@ -1193,6 +1202,25 @@ void ParameterPanel::refreshSynthesisToggles()
     psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
                                      juce::dontSendNotification);
     refreshRenderDeviceRow();
+}
+
+void ParameterPanel::setAiResynthesisAvailable(bool available)
+{
+    aiResynthesisAvailable = available;
+    refreshVocoderToggleAvailability();
+
+    if (!aiResynthesisAvailable && synthesisEngine == SynthesisEngineType::Vocoder)
+        setSynthesisEngineInternal(SynthesisEngineType::Psola, true);
+}
+
+void ParameterPanel::refreshVocoderToggleAvailability()
+{
+    vocoderEngineToggle.setEnabled(aiResynthesisAvailable);
+    // Tooltips still show on a disabled component, which is the point: the
+    // greyed-out option explains itself on hover.
+    vocoderEngineToggle.setTooltip(aiResynthesisAvailable
+                                       ? TR("tooltip.engine_vocoder")
+                                       : TR("tooltip.engine_vocoder_unavailable"));
 }
 
 void ParameterPanel::setRenderDeviceOptions(const juce::StringArray& deviceNames,

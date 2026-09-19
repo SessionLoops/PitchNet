@@ -225,4 +225,51 @@ juce::StringArray getDisplayAdapterNames()
   return {};
 #endif
 }
+
+bool hasGpuInference()
+{
+  static const bool available = []
+  {
+#if JUCE_MAC || JUCE_IOS
+    // Core ML is always there to take the vocoder off the CPU.
+    return true;
+#elif defined(HAVE_ONNXRUNTIME)
+    try
+    {
+      bool hasDml = false, hasCuda = false;
+      for (const auto &provider : Ort::GetAvailableProviders())
+      {
+        if (provider == "DmlExecutionProvider")
+          hasDml = true;
+        else if (provider == "CUDAExecutionProvider")
+          hasCuda = true;
+      }
+
+#if defined(USE_DIRECTML) && defined(_WIN32)
+      // Same rule the Settings device list applies: a DirectML runtime can be
+      // installed on a machine with no hardware adapter to run it on.
+      if (hasDml && !getDxgiAdapterNames().isEmpty())
+        return true;
+#else
+      juce::ignoreUnused(hasDml);
+#endif
+
+#ifdef USE_CUDA
+      if (hasCuda)
+        return true;
+#else
+      juce::ignoreUnused(hasCuda);
+#endif
+    }
+    catch (const std::exception &)
+    {
+    }
+    return false;
+#else
+    return false;
+#endif
+  }();
+
+  return available;
+}
 } // namespace GpuDeviceList

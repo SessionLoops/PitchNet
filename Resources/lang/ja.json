@@ -260,6 +260,7 @@
   "tooltip.draw_tool": "ピッチ描画ツール（ショートカット: 3）",
   "tooltip.engine_psola": "クラシック DSP（時間領域 PSOLA）\n元の録音そのものをシフトします。編集していない音声はそのまま残り、モデルも不要なため CPU では非常に高速です。大きなピッチ変更は粗くなります。",
   "tooltip.engine_vocoder": "ニューラルボコーダー（PC-NSF-HiFiGAN）\nスペクトルから声を再構築します。大きなピッチ変更に最も強く、編集領域全体の音色を作り直します。",
+  "tooltip.engine_vocoder_unavailable": "このコンピューターでは AI リシンセシスを使用できません\nニューラルボコーダーには GPU アクセラレーション（Windows では DirectML）が必要ですが、見つかりませんでした。CPU だけでは編集ごとのレンダリングに時間がかかりすぎるため、代わりにクラシックを使用します。",
   "tooltip.live_audition": "ライブ試聴のオン/オフ",
   "tooltip.quantize_macro": "ピッチ補正マクロ",
   "tooltip.restore_original": "元に戻す",

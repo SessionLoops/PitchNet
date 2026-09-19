@@ -327,8 +327,21 @@ public:
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
+    void enablementChanged() override
+    {
+        juce::ToggleButton::enablementChanged();
+        setMouseCursor(isEnabled() ? juce::MouseCursor::PointingHandCursor
+                                   : juce::MouseCursor::NormalCursor);
+    }
+
     void paintButton(juce::Graphics& g, bool highlighted, bool /*down*/) override
     {
+        // A disabled button still gets hover (for its tooltip) but must not
+        // look clickable, and dims as a whole - circle included.
+        highlighted = highlighted && isEnabled();
+        if (!isEnabled())
+            g.beginTransparencyLayer(0.4f);
+
         constexpr float diameter = 16.0f;
         const juce::Rectangle<float> circle(
             4.0f, (static_cast<float>(getHeight()) - diameter) * 0.5f + 1.0f,
@@ -344,12 +357,12 @@ public:
         g.setColour(selected ? juce::Colour(0xFFE6E6E6u)
                              : juce::Colour(highlighted ? 0xFF9B9B9Bu : 0xFF515151u));
         g.setFont(AppFont::getFont(15.0f));
-        if (!isEnabled())
-            g.setOpacity(0.5f);
-
         g.drawFittedText(getButtonText(),
                          getLocalBounds().withTrimmedLeft(30).withTrimmedRight(2),
                          juce::Justification::centredLeft, 1);
+
+        if (!isEnabled())
+            g.endTransparencyLayer();
     }
 };
 

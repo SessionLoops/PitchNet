@@ -260,6 +260,7 @@
   "tooltip.draw_tool": "피치 그리기 도구 (단축키: 3)",
   "tooltip.engine_psola": "클래식 DSP(시간 영역 PSOLA)\n원본 녹음을 그대로 이동시킵니다. 편집하지 않은 오디오는 그대로 남고 모델이 필요 없어 CPU에서 훨씬 빠릅니다. 큰 피치 변화는 거칠어집니다.",
   "tooltip.engine_vocoder": "뉴럴 보코더(PC-NSF-HiFiGAN)\n스펙트럼에서 목소리를 다시 만듭니다. 큰 피치 변화에 가장 강하고 편집한 구간 전체의 음색을 다시 형성합니다.",
+  "tooltip.engine_vocoder_unavailable": "이 컴퓨터에서는 AI 리신서시스를 사용할 수 없습니다\n뉴럴 보코더에는 GPU 가속(Windows에서는 DirectML)이 필요하지만 찾을 수 없습니다. CPU만으로는 편집할 때마다 렌더링이 너무 오래 걸리므로 대신 클래식을 사용합니다.",
   "tooltip.live_audition": "실시간 미리듣기 켜기/끄기",
   "tooltip.quantize_macro": "피치 보정 매크로",
   "tooltip.restore_original": "원본 복원",

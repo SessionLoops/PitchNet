@@ -260,6 +260,7 @@
   "tooltip.draw_tool": "音高绘制工具（快捷键：3）",
   "tooltip.engine_psola": "经典 DSP（时域 PSOLA）\n直接移动原始录音。未编辑的音频保持不变且无需模型，因此在 CPU 上快得多。大幅音高变化会比较粗糙。",
   "tooltip.engine_vocoder": "神经声码器（PC-NSF-HiFiGAN）\n从频谱重建人声。最擅长处理大幅音高变化，并会重塑整个编辑区域的音色。",
+  "tooltip.engine_vocoder_unavailable": "此电脑无法使用 AI 重合成\n神经声码器需要 GPU 加速（Windows 上为 DirectML），但此电脑上未找到。仅靠 CPU 时每次编辑的渲染都会耗时过长，因此改用经典。",
   "tooltip.live_audition": "实时试听开/关",
   "tooltip.quantize_macro": "音高修正宏",
   "tooltip.restore_original": "恢复原始",

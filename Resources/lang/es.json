@@ -260,6 +260,7 @@
   "tooltip.draw_tool": "Herramienta de dibujo de tono (atajo: 3)",
   "tooltip.engine_psola": "DSP clásico (PSOLA en el dominio del tiempo)\nDesplaza la grabación original. Deja intacto el audio no editado y no necesita modelo, por lo que es mucho más rápido en CPU. Los cambios de tono grandes suenan más ásperos.",
   "tooltip.engine_vocoder": "Vocoder neuronal (PC-NSF-HiFiGAN)\nReconstruye la voz a partir de su espectro. Es lo mejor para cambios de tono grandes y remodela el timbre en toda la región editada.",
+  "tooltip.engine_vocoder_unavailable": "La resíntesis con IA no está disponible en este equipo\nEl vocoder neuronal necesita aceleración por GPU (DirectML en Windows) y no se ha encontrado ninguna. Solo con la CPU, cada edición tardaría demasiado en renderizarse, así que se usa Clásico en su lugar.",
   "tooltip.live_audition": "Audición en vivo activada/desactivada",
   "tooltip.quantize_macro": "Macro de corrección de tono",
   "tooltip.restore_original": "Restaurar el original",

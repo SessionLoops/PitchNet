@@ -48,6 +48,15 @@ public:
     void setSynthesisEngine(SynthesisEngineType type);
     SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
 
+    // ===== Rendering card: AI Resynthesis availability =====
+    // On a CPU-only machine (Windows/Linux with no DirectML adapter) the
+    // vocoder is too slow to be a real choice, so its radio is disabled and
+    // its tooltip says why. If it was the selected engine, the panel moves to
+    // Classic DSP and reports that through onSynthesisEngineChanged so the
+    // owner persists it and the controller renders with it.
+    void setAiResynthesisAvailable(bool available);
+    bool isAiResynthesisAvailable() const { return aiResynthesisAvailable; }
+
     // ===== Rendering card: inference device =====
     // The row only earns its space when there is a choice to make, so it shows
     // only while AI Resynthesis is the engine and the execution provider
@@ -103,6 +112,7 @@ private:
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
+    void refreshVocoderToggleAvailability();
     void refreshRenderDeviceRow();
     void showRenderDeviceMenu();
     void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);
@@ -193,6 +203,7 @@ private:
     bool timelineSnapCycle = false;
     double uiBrightnessPercent = 100.0;
     SynthesisEngineType synthesisEngine = defaultSynthesisEngineType();
+    bool aiResynthesisAvailable = true;
 
     juce::StringArray renderDeviceNames;
     int renderDeviceIndex = 0;
