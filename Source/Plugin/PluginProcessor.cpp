@@ -184,6 +184,7 @@ void mergeRenderedState(Project &target, const Project &rendered) {
     for (size_t i = 0; i < targetNotes.size(); ++i) {
       const auto &renderedNote = renderedNotes[i];
       targetNotes[i].setRenderedEdit(renderedNote.hasRenderedEdit());
+      targetNotes[i].setDirectF0Edit(renderedNote.hasDirectF0Edit());
       targetNotes[i].setSynthDirty(renderedNote.isSynthDirty());
     }
   }
