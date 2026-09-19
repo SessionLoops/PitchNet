@@ -807,6 +807,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
         obj->setProperty("phoneme", note.getPhoneme());
     if (note.hasRenderedEdit())
         obj->setProperty("renderedEdit", true);
+    if (note.hasDirectF0Edit())
+        obj->setProperty("directF0Edit", true);
 
     // Pitch tool transformation parameters (non-destructive)
     obj->setProperty("tiltLeft", note.getTiltLeft());
@@ -905,6 +907,10 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
         (!legacySynthWaveform.isVoid() &&
          legacySynthWaveform.toString().isNotEmpty());
     note.setRenderedEdit(hasRenderedEdit);
+    // Absent in projects saved before this flag existed, which read as false -
+    // correct, because those projects predate the drawn-edit tracking.
+    note.setDirectF0Edit(
+        static_cast<bool>(json.getProperty("directF0Edit", false)));
     if (hasRenderedEdit)
         note.setSynthDirty(false);
     // Per-note delta scale/offset

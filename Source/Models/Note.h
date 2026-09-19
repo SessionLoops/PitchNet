@@ -113,6 +113,15 @@ public:
     void setOriginalDeltaPitch(std::vector<float> delta) { originalDeltaPitch = std::move(delta); }
     bool hasOriginalDeltaPitch() const { return !originalDeltaPitch.empty(); }
 
+    // Set when a tool edits this note's pitch by writing AudioData::f0
+    // directly rather than through any per-note field - the freehand Draw tool
+    // does exactly that, and clears deltaPitch as it goes. Without this the
+    // note is indistinguishable from an untouched one, so
+    // isNeutralForOriginalWaveform() reports it neutral, the region is judged
+    // unedited, and the drawn audio is discarded before it can be heard.
+    bool hasDirectF0Edit() const { return directF0Edit; }
+    void setDirectF0Edit(bool edited) { directF0Edit = edited; }
+
     // Optional committed per-frame contour. This is the editable source used
     // by pitch tools after a destructive/baked curve operation, while
     // originalDeltaPitch remains the immutable analysis result.
@@ -245,6 +254,7 @@ private:
 
     std::vector<float> f0Values;
     bool renderedEdit = false; // Audio for this note is present in the composite
+    bool directF0Edit = false; // Pitch edited by writing AudioData::f0 directly
     // Timeline bounds represented by the current composite waveform. These can
     // differ from both the immutable source bounds and the next pending edit.
     int renderedStartFrame = 0;

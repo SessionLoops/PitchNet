@@ -1,5 +1,6 @@
 #include "DrawHandler.h"
 #include "../../PianoRollComponent.h"
+#include "../../../Undo/F0Actions.h"
 #include "../../../Utils/Constants.h"
 #include "../../../Utils/PitchCurveProcessor.h"
 
@@ -154,6 +155,7 @@ void DrawHandler::commitPitchDrawing() {
   }
 
   // Clear deltaPitch for notes in the edited range so they use the drawn F0
+  std::vector<F0EditAction::NoteFlagEdit> noteFlagEdits;
   if (owner_.project && minFrame <= maxFrame) {
     const int maxFrameExclusive = maxFrame + 1;
     auto &notes = owner_.project->getNotes();
@@ -163,6 +165,12 @@ void DrawHandler::commitPitchDrawing() {
         if (note.hasDeltaPitch()) {
           note.setDeltaPitch(std::vector<float>());
         }
+        // The drawn curve lives in AudioData::f0, and clearing deltaPitch above
+        // removes the last per-note trace of it. Record the edit on the note so
+        // it is not mistaken for an untouched one and thrown away. The previous
+        // value goes into the undo action, which owns restoring it.
+        noteFlagEdits.push_back({&note, note.hasDirectF0Edit()});
+        note.setDirectF0Edit(true);
       }
     }
   }
@@ -181,7 +189,8 @@ void DrawHandler::commitPitchDrawing() {
         drawingEdits, [projectPtr](int minFrame, int maxFrame) {
           if (projectPtr)
             projectPtr->setF0DirtyRange(minFrame, maxFrame + 1);
-        });
+        },
+        std::move(noteFlagEdits));
     owner_.undoManager->addAction(std::move(action));
   }
 
