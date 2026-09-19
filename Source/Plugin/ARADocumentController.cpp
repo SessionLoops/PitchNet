@@ -358,13 +358,11 @@ void PitchNetPlaybackRenderer::prepareToPlay(
     docCtrl->processPlaybackRegions(getPlaybackRegions(), sampleRate);
   }
 
-  // Create readers for all playback regions
-  for (auto *region : getPlaybackRegions()) {
-    auto *source = region->getAudioModification()->getAudioSource();
-    if (readers.find(source) == readers.end())
-      readers.emplace(source,
-                      std::make_unique<juce::ARAAudioSourceReader>(source));
-  }
+  // Readers and resampler slots for the regions assigned so far. Regions the
+  // host assigns later arrive via didAddPlaybackRegion(), also on the model
+  // thread, so processBlock() never has to allocate.
+  for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>())
+    ensureRenderResourcesFor(region);
 }
 
 void PitchNetPlaybackRenderer::releaseResources() {
@@ -372,6 +370,41 @@ void PitchNetPlaybackRenderer::releaseResources() {
   rawResamplingStates.clear();
   processedResamplingStates.clear();
   tempBuffer.reset();
+}
+
+void PitchNetPlaybackRenderer::ensureRenderResourcesFor(
+    juce::ARAPlaybackRegion *region) {
+  // Model thread only (prepareToPlay and region assignment). Allocating the
+  // reader and both resampler slots here is what keeps processBlock()
+  // allocation-free.
+  if (region == nullptr)
+    return;
+
+  rawResamplingStates.try_emplace(region);
+  processedResamplingStates.try_emplace(region);
+
+  auto *modification = region->getAudioModification();
+  auto *source =
+      modification != nullptr ? modification->getAudioSource() : nullptr;
+  if (source != nullptr && readers.find(source) == readers.end())
+    readers.emplace(source,
+                    std::make_unique<juce::ARAAudioSourceReader>(source));
+}
+
+void PitchNetPlaybackRenderer::didAddPlaybackRegion(
+    ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept {
+  ensureRenderResourcesFor(
+      static_cast<juce::ARAPlaybackRegion *>(playbackRegion));
+}
+
+void PitchNetPlaybackRenderer::willRemovePlaybackRegion(
+    ARA::PlugIn::PlaybackRegion *playbackRegion) noexcept {
+  // Drop resampler state keyed by this pointer so a later region that reuses
+  // the address cannot inherit it. Readers are keyed by audio source and are
+  // cleared in releaseResources().
+  auto *region = static_cast<juce::ARAPlaybackRegion *>(playbackRegion);
+  rawResamplingStates.erase(region);
+  processedResamplingStates.erase(region);
 }
 
 bool PitchNetPlaybackRenderer::renderProcessedRegions(
@@ -419,27 +452,30 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
           auto *source = modification->getAudioSource();
           const double modificationRate =
               source != nullptr ? source->getSampleRate() : 0.0;
-          renderedRegion = mixProcessedRegionAudio(
-              buffer, *region, data->audio, data->sampleRate,
-              data->startSampleInModification, modificationRate, sampleRate,
-              timeInSamples, &processedResamplingStates[region]);
+          // Never operator[] here: it would insert and allocate on the
+          // audio thread.
+          if (auto processedState = processedResamplingStates.find(region);
+              processedState != processedResamplingStates.end())
+            renderedRegion = mixProcessedRegionAudio(
+                buffer, *region, data->audio, data->sampleRate,
+                data->startSampleInModification, modificationRate, sampleRate,
+                timeInSamples, &processedState->second);
         }
       }
     }
 
     if (!renderedRegion && intersectsBlock) {
       auto *source = region->getAudioModification()->getAudioSource();
-      if (source != nullptr) {
-        auto it = readers.find(source);
-        if (it == readers.end())
-          it = readers
-                   .emplace(source, std::make_unique<juce::ARAAudioSourceReader>(
-                                        source))
-                   .first;
+      auto it = source != nullptr ? readers.find(source) : readers.end();
+      auto rawState = rawResamplingStates.find(region);
+      // Both are created on the model thread by ensureRenderResourcesFor().
+      // A miss means this region is not ready to render yet: skip it rather
+      // than allocating here.
+      if (it != readers.end() && rawState != rawResamplingStates.end()) {
         tempBuffer->clear();
         if (readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
                                         timeInSamples, *tempBuffer,
-                                        &rawResamplingStates[region])) {
+                                        &rawState->second)) {
           for (int ch = 0; ch < std::min(buffer.getNumChannels(),
                                          tempBuffer->getNumChannels());
                ++ch)
@@ -458,14 +494,33 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 bool PitchNetPlaybackRenderer::processBlock(
     juce::AudioBuffer<float> &buffer, juce::AudioProcessor::Realtime realtime,
     const juce::AudioPlayHead::PositionInfo &posInfo) noexcept {
+  // Get document controller for accessing MainComponent
+  auto *docCtrl = getDocController();
+  if (!docCtrl) {
+    buffer.clear();
+    return true;
+  }
+
+  // Produce nothing while the host is mutating the model graph: any region
+  // this block would read may be freed before the block finishes.
+  //
+  // "Nothing" has to mean silence, not passthrough. Every other exit from this
+  // function clears, and neither processBlockForARA() nor the processor's ARA
+  // branch clears afterwards, so returning early without clearing would hand
+  // the host's own input buffer to the output for the length of an editing
+  // cycle.
+  const auto processingLock = docCtrl->getProcessingLock();
+  if (!processingLock.isLocked()) {
+    buffer.clear();
+    return true;
+  }
+
   auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
   bool isPlaying = posInfo.getIsPlaying();
   int numSamples = buffer.getNumSamples();
   const bool shouldSyncUi = (realtime == juce::AudioProcessor::Realtime::yes);
   const bool hasPlaybackRegions = !getPlaybackRegions().empty();
 
-  // Get document controller for accessing MainComponent
-  auto *docCtrl = getDocController();
   syncHostLoopState(docCtrl, posInfo, shouldSyncUi);
 
   auto notifyHostStopped = [&]() {
@@ -538,6 +593,11 @@ PitchNetDocumentController *PitchNetEditorRenderer::getDocController() const {
           docController);
 }
 
+PitchNetEditorRenderer::~PitchNetEditorRenderer() {
+  for (auto *sequence : listenedRegionSequences)
+    sequence->removeListener(this);
+}
+
 void PitchNetEditorRenderer::prepareToPlay(
     double sampleRateIn, int, int numChannelsIn,
     juce::AudioProcessor::ProcessingPrecision,
@@ -562,18 +622,76 @@ void PitchNetEditorRenderer::prepareToPlay(
   previewLoopPosition = 0;
 
   readers.clear();
+  mayCreateReadersWhileRendering = (alwaysNonRealtime == AlwaysNonRealtime::yes);
   if (alwaysNonRealtime == AlwaysNonRealtime::yes)
     return;
 
-  for (auto *region : getPlaybackRegions()) {
-    if (!region || !region->getAudioModification())
-      continue;
+  for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>())
+    ensureReaderFor(region);
+}
 
-    auto *source = region->getAudioModification()->getAudioSource();
-    if (source && readers.find(source) == readers.end())
-      readers.emplace(source,
-                      std::make_unique<juce::ARAAudioSourceReader>(source));
-  }
+void PitchNetEditorRenderer::ensureReaderFor(juce::ARAPlaybackRegion *region) {
+  // Model thread only (prepareToPlay and region assignment).
+  if (region == nullptr || region->getAudioModification() == nullptr)
+    return;
+
+  auto *source = region->getAudioModification()->getAudioSource();
+  if (source != nullptr && readers.find(source) == readers.end())
+    readers.emplace(source,
+                    std::make_unique<juce::ARAAudioSourceReader>(source));
+}
+
+void PitchNetEditorRenderer::didAddPlaybackRegion(
+    ARA::PlugIn::PlaybackRegion *) noexcept {
+  // Do not touch the reader map here: this call is allowed while rendering, so
+  // processBlock() may be reading it right now. Defer to configure().
+  asyncConfigCallback.startConfigure();
+}
+
+void PitchNetEditorRenderer::didAddRegionSequence(
+    ARA::PlugIn::RegionSequence *regionSequence) noexcept {
+  auto *sequence = static_cast<juce::ARARegionSequence *>(regionSequence);
+  if (sequence != nullptr && listenedRegionSequences.insert(sequence).second)
+    sequence->addListener(this);
+  asyncConfigCallback.startConfigure();
+}
+
+void PitchNetEditorRenderer::willRemoveRegionSequence(
+    ARA::PlugIn::RegionSequence *regionSequence) noexcept {
+  auto *sequence = static_cast<juce::ARARegionSequence *>(regionSequence);
+  if (sequence != nullptr && listenedRegionSequences.erase(sequence) > 0)
+    sequence->removeListener(this);
+}
+
+void PitchNetEditorRenderer::didAddPlaybackRegionToRegionSequence(
+    juce::ARARegionSequence *, juce::ARAPlaybackRegion *) {
+  // A region appearing in a sequence this renderer already previews needs a
+  // reader too, and arrives without didAddPlaybackRegion() being called.
+  asyncConfigCallback.startConfigure();
+}
+
+void PitchNetEditorRenderer::configure() {
+  // Message thread, holding asyncConfigCallback's lock exclusively, so
+  // processBlock() cannot be inside the reader map while it is rewritten.
+  if (mayCreateReadersWhileRendering)
+    return;
+
+  forEachAssignedPlaybackRegion([this](juce::ARAPlaybackRegion *region) {
+    ensureReaderFor(region);
+    return true;
+  });
+
+  // REAPER can ask for a preview of a region it never assigned to this
+  // renderer, and processBlock() honours that (see previewRegionIsAssigned).
+  // Such a region is in neither list above, so prepare its reader explicitly.
+  if (auto *docCtrl = getDocController())
+    ensureReaderFor(docCtrl->getPreviewState().previewedRegion.load());
+
+  // Readers may have appeared. Invalidate the render thread's cached preview
+  // request so one that could not be rendered before is tried again. Released
+  // last, after every reader is in place, so a render thread that observes the
+  // new generation also observes the readers.
+  readerConfigGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void PitchNetEditorRenderer::releaseResources() {
@@ -599,10 +717,17 @@ bool PitchNetEditorRenderer::readPlaybackRangeIntoBuffer(
     return false;
 
   auto it = readers.find(source);
-  if (it == readers.end())
+  if (it == readers.end()) {
+    // Reached from processBlock() via renderPreviewBuffer(). On a realtime
+    // thread a miss means this region has no reader yet: give up rather than
+    // allocate. Offline rendering is not realtime and has no pre-made readers,
+    // so it is allowed to create one here.
+    if (!mayCreateReadersWhileRendering)
+      return false;
     it = readers.emplace(source, std::make_unique<juce::ARAAudioSourceReader>(
                                      source))
              .first;
+  }
 
   const auto sourceSampleRate = source->getSampleRate();
   const int sourceChannels = source->getChannelCount();
@@ -891,6 +1016,23 @@ bool PitchNetEditorRenderer::processBlock(
   if (!docCtrl)
     return true;
 
+  // See PitchNetPlaybackRenderer::processBlock(): the editor renderer reads
+  // the same regions and needs the same exclusion during host graph edits.
+  const auto processingLock = docCtrl->getProcessingLock();
+  if (!processingLock.isLocked())
+    return true;
+
+  // Editor-renderer region assignment is allowed while rendering, so the
+  // editing lock above does not cover it (see AraAsyncConfigurationCallback).
+  // This second try-lock excludes the reader rebuild in configure().
+  //
+  // Deliberately no buffer.clear() on either early return: the playback
+  // renderer has already written this block into the same buffer
+  // (processBlockForARA calls it first), and clearing would silence it.
+  const auto configLock = asyncConfigCallback.tryLockForRender();
+  if (!configLock.isLocked())
+    return true;
+
   auto &previewState = docCtrl->getPreviewState();
   const bool previewRequested = previewState.auditionActive.load() ||
                                 previewState.previewedRegion.load() != nullptr;
@@ -981,12 +1123,36 @@ bool PitchNetEditorRenderer::processBlock(
       }
     }
 
+    // A preview requested before its reader existed renders nothing and leaves
+    // previewLoopRange empty, yet the request is cached as handled - so once
+    // configure() creates the reader, an unchanged request would never be
+    // retried and would stay silent. Re-rendering when the reader generation
+    // moves fixes that without retrying on every block.
+    //
+    // Only a render that PRODUCED NOTHING is worth retrying. configure() runs
+    // on every preview request, so an unconditional retry re-rendered a preview
+    // that had already started, resetting previewLoopPosition and retriggering
+    // it a few milliseconds in.
+    const auto readerConfig =
+        readerConfigGeneration.load(std::memory_order_acquire);
+    const bool readersChanged = readerConfig != lastReaderConfigGeneration;
+    lastReaderConfigGeneration = readerConfig;
+
+    // The outcome has to be recorded at render time. previewLoopRange cannot
+    // stand in for it here: writePreviewOnce() empties it when playback
+    // finishes, so a completed preview would be indistinguishable from a failed
+    // one and would replay on the next reader-generation change.
+    const bool retryFailedRender =
+        readersChanged && !lastPreviewRenderProducedAudio;
+
     const double previewStartTime = previewState.previewStartTime.load();
     const double previewEndTime = previewState.previewEndTime.load();
-    if (!juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
+    if (retryFailedRender ||
+        !juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
         !juce::approximatelyEqual(previewEndTime, lastPreviewEndTime) ||
         previewRegion != lastPreviewRegion) {
       renderPreviewBuffer(previewRegion, previewStartTime, previewEndTime);
+      lastPreviewRenderProducedAudio = !previewLoopRange.isEmpty();
       lastPreviewStartTime = previewStartTime;
       lastPreviewEndTime = previewEndTime;
       lastPreviewRegion = previewRegion;
@@ -2034,10 +2200,20 @@ void PitchNetDocumentController::willDestroyRegionSequence(
   currentPlaybackRegion = nullptr;
 }
 
+juce::ScopedTryReadLock PitchNetDocumentController::getProcessingLock() {
+  return juce::ScopedTryReadLock{processBlockLock};
+}
+
 void PitchNetDocumentController::willBeginEditing(juce::ARADocument *document) {
   hostEditing = true;
   splitSnapshots.clear();
   deferredRegionUpdates.clear();
+
+  // Snapshot before taking the write lock. This pass only reads the graph and
+  // the host has not begun mutating it yet, so the audio thread may keep
+  // rendering while we copy. Holding the lock across a per-region Project copy
+  // of the whole document would stall playback audibly on a large session.
+  [&] {
   auto *processor = getRegionCanvasProcessor();
   if (!processor || !document)
     return;
@@ -2111,6 +2287,13 @@ void PitchNetDocumentController::willBeginEditing(juce::ARADocument *document) {
           }
         }
       }
+  }();
+
+  // Exclude the audio thread for the duration of the host's graph edit. Paired
+  // with exitWrite() in didEndEditing(); enterWrite() must run on every path,
+  // which is why the snapshot above is scoped in a lambda instead of returning
+  // early out of this function.
+  processBlockLock.enterWrite();
 }
 
 void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
@@ -2294,6 +2477,10 @@ void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
   }
   hostEditing = false;
   splitSnapshots.clear();
+  // The graph is stable again. Let the audio thread back in before the tail
+  // below, which reads source audio and dispatches analysis and must not run
+  // with the render path locked out.
+  processBlockLock.exitWrite();
   auto updates = std::move(deferredRegionUpdates);
   deferredRegionUpdates.clear();
   for (auto *region : updates)
@@ -2523,6 +2710,14 @@ void PitchNetDocumentController::startPreviewRange(double previewStartSeconds,
   previewState.previewEndTime.store(end);
   previewState.previewClaimedRenderer.store(nullptr);
   previewState.previewedRegion.store(previewRegion);
+
+  // Model thread. A host may preview a region it never assigned to an editor
+  // renderer, in which case no assignment callback fires and the renderer has
+  // no reader for it. Ask for one now; the renderer does the thread bridging.
+  for (auto *renderer :
+       getDocumentController()->getEditorRenderers<PitchNetEditorRenderer>())
+    if (renderer != nullptr)
+      renderer->requestReaderConfiguration();
 }
 
 void PitchNetDocumentController::startPreviewAudio(
