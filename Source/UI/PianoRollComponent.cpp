@@ -1248,7 +1248,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       else if (*choice >= 2 && *choice <= 5)
       {
         const EditMode modes[] = { EditMode::Select, EditMode::Split,
-                                   EditMode::Draw, EditMode::Timing };
+                                   EditMode::Anchor, EditMode::Timing };
         const auto mode = modes[*choice - 2];
         if (safeThis->onEditModeRequested)
           safeThis->onEditModeRequested(mode);
