@@ -1,0 +1,76 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "warnings": {
+        "dev": false
+      }
+    },
+    {
+      "name": "pitchnet-dev",
+      "displayName": "PitchNet Dev (RelWithDebInfo + ARA diagnostics)",
+      "description": "Side-by-side dev plugin identity, optimized so realtime behaviour in a DAW matches a release build while symbols are kept for the debugger. NOTE: these are Ninja presets, which inherit the target architecture from the environment - configure from Visual Studio or an x64 developer shell, never a plain prompt, or cl.exe silently targets x86.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "PITCHNET_DEV_BUILD": "ON"
+      }
+    },
+    {
+      "name": "pitchnet-dev-debug",
+      "displayName": "PitchNet Dev (Debug + ARA diagnostics)",
+      "description": "Unoptimized dev build with asserts live. Use only for stepping through logic that RelWithDebInfo optimizes away - realtime performance in a DAW is not representative and dropouts here are not real bugs.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PITCHNET_DEV_BUILD": "ON"
+      }
+    },
+    {
+      "name": "pitchnet-release",
+      "displayName": "PitchNet (Release)",
+      "description": "Shipping identity. This is the build that must keep resolving for projects saved against a released PitchNet.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PITCHNET_DEV_BUILD": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "pitchnet-dev",
+      "displayName": "PitchNet Dev VST3",
+      "configurePreset": "pitchnet-dev",
+      "targets": [
+        "PitchNetPlugin_VST3"
+      ]
+    },
+    {
+      "name": "pitchnet-dev-debug",
+      "displayName": "PitchNet Dev VST3 (Debug)",
+      "configurePreset": "pitchnet-dev-debug",
+      "targets": [
+        "PitchNetPlugin_VST3"
+      ]
+    },
+    {
+      "name": "pitchnet-release",
+      "displayName": "PitchNet VST3 (Release)",
+      "configurePreset": "pitchnet-release",
+      "targets": [
+        "PitchNetPlugin_VST3"
+      ]
+    }
+  ]
+}
