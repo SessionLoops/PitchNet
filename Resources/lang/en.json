@@ -260,7 +260,7 @@
   "tooltip.draw_tool": "Pitch Drawing Tool (Shortcut: 3)",
   "tooltip.engine_psola": "Classic DSP (time-domain PSOLA)\nShifts the original recording itself. Leaves untouched audio identical and needs no model, so it is far faster on CPU. Large pitch moves are rougher.",
   "tooltip.engine_vocoder": "Neural vocoder (PC-NSF-HiFiGAN)\nRebuilds the voice from its spectrum. Handles large pitch moves best, and reshapes tone across the whole edited region.",
-  "tooltip.engine_vocoder_unavailable": "AI Resynthesis is unavailable on this computer\nThe neural vocoder needs GPU acceleration (DirectML on Windows), and none was found here. On the CPU alone every edit would take far too long to render, so Classic is used instead.",
+  "tooltip.engine_vocoder_unavailable": "Only available on Mac and on Windows with DirectML",
   "tooltip.live_audition": "Live Audition On/Off",
   "tooltip.quantize_macro": "Correct Pitch Macro",
   "tooltip.restore_original": "Restore Original",

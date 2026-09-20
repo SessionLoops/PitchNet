@@ -47,15 +47,8 @@ public:
     void setSelectedNote(Note* note);
     void setSynthesisEngine(SynthesisEngineType type);
     SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
-
-    // ===== Rendering card: AI Resynthesis availability =====
-    // On a CPU-only machine (Windows/Linux with no DirectML adapter) the
-    // vocoder is too slow to be a real choice, so its radio is disabled and
-    // its tooltip says why. If it was the selected engine, the panel moves to
-    // Classic DSP and reports that through onSynthesisEngineChanged so the
-    // owner persists it and the controller renders with it.
+    // Disables the AI Resynthesis radio on CPU-only machines.
     void setAiResynthesisAvailable(bool available);
-    bool isAiResynthesisAvailable() const { return aiResynthesisAvailable; }
 
     // ===== Rendering card: inference device =====
     // The row only earns its space when there is a choice to make, so it shows
@@ -112,7 +105,6 @@ private:
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
-    void refreshVocoderToggleAvailability();
     void refreshRenderDeviceRow();
     void showRenderDeviceMenu();
     void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);

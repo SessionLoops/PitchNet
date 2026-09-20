@@ -715,9 +715,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (editorController)
       editorController->setSynthesisEngineType(type);
   };
-  // After the callback above is wired: on a CPU-only machine this moves a
-  // saved AI Resynthesis choice to Classic DSP, and that has to be persisted
-  // and handed to the controller.
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
   parameterPanel.onRenderDeviceChanged = [this](int deviceId)

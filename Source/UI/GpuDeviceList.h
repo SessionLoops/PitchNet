@@ -50,19 +50,8 @@ bool hasDeviceChoice(const juce::String &providerName);
 juce::StringArray getDisplayAdapterNames();
 
 /**
- * True when this machine can run the neural vocoder (AI Resynthesis) on
- * something other than the CPU.
- *
- * macOS always can (Core ML). Windows can when ONNX Runtime exposes the
- * DirectML provider and DXGI reports a hardware adapter for it to run on; a
- * CUDA build counts too when its provider is present. A Linux build with no
- * GPU provider, or a Windows machine with no usable adapter, is CPU-only:
- * the vocoder still runs there, but every edit takes far too long to render
- * for it to be a usable choice.
- *
- * Hardware does not change while the app runs, so the answer is computed
- * once and cached. ONNX Runtime must already be loaded when this is first
- * called.
+ * True when AI Resynthesis can run off the CPU: always on macOS (Core ML), and
+ * on Windows when the DirectML provider has a hardware adapter to run on.
  */
 bool hasGpuInference();
 } // namespace GpuDeviceList
