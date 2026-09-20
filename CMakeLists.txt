@@ -8,7 +8,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
         "macOS target architectures" FORCE)
 endif()
 
-project(PitchNet VERSION 0.5.7)
+project(PitchNet VERSION 0.6.0)
 
 # Fail fast on a 32-bit toolchain. Every ONNX Runtime package selected below is
 # x64/arm64 only, so a 32-bit build cannot link - it dies much later with a wall
@@ -391,9 +391,13 @@ target_include_directories(pitchnet_core PRIVATE ${R8BRAIN_INCLUDE_DIR})
 file(GLOB IMAGE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/*")
 list(FILTER IMAGE_FILES EXCLUDE REGEX "/\\.DS_Store$")
 set(BINARY_DATA_FILES ${IMAGE_FILES})
-set(EMBED_EN_LANG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/en.json")
-if(EXISTS "${EMBED_EN_LANG_FILE}")
-    list(APPEND BINARY_DATA_FILES "${EMBED_EN_LANG_FILE}")
+# Every translation is compiled in, so a language still works when the
+# Resources folder did not ship alongside the binary. A file on disk with the
+# same name still takes precedence at runtime (see Localization.h).
+file(GLOB LANG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/*.json")
+list(SORT LANG_FILES)
+if(LANG_FILES)
+    list(APPEND BINARY_DATA_FILES ${LANG_FILES})
 endif()
 set(EMBED_NOTICES_FILE "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.txt")
 if(EXISTS "${EMBED_NOTICES_FILE}")

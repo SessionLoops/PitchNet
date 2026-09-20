@@ -3,6 +3,7 @@
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/TimecodeFont.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -151,6 +152,32 @@ namespace
       note.markSynthDirty();
     }
   };
+
+  bool hasPitchEdits(const Note& note)
+  {
+    const auto current = NoteEditState::capture(note);
+    const auto defaults = NoteEditState::defaultsFor(note);
+    return current.midiNote != defaults.midiNote ||
+           current.pitchOffset != defaults.pitchOffset ||
+           current.tiltLeft != defaults.tiltLeft ||
+           current.tiltRight != defaults.tiltRight ||
+           current.vibrato != defaults.vibrato ||
+           current.pitchDrift != defaults.pitchDrift ||
+           current.smoothLeftFrames != defaults.smoothLeftFrames ||
+           current.smoothRightFrames != defaults.smoothRightFrames ||
+           current.deltaScale != defaults.deltaScale ||
+           current.deltaOffset != defaults.deltaOffset ||
+           current.bakedDeltaPitch != defaults.bakedDeltaPitch ||
+           current.deltaPitch != defaults.deltaPitch;
+  }
+
+  bool hasFormantEdits(const Note& note) { return note.getFormantShift() != 0.0f; }
+  bool hasAmplitudeEdits(const Note& note) { return note.getVolumeDb() != 0.0f; }
+  bool hasTimingEdits(const Note& note)
+  {
+    return note.getStartFrame() != note.getSrcStartFrame() ||
+           note.getEndFrame() != note.getSrcEndFrame();
+  }
 
   class ResetNoteEditsAction final : public UndoableAction
   {
@@ -353,7 +380,7 @@ PianoRollComponent::PianoRollComponent()
     previewButtonWidth = std::max(1, previewButton.getWidth());
     previewButtonHeight = std::max(1, previewButton.getHeight());
   }
-  previewButton.setTooltip("Context Audition");
+  previewButton.setTooltip(TR("tooltip.context_audition"));
   previewButton.setVisible(false);
   previewButton.onClick = [this]()
   {
@@ -371,7 +398,7 @@ PianoRollComponent::PianoRollComponent()
     resetButtonWidth = std::max(1, resetButton.getWidth());
     resetButtonHeight = std::max(1, resetButton.getHeight());
   }
-  resetButton.setTooltip("Restore Original");
+  resetButton.setTooltip(TR("tooltip.restore_original"));
   resetButton.setVisible(false);
   resetButton.onClick = [this]()
   {
@@ -1252,7 +1279,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       else if (*choice >= 2 && *choice <= 5)
       {
         const EditMode modes[] = { EditMode::Select, EditMode::Split,
-                                   EditMode::Draw, EditMode::Timing };
+                                   EditMode::Anchor, EditMode::Timing };
         const auto mode = modes[*choice - 2];
         if (safeThis->onEditModeRequested)
           safeThis->onEditModeRequested(mode);
@@ -1664,12 +1691,12 @@ juce::String PianoRollComponent::getTooltip()
 
   switch (pitchToolHandles->getHandle(handleIndex).type)
   {
-    case PitchToolHandles::HandleType::TiltLeft: return "Left Slope";
-    case PitchToolHandles::HandleType::Vibrato: return "Pitch Modulation";
-    case PitchToolHandles::HandleType::PitchDrift: return "Pitch Drift";
-    case PitchToolHandles::HandleType::Amplitude: return "Amplitude";
-    case PitchToolHandles::HandleType::Formant: return "Formant Shift";
-    case PitchToolHandles::HandleType::TiltRight: return "Right Slope";
+    case PitchToolHandles::HandleType::TiltLeft: return TR("handle.tilt_left");
+    case PitchToolHandles::HandleType::Vibrato: return TR("handle.vibrato");
+    case PitchToolHandles::HandleType::PitchDrift: return TR("handle.pitch_drift");
+    case PitchToolHandles::HandleType::Amplitude: return TR("handle.amplitude");
+    case PitchToolHandles::HandleType::Formant: return TR("handle.formant");
+    case PitchToolHandles::HandleType::TiltRight: return TR("handle.tilt_right");
     default: return {};
   }
 }
@@ -3047,21 +3074,44 @@ void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
   repaint();
 }
 
+void PianoRollComponent::refreshLocalisedText()
+{
+  previewButton.setTooltip(TR("tooltip.context_audition"));
+  resetButton.setTooltip(TR("tooltip.restore_original"));
+}
+
 void PianoRollComponent::showResetMenu(Note &note)
 {
   juce::PopupMenu menu;
   menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
-  const auto addItem = [&menu](int id, const juce::String& label)
+  const auto targets = getResetTargetNotes(note);
+  const auto anyTarget = [&targets](bool (*predicate)(const Note&))
   {
-    menu.addCustomItem(id, std::make_unique<pitchPopupMenu::MenuItemComponent>(
-        label, false, std::function<void()>{}, false), nullptr, label);
+    return std::any_of(targets.begin(), targets.end(),
+                       [predicate](const Note* n) { return n && predicate(*n); });
   };
-  addItem(1, "Pitch");
-  addItem(3, "Formant");
-  addItem(4, "Amplitude");
-  addItem(2, "Timing");
+  const bool pitchChanged = anyTarget(hasPitchEdits);
+  const bool formantChanged = anyTarget(hasFormantEdits);
+  const bool amplitudeChanged = anyTarget(hasAmplitudeEdits);
+  const bool timingChanged = anyTarget(hasTimingEdits);
+  const bool anyChanged =
+      pitchChanged || formantChanged || amplitudeChanged || timingChanged;
+
+  const auto addItem = [&menu](int id, const juce::String& label, bool enabled)
+  {
+    juce::PopupMenu::Item item(label);
+    item.itemID = id;
+    item.isEnabled = enabled;
+    item.customComponent = std::make_unique<pitchPopupMenu::MenuItemComponent>(
+        label, false, std::function<void()>{}, false).release();
+    menu.addItem(std::move(item));
+  };
+  addItem(1, TR("restore.pitch"), pitchChanged);
+  addItem(3, TR("restore.formant"), formantChanged);
+  addItem(4, TR("restore.amplitude"), amplitudeChanged);
+  addItem(2, TR("restore.timing"), timingChanged);
   menu.addSeparator();
-  addItem(5, "All Edits");
+  addItem(5, TR("restore.all"), anyChanged);
 
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   Note* notePtr = &note;

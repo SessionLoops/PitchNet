@@ -1,14 +1,17 @@
 #include "ProjectSerializer.h"
+#include "../Utils/Constants.h"
+#include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 9;
+constexpr int kProjectArchiveVersion = 10;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
@@ -110,17 +113,6 @@ bool readAudioBuffer(juce::InputStream& in, juce::AudioBuffer<float>& buffer)
         if (bytes > 0 &&
             in.read(buffer.getWritePointer(ch), static_cast<int>(bytes)) !=
                 static_cast<int>(bytes))
-            return false;
-    return true;
-}
-
-bool writeMel(juce::OutputStream& out,
-              const std::vector<std::vector<float>>& mel)
-{
-    if (!out.writeInt64(static_cast<juce::int64>(mel.size())))
-        return false;
-    for (const auto& frame : mel)
-        if (!writeFloatVector(out, frame))
             return false;
     return true;
 }
@@ -500,16 +492,23 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
 {
     destData.setSize(0);
     juce::MemoryOutputStream out(destData, false);
+    return toBinaryArchive(project, out, mode);
+}
 
+bool ProjectSerializer::toBinaryArchive(const Project& project,
+                                        juce::OutputStream& out,
+                                        BinaryArchiveMode mode)
+{
     const auto metadataJson =
         juce::JSON::toString(toJson(project, false, false), false);
     const auto& audioData = project.getAudioData();
     const bool includeSourceDerivedData =
         mode == BinaryArchiveMode::selfContained;
+    // The mel spectrogram is a pure function of originalWaveform, so v10+
+    // archives omit it (~8MB for a 3 minute take) and rebuild it on load.
     const int archiveFlags =
         includeSourceDerivedData
             ? kProjectArchiveHasOriginalWaveform |
-                  kProjectArchiveHasMelSpectrogram |
                   kProjectArchiveHasRenderedWaveform
             : 0;
 
@@ -529,9 +528,7 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
         !writeFloatVector(out, audioData.basePitch) ||
         !writeFloatVector(out, audioData.deltaPitch) ||
         !writeBoolVector(out, audioData.voicedMask) ||
-        !writeBoolVector(out, audioData.vadMask) ||
-        (includeSourceDerivedData &&
-         !writeMel(out, audioData.melSpectrogram)))
+        !writeBoolVector(out, audioData.vadMask))
         return false;
 
     if (!out.writeInt64(
@@ -751,6 +748,36 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         audioData.cleanedF0 = audioData.rawF0;
     if (audioData.denseF0.empty())
         audioData.denseF0 = audioData.f0;
+
+    // v10+ archives omit the mel spectrogram, which is a deterministic
+    // function of the pristine source waveform. Rebuild it with exactly the
+    // parameters EditorController analysed with. Host-backed ARA archives
+    // carry no originalWaveform and are hydrated from the host instead.
+    if (audioData.melSpectrogram.empty() &&
+        audioData.originalWaveform.getNumChannels() > 0 &&
+        audioData.originalWaveform.getNumSamples() > 0) {
+        const int melSampleRate =
+            audioData.sampleRate > 0 ? audioData.sampleRate : 44100;
+        MelSpectrogram melComputer(melSampleRate, N_FFT, HOP_SIZE, NUM_MELS,
+                                   FMIN, FMAX);
+        audioData.melSpectrogram = melComputer.compute(
+            audioData.originalWaveform.getReadPointer(0),
+            audioData.originalWaveform.getNumSamples());
+
+        // MainComponent's repadMel() zero-fills the frames ahead of the
+        // timeline offset rather than computing them over the silent padding.
+        // Match that, or the synthesizer sees different leading frames after a
+        // save than it did before one.
+        const int offsetFrames = juce::jlimit(
+            0, static_cast<int>(audioData.melSpectrogram.size()),
+            static_cast<int>(std::llround(audioData.timelineOffsetSeconds *
+                                          melSampleRate /
+                                          static_cast<double>(HOP_SIZE))));
+        for (int i = 0; i < offsetFrames; ++i)
+            std::fill(audioData.melSpectrogram[static_cast<size_t>(i)].begin(),
+                      audioData.melSpectrogram[static_cast<size_t>(i)].end(),
+                      0.0f);
+    }
 
     project.setModified(false);
     return true;

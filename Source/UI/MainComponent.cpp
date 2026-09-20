@@ -53,7 +53,7 @@ juce::String getCurrentApplicationVersion()
 #elif defined(JucePlugin_VersionString)
   return JucePlugin_VersionString;
 #else
-  return "0.5.7";
+  return "0.6.0";
 #endif
 }
 
@@ -151,9 +151,9 @@ public:
                          const juce::String &releaseNotes)
       : latest(latestVersion),
         current(currentVersion),
-        cancelButton("Ask Me Later"),
-        skipButton("Skip This Version"),
-        downloadButton("Download Now")
+        cancelButton(TR("update.ask_later")),
+        skipButton(TR("update.skip_version")),
+        downloadButton(TR("update.download_now"))
   {
     releaseNotesEditor.setMultiLine(true);
     releaseNotesEditor.setReadOnly(true);
@@ -233,12 +233,12 @@ public:
 
     g.setColour(juce::Colour(0xFFEFEFEFu));
     g.setFont(AppFont::getFont(16.0f));
-    g.drawText("Update Available", 24, 24, getWidth() - 48, 24,
+    g.drawText(TR("update.title"), 24, 24, getWidth() - 48, 24,
                juce::Justification::centred, false);
 
     g.setFont(juce::Font(juce::FontOptions(updateSubtitleFontSize)).boldened());
     juce::ignoreUnused(latest, current);
-    g.drawFittedText("A new version of PitchNet is available. Would you like to download it?",
+    g.drawFittedText(TR("update.message"),
                      24, 54, getWidth() - 48, 34,
                      juce::Justification::centred, 2);
   }
@@ -323,7 +323,7 @@ class AboutContent : public juce::Component
 {
 public:
   AboutContent()
-      : closeButton("Close")
+      : closeButton(TR("dialog.close"))
   {
     noticesEditor.setMultiLine(true);
     noticesEditor.setReadOnly(true);
@@ -615,7 +615,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   if (auto *audioEngine = editorController
                               ? editorController->getAudioEngine()
                               : nullptr)
-    audioEngine->initializeAudio();
+    audioEngine->initializeAudio(
+        settingsManager->getAudioDeviceState(),
+        settingsManager->getFollowSystemAudioOutput());
   LOG("MainComponent: audio initialized");
 
   LOG("MainComponent: setting up callbacks...");
@@ -697,6 +699,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
     settingsManager->setUiBrightnessPercent(brightnessPercent);
     applyUiBrightness(brightnessPercent);
   };
+  parameterPanel.onLanguageChanged = [this](const juce::String &languageCode)
+  {
+    // The panel has already switched the language; this only records it.
+    if (settingsManager == nullptr)
+      return;
+    settingsManager->setLanguage(languageCode);
+    settingsManager->saveConfig();
+  };
   parameterPanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
   parameterPanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
   {
@@ -705,6 +715,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (editorController)
       editorController->setSynthesisEngineType(type);
   };
+  parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
   parameterPanel.onRenderDeviceChanged = [this](int deviceId)
   {
@@ -1709,12 +1720,38 @@ void MainComponent::addRecentFile(const juce::File &file)
   refreshRecentFilesMenu();
 }
 
+void MainComponent::refreshLocalisedText()
+{
+  // Command names and categories are read back from the string table every
+  // time JUCE asks for them, so the menus only need to be told to reread.
+  if (commandManager)
+    commandManager->commandStatusChanged();
+
+  if (menuHandler)
+  {
+    menuHandler->menuItemsChanged();
+
+#if JUCE_MAC
+    if (!isPluginMode())
+    {
+      macExtraAppleMenuItems = menuHandler->getMacExtraAppleMenu();
+      juce::MenuBarModel::setMacMainMenu(menuHandler.get(),
+                                         &macExtraAppleMenuItems);
+    }
+#endif
+  }
+
+  resized();
+  repaint();
+}
+
 void MainComponent::openRecentFile(const juce::File &file)
 {
   if (!file.existsAsFile())
   {
-    StyledMessageBox::show(this, "Recent file missing",
-                           "File not found:\n" + file.getFullPathName(),
+    StyledMessageBox::show(this, TR("dialog.recent_missing"),
+                           TR("dialog.file_not_found") + "\n" +
+                               file.getFullPathName(),
                            StyledMessageBox::WarningIcon);
     recentFiles.removeString(file.getFullPathName());
     if (settingsManager)
@@ -1899,7 +1936,7 @@ void MainComponent::exportFile()
               auto *format = ExportHelper::findFormatForExtension(
                   formatManager, ExportHelper::getFormatExtension(settings.format));
               if (!format) {
-                error = "No exporter is available for format: " +
+                error = TR("error.no_exporter") + " " +
                         ExportHelper::getFormatDisplayName(settings.format);
                 break;
               }
@@ -3024,10 +3061,10 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
             if (!vocoder->loadModel(modelPath))
             {
               juce::AlertWindow::showMessageBoxAsync(
-                  juce::AlertWindow::WarningIcon, "Inference failed",
-                  "Failed to load vocoder model at:\n" +
-                      modelPath.getFullPathName() +
-                      "\n\nPlease check your model installation and try again.");
+                  juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                  TR("error.vocoder_load_failed") + "\n" +
+                      modelPath.getFullPathName() + "\n\n" +
+                      TR("error.check_model_install"));
               safeThis->toolbar.hideProgress();
               return;
             }
@@ -3035,10 +3072,10 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
           else
           {
             juce::AlertWindow::showMessageBoxAsync(
-                juce::AlertWindow::WarningIcon, "Missing model file",
-                "The vocoder model was not found at:\n" +
-                    modelPath.getFullPathName() +
-                    "\n\nPlease install the required model files and try again.");
+                juce::AlertWindow::WarningIcon, TR("error.missing_model"),
+                TR("error.vocoder_not_found") + "\n" +
+                    modelPath.getFullPathName() + "\n\n" +
+                    TR("error.install_models"));
             safeThis->toolbar.hideProgress();
             return;
           }
@@ -3564,51 +3601,51 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   {
   // File commands
   case CommandIDs::openFile:
-    result.setInfo(TR("command.open_audio"), TR("command.open_audio.desp"), "File", 0);
+    result.setInfo(TR("command.open_audio"), TR("command.open_audio.desp"), TR("menu.file"), 0);
     result.addDefaultKeypress('o', primaryModifier);
     break;
 
   case CommandIDs::saveProject:
-    result.setInfo(TR("command.save_project"), TR("command.save_project.desp"), "File", 0);
+    result.setInfo(TR("command.save_project"), TR("command.save_project.desp"), TR("menu.file"), 0);
     result.addDefaultKeypress('s', primaryModifier);
     result.setActive(project != nullptr);
     break;
 
   case CommandIDs::saveProjectAs:
     result.setInfo(TR("command.save_project_as"), TR("command.save_project_as.desp"),
-                   "File", 0);
+                   TR("menu.file"), 0);
     result.addDefaultKeypress('s', primaryModifier | juce::ModifierKeys::shiftModifier);
     result.setActive(project != nullptr);
     break;
 
   case CommandIDs::exportAudio:
-    result.setInfo(TR("command.export_audio"), TR("command.export_audio.desp"), "File", 0);
+    result.setInfo(TR("command.export_audio"), TR("command.export_audio.desp"), TR("menu.file"), 0);
     result.addDefaultKeypress('e', primaryModifier);
     result.setActive(project != nullptr &&
                      project->getAudioData().waveform.getNumSamples() > 0);
     break;
 
   case CommandIDs::exportMidi:
-    result.setInfo(TR("command.export_midi"), TR("command.export_midi.desp"), "File", 0);
+    result.setInfo(TR("command.export_midi"), TR("command.export_midi.desp"), TR("menu.file"), 0);
     result.setActive(project != nullptr && !project->getNotes().empty());
     break;
 
   case CommandIDs::quit:
-    result.setInfo(TR("command.quit"), TR("command.quit.desp"), "File", 0);
+    result.setInfo(TR("command.quit"), TR("command.quit.desp"), TR("menu.file"), 0);
     result.addDefaultKeypress('q', primaryModifier);
     result.setActive(!isPluginMode());
     break;
 
   // Edit commands
   case CommandIDs::undo:
-    result.setInfo(TR("command.undo"), TR("command.undo.desp"), "Edit", 0);
+    result.setInfo(TR("command.undo"), TR("command.undo.desp"), TR("menu.edit"), 0);
     result.addDefaultKeypress('z', primaryModifier);
     result.setActive(isPluginMode() ||
                      (undoManager != nullptr && undoManager->canUndo()));
     break;
 
   case CommandIDs::redo:
-    result.setInfo(TR("command.redo"), TR("command.redo.desp"), "Edit", 0);
+    result.setInfo(TR("command.redo"), TR("command.redo.desp"), TR("menu.edit"), 0);
 #if JUCE_MAC
     result.addDefaultKeypress('z', primaryModifier | juce::ModifierKeys::shiftModifier);
 #else
@@ -3619,36 +3656,36 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     break;
 
   case CommandIDs::selectAll:
-    result.setInfo(TR("command.select_all"), TR("command.select_all.desp"), "Edit", 0);
+    result.setInfo(TR("command.select_all"), TR("command.select_all.desp"), TR("menu.edit"), 0);
     result.addDefaultKeypress('a', primaryModifier);
     result.setActive(project != nullptr);
     break;
 
   // View commands
   case CommandIDs::showSettings:
-    result.setInfo(TR("command.settings"), TR("command.settings.desp"), "View", 0);
+    result.setInfo(TR("command.settings"), TR("command.settings.desp"), TR("menu.view"), 0);
     result.addDefaultKeypress(',', primaryModifier);
     break;
 
   case CommandIDs::showAbout:
-    result.setInfo(TR("command.about"), TR("command.about.desp"), "View", 0);
+    result.setInfo(TR("command.about"), TR("command.about.desp"), TR("menu.view"), 0);
     break;
 
   case CommandIDs::showDeltaPitch:
-    result.setInfo(TR("command.show_delta_pitch"), TR("command.show_delta_pitch.desp"), "View", 0);
+    result.setInfo(TR("command.show_delta_pitch"), TR("command.show_delta_pitch.desp"), TR("menu.view"), 0);
     result.addDefaultKeypress('d', primaryModifier | juce::ModifierKeys::shiftModifier);
     result.setTicked(settingsManager->getShowDeltaPitch());
     break;
 
   case CommandIDs::showBasePitch:
-    result.setInfo(TR("command.show_base_pitch"), TR("command.show_base_pitch.desp"), "View", 0);
+    result.setInfo(TR("command.show_base_pitch"), TR("command.show_base_pitch.desp"), TR("menu.view"), 0);
     result.addDefaultKeypress('b', primaryModifier | juce::ModifierKeys::shiftModifier);
     result.setTicked(settingsManager->getShowBasePitch());
     break;
 
   // Transport commands
   case CommandIDs::playPause:
-    result.setInfo(TR("command.play_pause"), TR("command.play_pause.desp"), "Transport", 0);
+    result.setInfo(TR("command.play_pause"), TR("command.play_pause.desp"), TR("category.transport"), 0);
     // In plugin mode space is normally left to the host. JUCE's Windows peer
     // forwards unhandled keys to the host window, but the Linux X11 peer does
     // not, so a focused editor would swallow space. Bind it on Linux; the
@@ -3664,62 +3701,63 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     break;
 
   case CommandIDs::stop:
-    result.setInfo(TR("command.stop"), TR("command.stop.desp"), "Transport", 0);
+    result.setInfo(TR("command.stop"), TR("command.stop.desp"), TR("category.transport"), 0);
     result.addDefaultKeypress(juce::KeyPress::escapeKey, juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && isPlaying &&
                      hostTransportControlAvailable);
     break;
 
   case CommandIDs::goToStart:
-    result.setInfo(TR("command.go_to_start"), TR("command.go_to_start.desp"), "Transport", 0);
+    result.setInfo(TR("command.go_to_start"), TR("command.go_to_start.desp"), TR("category.transport"), 0);
     result.addDefaultKeypress(juce::KeyPress::homeKey, juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr);
     break;
 
   case CommandIDs::goToEnd:
-    result.setInfo(TR("command.go_to_end"), TR("command.go_to_end.desp"), "Transport", 0);
+    result.setInfo(TR("command.go_to_end"), TR("command.go_to_end.desp"), TR("category.transport"), 0);
     result.addDefaultKeypress(juce::KeyPress::endKey, juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr);
     break;
 
   // Edit mode commands
   case CommandIDs::toggleDrawMode:
-    result.setInfo(TR("command.toggle_draw"), TR("command.toggle_draw.desp"), "Edit Mode", 0);
+    result.setInfo(TR("command.toggle_draw"), TR("command.toggle_draw.desp"), TR("category.edit_mode"), 0);
     result.setActive(project != nullptr);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Draw);
     break;
 
   case CommandIDs::exitDrawMode:
-    result.setInfo(TR("command.exit_draw"), TR("command.exit_draw.desp"), "Edit Mode", 0);
+    result.setInfo(TR("command.exit_draw"), TR("command.exit_draw.desp"), TR("category.edit_mode"), 0);
     result.setActive(pianoRoll.getEditMode() == EditMode::Draw);
     break;
 
   case CommandIDs::activateMainTool:
-    result.setInfo("Main Tool", "Activate the main editing tool", "Edit Mode", 0);
+    result.setInfo(TR("command.main_tool"), TR("command.main_tool.desp"),
+                   TR("category.edit_mode"), 0);
     result.addDefaultKeypress('1', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Select);
     break;
 
   case CommandIDs::activateSplitTool:
-    result.setInfo("Note Separation Tool", "Activate the note separation tool",
-                   "Edit Mode", 0);
+    result.setInfo(TR("command.split_tool"), TR("command.split_tool.desp"),
+                   TR("category.edit_mode"), 0);
     result.addDefaultKeypress('2', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
     break;
 
   case CommandIDs::activateAnchorTool:
-    result.setInfo("Pitch Drawing Tool", "Activate the pitch drawing tool",
-                   "Edit Mode", 0);
+    result.setInfo(TR("command.draw_tool"), TR("command.draw_tool.desp"),
+                   TR("category.edit_mode"), 0);
     result.addDefaultKeypress('3', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Anchor);
     break;
 
   case CommandIDs::activateTimingTool:
-    result.setInfo("Timing Tool", "Activate the timing editing tool",
-                   "Edit Mode", 0);
+    result.setInfo(TR("command.timing_tool"), TR("command.timing_tool.desp"),
+                   TR("category.edit_mode"), 0);
     result.addDefaultKeypress('4', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Timing);

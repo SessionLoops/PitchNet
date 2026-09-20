@@ -225,4 +225,24 @@ juce::StringArray getDisplayAdapterNames()
   return {};
 #endif
 }
+
+bool hasGpuInference()
+{
+#if JUCE_MAC
+  return true;
+#elif defined(_WIN32) && defined(USE_DIRECTML) && defined(HAVE_ONNXRUNTIME)
+  try
+  {
+    for (const auto &provider : Ort::GetAvailableProviders())
+      if (provider == "DmlExecutionProvider")
+        return !getDxgiAdapterNames().isEmpty();
+  }
+  catch (const std::exception &)
+  {
+  }
+  return false;
+#else
+  return false;
+#endif
+}
 } // namespace GpuDeviceList

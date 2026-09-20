@@ -5,6 +5,7 @@
 #include "../Models/Note.h"
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 #include "IMainView.h"
 #include "StyledComponents.h"
@@ -33,6 +34,9 @@ public:
     // Only ARA plugin mode has playback regions, so the card is off by default
     // and the hosting panel is told to re-measure whenever it appears or goes
     // away - the card stack's natural height is what the panel scrolls against.
+    /** Re-applies every caption and tooltip after a language change. */
+    void refreshLocalisedText();
+
     void setRegionsCardVisible(bool visible);
     bool isRegionsCardVisible() const { return regionsCardVisible; }
     void setRegionList(const std::vector<MainViewRegionEntry>& regions,
@@ -43,6 +47,8 @@ public:
     void setSelectedNote(Note* note);
     void setSynthesisEngine(SynthesisEngineType type);
     SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
+    // Disables the AI Resynthesis radio on CPU-only machines.
+    void setAiResynthesisAvailable(bool available);
 
     // ===== Rendering card: inference device =====
     // The row only earns its space when there is a choice to make, so it shows
@@ -60,6 +66,11 @@ public:
 
     std::function<void()> onParameterChanged;
     std::function<void(const juce::String&)> onRegionSelected;
+
+    // Fired with the code to persist ("auto", "en", "zh-TW", ...) whenever the
+    // language card changes. The panel applies the language itself; the owner
+    // only has to write the code to its settings.
+    std::function<void(const juce::String&)> onLanguageChanged;
     std::function<void()> onPreferredHeightChanged;
     std::function<void()> onParameterEditFinished;
     std::function<void(int)> onScaleRootChanged;
@@ -79,6 +90,9 @@ public:
 private:
     void setupTextButton(juce::TextButton& button);
     void showRegionsMenu();
+    void showLanguageMenu();
+    void refreshLanguageButtonText();
+    void applyLanguageSelection(const juce::String& languageCode);
     void refreshRegionsButtonText();
     void showDragSnapModeMenu();
     void showTimelineBeatMenu();
@@ -105,21 +119,31 @@ private:
     Note* selectedNote = nullptr;
     bool isUpdating = false;
 
-    juce::Label regionsSectionLabel { {}, "Regions" };
+    // Card titles and control captions all come from the string table; see
+    // refreshLocalisedText(), which is also what a language change calls.
+    juce::Label regionsSectionLabel;
     juce::Rectangle<int> regionsCardBounds;
-    juce::Label pitchSectionLabel { {}, "Pitch" };
+    juce::Label pitchSectionLabel;
     juce::Rectangle<int> pitchCardBounds;
-    juce::Label timeSectionLabel { {}, "Time" };
+    juce::Label timeSectionLabel;
     juce::Rectangle<int> timeCardBounds;
-    juce::Label synthesisSectionLabel { {}, "Rendering" };
+    juce::Label synthesisSectionLabel;
     juce::Rectangle<int> synthesisCardBounds;
-    juce::Label brightnessSectionLabel { {}, "UI Brightness" };
+    juce::Label languageSectionLabel;
+    juce::Rectangle<int> languageCardBounds;
+    juce::Label brightnessSectionLabel;
     juce::Rectangle<int> brightnessCardBounds;
 
-    ComboSelectionButton regionsSelectorButton { "No regions" };
+    ComboSelectionButton regionsSelectorButton;
 
-    RadioButton chromaticToggle { "Chromatic" };
-    RadioButton scaleToggle { "Scale" };
+    // Interface language. "auto" follows the system language; anything else is
+    // an explicit choice. The selector matches the Regions one: a button that
+    // opens a ticked menu rather than a combo box.
+    ComboSelectionButton languageSelectorButton;
+    juce::String selectedLanguageCode { "auto" };
+
+    RadioButton chromaticToggle;
+    RadioButton scaleToggle;
 
     // How an edited region is rendered. Only one of these is resynthesis in
     // the analysis/resynthesis sense - the model turns a spectrum back into a
@@ -130,27 +154,27 @@ private:
     // Not ranked by quality: neither is better everywhere. The model wins on
     // large pitch moves, PSOLA returns untouched audio bit for bit. The member
     // names track the enum, the button text is what the user reads.
-    RadioButton vocoderEngineToggle { "AI Resynthesis" };
-    RadioButton psolaEngineToggle { "Classic" };
+    RadioButton vocoderEngineToggle;
+    RadioButton psolaEngineToggle;
 
-    juce::Label renderDeviceLabel { {}, "Device" };
-    ComboSelectionButton renderDeviceButton { "Default" };
+    juce::Label renderDeviceLabel;
+    ComboSelectionButton renderDeviceButton;
 
-    juce::Label referenceLabel { {}, "Reference (A4)" };
+    juce::Label referenceLabel;
     SliderBox referenceSlider { "Pitch Reference" };
 
-    StyledToggleButton snapToSemitonesToggle { "Drag Snap" };
-    CompactSelectionButton dragSnapModeButton { "Chromatic" };
+    StyledToggleButton snapToSemitonesToggle;
+    CompactSelectionButton dragSnapModeButton;
 
-    RadioButton beatsTimelineToggle { "Beats" };
-    RadioButton timeTimelineToggle { "Time" };
-    juce::Label timelineBeatLabel { {}, "Beat" };
+    RadioButton beatsTimelineToggle;
+    RadioButton timeTimelineToggle;
+    juce::Label timelineBeatLabel;
     CompactSelectionButton timelineBeatButton { "4/4" };
-    juce::Label timelineTempoLabel { {}, "Tempo" };
+    juce::Label timelineTempoLabel;
     SliderBox timelineTempoSlider { "Tempo" };
-    juce::Label timelineGridLabel { {}, "Grid" };
+    juce::Label timelineGridLabel;
     CompactSelectionButton timelineGridButton { "1/4" };
-    StyledToggleButton timelineSnapCycleToggle { "Snap Cycle" };
+    StyledToggleButton timelineSnapCycleToggle;
     MacroSlider brightnessSlider;
 
     std::vector<MainViewRegionEntry> regionEntries;
@@ -171,10 +195,19 @@ private:
     bool timelineSnapCycle = false;
     double uiBrightnessPercent = 100.0;
     SynthesisEngineType synthesisEngine = defaultSynthesisEngineType();
+    bool aiResynthesisAvailable = true;
 
     juce::StringArray renderDeviceNames;
     int renderDeviceIndex = 0;
     bool renderDeviceRowVisible = false;
+
+    // Declared last so it is torn down before the widgets it refreshes.
+    LocalisationWatcher languageWatcher{[this]
+                                        {
+                                            refreshLocalisedText();
+                                            resized();
+                                            repaint();
+                                        }};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

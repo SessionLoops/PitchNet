@@ -1,6 +1,7 @@
 #include "PianoRollWorkspaceView.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "BinaryData.h"
 #include "Dialogs/QuantizePitchDialog.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -144,7 +145,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
 
   autoZoomButton.setImage(juce::ImageFileFormat::loadFrom(
       BinaryData::autozoom_png, static_cast<size_t>(BinaryData::autozoom_pngSize)));
-  autoZoomButton.setTooltip("Vertical Auto-Zoom");
+  autoZoomButton.setTooltip(TR("tooltip.vertical_auto_zoom"));
   autoZoomButton.onClick = [this]()
   {
     if (onAutoZoomRequested)
@@ -524,4 +525,9 @@ void PianoRollWorkspaceView::timerCallback()
     lastOverviewCursorTime = cursorTime;
     overviewPanel.repaintPlayhead(previousCursorTime, cursorTime);
   }
+}
+
+void PianoRollWorkspaceView::refreshLocalisedText()
+{
+  autoZoomButton.setTooltip(TR("tooltip.vertical_auto_zoom"));
 }

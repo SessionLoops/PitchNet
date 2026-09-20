@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
+#include "../../Utils/Localization.h"
 #include "../../Utils/UI/Theme.h"
 #include "AppFont.h"
 #include <functional>
@@ -26,7 +27,7 @@ public:
         setOpaque(false);
 
         // Add OK button
-        okButton = std::make_unique<juce::TextButton>("OK");
+        okButton = std::make_unique<juce::TextButton>(TR("dialog.ok"));
         okButton->setSize(90, 34);
         okButton->onClick = [this] {
             if (onClose != nullptr)

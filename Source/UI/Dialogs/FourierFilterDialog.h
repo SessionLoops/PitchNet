@@ -50,8 +50,8 @@ private:
   juce::Label lowpassLabel;
   juce::Slider highpassSlider;
   juce::Label highpassLabel;
-  juce::TextButton okButton{"OK"};
-  juce::TextButton cancelButton{"Cancel"};
+  juce::TextButton okButton;
+  juce::TextButton cancelButton;
 
   // Spectrum viewport bounds
   juce::Rectangle<int> spectrumBounds;

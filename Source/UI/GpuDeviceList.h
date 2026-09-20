@@ -48,4 +48,10 @@ bool hasDeviceChoice(const juce::String &providerName);
  * fixed range when enumeration comes up empty, this does not.
  */
 juce::StringArray getDisplayAdapterNames();
+
+/**
+ * True when AI Resynthesis can run off the CPU: always on macOS (Core ML), and
+ * on Windows when the DirectML provider has a hardware adapter to run on.
+ */
+bool hasGpuInference();
 } // namespace GpuDeviceList

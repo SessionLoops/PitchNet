@@ -20,8 +20,9 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
   auto loadedProject = std::make_shared<Project>();
   if (!ProjectSerializer::loadFromFile(*loadedProject, file)) {
-    StyledMessageBox::show(this, "Open failed",
-                           "Failed to load project:\n" + file.getFullPathName(),
+    StyledMessageBox::show(this, TR("dialog.open_failed"),
+                           TR("dialog.project_load_failed") + "\n" +
+                               file.getFullPathName(),
                            StyledMessageBox::WarningIcon);
     return;
   }
@@ -72,8 +73,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
   auto continueOpenWithAudio = [this, loadedProject](const juce::File &audioFile) {
     if (!audioFile.existsAsFile()) {
-      StyledMessageBox::show(this, "Open failed",
-                             "Project audio file not found:\n" +
+      StyledMessageBox::show(this, TR("dialog.open_failed"),
+                             TR("dialog.project_audio_missing") + "\n" +
                                  audioFile.getFullPathName(),
                              StyledMessageBox::WarningIcon);
       return;
@@ -215,19 +216,19 @@ void MainComponent::openProjectFile(const juce::File &file) {
                   if (modelPath.exists()) {
                     if (!vocoder->loadModel(modelPath)) {
                       juce::AlertWindow::showMessageBoxAsync(
-                          juce::AlertWindow::WarningIcon, "Inference failed",
-                          "Failed to load vocoder model at:\n" +
-                              modelPath.getFullPathName() +
-                              "\n\nPlease check your model installation and try again.");
+                          juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                          TR("error.vocoder_load_failed") + "\n" +
+                              modelPath.getFullPathName() + "\n\n" +
+                              TR("error.check_model_install"));
                       safeThis->isLoadingAudio = false;
                       return;
                     }
                   } else {
                     juce::AlertWindow::showMessageBoxAsync(
-                        juce::AlertWindow::WarningIcon, "Missing model file",
-                        "The vocoder model was not found at:\n" +
-                            modelPath.getFullPathName() +
-                            "\n\nPlease install the required model files and try again.");
+                        juce::AlertWindow::WarningIcon, TR("error.missing_model"),
+                        TR("error.vocoder_not_found") + "\n" +
+                            modelPath.getFullPathName() + "\n\n" +
+                            TR("error.install_models"));
                     safeThis->isLoadingAudio = false;
                     return;
                   }
@@ -263,9 +264,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
                         if (!success) {
                           StyledMessageBox::show(
-                              safeThis.getComponent(), "Open warning",
-                              "Project opened, but applying saved pitch edits failed.\n"
-                              "You can click Re-analyze to rebuild pitch data.",
+                              safeThis.getComponent(), TR("dialog.open_warning"),
+                              TR("dialog.pitch_edits_failed"),
                               StyledMessageBox::WarningIcon);
                           return;
                         }
@@ -287,11 +287,11 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
     if (!shaMatched) {
       juce::AlertWindow::showOkCancelBox(
-          juce::AlertWindow::WarningIcon, "Audio file changed",
-          "The saved audio hash does not match current file:\n" +
-              audioFile.getFullPathName() +
-              "\n\nDo you want to re-analyze this audio?",
-          "Re-analyze", "Use Saved Edits", this,
+          juce::AlertWindow::WarningIcon, TR("dialog.audio_changed"),
+          TR("dialog.audio_hash_mismatch") + "\n" +
+              audioFile.getFullPathName() + "\n\n" +
+              TR("dialog.reanalyze_question"),
+          TR("dialog.reanalyze"), TR("dialog.use_saved_edits"), this,
           juce::ModalCallbackFunction::create([proceedWithProject](int result) {
             proceedWithProject(result != 0);
           }));
@@ -304,10 +304,11 @@ void MainComponent::openProjectFile(const juce::File &file) {
   const juce::File audioFile = loadedProject->getFilePath();
   if (!audioFile.existsAsFile()) {
     juce::AlertWindow::showOkCancelBox(
-        juce::AlertWindow::WarningIcon, "Audio file missing",
-        "Project audio file was not found:\n" + audioFile.getFullPathName() +
-            "\n\nDo you want to locate a replacement audio file?",
-        "Locate Audio", "Cancel", this,
+        juce::AlertWindow::WarningIcon, TR("dialog.audio_missing"),
+        TR("dialog.project_audio_missing") + "\n" +
+            audioFile.getFullPathName() + "\n\n" +
+            TR("dialog.locate_question"),
+        TR("dialog.locate_audio"), TR("dialog.cancel"), this,
         juce::ModalCallbackFunction::create(
             [this, continueOpenWithAudio](int result) {
               if (result == 0)
@@ -418,18 +419,18 @@ void MainComponent::loadAudioFile(const juce::File &file) {
           if (modelPath.exists()) {
             if (!vocoder->loadModel(modelPath)) {
               juce::AlertWindow::showMessageBoxAsync(
-                  juce::AlertWindow::WarningIcon, "Inference failed",
-                  "Failed to load vocoder model at:\n" +
-                      modelPath.getFullPathName() +
-                      "\n\nPlease check your model installation and try again.");
+                  juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                  TR("error.vocoder_load_failed") + "\n" +
+                      modelPath.getFullPathName() + "\n\n" +
+                      TR("error.check_model_install"));
               return;
             }
           } else {
             juce::AlertWindow::showMessageBoxAsync(
-                juce::AlertWindow::WarningIcon, "Missing model file",
-                "The vocoder model was not found at:\n" +
-                    modelPath.getFullPathName() +
-                    "\n\nPlease install the required model files and try again.");
+                juce::AlertWindow::WarningIcon, TR("error.missing_model"),
+                TR("error.vocoder_not_found") + "\n" +
+                    modelPath.getFullPathName() + "\n\n" +
+                    TR("error.install_models"));
             return;
           }
         }

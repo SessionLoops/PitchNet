@@ -72,6 +72,11 @@ public:
   {
     preferredAudioOutputDevice = name;
   }
+  // Serialised juce::AudioDeviceManager state (device type, device names,
+  // sample rate, buffer size). Restored at launch so the standalone app comes
+  // back on the device the user picked, not the platform default.
+  juce::String getAudioDeviceState() const { return audioDeviceState; }
+  void setAudioDeviceState(const juce::String &xml) { audioDeviceState = xml; }
   juce::String getSkippedUpdateVersion() const { return skippedUpdateVersion; }
   void setSkippedUpdateVersion(const juce::String &version)
   {
@@ -122,7 +127,8 @@ private:
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   int gpuDeviceId = 0;
   bool hasStoredGpuDeviceIdSetting = false;
-  juce::String language = "en";
+  // "auto" follows the system language until the user picks one.
+  juce::String language = "auto";
 
   // Config
   juce::File lastFilePath;
@@ -140,6 +146,7 @@ private:
   bool showVocoderF0Debug = false;
   bool followSystemAudioOutput = true;
   juce::String preferredAudioOutputDevice;
+  juce::String audioDeviceState;
   juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
   bool liveAuditionEnabled = false;

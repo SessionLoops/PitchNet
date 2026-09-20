@@ -69,7 +69,13 @@ public:
 
   // Audio device management
   juce::AudioDeviceManager &getDeviceManager() { return deviceManager; }
-  void initializeAudio();
+  /// Opens the output device. @p savedStateXml is the state previously
+  /// captured with juce::AudioDeviceManager::createStateXml() (empty on first
+  /// run); when @p followSystemDefault is set the restored state only supplies
+  /// the device type and the output falls back to that type's current default
+  /// device.
+  void initializeAudio(const juce::String &savedStateXml = {},
+                       bool followSystemDefault = true);
   void shutdownAudio();
 
   // Volume control (dB, -60 to +12)

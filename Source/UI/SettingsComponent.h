@@ -3,6 +3,7 @@
 #include "../Audio/PitchDetectorType.h"
 #include "../JuceHeader.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "Main/SettingsManager.h"
 #include "StyledComponents.h"
 #include <functional>
@@ -45,7 +46,6 @@ public:
 
   // Callbacks
   std::function<void()> onSettingsChanged;
-  std::function<void()> onLanguageChanged;
   std::function<void(PitchDetectorType)> onPitchDetectorChanged;
   std::function<void(bool)> onShowSegmentsDebugChanged;
   std::function<void(bool)> onShowGameValuesDebugChanged;
@@ -59,6 +59,9 @@ public:
   // Load/save settings
   void loadSettings();
   void saveSettings();
+
+  // Re-applies every string this dialog owns after a language change.
+  void refreshLocalisedText();
 
   // Get available execution providers
   static juce::StringArray getAvailableDevices();
@@ -122,6 +125,9 @@ private:
   void updateSampleRates();
   void updateBufferSizes();
   void applyAudioSettings();
+  /// Writes the live device selection (including the serialised device-manager
+  /// state) to config.json so it can be restored on the next launch.
+  void persistAudioDeviceSettings();
   void syncToSystemOutputIfNeeded();
   void setActiveTab(SettingsTab tab);
   void updateTabButtonStyles();
@@ -134,9 +140,6 @@ private:
   SettingsLookAndFeel settingsLookAndFeel;
 
   juce::Label titleLabel;
-
-  juce::Label languageLabel;
-  StyledComboBox languageComboBox;
 
   juce::Label deviceLabel;
   StyledComboBox deviceComboBox;
@@ -199,6 +202,9 @@ private:
   juce::Rectangle<int> sidebarBounds;
   juce::Rectangle<int> tabListBounds;
   float cornerRadius = 10.0f;
+
+  // Declared last so it is torn down before the components it refreshes.
+  LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsComponent)
 };

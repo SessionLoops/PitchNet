@@ -1,4 +1,5 @@
 #include "SettingsOverlay.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 
 //==============================================================================
@@ -83,7 +84,7 @@ void SettingsOverlay::closeIfPossible() {
 
 SettingsDialog::SettingsDialog(SettingsManager *settingsManager,
                                juce::AudioDeviceManager *audioDeviceManager)
-    : DialogWindow("Settings", APP_COLOR_BACKGROUND, true) {
+    : DialogWindow(TR("settings.title"), APP_COLOR_BACKGROUND, true) {
   // Set opaque before any other operations - this must be done first
   setOpaque(true);
 

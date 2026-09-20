@@ -1,21 +1,80 @@
 #include "AudioEngine.h"
+#include "../Utils/AppLogger.h"
 #include <algorithm>
 
 AudioEngine::AudioEngine() {}
 
 AudioEngine::~AudioEngine() { shutdownAudio(); }
 
-void AudioEngine::initializeAudio() {
-  // Initialize audio device
-  auto result = deviceManager.initialiseWithDefaultDevices(
-      0, 2); // No input, stereo output
+namespace {
+// Name of the current device type's default output, or empty if it has none.
+juce::String defaultOutputDeviceName(juce::AudioDeviceManager &manager) {
+  auto *type = manager.getCurrentDeviceTypeObject();
+  if (type == nullptr)
+    return {};
 
-  if (result.isNotEmpty()) {
-  } else {
-    auto *device = deviceManager.getCurrentAudioDevice();
-    if (device) {
+  auto devices = type->getDeviceNames(false);
+  const int defaultIndex = type->getDefaultDeviceIndex(false);
+  if (juce::isPositiveAndBelow(defaultIndex, devices.size()))
+    return devices[defaultIndex];
+
+  return devices.size() > 0 ? devices[0] : juce::String();
+}
+} // namespace
+
+void AudioEngine::initializeAudio(const juce::String &savedStateXml,
+                                  bool followSystemDefault) {
+  // Initialize audio device, restoring the device type / device / sample rate
+  // / buffer size the user last chose. Passing the state to initialise() (0 in,
+  // stereo out) falls back to the default device if the saved one is gone.
+  std::unique_ptr<juce::XmlElement> savedState;
+  if (savedStateXml.isNotEmpty())
+    savedState = juce::parseXML(savedStateXml);
+
+  for (auto *type : deviceManager.getAvailableDeviceTypes())
+    LOG("AudioEngine: driver '" + type->getTypeName() + "' outputs: " +
+        type->getDeviceNames(false).joinIntoString(", "));
+
+  if (savedState != nullptr)
+    deviceManager.initialise(0, 2, savedState.get(), true);
+  else
+    deviceManager.initialiseWithDefaultDevices(0, 2);
+
+  // "System Default" stores the driver but no device name, and JUCE opens
+  // nothing for an empty name. Resolve it against the restored driver so the
+  // output tracks that driver's current default device. This has to run before
+  // the fallback below, or a perfectly usable driver looks dead.
+  if (followSystemDefault && savedState != nullptr) {
+    const auto targetName = defaultOutputDeviceName(deviceManager);
+    auto *current = deviceManager.getCurrentAudioDevice();
+    if (targetName.isNotEmpty() &&
+        (current == nullptr || current->getName() != targetName)) {
+      auto setup = deviceManager.getAudioDeviceSetup();
+      setup.outputDeviceName = targetName;
+      setup.sampleRate = 0.0;
+      setup.bufferSize = 0;
+      setup.useDefaultOutputChannels = true;
+      setup.outputChannels.clear();
+      deviceManager.setAudioDeviceSetup(setup, true);
     }
   }
+
+  // Nothing opened, so the saved driver really is unusable (e.g. JACK with no
+  // jackd running). JUCE's own fallback retries the default device of that
+  // same dead driver, so drop to the first available one explicitly.
+  if (deviceManager.getCurrentAudioDevice() == nullptr) {
+    if (auto *firstType = deviceManager.getAvailableDeviceTypes().getFirst())
+      deviceManager.setCurrentAudioDeviceType(firstType->getTypeName(), false);
+    deviceManager.initialiseWithDefaultDevices(0, 2);
+  }
+
+  if (auto *device = deviceManager.getCurrentAudioDevice())
+    LOG("AudioEngine: output device '" + device->getName() + "' (driver " +
+        device->getTypeName() + ", " +
+        juce::String(device->getCurrentSampleRate(), 0) + " Hz, " +
+        juce::String(device->getCurrentBufferSizeSamples()) + " samples)");
+  else
+    LOG("AudioEngine: no output device could be opened");
 
   deviceManager.addAudioCallback(&audioSourcePlayer);
   audioSourcePlayer.setSource(this);

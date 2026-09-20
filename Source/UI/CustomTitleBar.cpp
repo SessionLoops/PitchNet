@@ -1,5 +1,6 @@
 #include "CustomTitleBar.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 
 // Window button colors
@@ -118,7 +119,7 @@ void CustomTitleBar::WindowButton::paintButton(juce::Graphics& g, bool isMouseOv
 // CustomTitleBar implementation
 CustomTitleBar::CustomTitleBar()
 {
-    title = "Pitch Editor";
+    title = TR("titlebar.pitch_editor");
 
 #if !JUCE_MAC
     // Only create custom buttons on non-macOS (macOS uses native traffic lights)
@@ -194,6 +195,18 @@ void CustomTitleBar::mouseDoubleClick(const juce::MouseEvent&)
 void CustomTitleBar::setTitle(const juce::String& newTitle)
 {
     title = newTitle;
+    titleIsDefault = false;
+    repaint();
+}
+
+void CustomTitleBar::refreshLocalisedText()
+{
+    // A document name set by the app stays put; only the built-in caption is
+    // re-read, so a language change never overwrites what the user opened.
+    if (!titleIsDefault)
+        return;
+
+    title = TR("titlebar.pitch_editor");
     repaint();
 }
 

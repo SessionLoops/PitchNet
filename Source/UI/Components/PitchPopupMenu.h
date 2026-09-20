@@ -87,7 +87,10 @@ public:
             g.fillEllipse(8.0f, area.getCentreY() - 3.5f, 7.0f, 7.0f);
         }
 
-        g.setColour(APP_COLOR_TEXT_PRIMARY);
+        const auto* menuItem = getItem();
+        const bool itemEnabled = menuItem == nullptr || menuItem->isEnabled;
+        g.setColour(itemEnabled ? APP_COLOR_TEXT_PRIMARY
+                                : APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(0.35f));
         g.setFont(AppFont::getFont(14.0f));
         g.drawText(itemText, getLocalBounds().withTrimmedLeft(
                                   reservesSelectionSpace ? 22 : 12),

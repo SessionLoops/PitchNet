@@ -53,7 +53,8 @@ public:
 
     g.setColour(juce::Colour(0xFFEFEFEFu));
     g.setFont(AppFont::getFont(16.0f));
-    g.drawText(title, getLocalBounds().withHeight(44).translated(0, 4),
+    g.drawText(TR("progress.analyzing_title"),
+               getLocalBounds().withHeight(44).translated(0, 4),
                juce::Justification::centred, false);
 
     auto bar = juce::Rectangle<float>(29.0f, 53.0f, bounds.getWidth() - 58.0f, 20.0f);
@@ -76,7 +77,6 @@ public:
 
 private:
   double progress = 0.0;
-  static constexpr const char *title = "Analyzing Audio...";
 };
 
 class MainComponent : public juce::Component,
@@ -409,6 +409,13 @@ private:
 #if JUCE_MAC
   juce::ComponentDragger dragger;
 #endif
+
+  // Rebuilds the menu bar and command names after a language change; the
+  // child components refresh themselves through their own watchers.
+  void refreshLocalisedText();
+
+  // Declared last so it is torn down before what it refreshes.
+  LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

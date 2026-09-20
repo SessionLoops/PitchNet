@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
+#include "../Utils/Localization.h"
 #include "Buttons.h"
 #include "PianoRollComponent.h"
 #include "PianoRoll/OverviewPanel.h"
@@ -88,6 +89,10 @@ private:
   static constexpr int zoomSliderLength = 110;
   static constexpr int overlayControlGap = 12;
   static constexpr int overlayVerticalGap = overlayControlGap - 4;
+
+  void refreshLocalisedText();
+
+  LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollWorkspaceView)
 };

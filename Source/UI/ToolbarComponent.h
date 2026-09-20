@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 #include "Buttons.h"
 #include "ScaleSelectionControl.h"
@@ -68,6 +69,9 @@ public:
     void mouseDoubleClick(const juce::MouseEvent &e) override;
 
     void buttonClicked(juce::Button *button) override;
+
+    /** Re-applies every tooltip and caption after a language change. */
+    void refreshLocalisedText();
     void sliderValueChanged(juce::Slider *slider) override;
 
     void setPlaying(bool playing);
@@ -154,7 +158,7 @@ private:
     juce::Label timeLabel;
 
     juce::Slider zoomSlider;
-    juce::Label zoomLabel{{}, "Zoom:"};
+    juce::Label zoomLabel;
 
     // Progress components
     double progressValue = 0.0; // Must be declared before progressBar
@@ -174,6 +178,14 @@ private:
 #if JUCE_MAC
     juce::ComponentDragger dragger;
 #endif
+
+    // Declared last so it is torn down before the widgets it refreshes.
+    LocalisationWatcher languageWatcher{[this]
+                                        {
+                                            refreshLocalisedText();
+                                            resized();
+                                            repaint();
+                                        }};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToolbarComponent)
 };

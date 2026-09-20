@@ -1,5 +1,6 @@
 #include "ScaleSelectionControl.h"
 #include "Components/PitchPopupMenu.h"
+#include "../Utils/Localization.h"
 #include <array>
 
 namespace
@@ -7,7 +8,7 @@ namespace
 struct ScaleModeOption
 {
     ScaleMode mode;
-    const char* label;
+    const char* labelKey; // looked up in the string table, not shown as-is
 };
 
 constexpr std::array<const char*, 12> kRootLabels {{
@@ -15,20 +16,20 @@ constexpr std::array<const char*, 12> kRootLabels {{
 }};
 
 constexpr std::array<ScaleModeOption, 14> kModeOptions {{
-    { ScaleMode::Major, "Major" },
-    { ScaleMode::Minor, "Minor" },
-    { ScaleMode::Blues, "Blues" },
-    { ScaleMode::Dorian, "Dorian" },
-    { ScaleMode::HarmonicMinor, "Harmonic Minor" },
-    { ScaleMode::Locrian, "Locrian" },
-    { ScaleMode::Lydian, "Lydian" },
-    { ScaleMode::MajorPentatonic, "Major Pentatonic" },
-    { ScaleMode::MelodicMinor, "Melodic Minor" },
-    { ScaleMode::MinorPentatonic, "Minor Pentatonic" },
-    { ScaleMode::Mixolydian, "Mixolydian" },
-    { ScaleMode::Phrygian, "Phrygian" },
-    { ScaleMode::PhrygianDominant, "Phrygian Dominant" },
-    { ScaleMode::WholeTone, "Whole Tone" }
+    { ScaleMode::Major, "scale.major" },
+    { ScaleMode::Minor, "scale.minor" },
+    { ScaleMode::Blues, "scale.blues" },
+    { ScaleMode::Dorian, "scale.dorian" },
+    { ScaleMode::HarmonicMinor, "scale.harmonic_minor" },
+    { ScaleMode::Locrian, "scale.locrian" },
+    { ScaleMode::Lydian, "scale.lydian" },
+    { ScaleMode::MajorPentatonic, "scale.major_pentatonic" },
+    { ScaleMode::MelodicMinor, "scale.melodic_minor" },
+    { ScaleMode::MinorPentatonic, "scale.minor_pentatonic" },
+    { ScaleMode::Mixolydian, "scale.mixolydian" },
+    { ScaleMode::Phrygian, "scale.phrygian" },
+    { ScaleMode::PhrygianDominant, "scale.phrygian_dominant" },
+    { ScaleMode::WholeTone, "scale.whole_tone" }
 }};
 
 juce::String rootLabel(int root)
@@ -42,15 +43,15 @@ juce::String modeLabel(ScaleMode mode)
 {
     for (const auto& option : kModeOptions)
         if (option.mode == mode)
-            return option.label;
-    return "Major";
+            return TR(option.labelKey);
+    return TR("scale.major");
 }
 
 }
 
 ScaleSelectionControl::ScaleSelectionControl()
-    : CompactSelectionButton("C Major")
 {
+    setButtonText(rootLabel(0) + " " + modeLabel(ScaleMode::Major));
     onClick = [this] { showPopup(); };
 }
 
@@ -101,7 +102,7 @@ void ScaleSelectionControl::showPopup()
     for (size_t i = 0; i < kModeOptions.size(); ++i)
     {
         const auto mode = kModeOptions[i].mode;
-        const juce::String label = kModeOptions[i].label;
+        const juce::String label = TR(kModeOptions[i].labelKey);
         auto hoverCallback =
             [safeThis = juce::Component::SafePointer<ScaleSelectionControl>(this), mode]()
             {
@@ -115,8 +116,8 @@ void ScaleSelectionControl::showPopup()
             nullptr, label);
     }
 
-    menu.addSubMenu("Root", rootMenu);
-    menu.addSubMenu("Mode", modeMenu);
+    menu.addSubMenu(TR("scale.root"), rootMenu);
+    menu.addSubMenu(TR("scale.mode"), modeMenu);
     menu.showMenuAsync(
         juce::PopupMenu::Options()
             .withTargetComponent(this)
@@ -145,6 +146,11 @@ void ScaleSelectionControl::showPopup()
                 safeThis->setScaleMode(
                     kModeOptions[static_cast<size_t>(modeIndex)].mode);
         });
+}
+
+void ScaleSelectionControl::refreshLocalisedText()
+{
+    refreshLabel();
 }
 
 void ScaleSelectionControl::refreshLabel()

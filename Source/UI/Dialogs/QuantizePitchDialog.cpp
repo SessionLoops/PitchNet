@@ -2,6 +2,7 @@
 #include "../Components/AppFont.h"
 #include "../Components/DarkLookAndFeel.h"
 #include "../Components/StyledWidgets.h"
+#include "../../Utils/Localization.h"
 #include "../../Utils/UI/Theme.h"
 #include <utility>
 
@@ -16,7 +17,7 @@ public:
           std::function<void(bool)> completed)
       : onPreview(std::move(preview)), onComplete(std::move(completed))
   {
-    pitchCenterLabel.setText("Pitch Center", juce::dontSendNotification);
+    pitchCenterLabel.setText(TR("quantize.pitch_center"), juce::dontSendNotification);
     pitchCenterLabel.setFont(AppFont::getFont(15.0f));
     pitchCenterLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
 
@@ -25,7 +26,7 @@ public:
     pitchCenter.setValue(initialPitchCenter, juce::dontSendNotification);
     pitchCenter.onValueChange = [this] { previewCorrection(); };
 
-    pitchDriftLabel.setText("Pitch Drift", juce::dontSendNotification);
+    pitchDriftLabel.setText(TR("quantize.pitch_drift"), juce::dontSendNotification);
     pitchDriftLabel.setFont(AppFont::getFont(15.0f));
     pitchDriftLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
     pitchDrift.setRange(0.0, 100.0, 1.0);
@@ -36,8 +37,10 @@ public:
     snapToScale.setToggleState(initialSnapToScale, juce::dontSendNotification);
     snapToScale.onClick = [this] { previewCorrection(); };
 
-    setupButton(cancelButton, "Cancel");
-    setupButton(okButton, "OK");
+    snapToScale.setButtonText(TR("quantize.snap_to_scale"));
+
+    setupButton(cancelButton, TR("dialog.cancel"));
+    setupButton(okButton, TR("dialog.ok"));
     cancelButton.onClick = [this] { finish(false); };
     okButton.onClick = [this] { finish(true); };
 
@@ -130,7 +133,7 @@ private:
   juce::Label pitchDriftLabel;
   MacroSlider pitchDrift;
   bool driftEdited = false;
-  StyledToggleButton snapToScale { "Snap to Scale" };
+  StyledToggleButton snapToScale;
   juce::TextButton cancelButton, okButton;
   bool finished = false;
 };

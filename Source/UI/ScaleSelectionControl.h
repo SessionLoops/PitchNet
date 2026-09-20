@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
+#include "../Utils/Localization.h"
 #include "Components/StyledWidgets.h"
 #include <functional>
 #include <optional>
@@ -27,10 +28,15 @@ public:
     void previewScaleRoot(std::optional<int> rootNote);
     void previewScaleMode(std::optional<ScaleMode> mode);
 
+    /** Re-reads the scale name after a language change. */
+    void refreshLocalisedText();
+
 private:
     void refreshLabel();
 
     Project* project = nullptr;
+
+    LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ScaleSelectionControl)
 };

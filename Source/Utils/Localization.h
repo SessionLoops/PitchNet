@@ -1,7 +1,8 @@
-﻿#pragma once
+#pragma once
 
 #include "../JuceHeader.h"
 #include "PlatformPaths.h"
+#include <functional>
 #include <map>
 #include <vector>
 
@@ -12,7 +13,20 @@
 #define PITCHNET_HAS_BINARYDATA 0
 #endif
 
-class Localization {
+/**
+ * Application-wide string table.
+ *
+ * Every user-visible string lives in Resources/lang/<code>.json and is reached
+ * through the TR() macro. All of those files are compiled into the binary, so
+ * a language works even when the Resources folder did not ship with the build;
+ * a file on disk with the same name still wins, which keeps the edit-and-rerun
+ * loop working for translators.
+ *
+ * Localization is a ChangeBroadcaster: components that hold text register as
+ * listeners and re-apply their strings when the language changes, so switching
+ * language takes effect without a restart.
+ */
+class Localization : public juce::ChangeBroadcaster {
 public:
   static Localization &getInstance() {
     static Localization instance;
@@ -24,14 +38,46 @@ public:
     juce::String nativeName;
   };
 
+  /** Switches to an explicit language. "auto" follows the system language. */
   void setLanguage(const juce::String &langCode) {
-    if (languages.count(langCode)) {
-      currentLang = langCode;
-      loadLanguageFile(langCode);
+    if (langCode == "auto") {
+      useSystemLanguage();
+      return;
     }
+
+    if (!languages.count(langCode))
+      return;
+
+    followSystem = false;
+    if (currentLang == langCode)
+      return;
+
+    loadLanguageFile(langCode);
+    sendChangeMessage();
+  }
+
+  /** Follows whatever language the OS reports. */
+  void useSystemLanguage() {
+    const auto detected = detectSystemLanguageCode();
+    const bool wasFollowing = followSystem;
+    followSystem = true;
+
+    if (currentLang == detected && wasFollowing)
+      return;
+
+    loadLanguageFile(detected);
+    sendChangeMessage();
   }
 
   juce::String getLanguage() const { return currentLang; }
+
+  /** True while the language tracks the OS rather than an explicit choice. */
+  bool isFollowingSystemLanguage() const { return followSystem; }
+
+  /** The code to persist: "auto" while following the system. */
+  juce::String getPersistedLanguageCode() const {
+    return followSystem ? juce::String("auto") : currentLang;
+  }
 
   juce::String get(const juce::String &key) const {
     auto it = strings.find(key);
@@ -40,30 +86,44 @@ public:
     auto enIt = englishStrings.find(key);
     if (enIt != englishStrings.end())
       return enIt->second;
-    return "Missing translation";
+    // A key with no entry anywhere reads better as itself than as a
+    // placeholder: it says which string is missing instead of hiding it.
+    return key;
   }
 
   const std::vector<LangInfo> &getAvailableLanguages() const {
     return availableLanguages;
   }
 
-  static void detectSystemLanguage() {
-    auto &inst = getInstance();
-    auto locale = juce::SystemStats::getUserLanguage();
+  /** Maps the OS language to one of the codes this build ships. */
+  static juce::String detectSystemLanguageCode() {
+    const auto locale = juce::SystemStats::getUserLanguage();
+    const auto region = juce::SystemStats::getUserRegion();
 
-    juce::String langCode = "en";
-    if (locale.startsWith("zh-TW") || locale.startsWith("zh_TW") ||
-        locale.startsWith("zh-Hant"))
-      langCode = "zh-TW";
-    else if (locale.startsWith("zh"))
-      langCode = "zh";
-    else if (locale.startsWith("ja"))
-      langCode = "ja";
+    if (locale.startsWithIgnoreCase("zh")) {
+      // Traditional Chinese is spelled several ways depending on platform:
+      // the script subtag, the region subtag, or the region on its own.
+      if (locale.containsIgnoreCase("Hant") || locale.containsIgnoreCase("TW") ||
+          locale.containsIgnoreCase("HK") || locale.containsIgnoreCase("MO") ||
+          region.equalsIgnoreCase("TW") || region.equalsIgnoreCase("HK") ||
+          region.equalsIgnoreCase("MO"))
+        return "zh-TW";
+      return "zh";
+    }
 
-    inst.setLanguage(langCode);
+    if (locale.startsWithIgnoreCase("ja"))
+      return "ja";
+    if (locale.startsWithIgnoreCase("ko"))
+      return "ko";
+    if (locale.startsWithIgnoreCase("es"))
+      return "es";
+
+    return "en";
   }
 
-  // Load language from saved settings (call before UI creation)
+  static void detectSystemLanguage() { getInstance().useSystemLanguage(); }
+
+  /** Applies the saved language. Call before the UI is built. */
   static void loadFromSettings() {
     auto configFile = PlatformPaths::getConfigFile("config.json");
     if (configFile.existsAsFile()) {
@@ -72,10 +132,7 @@ public:
       if (auto *obj = json.getDynamicObject()) {
         auto langCode = obj->getProperty("language").toString();
         if (langCode.isNotEmpty()) {
-          if (langCode == "auto")
-            detectSystemLanguage();
-          else
-            getInstance().setLanguage(langCode);
+          getInstance().applyStoredCode(langCode);
           return;
         }
       }
@@ -89,56 +146,45 @@ public:
     if (settingsFile.existsAsFile()) {
       auto xml = juce::XmlDocument::parse(settingsFile);
       if (xml != nullptr) {
-        juce::String langCode = xml->getStringAttribute("language", "en");
-        if (langCode == "auto")
-          detectSystemLanguage();
-        else
-          getInstance().setLanguage(langCode);
+        getInstance().applyStoredCode(
+            xml->getStringAttribute("language", "auto"));
         return;
       }
     }
 
-    getInstance().setLanguage("en");
+    // Nothing saved yet: the system language is the default.
+    getInstance().useSystemLanguage();
   }
 
   void scanAvailableLanguages() {
     availableLanguages.clear();
     languages.clear();
-    std::vector<juce::String> knownCodes = {"en", "zh", "zh-TW", "ja"};
-    auto defaultNativeName = [](const juce::String &code) {
-      if (code == "en")
-        return juce::String("English");
-      if (code == "zh")
-        return juce::String::fromUTF8(u8"\u7b80\u4f53\u4e2d\u6587");
-      if (code == "zh-TW")
-        return juce::String::fromUTF8(u8"\u7e41\u9ad4\u4e2d\u6587");
-      if (code == "ja")
-        return juce::String::fromUTF8(u8"\u65e5\u672c\u8a9e");
-      return code;
-    };
 
-    for (const auto &code : knownCodes) {
+    for (const auto &code : getKnownLanguageCodes()) {
+      std::map<juce::String, juce::String> table;
+      const bool hasBinary = loadLanguageMapFromBinaryData(code, table);
       auto langFile = findLanguageFile(code);
-      const bool hasEmbeddedEnglish = (code == "en" && !englishStrings.empty());
-      if (!langFile.existsAsFile() && !hasEmbeddedEnglish)
+      if (langFile.existsAsFile())
+        loadLanguageMapFromFile(langFile, table);
+
+      if (!hasBinary && !langFile.existsAsFile())
         continue;
 
-      juce::String nativeName = defaultNativeName(code);
-      if (code == "en") {
-        auto it = englishStrings.find("lang.en");
-        if (it != englishStrings.end() && it->second.isNotEmpty())
-          nativeName = it->second;
-      } else if (langFile.existsAsFile()) {
-        std::map<juce::String, juce::String> tmp;
-        loadLanguageMapFromFile(langFile, tmp);
-        auto it = tmp.find("lang." + code);
-        if (it != tmp.end() && it->second.isNotEmpty())
-          nativeName = it->second;
-      }
+      juce::String nativeName = getFallbackNativeName(code);
+      auto it = table.find("lang." + code);
+      if (it != table.end() && it->second.isNotEmpty())
+        nativeName = it->second;
 
       availableLanguages.push_back({code, nativeName});
       languages[code] = nativeName;
     }
+  }
+
+  /** The codes this build knows about, in the order the UI lists them. */
+  static const std::vector<juce::String> &getKnownLanguageCodes() {
+    static const std::vector<juce::String> codes = {"en",    "es", "ja",
+                                                    "ko",    "zh", "zh-TW"};
+    return codes;
   }
 
 private:
@@ -148,32 +194,90 @@ private:
     loadLanguageFile("en");
   }
 
+  /** Applies a code read from disk, without broadcasting (nothing listens yet). */
+  void applyStoredCode(const juce::String &langCode) {
+    if (langCode.isEmpty() || langCode == "auto") {
+      followSystem = true;
+      loadLanguageFile(detectSystemLanguageCode());
+      return;
+    }
+
+    followSystem = false;
+    if (languages.count(langCode))
+      loadLanguageFile(langCode);
+    else
+      loadLanguageFile("en");
+  }
+
+  static juce::String getFallbackNativeName(const juce::String &code) {
+    if (code == "en")
+      return juce::String("English");
+    if (code == "es")
+      return juce::String::fromUTF8("Espa\xc3\xb1ol");
+    if (code == "ja")
+      return juce::String::fromUTF8("\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e");
+    if (code == "ko")
+      return juce::String::fromUTF8("\xed\x95\x9c\xea\xb5\xad\xec\x96\xb4");
+    if (code == "zh")
+      return juce::String::fromUTF8("\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87");
+    if (code == "zh-TW")
+      return juce::String::fromUTF8("\xe7\xb9\x81\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87");
+    return code;
+  }
+
   void loadLanguageFile(const juce::String &langCode) {
     strings = englishStrings;
 
+    std::map<juce::String, juce::String> table;
+    const bool hasBinary = loadLanguageMapFromBinaryData(langCode, table);
+
     auto langFile = findLanguageFile(langCode);
-    if (!langFile.existsAsFile()) {
+    if (langFile.existsAsFile())
+      loadLanguageMapFromFile(langFile, table);
+
+    if (!hasBinary && !langFile.existsAsFile()) {
       currentLang = "en";
       return;
     }
 
-    loadLanguageMapFromFile(langFile, strings);
+    for (const auto &entry : table)
+      strings[entry.first] = entry.second;
 
     currentLang = langCode;
   }
 
   void loadEnglishBase() {
     englishStrings.clear();
-
-#if PITCHNET_HAS_BINARYDATA
-    loadLanguageMapFromJsonText(
-        juce::String::fromUTF8(BinaryData::en_json, BinaryData::en_jsonSize),
-        englishStrings);
-#endif
+    loadLanguageMapFromBinaryData("en", englishStrings);
 
     auto enFile = findLanguageFile("en");
     if (enFile.existsAsFile())
       loadLanguageMapFromFile(enFile, englishStrings);
+  }
+
+  /** "zh-TW" -> "zh_TW_json", the name juce_add_binary_data generates. */
+  static juce::String getBinaryResourceName(const juce::String &langCode) {
+    return langCode.replaceCharacter('-', '_') + "_json";
+  }
+
+  static bool loadLanguageMapFromBinaryData(
+      const juce::String &langCode,
+      std::map<juce::String, juce::String> &target) {
+#if PITCHNET_HAS_BINARYDATA
+    int dataSize = 0;
+    const auto resourceName = getBinaryResourceName(langCode);
+    if (const char *data =
+            BinaryData::getNamedResource(resourceName.toRawUTF8(), dataSize)) {
+      if (dataSize > 0) {
+        loadLanguageMapFromJsonText(juce::String::fromUTF8(data, dataSize),
+                                    target);
+        return true;
+      }
+    }
+#else
+    juce::ignoreUnused(langCode, target);
+#endif
+    return false;
   }
 
   static void loadLanguageMapFromFile(
@@ -226,6 +330,7 @@ private:
   }
 
   juce::String currentLang = "en";
+  bool followSystem = true;
   std::map<juce::String, juce::String> strings;
   std::map<juce::String, juce::String> englishStrings;
   std::map<juce::String, juce::String> languages;
@@ -235,3 +340,34 @@ private:
 };
 
 #define TR(key) Localization::getInstance().get(key)
+
+/**
+ * Holds a callback that runs whenever the language changes.
+ *
+ * Components keep one as a member (declared last, so it is torn down first)
+ * rather than inheriting a listener, which keeps it usable by classes that
+ * already listen to something else:
+ *
+ *     LocalisationWatcher languageWatcher { [this] { refreshLocalisedText(); } };
+ */
+class LocalisationWatcher : private juce::ChangeListener {
+public:
+  explicit LocalisationWatcher(std::function<void()> onLanguageChanged)
+      : callback(std::move(onLanguageChanged)) {
+    Localization::getInstance().addChangeListener(this);
+  }
+
+  ~LocalisationWatcher() override {
+    Localization::getInstance().removeChangeListener(this);
+  }
+
+private:
+  void changeListenerCallback(juce::ChangeBroadcaster *) override {
+    if (callback)
+      callback();
+  }
+
+  std::function<void()> callback;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LocalisationWatcher)
+};
