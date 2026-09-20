@@ -1864,6 +1864,14 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     }
 
     mc->restoreViewportState(viewportState);
+
+#if JucePlugin_Enable_ARA
+    // The active region is normally set before the editor exists, so every
+    // push on that path found mainComponent null and returned without doing
+    // anything. Push once here so the ruler lines up with the host timeline
+    // as soon as the canvas opens, rather than only after the clip is moved.
+    pushTimelineDisplayOffset();
+#endif
   } else {
     // The editor is closing, but ARA playback/bounce must keep working
     // headlessly. Re-point the realtime processor at the persistent backend
