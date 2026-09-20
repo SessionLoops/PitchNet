@@ -148,6 +148,32 @@ namespace
     }
   };
 
+  bool hasPitchEdits(const Note& note)
+  {
+    const auto current = NoteEditState::capture(note);
+    const auto defaults = NoteEditState::defaultsFor(note);
+    return current.midiNote != defaults.midiNote ||
+           current.pitchOffset != defaults.pitchOffset ||
+           current.tiltLeft != defaults.tiltLeft ||
+           current.tiltRight != defaults.tiltRight ||
+           current.vibrato != defaults.vibrato ||
+           current.pitchDrift != defaults.pitchDrift ||
+           current.smoothLeftFrames != defaults.smoothLeftFrames ||
+           current.smoothRightFrames != defaults.smoothRightFrames ||
+           current.deltaScale != defaults.deltaScale ||
+           current.deltaOffset != defaults.deltaOffset ||
+           current.bakedDeltaPitch != defaults.bakedDeltaPitch ||
+           current.deltaPitch != defaults.deltaPitch;
+  }
+
+  bool hasFormantEdits(const Note& note) { return note.getFormantShift() != 0.0f; }
+  bool hasAmplitudeEdits(const Note& note) { return note.getVolumeDb() != 0.0f; }
+  bool hasTimingEdits(const Note& note)
+  {
+    return note.getStartFrame() != note.getSrcStartFrame() ||
+           note.getEndFrame() != note.getSrcEndFrame();
+  }
+
   class ResetNoteEditsAction final : public UndoableAction
   {
   public:
@@ -3031,17 +3057,34 @@ void PianoRollComponent::showResetMenu(Note &note)
 {
   juce::PopupMenu menu;
   menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
-  const auto addItem = [&menu](int id, const juce::String& label)
+  const auto targets = getResetTargetNotes(note);
+  const auto anyTarget = [&targets](bool (*predicate)(const Note&))
   {
-    menu.addCustomItem(id, std::make_unique<pitchPopupMenu::MenuItemComponent>(
-        label, false, std::function<void()>{}, false), nullptr, label);
+    return std::any_of(targets.begin(), targets.end(),
+                       [predicate](const Note* n) { return n && predicate(*n); });
   };
-  addItem(1, TR("restore.pitch"));
-  addItem(3, TR("restore.formant"));
-  addItem(4, TR("restore.amplitude"));
-  addItem(2, TR("restore.timing"));
+  const bool pitchChanged = anyTarget(hasPitchEdits);
+  const bool formantChanged = anyTarget(hasFormantEdits);
+  const bool amplitudeChanged = anyTarget(hasAmplitudeEdits);
+  const bool timingChanged = anyTarget(hasTimingEdits);
+  const bool anyChanged =
+      pitchChanged || formantChanged || amplitudeChanged || timingChanged;
+
+  const auto addItem = [&menu](int id, const juce::String& label, bool enabled)
+  {
+    juce::PopupMenu::Item item(label);
+    item.itemID = id;
+    item.isEnabled = enabled;
+    item.customComponent = std::make_unique<pitchPopupMenu::MenuItemComponent>(
+        label, false, std::function<void()>{}, false).release();
+    menu.addItem(std::move(item));
+  };
+  addItem(1, TR("restore.pitch"), pitchChanged);
+  addItem(3, TR("restore.formant"), formantChanged);
+  addItem(4, TR("restore.amplitude"), amplitudeChanged);
+  addItem(2, TR("restore.timing"), timingChanged);
   menu.addSeparator();
-  addItem(5, TR("restore.all"));
+  addItem(5, TR("restore.all"), anyChanged);
 
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   Note* notePtr = &note;
