@@ -136,10 +136,41 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
     float previousVisualEndFrame = -1.0f;
     int previousRegion = -1;
 
+    // Only build path geometry for notes that can touch the viewport. Without
+    // this, every repaint (drag, zoom, scroll) walked and stroked the pitch
+    // curve of the entire project, which scales with song length and is
+    // especially costly with the Direct2D renderer (geometry is rebuilt and
+    // tessellated per frame). Path coordinates are in world space, so the
+    // visible range is [scrollX, scrollX + componentWidth].
+    constexpr float cullPaddingPx = 16.0f;
+    const float cullLeft = static_cast<float>(scrollX) - cullPaddingPx;
+    const float cullRight = static_cast<float>(scrollX) +
+                            static_cast<float>(params.componentWidth) +
+                            cullPaddingPx;
+
     for (const auto &note : project->getNotes())
     {
       if (note.isRest())
         continue;
+
+      {
+        const float cullStartFrame = note.getVisualStartFrame();
+        const float cullEndFrame = note.getVisualEndFrame();
+        const float noteLeft =
+            framesToSeconds(std::min(cullStartFrame, cullEndFrame) - 1.0f) *
+            pixelsPerSecond;
+        const float noteRight =
+            framesToSeconds(std::max(cullStartFrame, cullEndFrame) + 1.0f) *
+            pixelsPerSecond;
+        if (noteRight < cullLeft || noteLeft > cullRight)
+        {
+          // Break the polyline here so the next visible note does not join
+          // across the skipped (off-screen) span.
+          strokeCurrentPath();
+          hasPreviousNote = false;
+          continue;
+        }
+      }
 
       const int startFrame = note.getStartFrame();
       const int endFrame =

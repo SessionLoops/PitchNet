@@ -257,7 +257,9 @@ private:
   void play();
   void pause();
   void stop();
-  void seek(double time);
+  // scrollToCursor=false leaves the view where it is (used when stop/finish
+  // rewinds the cursor while Auto Scroll is off).
+  void seek(double time, bool scrollToCursor = true);
   void previewNoteRegion(int startFrame, int endFrame);
   void finishPreviewRegion(bool restorePosition);
   void auditionDraggedNote(const Note &note);

@@ -1025,7 +1025,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       safeThis->isPlaying = false;
       safeThis->toolbar.setPlaying(false);
       safeThis->pianoRoll.setPlaybackActive(false);
-      safeThis->seek(0.0); });
+      // With Auto Scroll off, don't jump the view back to the start.
+      safeThis->seek(0.0, safeThis->toolbar.isFollowPlayback()); });
   }
 
   // Set initial project
@@ -2247,10 +2248,11 @@ void MainComponent::stop()
   toolbar.setPlaying(false);
   pianoRoll.setPlaybackActive(false);
   audioEngine->stop();
-  seek(0.0);
+  // With Auto Scroll off, don't jump the view back to the start.
+  seek(0.0, toolbar.isFollowPlayback());
 }
 
-void MainComponent::seek(double time)
+void MainComponent::seek(double time, bool scrollToCursor)
 {
   // In plugin mode, request a host seek when the host supports it and update
   // the UI cursor immediately for responsiveness.
@@ -2273,6 +2275,9 @@ void MainComponent::seek(double time)
   pendingCursorTime.store(time);
   pianoRoll.setCursorTime(time);
   toolbar.setCurrentTime(time);
+
+  if (!scrollToCursor)
+    return;
 
   // Scroll view to make cursor visible
   float cursorX = static_cast<float>(time * pianoRoll.getPixelsPerSecond());

@@ -268,6 +268,8 @@ PianoRollComponent::PianoRollComponent()
   timelineRenderer->setCoordinateMapper(coordMapper.get());
   waveformBackgroundRenderer->setCoordinateMapper(coordMapper.get());
   waveformBackgroundRenderer->setPitchToolController(pitchToolController.get());
+  // Lets the waveform renderer request a full-quality rebuild once a zoom settles.
+  waveformBackgroundRenderer->onRepaintRequested = [this] { repaint(); };
   noteRenderer->setCoordinateMapper(coordMapper.get());
   noteRenderer->setSelectHandler(selectHandler_.get());
   noteRenderer->setSplitHandler(splitHandler_.get());
