@@ -39,6 +39,14 @@ void WaveformBackgroundRenderer::appendLiveWaveform(
   invalidateCache();
 }
 
+void WaveformBackgroundRenderer::timerCallback()
+{
+  stopTimer();
+  zoomSettled = true;
+  if (onRepaintRequested)
+    onRepaintRequested();
+}
+
 void WaveformBackgroundRenderer::draw(juce::Graphics &g,
                                       const juce::Rectangle<int> &visibleArea)
 {
@@ -53,35 +61,82 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   if (!drawingLive && !drawingProject)
     return;
 
-  const double scrollX = coordMapper->getScrollX();
+  const int viewWidth = visibleArea.getWidth();
+  const int viewHeight = visibleArea.getHeight();
+  if (viewWidth <= 0 || viewHeight <= 0)
+    return;
+
+  // PianoRollComponent places scrolled content at an integer origin
+  // (static_cast<int>(scrollX)); use the same here so the waveform stays
+  // aligned with the grid and notes.
+  const int viewLeft = static_cast<int>(coordMapper->getScrollX());
+  const int viewRight = viewLeft + viewWidth;
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
 
   const bool amplitudePreview = pitchToolController && pitchToolController->isDragging() &&
       pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Amplitude;
-  const bool cacheValid = waveformCache.isValid() &&
-                          cachedAmplitudePreview == amplitudePreview &&
-                          std::abs(cachedScrollX - scrollX) < 1.0 &&
-                          std::abs(cachedPixelsPerSecond - pixelsPerSecond) < 0.01f &&
-                          cachedWidth == visibleArea.getWidth() &&
-                          cachedHeight == visibleArea.getHeight();
 
-  if (cacheValid)
+  const bool cacheUsable = waveformCache.isValid() && !cacheDirty &&
+                           cachedAmplitudePreview == amplitudePreview &&
+                           cachedHeight == viewHeight;
+  const int cachedImageWidth = waveformCache.getWidth();
+
+  // Fast path: same zoom and the viewport is inside the cached strip. Scrolling
+  // only changes which slice of the strip is blitted.
+  if (cacheUsable &&
+      std::abs(cachedPixelsPerSecond - pixelsPerSecond) < 0.01f &&
+      viewLeft >= cachedStripStartX &&
+      viewRight <= cachedStripStartX + cachedImageWidth)
   {
-    g.drawImageAt(waveformCache, visibleArea.getX(), visibleArea.getY());
+    g.drawImageAt(waveformCache,
+                  visibleArea.getX() + cachedStripStartX - viewLeft,
+                  visibleArea.getY());
     return;
   }
 
-  waveformCache = juce::Image(juce::Image::ARGB, visibleArea.getWidth(),
-                              visibleArea.getHeight(), true);
+  // Zoom in progress: stretch the stale strip to the new zoom instead of
+  // rebuilding the envelope for every wheel event, then rebuild once the zoom
+  // has stopped changing (timerCallback).
+  if (cacheUsable && !zoomSettled && cachedPixelsPerSecond > 0.0f)
+  {
+    const double scale =
+        static_cast<double>(pixelsPerSecond) / cachedPixelsPerSecond;
+    const int stretchedStart =
+        juce::roundToInt(static_cast<double>(cachedStripStartX) * scale);
+    const int stretchedWidth =
+        juce::jmax(1, juce::roundToInt(static_cast<double>(cachedImageWidth) * scale));
+    if (scale >= 0.25 && scale <= 4.0 && viewLeft >= stretchedStart &&
+        viewRight <= stretchedStart + stretchedWidth)
+    {
+      g.drawImage(waveformCache,
+                  visibleArea.getX() + stretchedStart - viewLeft,
+                  visibleArea.getY(), stretchedWidth, viewHeight, 0, 0,
+                  cachedImageWidth, waveformCache.getHeight());
+      startTimer(zoomSettleMs);
+      return;
+    }
+  }
+
+  // Rebuild. When the content itself changed (live recording, amplitude drag,
+  // new project) keep the strip viewport-sized so per-frame rebuilds cost what
+  // they used to; otherwise add half a viewport of margin on each side so the
+  // next scrolls and zoom-outs are pure blits.
+  int stripWidth = viewWidth;
+  if (!cacheDirty)
+    stripWidth = juce::jmax(viewWidth, juce::jmin(viewWidth * 2, 8192));
+  const int stripStart = viewLeft - (stripWidth - viewWidth) / 2;
+
+  waveformCache = juce::Image(juce::Image::ARGB, stripWidth, viewHeight, true);
   juce::Graphics cacheGraphics(waveformCache);
 
   const float visibleHeight = static_cast<float>(visibleArea.getHeight());
   const float centerY = visibleHeight * 0.5f;
   const float waveformHeight = visibleHeight * 0.8f;
 
-  const int visibleWidth = visibleArea.getWidth();
-  if (visibleWidth <= 0 || visibleArea.getHeight() <= 0)
-    return;
+  // The strip is built in world pixels: pixel 0 of the image is world x =
+  // stripStart, so the lambda below treats stripStart as its "scrollX".
+  const int visibleWidth = stripWidth;
+  const double scrollX = static_cast<double>(stripStart);
 
   auto drawWaveform = [&](const juce::AudioBuffer<float> &source,
                           int numSamples, double sampleRate,
@@ -167,10 +222,13 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
                  liveTimelineOffsetSeconds, false);
 
   cachedAmplitudePreview = amplitudePreview;
-  cachedScrollX = scrollX;
+  cachedStripStartX = stripStart;
   cachedPixelsPerSecond = pixelsPerSecond;
-  cachedWidth = visibleArea.getWidth();
-  cachedHeight = visibleArea.getHeight();
+  cachedHeight = viewHeight;
+  cacheDirty = false;
+  zoomSettled = false;
+  stopTimer();
 
-  g.drawImageAt(waveformCache, visibleArea.getX(), visibleArea.getY());
+  g.drawImageAt(waveformCache, visibleArea.getX() + stripStart - viewLeft,
+                visibleArea.getY());
 }
