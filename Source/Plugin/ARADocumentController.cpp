@@ -371,9 +371,6 @@ void PitchNetPlaybackRenderer::ensureRenderResourcesFor(
 
   rawResamplingStates.try_emplace(region);
   processedResamplingStates.try_emplace(region);
-#if PITCHNET_ARA_DIAGNOSTICS
-  diagnosticRenderStates.try_emplace(region);
-#endif
 
   auto *modification = region->getAudioModification();
   auto *source =
@@ -402,9 +399,6 @@ void PitchNetPlaybackRenderer::willRemovePlaybackRegion(
   auto *region = static_cast<juce::ARAPlaybackRegion *>(playbackRegion);
   rawResamplingStates.erase(region);
   processedResamplingStates.erase(region);
-#if PITCHNET_ARA_DIAGNOSTICS
-  diagnosticRenderStates.erase(region);
-#endif
 }
 
 bool PitchNetPlaybackRenderer::renderProcessedRegions(
@@ -497,39 +491,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       }
     }
 
-#if PITCHNET_ARA_DIAGNOSTICS
-    // Fires only when this region's outcome changes - a move, a resize, or a
-    // transition to/from silence. Never per block.
-    if (intersectsBlock) {
-      auto *mod = region->getAudioModification<PitchNetAudioModification>();
-      const auto *rd =
-          mod != nullptr
-              ? mod->getProcessedRegionData(pitchnetRegionKey(*region))
-              : nullptr;
-      DiagnosticRenderState now{region->getStartInPlaybackTime(),
-                                region->getStartInAudioModificationSamples(),
-                                rd ? rd->audio.getNumSamples() : -1,
-                                renderedRegion,
-                                rd ? araDiagFingerprint(rd->audio) : 0.0f};
-      auto previous = diagnosticRenderStates.find(region);
-      if (previous != diagnosticRenderStates.end() &&
-          !(previous->second == now)) {
-        previous->second = now;
-        ARA_DIAG("render region=" + ARA_DIAG_PTR(region) +
-                 " mod=" + ARA_DIAG_PTR(mod) +
-                 " id=" + (mod ? juce::String(mod->getPersistentID())
-                               : juce::String("-")) +
-                 " startInMod=" + juce::String(now.startInModification) +
-                 " playbackStart=" + juce::String(now.playbackStart, 3) +
-                 " blob=" + (rd ? juce::String(rd->audio.getNumSamples())
-                                : juce::String("none")) +
-                 " blobOffset=" + (rd ? juce::String(rd->startSampleInModification)
-                                      : juce::String("-")) +
-                 " renderedProcessed=" + juce::String(renderedRegion ? 1 : 0) +
-                 " fp=" + juce::String(now.blobFingerprint, 6));
-      }
-    }
-#endif
 
     renderedAny = renderedAny || renderedRegion;
   }

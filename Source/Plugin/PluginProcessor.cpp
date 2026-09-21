@@ -2694,107 +2694,6 @@ bool PitchNetAudioProcessor::araRegionProjectNeedsSourceHydration(
          audioData.melSpectrogram.empty();
 }
 
-#if PITCHNET_ARA_DIAGNOSTICS
-namespace {
-// TEMPORARY (issue #2): report what edit state a project carries on arrival.
-//
-// A split clone restores its parent's archive wholesale, so both halves start
-// life holding the parent's edited waveform and pitch curves. That is intended
-// - the halves should keep edits made before the split - but it is also where
-// a stacked edit would first become visible. This says which of the inherited
-// fields disagree, so the "correcting the previous correction" symptom can be
-// pinned to the audio buffer or to the pitch curves rather than guessed at.
-//
-// Index convention for the comparisons: -1 identical, -2 not comparable,
-// >= 0 the first differing index (or the common length, if one is a prefix
-// of the other).
-juce::String describeInheritedEditState(const AudioData &audioData) {
-  auto firstDiffSample = [](const juce::AudioBuffer<float> &a,
-                            const juce::AudioBuffer<float> &b) {
-    if (a.getNumChannels() <= 0 || b.getNumChannels() <= 0)
-      return -2;
-    const int n = std::min(a.getNumSamples(), b.getNumSamples());
-    const float *pa = a.getReadPointer(0);
-    const float *pb = b.getReadPointer(0);
-    for (int i = 0; i < n; ++i)
-      if (std::abs(pa[i] - pb[i]) > 1.0e-7f)
-        return i;
-    return a.getNumSamples() == b.getNumSamples() ? -1 : n;
-  };
-
-  auto firstDiffFrame = [](const std::vector<float> &a,
-                           const std::vector<float> &b) {
-    if (a.empty() || b.empty())
-      return -2;
-    const size_t n = std::min(a.size(), b.size());
-    for (size_t i = 0; i < n; ++i)
-      if (std::abs(a[i] - b[i]) > 1.0e-4f)
-        return static_cast<int>(i);
-    return a.size() == b.size() ? -1 : static_cast<int>(n);
-  };
-
-  int nonZeroDelta = 0;
-  for (const auto v : audioData.deltaPitch)
-    if (std::abs(v) > 1.0e-4f)
-      ++nonZeroDelta;
-
-  return "wavVsOrig=" +
-         juce::String(firstDiffSample(audioData.waveform,
-                                      audioData.originalWaveform)) +
-         " f0VsDense=" +
-         juce::String(firstDiffFrame(audioData.f0, audioData.denseF0)) +
-         " baseVsDense=" +
-         juce::String(firstDiffFrame(audioData.baseF0, audioData.denseF0)) +
-         " deltaNonZero=" + juce::String(nonZeroDelta) + "/" +
-         juce::String(static_cast<int>(audioData.deltaPitch.size())) +
-         " wavN=" + juce::String(audioData.waveform.getNumSamples()) +
-         " origN=" + juce::String(audioData.originalWaveform.getNumSamples()) +
-         " melT=" + juce::String(static_cast<int>(audioData.melSpectrogram.size()));
-}
-
-// TEMPORARY (issue #3): measure, rather than assume, how much of a project is
-// source-derived and therefore shareable across every modification of the same
-// ARA audio source.
-//
-// The refactor is sized from arithmetic over field widths. That arithmetic
-// assumes each split clone carries FULL-LENGTH buffers rather than just its
-// own slice. If that assumption is wrong the whole premise shrinks, so this
-// reports actual retained bytes before any of it is built.
-struct ProjectFootprint {
-  double sharedMB = 0.0;  // pure functions of the audio source
-  double perModMB = 0.0;  // genuinely per-modification
-  double totalMB() const { return sharedMB + perModMB; }
-};
-
-ProjectFootprint measureProjectFootprint(const AudioData &audioData) {
-  auto bufferBytes = [](const juce::AudioBuffer<float> &b) {
-    return static_cast<double>(b.getNumChannels()) *
-           static_cast<double>(b.getNumSamples()) * sizeof(float);
-  };
-  auto vecBytes = [](const std::vector<float> &v) {
-    return static_cast<double>(v.size()) * sizeof(float);
-  };
-
-  double melBytes = 0.0;
-  for (const auto &frame : audioData.melSpectrogram)
-    melBytes += static_cast<double>(frame.capacity()) * sizeof(float) +
-                sizeof(std::vector<float>);
-
-  ProjectFootprint out;
-  out.sharedMB = bufferBytes(audioData.originalWaveform) + melBytes +
-                 vecBytes(audioData.rawF0) + vecBytes(audioData.cleanedF0) +
-                 vecBytes(audioData.denseF0);
-  out.perModMB = bufferBytes(audioData.waveform) + vecBytes(audioData.f0) +
-                 vecBytes(audioData.baseF0) + vecBytes(audioData.basePitch) +
-                 vecBytes(audioData.deltaPitch);
-
-  constexpr double kMB = 1024.0 * 1024.0;
-  out.sharedMB /= kMB;
-  out.perModMB /= kMB;
-  return out;
-}
-} // namespace
-#endif
 
 bool PitchNetAudioProcessor::hydrateAraRegionProject(
     const juce::String &regionKey,
@@ -2818,43 +2717,11 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
 
   auto &audioData = project->getAudioData();
 
-  // TEMPORARY (issue #2): fires before the early-out below, which is the path
-  // a freshly split clone takes - it arrives with everything already
-  // populated, so hydration is a no-op and this is the only report we get.
+  // A freshly split clone arrives with everything already populated, so
+  // hydration is a no-op for it.
   const bool takesEarlyOut = audioData.waveform.getNumSamples() > 0 &&
                              audioData.originalWaveform.getNumSamples() > 0 &&
                              !audioData.melSpectrogram.empty();
-  ARA_DIAG("hydrate key=" + regionKey +
-           " earlyOut=" + (takesEarlyOut ? "1" : "0") + " " +
-           describeInheritedEditState(audioData));
-
-#if PITCHNET_ARA_DIAGNOSTICS
-  {
-    // Retained footprint across every region PitchNet is holding, so the
-    // "runaway slice" claim can be checked against a number instead of an
-    // estimate. sharedMB is what a source-keyed cache would collapse to one
-    // copy; perModMB would remain per-modification either way.
-    const auto here = measureProjectFootprint(audioData);
-    double sharedTotal = 0.0;
-    double perModTotal = 0.0;
-    for (const auto &entry : araRegions) {
-      if (entry.second.project == nullptr)
-        continue;
-      const auto f =
-          measureProjectFootprint(entry.second.project->getAudioData());
-      sharedTotal += f.sharedMB;
-      perModTotal += f.perModMB;
-    }
-    ARA_DIAG("footprint key=" + regionKey + " thisShared=" +
-             juce::String(here.sharedMB, 1) + "MB thisPerMod=" +
-             juce::String(here.perModMB, 1) + "MB regions=" +
-             juce::String(static_cast<int>(araRegions.size())) +
-             " allShared=" + juce::String(sharedTotal, 1) + "MB allPerMod=" +
-             juce::String(perModTotal, 1) + "MB allTotal=" +
-             juce::String(sharedTotal + perModTotal, 1) + "MB");
-  }
-#endif
-
   if (takesEarlyOut)
     return true;
 

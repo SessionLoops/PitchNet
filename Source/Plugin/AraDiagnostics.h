@@ -21,18 +21,17 @@
 #define ARA_DIAG_PTR(p)                                                        \
   juce::String::toHexString((juce::int64)(juce::pointer_sized_int)(p))
 
-// TEMPORARY: cheap content fingerprint of an audio buffer.
+// Cheap content fingerprint of an audio buffer.
 //
-// The render diagnostic tracks a blob's dimensions, which never change on an
-// edit - the project spans the whole modification, so every republish is the
-// same length. That makes a content change invisible. This gives publish and
-// render sites a comparable value so a blob can be followed from where it is
-// written to where it is served.
+// A blob's dimensions never change on an edit - the project spans the whole
+// modification, so every republish is the same length - which makes a content
+// change invisible to anything tracking sizes. This gives the publish sites a
+// comparable value, so a blob can be followed from where it is written to
+// where it is served.
 //
 // Must be identical at every call site or the comparison means nothing, hence
 // one definition here. Samples a fixed number of taps rather than the whole
-// buffer: the render site runs on the audio thread and must stay O(1) in the
-// blob length.
+// buffer, so it stays O(1) in the blob length.
 inline float araDiagFingerprint(const juce::AudioBuffer<float> &buffer) {
   const int n = buffer.getNumSamples();
   if (n <= 0 || buffer.getNumChannels() <= 0)

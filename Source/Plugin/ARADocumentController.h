@@ -136,28 +136,6 @@ private:
   std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
       processedResamplingStates;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
-  // Diagnostics: last reported render outcome per region, so a line is only
-  // emitted when something actually changes (see PITCHNET_ARA_DIAGNOSTICS).
-  struct DiagnosticRenderState {
-    double playbackStart = -1.0;
-    juce::int64 startInModification = -1;
-    int blobSamples = -2;
-    bool rendered = false;
-    // Cheap content fingerprint of the served blob. Without it this state only
-    // tracks the blob's DIMENSIONS, so a republished blob of identical length
-    // - which is every edit, since the project spans the whole modification -
-    // looks unchanged and never reports. That blind spot is what stopped the
-    // first-edit-after-split bug from being diagnosable.
-    float blobFingerprint = 0.0f;
-    bool operator==(const DiagnosticRenderState &o) const {
-      return juce::approximatelyEqual(playbackStart, o.playbackStart) &&
-             startInModification == o.startInModification &&
-             blobSamples == o.blobSamples && rendered == o.rendered &&
-             blobFingerprint == o.blobFingerprint;
-    }
-  };
-  std::unordered_map<juce::ARAPlaybackRegion *, DiagnosticRenderState>
-      diagnosticRenderStates;
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
   HostLoopState previousLoopState;
