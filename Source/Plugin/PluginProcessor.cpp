@@ -16,6 +16,7 @@
 #include "PluginEditor.h"
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 namespace {
@@ -1084,7 +1085,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   araAnalysisReady = false;
   araAnalysisTimelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
   araAnalysisProjectSnapshot.reset();
-  araAnalysisProjectJson.clear();
+  invalidateAraAnalysisProjectJson();
 
   if (mainComponent) {
     mainComponent->setStatusMessage(TR("progress.analyzing"));
@@ -1240,9 +1241,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
 
         araAnalysisProjectSnapshot =
             std::make_unique<Project>(*completedProject);
-        araAnalysisProjectJson =
-            juce::JSON::toString(ProjectSerializer::toJson(*completedProject),
-                                 false);
+        invalidateAraAnalysisProjectJson();
         araAnalysisLoading = false;
         araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
 
@@ -1258,8 +1257,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
           if (auto *positionedProject = mainComponent->getProject()) {
             araAnalysisProjectSnapshot =
                 std::make_unique<Project>(*positionedProject);
-            araAnalysisProjectJson = juce::JSON::toString(
-                ProjectSerializer::toJson(*positionedProject), false);
+            invalidateAraAnalysisProjectJson();
           }
           if (araAnalysisProjectSnapshot)
             publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
@@ -1464,9 +1462,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                 araAnalysisTimelineOffsetSeconds;
             araAnalysisProjectSnapshot =
                 std::make_unique<Project>(*renderedProject);
-            araAnalysisProjectJson =
-                juce::JSON::toString(
-                    ProjectSerializer::toJson(*renderedProject), false);
+            invalidateAraAnalysisProjectJson();
             araAnalysisReady = true;
             publishPersistentProjectSnapshot(*renderedProject);
           }
@@ -1527,8 +1523,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
       araRegionScopedProject != nullptr ? *araRegionScopedProject : project;
 
   araAnalysisProjectSnapshot = std::make_unique<Project>(stateProject);
-  araAnalysisProjectJson =
-      juce::JSON::toString(ProjectSerializer::toJson(stateProject), false);
+  invalidateAraAnalysisProjectJson();
   araAnalysisReady =
       stateProject.getAudioData().waveform.getNumSamples() > 0 &&
       !stateProject.getAudioData().f0.empty();
@@ -1632,42 +1627,175 @@ bool PitchNetAudioProcessor::projectHasRegionEdits(const Project &project) {
   return false;
 }
 #endif
+const Project *PitchNetAudioProcessor::projectForPersistentState() const {
+  if (mainComponent) {
+    if (auto *project = mainComponent->getProject())
+      return project;
+  }
+
+  if (araAnalysisProjectSnapshot)
+    return araAnalysisProjectSnapshot.get();
+
+  if (araAnalysisController && araAnalysisController->getProject())
+    return araAnalysisController->getProject();
+
+  return nullptr;
+}
+
 bool PitchNetAudioProcessor::serializePersistentProjectState(
     juce::MemoryBlock &destData, bool hostBackedARA) const {
   destData.setSize(0);
+  juce::MemoryOutputStream out(destData, false);
+  return serializePersistentProjectState(out, hostBackedARA);
+}
 
+bool PitchNetAudioProcessor::serializePersistentProjectState(
+    juce::OutputStream &out, bool hostBackedARA) const {
   const auto archiveMode =
       hostBackedARA
           ? ProjectSerializer::BinaryArchiveMode::hostBackedARA
           : ProjectSerializer::BinaryArchiveMode::selfContained;
 
-  if (mainComponent) {
-    if (auto *project = mainComponent->getProject())
-      return ProjectSerializer::toBinaryArchive(*project, destData,
-                                                archiveMode);
-  }
+  if (const auto *project = projectForPersistentState())
+    return ProjectSerializer::toBinaryArchive(*project, out, archiveMode);
 
-  if (araAnalysisProjectSnapshot)
-    return ProjectSerializer::toBinaryArchive(*araAnalysisProjectSnapshot,
-                                              destData, archiveMode);
-
-  if (araAnalysisController && araAnalysisController->getProject())
-    return ProjectSerializer::toBinaryArchive(
-        *araAnalysisController->getProject(), destData, archiveMode);
-
+  // Deliberately outside projectForPersistentState(): there is no Project here
+  // to fingerprint, so computePersistentStateKey() returns its "nothing
+  // cacheable" sentinel and this path is written fresh every time.
   if (pendingStateJson.isNotEmpty()) {
     Project pendingProject;
     if (ProjectSerializer::fromJson(
             pendingProject, juce::JSON::parse(pendingStateJson)))
-      return ProjectSerializer::toBinaryArchive(pendingProject, destData,
+      return ProjectSerializer::toBinaryArchive(pendingProject, out,
                                                 archiveMode);
 
-    destData.append(pendingStateJson.toRawUTF8(),
-                    pendingStateJson.getNumBytesAsUTF8());
-    return destData.getSize() > 0;
+    return out.write(pendingStateJson.toRawUTF8(),
+                     pendingStateJson.getNumBytesAsUTF8());
   }
 
   return false;
+}
+
+std::uint64_t PitchNetAudioProcessor::computePersistentStateKey(
+    const juce::String &parametersXml, bool hostBackedARA) const {
+  const Project *project = projectForPersistentState();
+  if (project == nullptr)
+    return 0;
+
+  std::uint64_t hash = 0xcbf29ce484222325ull;
+
+  const auto hashBytes = [&hash](const void *data, size_t bytes) {
+    const auto *cursor = static_cast<const unsigned char *>(data);
+    size_t i = 0;
+    for (; i + sizeof(std::uint64_t) <= bytes; i += sizeof(std::uint64_t)) {
+      std::uint64_t word = 0;
+      std::memcpy(&word, cursor + i, sizeof(word));
+      hash = (hash ^ word) * 0x100000001b3ull;
+    }
+    for (; i < bytes; ++i)
+      hash = (hash ^ cursor[i]) * 0x100000001b3ull;
+  };
+  const auto hashValue = [&hash](std::uint64_t value) {
+    hash = (hash ^ value) * 0x100000001b3ull;
+  };
+  const auto hashFloats = [&hashValue,
+                           &hashBytes](const std::vector<float> &values) {
+    hashValue(values.size());
+    if (!values.empty())
+      hashBytes(values.data(), values.size() * sizeof(float));
+  };
+  const auto hashBools = [&hashValue](const std::vector<bool> &values) {
+    hashValue(values.size());
+    for (bool value : values)
+      hashValue(value ? 1u : 0u);
+  };
+
+  hashValue(hostBackedARA ? 1u : 0u);
+  hashBytes(parametersXml.toRawUTF8(), parametersXml.getNumBytesAsUTF8());
+
+  // Everything the archive's metadata carries - global parameters, note
+  // positions, gains, macros, and the modification-time region span - in
+  // exactly the shape toBinaryArchive() writes it, so this cannot drift as
+  // fields are added.
+  const auto metadataJson = juce::JSON::toString(
+      ProjectSerializer::toJson(*project, false, false), false);
+  hashBytes(metadataJson.toRawUTF8(), metadataJson.getNumBytesAsUTF8());
+
+  // The pitch curves are hashed in full: they are ~1MB for a long take and
+  // every edit moves one of them. The waveform buffers are deliberately
+  // fingerprinted by shape only. They are tens of MB, originalWaveform never
+  // changes after capture, and the rendered waveform cannot change without a
+  // resynthesis that moved the curves or metadata hashed above.
+  const auto &audioData = project->getAudioData();
+  hashValue(static_cast<std::uint64_t>(audioData.sampleRate));
+  hashBytes(&audioData.timelineOffsetSeconds,
+            sizeof(audioData.timelineOffsetSeconds));
+  for (const auto *buffer : {&audioData.waveform, &audioData.originalWaveform}) {
+    hashValue(static_cast<std::uint64_t>(buffer->getNumChannels()));
+    hashValue(static_cast<std::uint64_t>(buffer->getNumSamples()));
+  }
+
+  hashFloats(audioData.f0);
+  hashFloats(audioData.rawF0);
+  hashFloats(audioData.cleanedF0);
+  hashFloats(audioData.denseF0);
+  hashFloats(audioData.baseF0);
+  hashFloats(audioData.basePitch);
+  hashFloats(audioData.deltaPitch);
+  hashBools(audioData.voicedMask);
+  hashBools(audioData.vadMask);
+
+  // toBinaryArchive() writes the segment chunks as their own binary section,
+  // outside the metadata JSON hashed above, so they need hashing explicitly -
+  // otherwise a re-segmentation could be served from the cache as unchanged.
+  hashValue(audioData.segmentDebugChunks.size());
+  for (const auto &chunk : audioData.segmentDebugChunks) {
+    hashValue(static_cast<std::uint64_t>(chunk.chunkIndex));
+    hashValue(static_cast<std::uint64_t>(chunk.startFrame));
+    hashValue(static_cast<std::uint64_t>(chunk.endFrame));
+    hashValue(static_cast<std::uint64_t>(chunk.shortRestThreshold));
+    hashValue(chunk.events.size());
+    for (const auto &event : chunk.events) {
+      hashValue(static_cast<std::uint64_t>(event.startFrame));
+      hashValue(static_cast<std::uint64_t>(event.endFrame));
+      hashValue(static_cast<std::uint64_t>(event.attachedStartFrame));
+      hashBytes(&event.midiNote, sizeof(event.midiNote));
+      hashValue(event.isRest ? 1u : 0u);
+      hashBytes(&event.durationSeconds, sizeof(event.durationSeconds));
+    }
+  }
+
+  for (const auto &note : project->getNotes()) {
+    hashFloats(note.getOriginalDeltaPitch());
+    hashFloats(note.getDeltaPitch());
+    hashFloats(note.getBakedDeltaPitch());
+    hashFloats(note.getF0Values());
+  }
+
+  // 0 is the "nothing to cache" sentinel.
+  return hash == 0 ? 1 : hash;
+}
+
+const juce::String &PitchNetAudioProcessor::getAraAnalysisProjectJson() const {
+  if (!araAnalysisProjectJsonValid) {
+    araAnalysisProjectJson =
+        araAnalysisProjectSnapshot
+            ? juce::JSON::toString(
+                  ProjectSerializer::toJson(*araAnalysisProjectSnapshot), false)
+            : juce::String();
+    araAnalysisProjectJsonValid = true;
+  }
+  return araAnalysisProjectJson;
+}
+
+void PitchNetAudioProcessor::invalidateAraAnalysisProjectJson() {
+  araAnalysisProjectJson.clear();
+  araAnalysisProjectJsonValid = false;
+}
+
+void PitchNetAudioProcessor::setAraAnalysisProjectJson(juce::String json) {
+  araAnalysisProjectJson = std::move(json);
+  araAnalysisProjectJsonValid = true;
 }
 
 bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
@@ -1686,7 +1814,10 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
 
   araAnalysisTimelineOffsetSeconds =
       restoredProject->getAudioData().timelineOffsetSeconds;
-  araAnalysisProjectJson = projectJson;
+  // The JSON this project was restored from, so
+  // there is no need to rebuild it from the
+  // snapshot on the next read.
+  setAraAnalysisProjectJson(projectJson);
   araAnalysisProjectSnapshot = std::make_unique<Project>(*restoredProject);
   araAnalysisLoading = false;
   araAnalysisReady =
@@ -1713,9 +1844,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
     pendingStateJson.clear();
     araAnalysisTimelineOffsetSeconds =
         restoredProject->getAudioData().timelineOffsetSeconds;
-    araAnalysisProjectJson =
-        juce::JSON::toString(ProjectSerializer::toJson(*restoredProject),
-                             false);
+    invalidateAraAnalysisProjectJson();
     araAnalysisProjectSnapshot = std::make_unique<Project>(*restoredProject);
     araAnalysisLoading = false;
     araAnalysisReady =
@@ -1755,8 +1884,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
       cachedPitchOffset = project->getGlobalPitchOffset();
       cachedFormantShift = project->getFormantShift();
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
-      araAnalysisProjectJson =
-          juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+      invalidateAraAnalysisProjectJson();
       publishPersistentProjectSnapshot(*project);
     }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
@@ -1830,8 +1958,9 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
       restoredPersistentProject =
           mc->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
     } else if (!restoredPersistentProject &&
-               araAnalysisProjectJson.isNotEmpty()) {
-      restoredPersistentProject = mc->restoreProjectJson(araAnalysisProjectJson);
+               getAraAnalysisProjectJson().isNotEmpty()) {
+      restoredPersistentProject =
+          mc->restoreProjectJson(getAraAnalysisProjectJson());
     }
 
     // Sync current APVTS parameter values to project
@@ -1858,8 +1987,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
                                        ->convertTo0to1(
                                            project->getFormantShift()));
         araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
-        araAnalysisProjectJson =
-            juce::JSON::toString(ProjectSerializer::toJson(*project), false);
+        invalidateAraAnalysisProjectJson();
         araAnalysisReady =
             project->getAudioData().waveform.getNumSamples() > 0 &&
             !project->getAudioData().f0.empty();
@@ -1909,7 +2037,6 @@ void PitchNetAudioProcessor::getStateInformation(
   const juce::String parametersXml = apvtsXml ? apvtsXml->toString()
                                               : juce::String();
 
-  juce::MemoryBlock projectArchive;
   bool hostBackedARA = false;
 #if JucePlugin_Enable_ARA
   // When this processor is attached to an ARA document, the host already owns
@@ -1917,14 +2044,40 @@ void PitchNetAudioProcessor::getStateInformation(
   // for edited playback. Keep ordinary/non-ARA plugin state self-contained.
   hostBackedARA = araDocumentController != nullptr;
 #endif
-  serializePersistentProjectState(projectArchive, hostBackedARA);
 
+  // Hosts ask for plug-in state far more often than the project changes: every
+  // project save, every track duplicate, editor close and offline bounce.
+  // Re-archiving a multi-minute take each time is what makes saving stall, so
+  // hand back the previous blob when nothing moved. The key is a content
+  // fingerprint rather than Project::isModified(), which not every edit path
+  // sets - a missed invalidation here would silently persist stale audio.
+  const auto stateKey = computePersistentStateKey(parametersXml, hostBackedARA);
+  if (stateKey != 0 && stateKey == cachedPluginStateKey &&
+      cachedPluginStateBlock.getSize() > 0) {
+    destData = cachedPluginStateBlock;
+    return;
+  }
+
+  // Write the archive straight into the host's block and back-patch its length
+  // rather than staging it in a second MemoryBlock first, which doubled both
+  // the peak footprint and the copying.
   out.writeInt(static_cast<int>(kPluginStateMagic));
   out.writeInt(kPluginStateBinaryVersion);
   writeStateString(out, parametersXml);
-  out.writeInt64(static_cast<juce::int64>(projectArchive.getSize()));
-  if (projectArchive.getSize() > 0)
-    out.write(projectArchive.getData(), projectArchive.getSize());
+
+  const auto lengthFieldPosition = out.getPosition();
+  out.writeInt64(0);
+  const auto archiveStart = out.getPosition();
+  serializePersistentProjectState(out, hostBackedARA);
+  const auto archiveEnd = out.getPosition();
+
+  out.setPosition(lengthFieldPosition);
+  out.writeInt64(archiveEnd - archiveStart);
+  out.setPosition(archiveEnd);
+  out.flush();
+
+  cachedPluginStateKey = stateKey;
+  cachedPluginStateBlock = destData;
 }
 
 void PitchNetAudioProcessor::setStateInformation(const void *data,
