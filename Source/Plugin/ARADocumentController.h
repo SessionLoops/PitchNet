@@ -280,6 +280,14 @@ private:
   int previewTransitionRemaining = 0;
   int previewTransitionTotal = 0;
   std::uint32_t lastPreviewGeneration = 0;
+  // Bumped by configure() once every reader is in place, so a preview that was
+  // requested before its reader existed is retried instead of staying silent.
+  // configure() runs on the message thread while processBlock() may be running,
+  // so this crosses threads; the cached copy and the outcome flag below are
+  // render-thread only.
+  std::atomic<std::uint32_t> readerConfigGeneration{0};
+  std::uint32_t lastReaderConfigGeneration = 0;
+  bool lastPreviewRenderProducedAudio = false;
   double lastPreviewStartTime = -1.0;
   double lastPreviewEndTime = -1.0;
   juce::ARAPlaybackRegion *lastPreviewRegion = nullptr;

@@ -661,6 +661,7 @@ void PitchNetEditorRenderer::prepareToPlay(
   lastPreviewStartTime = -1.0;
   lastPreviewEndTime = -1.0;
   lastPreviewRegion = nullptr;
+  lastPreviewRenderProducedAudio = false;
   wasPreviewing = false;
   if (auto *docCtrl = getDocController())
     docCtrl->getPreviewState().editorRendererSampleRate.store(sampleRate);
@@ -674,6 +675,10 @@ void PitchNetEditorRenderer::prepareToPlay(
 
   for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>())
     ensureReaderFor(region);
+
+  // Readers may have appeared. Release last, after every reader is in place, so
+  // a render thread that observes the new generation also observes the readers.
+  readerConfigGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void PitchNetEditorRenderer::ensureReaderFor(juce::ARAPlaybackRegion *region) {
@@ -1165,13 +1170,33 @@ bool PitchNetEditorRenderer::processBlock(
 
     const auto previewGeneration =
         previewState.previewGeneration.load(std::memory_order_acquire);
+    const auto readerConfig =
+        readerConfigGeneration.load(std::memory_order_acquire);
     const double previewStartTime = previewState.previewStartTime.load();
     const double previewEndTime = previewState.previewEndTime.load();
-    if (previewGeneration != lastPreviewGeneration ||
+
+    // Two independent reasons to render, and they must not be merged. An
+    // explicit request always renders, even for the span that just played -
+    // pressing audition again has to make sound. A reader-configuration change
+    // renders only a preview that produced nothing, so readers appearing while
+    // a preview is playing cannot restart it.
+    //
+    // The outcome is recorded from the render itself rather than inferred
+    // later: writePreviewOnce() empties previewLoopRange when playback finishes
+    // normally, which would make a completed preview indistinguishable from a
+    // failed one and retry it on the next reader change.
+    const bool explicitRequest = previewGeneration != lastPreviewGeneration;
+    const bool spanChanged =
         !juce::approximatelyEqual(previewStartTime, lastPreviewStartTime) ||
         !juce::approximatelyEqual(previewEndTime, lastPreviewEndTime) ||
-        previewRegion != lastPreviewRegion) {
+        previewRegion != lastPreviewRegion;
+    const bool retryFailedRender = readerConfig != lastReaderConfigGeneration &&
+                                   !lastPreviewRenderProducedAudio;
+    lastReaderConfigGeneration = readerConfig;
+
+    if (explicitRequest || spanChanged || retryFailedRender) {
       renderPreviewBuffer(previewRegion, previewStartTime, previewEndTime);
+      lastPreviewRenderProducedAudio = !previewLoopRange.isEmpty();
       lastPreviewGeneration = previewGeneration;
       lastPreviewStartTime = previewStartTime;
       lastPreviewEndTime = previewEndTime;
