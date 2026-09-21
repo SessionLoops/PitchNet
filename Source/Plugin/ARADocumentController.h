@@ -39,6 +39,19 @@ class PitchNetEditorRenderer;
 // playback regions, so every region referencing a modification resolves to one
 // key and shares one edit layer.
 juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
+/** Which window of a modification's edits is currently selected.
+
+    The two identities answer different questions and must not be conflated:
+    pitchnetRegionKey() answers "whose edits are these?" and owns the Project,
+    the archive and the undo history, so every region of one modification
+    shares it. This answers "which window of those edits is selected?" and is
+    unique per playback region.
+
+    Ephemeral and UI-only - it encodes an object address, so it is meaningful
+    for this session and must never be stored, archived or compared across
+    runs. Callers resolve it by re-collecting live regions, never by
+    dereferencing it. */
+juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region);
 juce::String
 pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region);
 

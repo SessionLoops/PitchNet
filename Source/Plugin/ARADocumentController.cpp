@@ -30,6 +30,18 @@ juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region) {
   return juce::String(modification->getPersistentID());
 }
 
+juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region) {
+  const auto *modification = region.getAudioModification();
+  if (modification == nullptr)
+    return {};
+
+  // Modification ID first so the value stays readable in a log; the address
+  // distinguishes siblings that share it.
+  const auto address = reinterpret_cast<std::uintptr_t>(&region);
+  return juce::String(modification->getPersistentID()) + "#" +
+         juce::String::toHexString(static_cast<juce::int64>(address));
+}
+
 juce::String
 pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region) {
   const auto *modification = region.getAudioModification();
@@ -698,6 +710,13 @@ void PitchNetEditorRenderer::configure() {
   // Such a region is in neither list above, so prepare its reader explicitly.
   if (auto *docCtrl = getDocController())
     ensureReaderFor(docCtrl->getPreviewState().previewedRegion.load());
+
+  // Readers may have appeared. Released last, after every reader is in place,
+  // so a render thread that observes the new generation also observes the
+  // readers. This is the late-reader path a silent preview waits on -
+  // prepareToPlay() bumps it too, but a preview requested after that point is
+  // only rescued from here.
+  readerConfigGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void PitchNetEditorRenderer::releaseResources() {

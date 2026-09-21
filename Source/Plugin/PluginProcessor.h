@@ -176,6 +176,9 @@ public:
   // Display only - nothing in the project moves. May be negative.
   void pushTimelineDisplayOffset() const;
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
+  juce::String getActiveAraRegionSelector() const {
+    return activeRegionSelector;
+  }
   bool isAraRegionCanvasAnalysisPending() const {
     return regionCanvasAnalysisPending.load();
   }
@@ -400,6 +403,9 @@ private:
   // raw pointers retained by that region's undo actions.
   std::map<juce::String, AraRegionState> araRegions;
   juce::String activeRegionKey;
+  // The selected window onto activeRegionKey's modification. Siblings share
+  // the key, so this is what distinguishes them for selection and placement.
+  juce::String activeRegionSelector;
   // True only while the canvas is showing the ACTIVE REGION's own (region-local)
   // project. onProjectDataChanged fires for every project change — including
   // completion of the composite/document analysis, whose waveform is anchored to

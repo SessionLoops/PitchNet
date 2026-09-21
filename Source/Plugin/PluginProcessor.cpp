@@ -1735,6 +1735,26 @@ std::uint64_t PitchNetAudioProcessor::computePersistentStateKey(
     hashValue(static_cast<std::uint64_t>(buffer->getNumSamples()));
   }
 
+  // A self-contained archive writes every sample of BOTH buffers, so the key
+  // has to represent their contents, not just their shape. Shape alone is not
+  // enough: an asynchronous resynthesis can land after the edit that triggered
+  // it, leaving curves and metadata identical across two saves while the
+  // rendered samples differ - the second save would then be handed the first
+  // one's blob and persist pre-render audio. Host-backed archives omit both
+  // buffers, so they are not scanned there.
+  //
+  // This is a full memory scan, deliberately. It is still cheaper than the
+  // re-archive it avoids, and the alternative - a revision counter bumped at
+  // every waveform mutation - would be a correctness invariant that has to be
+  // found and maintained at every future write site.
+  if (!hostBackedARA) {
+    for (const auto *buffer :
+         {&audioData.waveform, &audioData.originalWaveform})
+      for (int channel = 0; channel < buffer->getNumChannels(); ++channel)
+        hashBytes(buffer->getReadPointer(channel),
+                  static_cast<size_t>(buffer->getNumSamples()) * sizeof(float));
+  }
+
   hashFloats(audioData.f0);
   hashFloats(audioData.rawF0);
   hashFloats(audioData.cleanedF0);
@@ -1762,6 +1782,7 @@ std::uint64_t PitchNetAudioProcessor::computePersistentStateKey(
       hashBytes(&event.midiNote, sizeof(event.midiNote));
       hashValue(event.isRest ? 1u : 0u);
       hashBytes(&event.durationSeconds, sizeof(event.durationSeconds));
+      hashValue(static_cast<std::uint64_t>(event.durationFrames));
     }
   }
 
@@ -2086,6 +2107,12 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
     return;
 
   const auto clearUndoHistories = [this]() {
+    // Incoming state replaces whatever this processor held, so the blob
+    // cached for the previous project must not outlive it - a later save
+    // could otherwise hand the host the state we just replaced.
+    cachedPluginStateKey = 0;
+    cachedPluginStateBlock.reset();
+
     undoManager->clear();
     for (auto &[regionKey, regionState] : araRegions) {
       juce::ignoreUnused(regionKey);
@@ -2095,6 +2122,7 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
     araRegions.clear();
 #if JucePlugin_Enable_ARA
     activeRegionKey.clear();
+  activeRegionSelector.clear();
     activeModification = nullptr;
     canvasShowsActiveAraRegion = false;
 #endif
@@ -2259,6 +2287,8 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   if (key.isEmpty())
     return;
 
+  const auto selector = pitchnetRegionSelector(*region);
+
   if (key == activeRegionKey) {
     // Studio One Event FX can bind and select the playback region before the
     // editor exists. That headless call records activeRegionKey but cannot
@@ -2269,8 +2299,17 @@ void PitchNetAudioProcessor::setActiveAraRegion(
         regionCanvasAnalysisPending.load() &&
         pendingRegionCanvasAnalysisKey == key;
     if (mainComponent == nullptr || canvasShowsActiveAraRegion ||
-        analysisAlreadyPendingForRegion)
+        analysisAlreadyPendingForRegion) {
+      // Same modification, so ownership is unchanged and the Project stays
+      // bound - but a different window onto it needs its placement refreshed,
+      // or the ruler, playhead and stamped span keep describing the sibling
+      // that was selected before.
+      if (selector != activeRegionSelector) {
+        activeRegionSelector = selector;
+        updateActiveAraRegionProperties(region);
+      }
       return;
+    }
   }
 
   // Return the outgoing region's actual Project to its store. Undo actions
@@ -2286,6 +2325,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   }
 
   activeRegionKey = key;
+  activeRegionSelector = selector;
   activeModification = region->getAudioModification<PitchNetAudioModification>();
   activeRegionStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
   activeRegionEndSeconds = std::max(activeRegionStartSeconds,
@@ -2617,6 +2657,7 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
 
   activeModification = nullptr;
   activeRegionKey.clear();
+  activeRegionSelector.clear();
   canvasShowsActiveAraRegion = false;
 }
 

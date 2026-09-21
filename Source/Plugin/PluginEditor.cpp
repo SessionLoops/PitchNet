@@ -544,12 +544,16 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
     if (duplicates > 0)
       name << " (" << (duplicates + 1) << ")";
 
-    entries.push_back({pitchnetRegionKey(*region), name});
+    // The list selects a playback region, so it is keyed by the region
+    // selector. Keying it by the modification would give every sibling of a
+    // split clip the same entry key: none of them could be told apart, and all
+    // of them would render as active.
+    entries.push_back({pitchnetRegionSelector(*region), name});
   }
 
-  const auto activeKey = audioProcessor.getActiveAraRegionKey();
+  const auto activeSelector = audioProcessor.getActiveAraRegionSelector();
 
-  juce::String signature = activeKey;
+  juce::String signature = activeSelector;
   for (const auto &entry : entries)
     signature << "\n" << entry.key << "\t" << entry.name;
 
@@ -558,13 +562,13 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
 
   regionListPublished = true;
   lastPublishedRegionSignature = signature;
-  mainView->updateRegionList(entries, activeKey);
+  mainView->updateRegionList(entries, activeSelector);
 
   // Only fires when the list actually changes, so this stays quiet - one line
   // per change saying what the card is showing and where it came from.
   juce::String diagnostic;
   diagnostic << "ARA region list: " << static_cast<int>(entries.size())
-             << " region(s), active='" << activeKey << "'";
+             << " region(s), active='" << activeSelector << "'";
   if (auto *renderer = audioProcessor.getPlaybackRenderer())
     diagnostic << " renderer="
                << static_cast<int>(
@@ -595,7 +599,7 @@ void PitchNetAudioProcessorEditor::activateAraRegionByKey(
   // host may have destroyed a region since the list was last published.
   juce::ARAPlaybackRegion *target = nullptr;
   for (auto *region : collectAraPlaybackRegions()) {
-    if (pitchnetRegionKey(*region) == regionKey) {
+    if (pitchnetRegionSelector(*region) == regionKey) {
       target = region;
       break;
     }
