@@ -143,12 +143,27 @@ public:
     regionProjectArchives[regionID] = juce::MemoryBlock(data, sizeInBytes);
   }
 
+  //============================================================================
+  // Key resolution
+  //
+  // A clone stays filed under the ID it was copied from until
+  // adoptClonedRegionState() runs, and the host is not obliged to send the
+  // property-update callback that triggers it. Every READ path therefore
+  // resolves a key the same way. Writes deliberately do not: a clone must store
+  // under its own ID, or it would overwrite the state it was copied from.
+  template <typename MapType>
+  auto findRegionSlot(MapType &map, const juce::String &regionID) const
+      -> decltype(map.find(regionID)) {
+    auto it = map.find(regionID);
+    if (it == map.end() && clonedPersistentID.isNotEmpty())
+      it = map.find(clonedPersistentID);
+    return it;
+  }
+
   bool copyProjectArchiveForRegion(const juce::String &regionID,
                                    juce::MemoryBlock &dest) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    auto it = regionProjectArchives.find(regionID);
-    if (it == regionProjectArchives.end() && clonedPersistentID.isNotEmpty())
-      it = regionProjectArchives.find(clonedPersistentID);
+    const auto it = findRegionSlot(regionProjectArchives, regionID);
     if (it == regionProjectArchives.end() || it->second.getSize() == 0)
       return false;
 
@@ -167,7 +182,7 @@ public:
 
   bool hasProjectArchiveForRegion(const juce::String &regionID) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = regionProjectArchives.find(regionID);
+    const auto it = findRegionSlot(regionProjectArchives, regionID);
     return it != regionProjectArchives.end() && it->second.getSize() > 0;
   }
 
@@ -175,10 +190,9 @@ public:
   // Queries
   bool hasProcessedAudioForRegion(const juce::String &regionID) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    if (const auto it = processedRegions.find(regionID);
-        it != processedRegions.end() && it->second != nullptr)
-      return it->second->hasAudio();
-    return false;
+    const auto it = findRegionSlot(processedRegions, regionID);
+    return it != processedRegions.end() && it->second != nullptr &&
+           it->second->hasAudio();
   }
 
   bool copyProcessedAudioForRegion(const juce::String &regionID,
@@ -186,7 +200,7 @@ public:
                                    double &sampleRateOut,
                                    juce::int64 &startSampleOut) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = processedRegions.find(regionID);
+    const auto it = findRegionSlot(processedRegions, regionID);
     if (it == processedRegions.end() || it->second == nullptr ||
         !it->second->hasAudio())
       return false;
@@ -214,17 +228,10 @@ public:
 
   const ProcessedRegionData *
   getProcessedRegionData(const juce::String &regionID) const noexcept {
-    if (const auto it = processedRegions.find(regionID);
-        it != processedRegions.end())
-      return it->second.get();
-    // A clone still filed under the ID it was copied from: adoptClonedRegionState()
-    // depends on a property-update callback that the host is not obliged to send.
-    // Read-only fallback, so this stays safe on the audio thread.
-    if (clonedPersistentID.isNotEmpty())
-      if (const auto it = processedRegions.find(clonedPersistentID);
-          it != processedRegions.end())
-        return it->second.get();
-    return nullptr;
+    // Read-only resolution, so the clone fallback stays safe on the audio
+    // thread.
+    const auto it = findRegionSlot(processedRegions, regionID);
+    return it != processedRegions.end() ? it->second.get() : nullptr;
   }
 
   ProcessedRegionData *
@@ -256,7 +263,7 @@ public:
   bool writeProcessedAudioForRegionToStream(const juce::String &regionID,
                                             juce::OutputStream &output) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = processedRegions.find(regionID);
+    const auto it = findRegionSlot(processedRegions, regionID);
     if (it == processedRegions.end() || it->second == nullptr ||
         !it->second->hasAudio())
       return false;

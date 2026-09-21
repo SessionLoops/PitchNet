@@ -2449,8 +2449,12 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
 
   if (mainComponent != nullptr && canvasShowsActiveAraRegion &&
       activeRegionKey.isNotEmpty()) {
-    auto releasedProject = mainComponent->exchangeProject(nullptr);
-    juce::ignoreUnused(releasedProject);
+    // Deactivation is reversible - redo can reactivate this same object - so
+    // the edited project has to survive in the region cache. Discarding it here
+    // lost every edit made since the last save whenever a track version was
+    // deactivated.
+    araRegions[activeRegionKey].project =
+        mainComponent->exchangeProject(nullptr);
     mainComponent->bindUndoManager(undoManager.get());
   }
 
@@ -2466,39 +2470,19 @@ void PitchNetAudioProcessor::forgetAraModification(
 
   releaseAraModificationCanvas(modification);
 
-  // Every region key for this modification is prefixed with its persistent ID,
-  // so the whole family goes in one pass. The object is still alive here, so
-  // the ID is safe to read.
-  const auto prefix = juce::String(modification->getPersistentID()) + ":";
-  for (auto it = araRegions.begin(); it != araRegions.end();) {
-    if (it->first.startsWith(prefix)) {
-      if (it->second.undoManager != nullptr)
-        it->second.undoManager->clear();
-      it = araRegions.erase(it);
-    } else {
-      ++it;
-    }
+  // Edit state is filed under the modification's persistent ID - one entry, not
+  // a prefixed family. This previously matched on a "<id>:" prefix left over
+  // from the per-region key scheme, which the modification-owned key never
+  // matches, so nothing was ever erased and every destroyed modification leaked
+  // its Project and undo history. The object is still alive here, so the ID is
+  // safe to read.
+  const auto key = juce::String(modification->getPersistentID());
+  const auto it = araRegions.find(key);
+  if (it != araRegions.end()) {
+    if (it->second.undoManager != nullptr)
+      it->second.undoManager->clear();
+    araRegions.erase(it);
   }
-}
-
-void PitchNetAudioProcessor::removeAraRegion(
-    const juce::String &regionKey) {
-  if (regionKey.isEmpty())
-    return;
-
-  if (regionKey == activeRegionKey) {
-    if (mainComponent != nullptr && canvasShowsActiveAraRegion &&
-        activeRegionKey.isNotEmpty()) {
-      auto removedProject = mainComponent->exchangeProject(nullptr);
-      juce::ignoreUnused(removedProject);
-      mainComponent->bindUndoManager(undoManager.get());
-    }
-    activeModification = nullptr;
-    activeRegionKey.clear();
-    canvasShowsActiveAraRegion = false;
-  }
-
-  araRegions.erase(regionKey);
 }
 
 bool PitchNetAudioProcessor::serializeAraRegionProject(

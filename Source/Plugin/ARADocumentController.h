@@ -35,11 +35,10 @@ class PitchNetEditorRenderer;
 // Persistent identity for an ARA playback region: the audio-modification
 // persistent ID plus the region's current index within that modification. Host
 // refs are reassigned every session, so they cannot be used for saved DAW
-// projects. Used to key per-region Projects and per-region processed audio so
-// each region/track is analysed, edited, and played back independently.
+// projects. ARA gives persistent identity to audio modifications, not to
+// playback regions, so every region referencing a modification resolves to one
+// key and shares one edit layer.
 juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
-juce::String pitchnetRegionKeyForIndex(const juce::String &modificationID,
-                                       int regionIndex);
 juce::String
 pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region);
 

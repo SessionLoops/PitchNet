@@ -16,14 +16,6 @@
 
 #include "AraDiagnostics.h"
 
-juce::String pitchnetRegionKeyForIndex(const juce::String &modificationID,
-                                       int regionIndex) {
-  if (modificationID.isEmpty() || regionIndex < 0)
-    return {};
-
-  return modificationID + ":" + juce::String(regionIndex);
-}
-
 juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region) {
   const auto *modification = region.getAudioModification();
   if (modification == nullptr)
@@ -2111,13 +2103,12 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
     currentPlaybackRegion = nullptr;
   }
 
-  // The removal callback has already cleared this region from the tracked
-  // selection. Destruction must release its Project and undo manager even
-  // when other regions remain selected.
-  if (playbackRegion == nullptr)
-    return;
-  if (auto *processor = getRegionCanvasProcessor())
-    processor->removeAraRegion(pitchnetRegionKey(*playbackRegion));
+  // Edit state belongs to the audio modification, and this key is shared by
+  // every region referencing it, so dropping it here destroyed the Project and
+  // undo history of every sibling - splitting a clip and then deleting one
+  // slice lost the edits on the others. It is also wrong for a modification
+  // that legitimately outlives its regions, such as an inactive track version.
+  // Only willDestroyAudioModification() may erase modification-owned state.
 }
 // Takes MODIFICATION seconds, because that is the space the Project - and so
 // the piano roll the user is selecting in - lives in. Previously it took
@@ -2484,77 +2475,48 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
         if (!output.writeString(audioModification->getPersistentID()))
           return false;
 
-        // One entry per region that has its own analysed/edited project, keyed
-        // by its index in this modification. Each entry carries the region's
-        // project JSON and, when present, its rendered processed audio so reload
-        // playback is pitch-corrected without re-analysing/re-rendering.
+        // One entry per audio modification. Identity is the modification, not
+        // the playback region: every region referencing it is a window onto the
+        // same edit layer, so a clip split into ten slices writes one payload
+        // instead of ten copies of it. Archives written before this carry one
+        // entry per region index; restore still reads them and collapses every
+        // entry into this same slot.
         const auto *pitchModification =
             dynamic_cast<const PitchNetAudioModification *>(audioModification);
         struct RegionEntry {
           int index;
           juce::String key;
-          juce::String audioKey;
           juce::MemoryBlock json;
         };
         std::vector<RegionEntry> regionEntries;
-        const auto &regions =
-            audioModification->getPlaybackRegions<juce::ARAPlaybackRegion>();
-        for (size_t r = 0; r < regions.size(); ++r) {
-          if (regions[r] == nullptr)
-            continue;
-          const auto key = pitchnetRegionKeyForIndex(
-              audioModification->getPersistentID(), static_cast<int>(r));
-          const auto liveKey = pitchnetRegionKey(*regions[r]);
-          juce::MemoryBlock json;
-          const bool hasDistinctLiveKey =
-              liveKey.isNotEmpty() && liveKey != key;
-          auto *processor = getRegionCanvasProcessor();
-          // The processor owns the live Project. Prefer serialising it at the
-          // instant the host asks us to save; the modification cache can lag
-          // behind an edit or an asynchronous resynthesis callback.
-          bool hasProject = false;
-          if (processor != nullptr && hasDistinctLiveKey)
-            hasProject =
-                processor->serializeAraRegionProject(liveKey, json);
-          if (!hasProject && pitchModification != nullptr &&
-              hasDistinctLiveKey)
-            hasProject =
-                pitchModification->copyProjectArchiveForRegion(liveKey, json);
-          if (!hasProject && pitchModification != nullptr)
-            hasProject =
-                pitchModification->copyProjectArchiveForRegion(key, json);
-          if (!hasProject && processor != nullptr)
-            hasProject = processor->serializeAraRegionProject(key, json);
-          ARA_DIAG("store mod=" + ARA_DIAG_PTR(pitchModification) +
-                   " id=" + juce::String(audioModification->getPersistentID()) +
-                   " regionIndex=" + juce::String((int)r) +
-                   " liveKey=" + liveKey + " indexKey=" + key +
-                   " hasProject=" + juce::String(hasProject ? 1 : 0) +
-                   " bytes=" + juce::String((int)json.getSize()));
-          if (pitchModification != nullptr && hasProject && json.getSize() > 0)
-            pitchModification->setProjectArchiveForRegion(
-                key, json.getData(), json.getSize());
-          if (json.getSize() > 0)
-            regionEntries.push_back(
-                {static_cast<int>(r), key, liveKey, std::move(json)});
-        }
+        const auto key = juce::String(audioModification->getPersistentID());
+        auto *processor = getRegionCanvasProcessor();
+        juce::MemoryBlock json;
 
-        // Inactive track versions can keep their modification while the host
-        // removes all playback regions. Persist the saved slots in that case.
-        if (regions.empty() && pitchModification != nullptr) {
-          const auto prefix =
-              juce::String(audioModification->getPersistentID()) + ":";
-          for (const auto &key : pitchModification->getProjectArchiveRegionIDs()) {
-            if (!key.startsWith(prefix))
-              continue;
-            const auto suffix = key.substring(prefix.length());
-            if (suffix.isEmpty() || !suffix.containsOnly("0123456789"))
-              continue;
-            juce::MemoryBlock json;
-            if (pitchModification->copyProjectArchiveForRegion(key, json))
-              regionEntries.push_back(
-                  {suffix.getIntValue(), key, key, std::move(json)});
-          }
+        // The processor owns the live Project, so prefer serialising it at the
+        // instant the host asks us to save; the modification's cache can lag an
+        // edit or an asynchronous resynthesis callback. Neither lookup needs a
+        // live playback region, so an inactive track version whose regions the
+        // host has removed still persists its edits here rather than needing a
+        // separate branch.
+        bool hasProject = processor != nullptr &&
+                          processor->serializeAraRegionProject(key, json);
+        if (!hasProject && pitchModification != nullptr)
+          hasProject = pitchModification->copyProjectArchiveForRegion(key, json);
+
+        ARA_DIAG("store mod=" + ARA_DIAG_PTR(pitchModification) + " id=" + key +
+                 " regions=" +
+                 juce::String((int)audioModification
+                                  ->getPlaybackRegions<juce::ARAPlaybackRegion>()
+                                  .size()) +
+                 " hasProject=" + juce::String(hasProject ? 1 : 0) +
+                 " bytes=" + juce::String((int)json.getSize()));
+
+        if (hasProject && json.getSize() > 0) {
+          if (pitchModification != nullptr)
+            pitchModification->setProjectArchiveForRegion(key, json.getData(),
+                                                          json.getSize());
+          regionEntries.push_back({0, key, std::move(json)});
         }
 
         if (!output.writeInt(static_cast<int>(regionEntries.size())))
@@ -2568,24 +2530,19 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
               !output.write(entry.json.getData(), entry.json.getSize()))
             return false;
 
-          // Prefer the live key because it contains any edits made after this
-          // project was restored. The stable index key is the same region's
-          // persisted fallback and may still contain an older render.
-          const bool hasLiveAudio =
-              pitchModification != nullptr && entry.audioKey != entry.key &&
-              pitchModification->hasProcessedAudioForRegion(entry.audioKey);
-          const bool hasArchivedAudio =
+          // One key family, so there is no live-versus-archived choice left to
+          // make. The predicate and the writer below resolve a clone's key the
+          // same way, so a "yes" here is always writable - if they disagreed,
+          // the failed write would abort the whole archive.
+          const bool hasAudio =
               pitchModification != nullptr &&
               pitchModification->hasProcessedAudioForRegion(entry.key);
-          const bool hasAudio = hasLiveAudio || hasArchivedAudio;
           if (!output.writeInt(hasAudio ? 1 : 0))
             return false;
-          if (hasAudio) {
-            const auto &audioKey = hasLiveAudio ? entry.audioKey : entry.key;
-            if (!pitchModification->writeProcessedAudioForRegionToStream(
-                    audioKey, output))
-              return false;
-          }
+          if (hasAudio &&
+              !pitchModification->writeProcessedAudioForRegionToStream(
+                  entry.key, output))
+            return false;
         }
       }
       return true;

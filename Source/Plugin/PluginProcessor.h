@@ -186,7 +186,6 @@ public:
 
   // Called when a playback region is removed. Its Project and undo history
   // have the same lifetime and are destroyed together.
-  void removeAraRegion(const juce::String &regionKey);
 
   // Drop the canvas binding if it is showing this modification, without
   // discarding its cached edit state. Used when the host deactivates a
