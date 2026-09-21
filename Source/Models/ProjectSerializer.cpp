@@ -394,6 +394,11 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     if (pitchDataVar.isObject()) {
         pitchDataFromJson(audioData, pitchDataVar);
     }
+
+    // Notes were read before the dense F0 existed, so any recovery of
+    // directF0Edit has to happen here rather than in noteFromJson().
+    if (formatVersion < 6)
+        migrateLegacyDirectF0Edits(project, audioData);
     audioBufferFromJson(audioData.waveform,
                         json.getProperty("waveform", juce::var()));
     audioBufferFromJson(audioData.originalWaveform,
@@ -907,8 +912,9 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
         (!legacySynthWaveform.isVoid() &&
          legacySynthWaveform.toString().isNotEmpty());
     note.setRenderedEdit(hasRenderedEdit);
-    // Absent in projects saved before this flag existed, which read as false -
-    // correct, because those projects predate the drawn-edit tracking.
+    // Absent in projects saved before this flag existed. Those read as false
+    // here and are recovered afterwards by migrateLegacyDirectF0Edits(), which
+    // needs the dense F0 this function does not have.
     note.setDirectF0Edit(
         static_cast<bool>(json.getProperty("directF0Edit", false)));
     if (hasRenderedEdit)
@@ -970,6 +976,57 @@ bool ProjectSerializer::pitchDataFromJson(AudioData& audioData, const juce::var&
         audioData.denseF0 = audioData.f0;
 
     return true;
+}
+
+void ProjectSerializer::migrateLegacyDirectF0Edits(Project& project,
+                                                   const AudioData& audioData) {
+    // A drawn stroke is a gesture, so it moves the curve much further than the
+    // rounding in the stored arrays ever could. Both thresholds are blunt on
+    // purpose: missing a legacy drawing costs no more than not having written
+    // this at all, while a false positive would hold a genuinely neutral
+    // region on the resynthesis path and put back the artifact this branch
+    // removes.
+    constexpr float kMinDeviationCents = 50.0f;
+    constexpr float kMinDeviatingFraction = 0.25f;
+    constexpr int kMinDeviatingFrames = 3;
+
+    const auto& f0 = audioData.f0;
+    if (f0.empty())
+        return;
+
+    for (auto& note : project.getNotes()) {
+        // Anything non-neutral already survives the neutrality check on its
+        // own and needs no flag; only a note that looks untouched can be
+        // wrongly discarded.
+        if (!note.isNeutralForOriginalWaveform())
+            continue;
+
+        const std::vector<float> expected = note.computeF0FromDelta();
+        const int startFrame = note.getStartFrame();
+
+        int comparable = 0;
+        int deviating = 0;
+        for (int i = 0; i < static_cast<int>(expected.size()); ++i) {
+            const int frame = startFrame + i;
+            if (frame < 0 || frame >= static_cast<int>(f0.size()))
+                continue;
+
+            const float stored = f0[frame];
+            const float predicted = expected[i];
+            if (stored <= 0.0f || predicted <= 0.0f)
+                continue; // unvoiced at either end carries no pitch to compare
+
+            ++comparable;
+            if (std::abs(1200.0f * std::log2(stored / predicted)) >
+                kMinDeviationCents)
+                ++deviating;
+        }
+
+        if (comparable > 0 && deviating >= kMinDeviatingFrames &&
+            static_cast<float>(deviating) >=
+                kMinDeviatingFraction * static_cast<float>(comparable))
+            note.setDirectF0Edit(true);
+    }
 }
 
 juce::var ProjectSerializer::audioBufferToJson(const juce::AudioBuffer<float>& buffer) {

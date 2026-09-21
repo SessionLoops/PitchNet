@@ -169,7 +169,7 @@ void DrawHandler::commitPitchDrawing() {
         // removes the last per-note trace of it. Record the edit on the note so
         // it is not mistaken for an untouched one and thrown away. The previous
         // value goes into the undo action, which owns restoring it.
-        noteFlagEdits.push_back({&note, note.hasDirectF0Edit()});
+        noteFlagEdits.push_back({note.getStartFrame(), note.hasDirectF0Edit()});
         note.setDirectF0Edit(true);
       }
     }
@@ -190,7 +190,7 @@ void DrawHandler::commitPitchDrawing() {
           if (projectPtr)
             projectPtr->setF0DirtyRange(minFrame, maxFrame + 1);
         },
-        std::move(noteFlagEdits));
+        std::move(noteFlagEdits), projectPtr);
     owner_.undoManager->addAction(std::move(action));
   }
 
