@@ -1,5 +1,6 @@
 #include "IncrementalSynthesizer.h"
 #include "FormantShifter.h"
+#include "OriginalWaveformRestore.h"
 #include "../../Utils/NoteGainCurve.h"
 #include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
@@ -12,6 +13,7 @@
 
 namespace {
 constexpr int kAdjacentFrameTolerance = 1;
+constexpr int kTimingClearFadeSamples = 128;
 
 struct EditedClusterSelection {
   std::vector<uint8_t> members;
@@ -1670,8 +1672,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // not bit-exact in float. Edges next to edited audio keep their
           // crossfade; there the body is still copied up to where it starts.
           //
-          // Skipped when timing moves are in play (their patches follow) or a
-          // global formant shift means no note is neutral to the original.
+          // Timing patches protect only their own samples (including fades).
+          // A global formant shift still means no note is neutral.
           {
             // Covers the widest splice any version has written past a note
             // edge: commit fade (512 before, 384 now) + 128 search, and the
@@ -1687,9 +1689,22 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
             const auto &original = audioData.originalWaveform;
             const int originalSamples = original.getNumSamples();
-            if (!hasGlobalFormant && audioMovePatches.empty() &&
-                !resetSpans.empty() && originalSamples > 0 &&
+            if (!hasGlobalFormant && !resetSpans.empty() && originalSamples > 0 &&
                 original.getNumChannels() > 0) {
+              std::vector<OriginalWaveformRestore::Range> timingProtectedRanges;
+              for (const auto &patch : audioMovePatches) {
+                // Timing clear fades extend 128 samples outside the gap.
+                if (patch.clearStartSample >= 0 &&
+                    patch.clearEndSample > patch.clearStartSample)
+                  timingProtectedRanges.push_back({
+                      patch.clearStartSample - kTimingClearFadeSamples,
+                      patch.clearEndSample + kTimingClearFadeSamples});
+                if (!patch.samples.empty())
+                  timingProtectedRanges.push_back({
+                      patch.destinationStartSample,
+                      patch.destinationStartSample +
+                          static_cast<int>(patch.samples.size())});
+              }
               const auto &allNotes = capturedProject->getNotes();
 
               // True if audio of an edited note (current edit, or rendered
@@ -1745,12 +1760,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      channel < audioData.waveform.getNumChannels(); ++channel) {
                   const int sourceChannel =
                       std::min(channel, original.getNumChannels() - 1);
-                  const float *source =
-                      original.getReadPointer(sourceChannel, startSample);
-                  float *destination =
-                      audioData.waveform.getWritePointer(channel, startSample);
-                  std::copy(source + copyStart, source + copyEnd,
-                            destination + copyStart);
+                  OriginalWaveformRestore::copy(
+                      audioData.waveform.getWritePointer(channel),
+                      original.getReadPointer(sourceChannel),
+                      startSample + copyStart, startSample + copyEnd,
+                      timingProtectedRanges);
                 }
               }
             }
@@ -1759,7 +1773,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // Apply fixed-length audio attached to timing-region boundaries.
           // These joins happen after the synthesized commit, so they need
           // their own smoothing instead of hard clear/copy operations.
-          constexpr int kTimingClearFadeSamples = 128;
           constexpr int kTimingPatchBoundaryMarginSamples = 512;
           constexpr int kTimingPatchFadeHalfSamples = 128;
           constexpr int kTimingPatchAnalysisHalfSamples = 128;
