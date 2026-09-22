@@ -147,6 +147,20 @@ namespace
     }
   };
 
+  // Note::deltaPitch is only the active contour when the note has no
+  // analysed originalDeltaPitch (legacy projects). Otherwise it is a scratch
+  // copy that stays empty after a fresh scan and is filled from the global
+  // curve when a drag starts, so comparing it to the original would flag
+  // every untouched note as pitch-edited. Real contour edits live in
+  // bakedDeltaPitch, which is compared separately.
+  bool hasUnrenderedDeltaEdit(const Note& note, const NoteEditState& current,
+                              const NoteEditState& defaults)
+  {
+    if (note.hasOriginalDeltaPitch())
+      return false;
+    return current.deltaPitch != defaults.deltaPitch;
+  }
+
   bool hasPitchEdits(const Note& note)
   {
     const auto current = NoteEditState::capture(note);
@@ -162,7 +176,7 @@ namespace
            current.deltaScale != defaults.deltaScale ||
            current.deltaOffset != defaults.deltaOffset ||
            current.bakedDeltaPitch != defaults.bakedDeltaPitch ||
-           current.deltaPitch != defaults.deltaPitch;
+           hasUnrenderedDeltaEdit(note, current, defaults);
   }
 
   bool hasFormantEdits(const Note& note) { return note.getFormantShift() != 0.0f; }
