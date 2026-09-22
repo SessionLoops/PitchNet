@@ -32,12 +32,25 @@ class PitchNetAudioProcessor;
 class PitchNetDocumentController;
 class PitchNetEditorRenderer;
 
-// Persistent identity for an ARA playback region: the audio-modification
-// persistent ID plus the region's current index within that modification. Host
-// refs are reassigned every session, so they cannot be used for saved DAW
-// projects. ARA gives persistent identity to audio modifications, not to
-// playback regions, so every region referencing a modification resolves to one
-// key and shares one edit layer.
+/** Live ownership key for an audio modification.
+
+    ARA gives persistent identity to audio modifications, not to playback
+    regions, so every region referencing a modification resolves to one key and
+    shares one edit layer.
+
+    This is a process-local serial minted when the modification is constructed,
+    NOT its host-assigned persistent ID. ARA treats that ID as an
+    archive-reconnection token and a mutable model property: hosts may adjust it
+    when restoring or importing, and REAPER rewrites it from an absolute to a
+    project-relative path on a project's first save, which silently orphaned
+    every edit. The persistent ID belongs in the archive stream and in
+    diagnostics only.
+
+    Session-local by construction, so it must never be stored or archived. */
+juce::String
+pitchnetModificationKey(const juce::ARAAudioModification &modification);
+
+/** The owning modification's live key, reached through a playback region. */
 juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
 /** Which window of a modification's edits is currently selected.
 
@@ -47,13 +60,16 @@ juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
     shares it. This answers "which window of those edits is selected?" and is
     unique per playback region.
 
-    Ephemeral and UI-only - it encodes an object address, so it is meaningful
-    for this session and must never be stored, archived or compared across
-    runs. Callers resolve it by re-collecting live regions, never by
-    dereferencing it. */
+    Ephemeral and UI-only - it combines the modification's live key with a
+    region object address, so it is meaningful for this session and must never
+    be stored, archived or compared across runs. Callers resolve it by
+    re-collecting live regions, never by dereferencing it. */
 juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region);
-juce::String
-pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region);
+
+// There is deliberately no archived-key helper. The persistent ID is written
+// to and read from the archive stream in doStore/doRestoreObjectsFromStream()
+// and used nowhere else; a helper that returns it as a "key" is how it leaked
+// into live lookups in the first place.
 
 struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};

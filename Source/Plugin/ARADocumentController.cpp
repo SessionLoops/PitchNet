@@ -16,18 +16,28 @@
 
 #include "AraDiagnostics.h"
 
+juce::String
+pitchnetModificationKey(const juce::ARAAudioModification &modification) {
+  // The modification mints a process-local serial at construction and owns it
+  // for its lifetime. Deliberately not getPersistentID(): that string is an
+  // archive-reconnection token which hosts are permitted to change on a live
+  // object, and REAPER does so on a project's first save.
+  if (const auto *pitchModification =
+          dynamic_cast<const PitchNetAudioModification *>(&modification))
+    return pitchModification->getLiveKey();
+  return {};
+}
+
 juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region) {
   const auto *modification = region.getAudioModification();
   if (modification == nullptr)
     return {};
 
-  // ARA gives persistent identity to audio modifications, not to playback
-  // regions: ARAPlaybackRegionProperties carries no persistentID, and both
-  // persistence filters expose only sources and modifications. Every region
-  // referencing a modification is a window onto the same edit layer, so they
-  // all resolve to one key. Splitting a clip therefore costs nothing - the new
-  // regions already find the edits through the modification they share.
-  return juce::String(modification->getPersistentID());
+  // Every region referencing a modification is a window onto the same edit
+  // layer, so they all resolve to one key. Splitting a clip therefore costs
+  // nothing - the new regions already find the edits through the modification
+  // they share.
+  return pitchnetModificationKey(*modification);
 }
 
 juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region) {
@@ -35,22 +45,12 @@ juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region) {
   if (modification == nullptr)
     return {};
 
-  // Modification ID first so the value stays readable in a log; the address
-  // distinguishes siblings that share it.
+  // Modification live key first so siblings group together in a log; the region
+  // address distinguishes them. No persistent ID here either - the selector
+  // would inherit the same instability.
   const auto address = reinterpret_cast<std::uintptr_t>(&region);
-  return juce::String(modification->getPersistentID()) + "#" +
+  return pitchnetModificationKey(*modification) + "#" +
          juce::String::toHexString(static_cast<juce::int64>(address));
-}
-
-juce::String
-pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region) {
-  const auto *modification = region.getAudioModification();
-  if (modification == nullptr)
-    return {};
-
-  // Retained as a distinct spelling only so call sites keep reading clearly.
-  // Region index is no longer part of any live identity.
-  return juce::String(modification->getPersistentID());
 }
 
 namespace {
@@ -443,17 +443,12 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
             region->getAudioModification<PitchNetAudioModification>()) {
       const auto lock = modification->tryLockProcessedAudio();
       if (lock.isLocked()) {
-        // Strictly the region's OWN processed audio. Do NOT fall back to some
-        // other region's processed data (the old getOnlyProcessedRegionData()
-        // fallback): with several regions/tracks sharing one modification it
-        // made every unedited region play the edited region's audio, so only
-        // the region currently being edited played back correctly.
-        const auto regionKey = pitchnetRegionKey(*region);
-        const auto archivedKey = pitchnetArchivedRegionKey(*region);
-        const auto *data = modification->getProcessedRegionData(regionKey);
-        if (data == nullptr && archivedKey.isNotEmpty() &&
-            archivedKey != regionKey)
-          data = modification->getProcessedRegionData(archivedKey);
+        // The modification owns one processed buffer and every region
+        // referencing it is a window onto that one edit layer, so they all
+        // render from it. This replaces the former per-region rule, which
+        // existed when regions owned their own state and a shared fallback
+        // would have made an unedited region play an edited sibling's audio.
+        const auto *data = modification->getProcessedData();
         if (data != nullptr && data->hasAudio()) {
           auto *source = modification->getAudioSource();
           const double modificationRate =
@@ -842,12 +837,8 @@ void PitchNetEditorRenderer::renderPreviewBuffer(
           region->getAudioModification<PitchNetAudioModification>()) {
     const auto lock = modification->tryLockProcessedAudio();
     if (lock.isLocked()) {
-      const auto regionKey = pitchnetRegionKey(*region);
-      const auto archivedKey = pitchnetArchivedRegionKey(*region);
-      const auto *data = modification->getProcessedRegionData(regionKey);
-      if (data == nullptr && archivedKey.isNotEmpty() &&
-          archivedKey != regionKey)
-        data = modification->getProcessedRegionData(archivedKey);
+      // One modification, one processed buffer - see the playback renderer.
+      const auto *data = modification->getProcessedData();
       if (data != nullptr && data->hasAudio()) {
         auto *source = modification->getAudioSource();
         const double modificationRate =
@@ -1745,7 +1736,7 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
         region->getAudioModification<PitchNetAudioModification>();
     if (pitchModification != nullptr) {
       juce::MemoryBlock archive;
-      if (pitchModification->copyProjectArchiveForRegion(liveKey, archive)) {
+      if (pitchModification->copyProjectArchive(archive)) {
         processor->restoreAraRegionProject(liveKey, archive.getData(),
                                            archive.getSize());
         if (!processor->araRegionProjectNeedsSourceHydration(liveKey) &&
@@ -1888,35 +1879,32 @@ void PitchNetDocumentController::snapshotRegionState(
   auto *modification = region.getAudioModification<PitchNetAudioModification>();
   if (modification == nullptr)
     return;
-  const auto liveKey = pitchnetRegionKey(region);
-  const auto archiveKey = pitchnetArchivedRegionKey(region);
-  if (archiveKey.isEmpty())
-    return;
-  juce::MemoryBlock archive;
+  // Flush the editor's live Project into the modification, which owns it.
+  // What used to follow - archive->archive and processed->processed copies -
+  // was a re-filing from the live key to the archived key. With one keyless
+  // slot per modification those would copy a slot onto itself.
   auto *processor = getRegionCanvasProcessor();
-  if ((processor && processor->serializeAraRegionProject(liveKey, archive)) ||
-      modification->copyProjectArchiveForRegion(liveKey, archive))
-    modification->setProjectArchiveForRegion(archiveKey, archive.getData(),
-                                             archive.getSize());
-  juce::AudioBuffer<float> audio;
-  double rate = 0.0;
-  juce::int64 start = 0;
-  if (modification->copyProcessedAudioForRegion(liveKey, audio, rate, start))
-    modification->setProcessedAudioForRegion(archiveKey, audio, rate, start);
+  if (processor == nullptr)
+    return;
+
+  juce::MemoryBlock archive;
+  if (processor->serializeAraRegionProject(pitchnetRegionKey(region), archive))
+    modification->setProjectArchive(archive.getData(), archive.getSize());
 }
 
 void PitchNetDocumentController::didUpdateAudioModificationProperties(
     juce::ARAAudioModification *audioModification) {
   if (auto *modification =
           dynamic_cast<PitchNetAudioModification *>(audioModification)) {
-    const auto pendingClone = modification->getPendingClonedPersistentID();
-    modification->adoptClonedRegionState();
+    // Nothing to re-key: state is keyless and owned by this object, and the
+    // constructor already deep-copied it from any clone source. The persistent
+    // ID is logged precisely because it is the string that moves underneath
+    // us - REAPER rewrites it here on a project's first save.
     ARA_DIAG("modProps mod=" + ARA_DIAG_PTR(modification) +
+             " liveKey=" + modification->getLiveKey() +
              " id=" + juce::String(modification->getPersistentID()) +
-             " pendingCloneId=" +
-             (pendingClone.isEmpty() ? juce::String("none") : pendingClone) +
-             " archiveKeys=" +
-             juce::String((int)modification->getProjectArchiveRegionIDs().size()));
+             " hasArchive=" +
+             juce::String(modification->hasProjectArchive() ? 1 : 0));
   }
 }
 
@@ -2370,29 +2358,30 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
         // Legacy archives carry one entry per region index; live identity is
         // the modification, so every entry restores into the same slot.
         juce::ignoreUnused(regionIndex);
-        const auto regionKey =
-            audioModification != nullptr
-                ? juce::String(audioModification->getPersistentID())
-                : persistentID;
+        // The archived persistent ID has now done its only job - asking the
+        // host's filter which live modification this payload belongs to. From
+        // here on identity is the live object, so restored state is filed
+        // under its live key. Filing under the archived string is what broke:
+        // REAPER reports one form at restore and another moments later.
+        const auto liveKey = audioModification != nullptr
+                                 ? pitchnetModificationKey(*audioModification)
+                                 : juce::String();
 
-        ARA_DIAG("restoreEntry id=" + persistentID +
-                 " regionIndex=" + juce::String(regionIndex) +
-                 " key=" + regionKey + " jsonBytes=" +
-                 juce::String((int)json.getSize()) + " hasAudio=" +
-                 juce::String(hasAudio));
-        if (payloadIsUsable && audioModification != nullptr)
-          restoreAraRegionProjectOrPend(regionKey, json.getData(),
+        ARA_DIAG("restoreEntry archivedId=" + persistentID +
+                 " regionIndex=" + juce::String(regionIndex) + " liveKey=" +
+                 (liveKey.isEmpty() ? juce::String("none") : liveKey) +
+                 " jsonBytes=" + juce::String((int)json.getSize()) +
+                 " hasAudio=" + juce::String(hasAudio));
+        if (payloadIsUsable && liveKey.isNotEmpty())
+          restoreAraRegionProjectOrPend(liveKey, json.getData(),
                                         json.getSize());
         if (payloadIsUsable && pitchModification != nullptr &&
-            regionKey.isNotEmpty() && json.getSize() > 0)
-          pitchModification->setProjectArchiveForRegion(
-              regionKey, json.getData(), json.getSize());
+            json.getSize() > 0)
+          pitchModification->setProjectArchive(json.getData(), json.getSize());
 
         if (hasAudio != 0) {
-          if (payloadIsUsable && pitchModification != nullptr &&
-              regionKey.isNotEmpty()) {
-            if (!pitchModification->readProcessedAudioForRegionFromStream(
-                    regionKey, input))
+          if (payloadIsUsable && pitchModification != nullptr) {
+            if (!pitchModification->readProcessedAudioFromStream(input))
               return false;
           } else if (!PitchNetAudioModification::skipProcessedAudioFromStream(
                          input)) {
@@ -2477,7 +2466,18 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
       for (auto *audioModification : audioModificationsToPersist) {
         if (!audioModification)
           continue;
-        if (!output.writeString(audioModification->getPersistentID()))
+
+        // Two values, deliberately kept visibly separate. The archived ID is
+        // the reconnection token and is written here and used nowhere else;
+        // the live key below resolves state in memory and is never written.
+        // Conflating them is the defect this change removes, and getting it
+        // the wrong way round is silent - saving would write empty archives
+        // while every diagnostic still reported success.
+        const auto archivedModificationID =
+            juce::String(audioModification->getPersistentID());
+        const auto liveKey = pitchnetModificationKey(*audioModification);
+
+        if (!output.writeString(archivedModificationID))
           return false;
 
         // One entry per audio modification. Identity is the modification, not
@@ -2490,11 +2490,10 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
             dynamic_cast<const PitchNetAudioModification *>(audioModification);
         struct RegionEntry {
           int index;
-          juce::String key;
           juce::MemoryBlock json;
         };
         std::vector<RegionEntry> regionEntries;
-        const auto key = juce::String(audioModification->getPersistentID());
+
         auto *processor = getRegionCanvasProcessor();
         juce::MemoryBlock json;
 
@@ -2504,13 +2503,14 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
         // live playback region, so an inactive track version whose regions the
         // host has removed still persists its edits here rather than needing a
         // separate branch.
-        bool hasProject = processor != nullptr &&
-                          processor->serializeAraRegionProject(key, json);
+        bool hasProject = processor != nullptr && liveKey.isNotEmpty() &&
+                          processor->serializeAraRegionProject(liveKey, json);
         if (!hasProject && pitchModification != nullptr)
-          hasProject = pitchModification->copyProjectArchiveForRegion(key, json);
+          hasProject = pitchModification->copyProjectArchive(json);
 
-        ARA_DIAG("store mod=" + ARA_DIAG_PTR(pitchModification) + " id=" + key +
-                 " regions=" +
+        ARA_DIAG("store mod=" + ARA_DIAG_PTR(pitchModification) +
+                 " liveKey=" + liveKey +
+                 " archivedId=" + archivedModificationID + " regions=" +
                  juce::String((int)audioModification
                                   ->getPlaybackRegions<juce::ARAPlaybackRegion>()
                                   .size()) +
@@ -2519,9 +2519,9 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
 
         if (hasProject && json.getSize() > 0) {
           if (pitchModification != nullptr)
-            pitchModification->setProjectArchiveForRegion(key, json.getData(),
-                                                          json.getSize());
-          regionEntries.push_back({0, key, std::move(json)});
+            pitchModification->setProjectArchive(json.getData(),
+                                                 json.getSize());
+          regionEntries.push_back({0, std::move(json)});
         }
 
         if (!output.writeInt(static_cast<int>(regionEntries.size())))
@@ -2535,18 +2535,15 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
               !output.write(entry.json.getData(), entry.json.getSize()))
             return false;
 
-          // One key family, so there is no live-versus-archived choice left to
-          // make. The predicate and the writer below resolve a clone's key the
-          // same way, so a "yes" here is always writable - if they disagreed,
-          // the failed write would abort the whole archive.
-          const bool hasAudio =
-              pitchModification != nullptr &&
-              pitchModification->hasProcessedAudioForRegion(entry.key);
+          // No key to disagree about: the predicate and the writer read the
+          // one slot this modification owns, so a "yes" here is always
+          // writable. If they could disagree, the failed write would abort the
+          // whole archive.
+          const bool hasAudio = pitchModification != nullptr &&
+                                pitchModification->hasProcessedAudio();
           if (!output.writeInt(hasAudio ? 1 : 0))
             return false;
-          if (hasAudio &&
-              !pitchModification->writeProcessedAudioForRegionToStream(
-                  entry.key, output))
+          if (hasAudio && !pitchModification->writeProcessedAudioToStream(output))
             return false;
         }
       }
