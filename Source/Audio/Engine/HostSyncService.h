@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../../JuceHeader.h"
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_events/juce_events.h>
 #include <atomic>
 #include <functional>
 
@@ -279,6 +280,10 @@ private:
     {
         std::atomic<double> positionSeconds{0.0};
         std::atomic<double> bpm{120.0};
+        std::atomic<int> timeSigNumerator{4};
+        std::atomic<int> timeSigDenominator{4};
+        std::atomic<bool> hasBpm{false};
+        std::atomic<bool> hasTimeSignature{false};
         std::atomic<bool> isPlaying{false};
         std::atomic<bool> isRecording{false};
         std::atomic<bool> isLooping{false};

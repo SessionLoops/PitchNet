@@ -820,7 +820,7 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
 
   audioProcessor.getTransportController().setTempoCallback(
       [safeMain](const HostSyncService::TempoInfo &tempo) {
-        if (!tempo.hasBpm || !tempo.hasTimeSignature)
+        if (!tempo.hasBpm && !tempo.hasTimeSignature)
           return;
 
         if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
@@ -830,7 +830,7 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
 
   const auto hostState =
       audioProcessor.getTransportController().getCurrentState();
-  if (hostState.tempo.hasBpm && hostState.tempo.hasTimeSignature)
+  if (hostState.tempo.hasBpm || hostState.tempo.hasTimeSignature)
     if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
       view->updateHostTimelineState(hostState.tempo.bpm,
                                     hostState.tempo.timeSigNumerator,

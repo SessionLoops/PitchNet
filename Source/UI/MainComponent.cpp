@@ -687,6 +687,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
+    if (hasCachedHostTimelineState)
+      updateHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
+                              cachedHostBeatDenominator);
   };
   // The Regions card changes the panel's natural height when it appears, and
   // that height is what the side panel scrolls against.
@@ -3316,6 +3319,18 @@ void MainComponent::updateHostTimelineState(double bpm, int numerator,
   if (!isPluginMode())
     return;
 
+  hasCachedHostTimelineState = true;
+  cachedHostTempoBpm = bpm;
+  cachedHostBeatNumerator = numerator;
+  cachedHostBeatDenominator = denominator;
+
+  // Analysis and project restoration can replace timeline settings without a
+  // host tempo change. Reapply the host values whenever a project is bound.
+  if (auto *project = getProject())
+  {
+    project->setTimelineTempoBpm(bpm);
+    project->setTimelineBeatSignature(numerator, denominator);
+  }
   parameterPanel.setHostTimelineState(bpm, numerator, denominator);
   pianoRoll.setTimelineTempoBpm(bpm);
   pianoRoll.setTimelineBeatSignature(numerator, denominator);

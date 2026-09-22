@@ -402,6 +402,11 @@ private:
   std::atomic<double> pendingCursorTime{0.0};
   std::atomic<bool> hasPendingCursorUpdate{false};
 
+  bool hasCachedHostTimelineState = false;
+  double cachedHostTempoBpm = 120.0;
+  int cachedHostBeatNumerator = 4;
+  int cachedHostBeatDenominator = 4;
+
   bool hasCachedHostLoopRange = false;
   double cachedHostLoopStartSeconds = 0.0;
   double cachedHostLoopEndSeconds = 0.0;
