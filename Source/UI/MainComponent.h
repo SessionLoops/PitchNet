@@ -115,6 +115,10 @@ public:
   bool isInterestedInFileDrag(const juce::StringArray &files) override;
   void filesDropped(const juce::StringArray &files, int x, int y) override;
 
+  // Opens a project or audio file chosen outside the UI (command line, file
+  // manager). Ignored in plugin mode and for files that no longer exist.
+  void openFileFromPath(const juce::File &file);
+
   // Plugin mode
   bool isPluginMode() const { return !enableAudioDeviceFlag; }
   juce::Component *getComponent() override { return this; }

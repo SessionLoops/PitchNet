@@ -11,6 +11,8 @@
 #include "Utils/UI/WindowSizing.h"
 #include "Utils/UI/TimecodeFont.h"
 
+#include <iostream>
+
 #if JUCE_WINDOWS
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
@@ -41,6 +43,29 @@ void configureWindowsTitleBarColour(HWND hwnd) {
 }
 } // namespace
 #endif
+
+namespace {
+// Resolves the first non-option argument to a file the app should open.
+// Options (anything starting with '-') are skipped so future flags don't get
+// mistaken for a path. Relative paths resolve against the working directory.
+juce::File findFileArgument(juce::String &unreadablePath) {
+  for (const auto &arg : juce::JUCEApplication::getCommandLineParameterArray()) {
+    const auto path = arg.unquoted().trim();
+    if (path.isEmpty() || path.startsWithChar('-'))
+      continue;
+
+    const auto file =
+        juce::File::getCurrentWorkingDirectory().getChildFile(path);
+    if (file.existsAsFile())
+      return file;
+
+    unreadablePath = path;
+    return {};
+  }
+
+  return {};
+}
+} // namespace
 
 class SplashComponent : public juce::Component, private juce::Timer {
 public:
@@ -139,11 +164,24 @@ public:
 #if JUCE_STANDALONE_APPLICATION
     splashWindow = std::make_unique<SplashWindow>();
 #endif
-    juce::MessageManager::callAsync([this]() {
+
+    juce::String unreadablePath;
+    const auto fileToOpen = findFileArgument(unreadablePath);
+    if (unreadablePath.isNotEmpty()) {
+      LOG("Command line file not found: " + unreadablePath);
+      std::cerr << "PitchNet: file not found: " << unreadablePath << std::endl;
+    } else if (fileToOpen != juce::File{}) {
+      LOG("Command line file: " + fileToOpen.getFullPathName());
+    }
+
+    juce::MessageManager::callAsync([this, fileToOpen]() {
       LOG("Creating MainWindow...");
       mainWindow = std::make_unique<MainWindow>(getApplicationName());
       splashWindow = nullptr;
       LOG("MainWindow created and visible");
+
+      if (fileToOpen != juce::File{})
+        mainWindow->openFile(fileToOpen);
     });
   }
 
@@ -179,6 +217,7 @@ public:
       LOG("MainWindow: MainComponent created");
       content->setOpaque(true);
       setContentOwned(content, true);
+      mainComponent = content;
 
       // Now set native title bar after content is set
       setUsingNativeTitleBar(true);
@@ -236,7 +275,14 @@ public:
       JUCEApplication::getInstance()->systemRequestedQuit();
     }
 
+    void openFile(const juce::File &file) {
+      if (mainComponent != nullptr)
+        mainComponent->openFileFromPath(file);
+    }
+
   private:
+    MainComponent *mainComponent = nullptr;
+
 #if JUCE_MAC
     void configureMacTitleBar() {
       setName({});

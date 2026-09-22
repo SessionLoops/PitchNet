@@ -2980,21 +2980,34 @@ bool MainComponent::isInterestedInFileDrag(const juce::StringArray &files)
 void MainComponent::filesDropped(const juce::StringArray &files, int /*x*/,
                                  int /*y*/)
 {
-  if (isPluginMode())
-    return;
-
   if (files.isEmpty())
     return;
 
-  juce::File audioFile(files[0]);
-  if (!audioFile.existsAsFile())
+  openFileFromPath(juce::File(files[0]));
+}
+
+void MainComponent::openFileFromPath(const juce::File &file)
+{
+  if (isPluginMode())
     return;
 
-  if (audioFile.hasFileExtension("pitchnet") ||
-      audioFile.hasFileExtension(".pitchnet"))
-    openProjectFile(audioFile);
+  if (!file.existsAsFile())
+    return;
+
+  if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
+  {
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis, file]()
+                                    {
+      if (safeThis != nullptr)
+        safeThis->openFileFromPath(file); });
+    return;
+  }
+
+  if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
+    openProjectFile(file);
   else
-    loadAudioFile(audioFile);
+    loadAudioFile(file);
 }
 
 void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
