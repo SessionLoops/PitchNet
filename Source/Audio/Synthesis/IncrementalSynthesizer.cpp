@@ -1439,47 +1439,131 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 sampleGain[static_cast<size_t>(i)];
           }
 
-          // A neutral dirty note is an explicit reset. Restore its pristine
-          // source body instead of committing a vocoder round-trip at neutral
-          // pitch; short fades keep the reset continuous with any rendered
-          // adjacent notes that remain in the composite.
-          constexpr int kResetFadeSamples = 512;
-          for (const auto &note : capturedProject->getNotes()) {
-            if (hasGlobalFormant || note.isRest() || !note.isDirty() ||
-                !note.isNeutralForOriginalWaveform())
-              continue;
+          // A neutral dirty note is an explicit reset: its body must be the
+          // pristine source, not a vocoder round-trip at neutral pitch.
+          //
+          // Consecutive neutral notes form one contiguous reset span. Fading
+          // at every internal note boundary crossfaded the synthesized pass
+          // against the original, and those two match in energy but not in
+          // phase, so the blend cancels instead of smoothing - no fade length
+          // avoids that. Inside a span there is nothing to smooth between,
+          // since both sides are the same source audio, so the span is copied
+          // wholesale. Only its outer edges, where it meets genuinely edited
+          // audio, need a transition, and those are placed where the two
+          // signals agree best rather than on the note boundary.
+          constexpr int kResetFadeHalfSamples = 256;
+          constexpr int kResetSpliceSearchRadiusSamples = 128;
 
-            const int localStart = std::max(
-                0, (note.getStartFrame() - capturedStartFrame) * hopSize);
-            const int localEnd = std::min(
-                samplesToWrite,
-                (note.getEndFrame() - capturedStartFrame) * hopSize);
-            const int bodySamples = localEnd - localStart;
+          struct ResetSpan {
+            int startSample;
+            int endSample;
+          };
+          std::vector<ResetSpan> resetSpans;
+          if (!hasGlobalFormant) {
+            // Notes are not guaranteed to be in frame order, so collect and
+            // sort before looking for contiguity.
+            std::vector<std::pair<int, int>> neutralFrameRanges;
+            for (const auto &note : capturedProject->getNotes()) {
+              if (note.isRest() || !note.isDirty() ||
+                  !note.isNeutralForOriginalWaveform())
+                continue;
+              neutralFrameRanges.emplace_back(note.getStartFrame(),
+                                              note.getEndFrame());
+            }
+            std::sort(neutralFrameRanges.begin(), neutralFrameRanges.end());
+
+            int spanStartFrame = -1;
+            int spanEndFrame = -1;
+            auto flushSpan = [&]() {
+              if (spanStartFrame < 0)
+                return;
+              const int first =
+                  std::max(0, (spanStartFrame - capturedStartFrame) * hopSize);
+              const int last =
+                  std::min(samplesToWrite,
+                           (spanEndFrame - capturedStartFrame) * hopSize);
+              if (last > first)
+                resetSpans.push_back({first, last});
+              spanStartFrame = -1;
+              spanEndFrame = -1;
+            };
+            for (const auto &range : neutralFrameRanges) {
+              // Only exactly contiguous notes join a span. Any gap - a rest,
+              // or an edited note between two neutral ones - ends it, so the
+              // restore is never silently widened past what it covered before.
+              if (spanStartFrame >= 0 && range.first == spanEndFrame) {
+                spanEndFrame = std::max(spanEndFrame, range.second);
+              } else {
+                flushSpan();
+                spanStartFrame = range.first;
+                spanEndFrame = range.second;
+              }
+            }
+            flushSpan();
+          }
+
+          auto resetSmoothstep = [](float t) {
+            t = std::clamp(t, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+          };
+
+          for (size_t spanIndex = 0; spanIndex < resetSpans.size();
+               ++spanIndex) {
+            const auto &span = resetSpans[spanIndex];
+            const int bodySamples = span.endSample - span.startSample;
             if (bodySamples <= 0)
               continue;
 
-            const int fadeSamples =
-                std::min(kResetFadeSamples, bodySamples / 2);
-            for (int sample = localStart; sample < localEnd; ++sample) {
-              const int bodySample = sample - localStart;
-              float resetBlend = 1.0f;
-              if (fadeSamples > 0 && bodySample < fadeSamples) {
-                const float t = static_cast<float>(bodySample) /
-                                static_cast<float>(fadeSamples);
-                resetBlend = t * t * (3.0f - 2.0f * t);
-              }
-              if (fadeSamples > 0 &&
-                  bodySample >= bodySamples - fadeSamples) {
-                const float t =
-                    static_cast<float>(bodySamples - 1 - bodySample) /
-                    static_cast<float>(fadeSamples);
-                resetBlend = std::min(
-                    resetBlend, t * t * (3.0f - 2.0f * t));
-              }
+            const int fadeHalf =
+                std::min(kResetFadeHalfSamples, std::max(1, bodySamples / 4));
+            const int searchRadius =
+                std::min(kResetSpliceSearchRadiusSamples,
+                         std::max(0, bodySamples / 2 - fadeHalf));
+            const bool fadeLeft = span.startSample > 0;
+            const bool fadeRight = span.endSample < samplesToWrite;
 
+            const int leftCenter =
+                fadeLeft ? findBestCommitSpliceCenter(
+                               originalSegment.data(), targetSegment,
+                               span.startSample, searchRadius, fadeHalf)
+                         : span.startSample;
+            const int rightCenter =
+                fadeRight ? findBestCommitSpliceCenter(
+                                originalSegment.data(), targetSegment,
+                                span.endSample, searchRadius, fadeHalf)
+                          : span.endSample;
+
+            // A fade needs room outside the span, so keep it from reaching
+            // into a neighbouring span and blending the same samples twice.
+            const int previousEnd =
+                spanIndex > 0 ? resetSpans[spanIndex - 1].endSample : 0;
+            const int nextStart = spanIndex + 1 < resetSpans.size()
+                                      ? resetSpans[spanIndex + 1].startSample
+                                      : samplesToWrite;
+            const int firstSample = std::max(
+                {0, previousEnd,
+                 fadeLeft ? leftCenter - fadeHalf : span.startSample});
+            const int lastSample = std::min(
+                {samplesToWrite, nextStart,
+                 fadeRight ? rightCenter + fadeHalf : span.endSample});
+
+            for (int sample = firstSample; sample < lastSample; ++sample) {
+              float leftBlend = 1.0f;
+              if (fadeLeft && sample < leftCenter + fadeHalf)
+                leftBlend = resetSmoothstep(
+                    static_cast<float>(sample - (leftCenter - fadeHalf)) /
+                    static_cast<float>(2 * fadeHalf));
+
+              float rightBlend = 1.0f;
+              if (fadeRight && sample >= rightCenter - fadeHalf)
+                rightBlend = resetSmoothstep(
+                    static_cast<float>((rightCenter + fadeHalf) - sample) /
+                    static_cast<float>(2 * fadeHalf));
+
+              const float blend = std::min(leftBlend, rightBlend);
               const auto index = static_cast<size_t>(sample);
               targetSegment[index] +=
-                  resetBlend * (originalSegment[index] - targetSegment[index]);
+                  blend * (originalSegment[index] - targetSegment[index]);
             }
           }
 
