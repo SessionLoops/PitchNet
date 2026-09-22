@@ -66,7 +66,6 @@ bool Note::isNeutralForOriginalWaveform() const
     return startFrame == srcStartFrame && endFrame == srcEndFrame &&
            std::abs(midiNote - originalMidiNote) <= kPitchEpsilon &&
            !hasBakedDeltaPitch() &&
-           !directF0Edit &&
            std::abs(pitchOffset) <= kPitchEpsilon &&
            std::abs(formantShift) <= kPitchEpsilon &&
            std::abs(volumeDb) <= kGainEpsilon &&

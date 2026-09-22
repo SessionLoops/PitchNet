@@ -156,26 +156,6 @@ void PitchEditor::endNoteDrag()
     draggedNote->setPitchOffset(0.0f);
     draggedNote->markSynthDirty();
 
-    // Find adjacent notes to expand dirty range
-    const auto &notes = project->getNotes();
-    int expandedStart = startFrame;
-    int expandedEnd = endFrame;
-    for (const auto &note : notes)
-    {
-      if (&note == draggedNote)
-        continue;
-      if (note.getEndFrame() > startFrame - 30 &&
-          note.getEndFrame() <= startFrame)
-      {
-        expandedStart = std::min(expandedStart, note.getStartFrame());
-      }
-      if (note.getStartFrame() < endFrame + 30 &&
-          note.getStartFrame() >= endFrame)
-      {
-        expandedEnd = std::max(expandedEnd, note.getEndFrame());
-      }
-    }
-
     // Rebuild pitch curves
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
 
@@ -183,9 +163,7 @@ void PitchEditor::endNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    int smoothStart = std::max(0, expandedStart - 60);
-    int smoothEnd = std::min(f0Size, expandedEnd + 60);
-    project->setF0DirtyRange(smoothStart, smoothEnd);
+    project->markNoteEditDirtyRange(startFrame, endFrame);
 
     // Create undo action
     if (undoManager)
@@ -203,23 +181,18 @@ void PitchEditor::endNoteDrag()
         f0Edits.push_back(edit);
       }
 
-      int capturedExpandedStart = expandedStart;
-      int capturedExpandedEnd = expandedEnd;
-      int capturedF0Size = f0Size;
+      const int capturedStart = startFrame;
+      const int capturedEnd = endFrame;
       auto *projectPtr = project;
       auto action = std::make_unique<NotePitchDragAction>(
           draggedNote, &audioData.f0, originalMidiNote,
           originalMidiNote + newOffset, std::move(f0Edits),
-          [projectPtr, capturedExpandedStart, capturedExpandedEnd,
-           capturedF0Size](Note *n)
+          [projectPtr, capturedStart, capturedEnd](Note *n)
           {
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              int smoothStart = std::max(0, capturedExpandedStart - 60);
-              int smoothEnd =
-                  std::min(capturedF0Size, capturedExpandedEnd + 60);
-              projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
+              projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
               if (n)
                 n->markSynthDirty();
             }
@@ -245,269 +218,6 @@ void PitchEditor::endNoteDrag()
   dragPreviewWeights.clear();
   dragBasePitchSnapshot.clear();
   dragF0Snapshot.clear();
-}
-
-void PitchEditor::startDrawing(float x, float y)
-{
-  isDrawing = true;
-  drawingEdits.clear();
-  drawingEditIndexByFrame.clear();
-  drawCurves.clear();
-  activeDrawCurve = nullptr;
-  lastDrawFrame = -1;
-  lastDrawValueCents = 0;
-
-  continueDrawing(x, y);
-}
-
-void PitchEditor::continueDrawing(float x, float y)
-{
-  if (!project || !coordMapper)
-    return;
-
-  auto &audioData = project->getAudioData();
-  if (audioData.f0.empty())
-    return;
-
-  double time = coordMapper->xToTime(x);
-  float midi =
-      coordMapper->yToMidi(y - coordMapper->getPixelsPerSemitone() * 0.5f);
-  int frameIndex = coordMapper->secondsToFrames(static_cast<float>(time));
-  int midiCents = static_cast<int>(std::round(midi * 100.0f));
-
-  applyPitchPoint(frameIndex, midiCents);
-
-  if (onPitchEdited)
-    onPitchEdited();
-}
-
-void PitchEditor::endDrawing()
-{
-  if (drawingEdits.empty())
-  {
-    isDrawing = false;
-    return;
-  }
-
-  // Calculate dirty frame range
-  int minFrame = std::numeric_limits<int>::max();
-  int maxFrame = std::numeric_limits<int>::min();
-  for (const auto &e : drawingEdits)
-  {
-    minFrame = std::min(minFrame, e.idx);
-    maxFrame = std::max(maxFrame, e.idx);
-  }
-
-  // Clear deltaPitch for notes in edited range
-  if (project && minFrame <= maxFrame)
-  {
-    const int maxFrameExclusive = maxFrame + 1;
-    auto &notes = project->getNotes();
-    for (auto &note : notes)
-    {
-      if (note.getEndFrame() > minFrame &&
-          note.getStartFrame() < maxFrameExclusive)
-      {
-        if (note.hasDeltaPitch())
-        {
-          note.setDeltaPitch(std::vector<float>());
-        }
-      }
-    }
-    project->setF0DirtyRange(minFrame, maxFrameExclusive);
-  }
-
-  // Create undo action
-  if (undoManager && project)
-  {
-    auto &audioData = project->getAudioData();
-    auto *projectPtr = project;
-    auto action = std::make_unique<F0EditAction>(
-        &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
-        drawingEdits, [projectPtr](int minFrame, int maxFrame)
-        {
-          if (projectPtr)
-            projectPtr->setF0DirtyRange(minFrame, maxFrame + 1);
-        });
-    undoManager->addAction(std::move(action));
-  }
-
-  drawingEdits.clear();
-  drawingEditIndexByFrame.clear();
-  lastDrawFrame = -1;
-  lastDrawValueCents = 0;
-  activeDrawCurve = nullptr;
-  drawCurves.clear();
-
-  isDrawing = false;
-
-  if (onPitchEditFinished)
-    onPitchEditFinished();
-}
-
-void PitchEditor::applyPitchPoint(int frameIndex, int midiCents)
-{
-  if (!project)
-    return;
-
-  auto &audioData = project->getAudioData();
-  if (audioData.f0.empty())
-    return;
-
-  const int f0Size = static_cast<int>(audioData.f0.size());
-  if (audioData.deltaPitch.size() < audioData.f0.size())
-    audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
-  if (audioData.basePitch.size() < audioData.f0.size())
-    audioData.basePitch.resize(audioData.f0.size(), 0.0f);
-  if (frameIndex < 0 || frameIndex >= f0Size)
-    return;
-
-  auto applyFrame = [&](int idx, int cents)
-  {
-    if (idx < 0 || idx >= f0Size)
-      return;
-
-    const float newFreq = midiToFreq(static_cast<float>(cents) / 100.0f);
-    const float oldF0 = audioData.f0[idx];
-    const float oldDelta = (idx < static_cast<int>(audioData.deltaPitch.size()))
-                               ? audioData.deltaPitch[idx]
-                               : 0.0f;
-    const bool oldVoiced = (idx < static_cast<int>(audioData.voicedMask.size()))
-                               ? audioData.voicedMask[idx]
-                               : false;
-
-    float baseMidi = (idx < static_cast<int>(audioData.basePitch.size()))
-                         ? audioData.basePitch[static_cast<size_t>(idx)]
-                         : 0.0f;
-    float newMidi = static_cast<float>(cents) / 100.0f;
-    float newDelta = newMidi - baseMidi;
-
-    auto it = drawingEditIndexByFrame.find(idx);
-    if (it == drawingEditIndexByFrame.end())
-    {
-      drawingEditIndexByFrame.emplace(idx, drawingEdits.size());
-      drawingEdits.push_back(F0FrameEdit{idx, oldF0, newFreq, oldDelta,
-                                         newDelta, oldVoiced, true});
-
-      // Clear deltaPitch for notes containing this frame
-      auto &notes = project->getNotes();
-      for (auto &note : notes)
-      {
-        if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-            note.hasDeltaPitch())
-        {
-          note.setDeltaPitch(std::vector<float>());
-          break;
-        }
-      }
-    }
-    else
-    {
-      auto &e = drawingEdits[it->second];
-      e.newF0 = newFreq;
-      e.newDelta = newDelta;
-      e.newVoiced = true;
-    }
-
-    audioData.f0[idx] = newFreq;
-    if (idx < static_cast<int>(audioData.deltaPitch.size()))
-    {
-      audioData.deltaPitch[static_cast<size_t>(idx)] = newDelta;
-    }
-    if (idx < static_cast<int>(audioData.voicedMask.size()))
-      audioData.voicedMask[idx] = true;
-  };
-
-  // Only start a new curve if there's no active curve (first point of drawing)
-  if (!activeDrawCurve)
-  {
-    startNewPitchCurve(frameIndex, midiCents);
-    applyFrame(frameIndex, midiCents);
-    return;
-  }
-
-  // Helper to append/prepend value to the active curve
-  auto appendValue = [&](int idx, int cents)
-  {
-    if (!activeDrawCurve)
-      return;
-
-    const int curveStart = activeDrawCurve->localStart();
-    auto &vals = activeDrawCurve->mutableValues();
-
-    // Handle backward drawing: prepend values if idx < curveStart
-    if (idx < curveStart)
-    {
-      const int prependCount = curveStart - idx;
-      std::vector<int> newVals(static_cast<size_t>(prependCount), cents);
-      newVals.insert(newVals.end(), vals.begin(), vals.end());
-      activeDrawCurve->setValues(std::move(newVals));
-      activeDrawCurve->setLocalStart(idx);
-      return;
-    }
-
-    const int offset = idx - curveStart;
-    if (offset < static_cast<int>(vals.size()))
-    {
-      vals[static_cast<std::size_t>(offset)] = cents;
-      return;
-    }
-
-    while (static_cast<int>(vals.size()) < offset)
-    {
-      int fill = vals.empty() ? cents : vals.back();
-      vals.push_back(fill);
-    }
-    vals.push_back(cents);
-  };
-
-  if (lastDrawFrame < 0)
-  {
-    appendValue(frameIndex, midiCents);
-    applyFrame(frameIndex, midiCents);
-  }
-  else
-  {
-    int start = lastDrawFrame;
-    int end = frameIndex;
-    int startVal = lastDrawValueCents;
-    int endVal = midiCents;
-
-    if (start == end)
-    {
-      appendValue(frameIndex, midiCents);
-      applyFrame(frameIndex, midiCents);
-    }
-    else
-    {
-      int step = (end > start) ? 1 : -1;
-      int length = std::abs(end - start);
-      for (int i = 0; i <= length; ++i)
-      {
-        int idx = start + i * step;
-        float t = length == 0
-                      ? 0.0f
-                      : static_cast<float>(i) / static_cast<float>(length);
-        float v = juce::jmap(t, 0.0f, 1.0f, static_cast<float>(startVal),
-                             static_cast<float>(endVal));
-        int cents = static_cast<int>(std::round(v));
-        appendValue(idx, cents);
-        applyFrame(idx, cents);
-      }
-    }
-  }
-
-  lastDrawFrame = frameIndex;
-  lastDrawValueCents = midiCents;
-}
-
-void PitchEditor::startNewPitchCurve(int frameIndex, int midiCents)
-{
-  drawCurves.push_back(std::make_unique<DrawCurve>(frameIndex, 1));
-  activeDrawCurve = drawCurves.back().get();
-  activeDrawCurve->appendValue(midiCents);
-  lastDrawFrame = frameIndex;
-  lastDrawValueCents = midiCents;
 }
 
 void PitchEditor::snapNoteToSemitone(Note *note)
@@ -648,18 +358,6 @@ void PitchEditor::endMultiNoteDrag()
       expandedEnd = std::max(expandedEnd, note->getEndFrame());
     }
 
-    // Find adjacent notes to expand dirty range
-    const auto &allNotes = project->getNotes();
-    for (const auto &note : allNotes)
-    {
-      if (note.getEndFrame() > expandedStart - 30 &&
-          note.getEndFrame() <= expandedStart)
-        expandedStart = std::min(expandedStart, note.getStartFrame());
-      if (note.getStartFrame() < expandedEnd + 30 &&
-          note.getStartFrame() >= expandedEnd)
-        expandedEnd = std::max(expandedEnd, note.getEndFrame());
-    }
-
     // Rebuild pitch curves
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
 
@@ -667,9 +365,7 @@ void PitchEditor::endMultiNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    int smoothStart = std::max(0, expandedStart - 60);
-    int smoothEnd = std::min(f0Size, expandedEnd + 60);
-    project->setF0DirtyRange(smoothStart, smoothEnd);
+    project->markNoteEditDirtyRange(expandedStart, expandedEnd);
 
     // Create undo action for multi-note drag
     if (undoManager)
@@ -694,9 +390,8 @@ void PitchEditor::endMultiNoteDrag()
         }
       }
 
-      int capturedExpandedStart = expandedStart;
-      int capturedExpandedEnd = expandedEnd;
-      int capturedF0Size = f0Size;
+      const int capturedStart = expandedStart;
+      const int capturedEnd = expandedEnd;
       std::vector<Note *> capturedNotes = draggedNotes;
       std::vector<float> capturedOriginalMidi = originalMidiNotes;
       float capturedNewOffset = newOffset;
@@ -705,16 +400,12 @@ void PitchEditor::endMultiNoteDrag()
       auto action = std::make_unique<MultiNotePitchDragAction>(
           capturedNotes, &audioData.f0, capturedOriginalMidi, capturedNewOffset,
           std::move(f0Edits),
-          [projectPtr, capturedExpandedStart, capturedExpandedEnd,
-           capturedF0Size](const std::vector<Note *> &)
+          [projectPtr, capturedStart, capturedEnd](const std::vector<Note *> &)
           {
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              int smoothStart = std::max(0, capturedExpandedStart - 60);
-              int smoothEnd =
-                  std::min(capturedF0Size, capturedExpandedEnd + 60);
-              projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
+              projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
             }
           });
       undoManager->addAction(std::move(action));

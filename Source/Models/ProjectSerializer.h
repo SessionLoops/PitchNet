@@ -13,9 +13,7 @@
  */
 class ProjectSerializer {
 public:
-    // 6: notes carry directF0Edit. Projects written at 5 or below predate it
-    //    and are run through migrateLegacyDirectF0Edits() on load.
-    static constexpr int FORMAT_VERSION = 6;
+    static constexpr int FORMAT_VERSION = 5;
 
     enum class BinaryArchiveMode {
         // Standalone documents and conventional plug-in state must remain
@@ -88,25 +86,6 @@ private:
     static juce::var pitchDataToJson(const AudioData& audioData);
     static bool pitchDataFromJson(AudioData& audioData, const juce::var& json);
 
-    /**
-     * Recover directF0Edit on projects saved before the flag existed.
-     *
-     * A drawn curve is written straight into AudioData::f0 and clears the
-     * note's deltaPitch, so a project written at FORMAT_VERSION <= 5 records
-     * one as a note that is neutral by every stored field while the dense F0
-     * over its frames disagrees with the pitch those fields describe. Nothing
-     * else can produce that disagreement, so it is used as the signal.
-     *
-     * Deliberately not keyed on renderedEdit: that flag is historical rather
-     * than comparative, so a note that was pitch-edited and then reset still
-     * carries it while being genuinely neutral. Treating those as drawn edits
-     * would pin their region to the resynthesis path and reintroduce the very
-     * artifact this branch removes.
-     *
-     * Must run after pitchDataFromJson(), which supplies the dense F0.
-     */
-    static void migrateLegacyDirectF0Edits(Project& project,
-                                           const AudioData& audioData);
     static juce::var audioBufferToJson(const juce::AudioBuffer<float>& buffer);
     static bool audioBufferFromJson(juce::AudioBuffer<float>& buffer, const juce::var& json);
     static juce::var melSpectrogramToJson(const std::vector<std::vector<float>>& mel);

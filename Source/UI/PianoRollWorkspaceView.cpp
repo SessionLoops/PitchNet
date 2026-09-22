@@ -397,9 +397,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         {
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
           pianoRoll.invalidateBasePitchCache();
-          const int frameCount = static_cast<int>(project->getAudioData().f0.size());
-          project->setF0DirtyRange(std::max(0, dirtyStart - 60),
-                                   std::min(frameCount, dirtyEnd + 60));
+          project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
           project->setModified(true);
         }
 
@@ -421,9 +419,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
                   {
                     PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
                     pianoRoll.invalidateBasePitchCache();
-                    const int f0Size = static_cast<int>(projectPtr->getAudioData().f0.size());
-                    projectPtr->setF0DirtyRange(std::max(0, dirtyStart - 60),
-                                                 std::min(f0Size, dirtyEnd + 60));
+                    projectPtr->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
                   }
                   projectPtr->setModified(true);
                   if (pianoRoll.onPitchEdited)

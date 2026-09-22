@@ -38,11 +38,9 @@ namespace CommandIDs
         goToEnd             = 0x2033,
         
         // Edit Mode Commands (0x2040-0x204F)
-        toggleDrawMode      = 0x2040,
-        exitDrawMode        = 0x2041,
         activateMainTool    = 0x2042,
         activateSplitTool   = 0x2043,
-        activateAnchorTool  = 0x2044,
+        activatePitchDrawingTool  = 0x2044,
         activateTimingTool  = 0x2045,
         
         // Pitch Tool Commands (0x2050-0x205F)

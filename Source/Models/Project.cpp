@@ -161,6 +161,22 @@ void Project::setF0DirtyRange(int startFrame, int endFrame)
         f0DirtyEnd = endFrame;
 }
 
+void Project::markNoteEditDirtyRange(int startFrame, int endFrame)
+{
+    if (startFrame > endFrame)
+        return;
+
+    // Covers the base-pitch glide into neighbouring notes (the 80 ms
+    // smoothing window reaches ~4 frames past a note) and the splice fades
+    // (~1 frame), with plenty of margin. The synthesiser extends the render
+    // window to the surrounding voiced phrase on its own.
+    constexpr int kPaddingFrames = 60;
+
+    const int frameCount = static_cast<int>(audioData.f0.size());
+    setF0DirtyRange(std::max(0, startFrame - kPaddingFrames),
+                    std::min(frameCount, endFrame + kPaddingFrames));
+}
+
 void Project::clearF0DirtyRange()
 {
     f0DirtyStart = -1;
@@ -194,7 +210,7 @@ std::pair<int, int> Project::getDirtyFrameRange() const
         }
     }
 
-    // Also include F0 dirty range from Draw mode edits
+    // Also include the F0 dirty range from pitch-curve edits
     if (f0DirtyStart >= 0)
     {
         if (minStart < 0 || f0DirtyStart < minStart)

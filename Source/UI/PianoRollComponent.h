@@ -33,11 +33,10 @@ class PianoRollInteractionContext;
 class InteractionHandler;
 class LoopDragHandler;
 class SelectHandler;
-class DrawHandler;
 class SplitHandler;
-class AnchorHandler;
+class PitchDrawingHandler;
 class TimingHandler;
-class AnchorConfirmationPanel;
+class PitchDrawingConfirmationPanel;
 
 /**
  * Piano roll component for displaying and editing notes.
@@ -165,7 +164,7 @@ public:
   EditMode getEditMode() const { return editMode; }
 
   // Cancel any transient pitch edit before undo/redo changes project history.
-  void cancelDrawing();
+  void cancelPitchDrawingPreview();
 
   // View settings
   void setShowDeltaPitch(bool show)
@@ -224,6 +223,11 @@ public:
   std::function<void()> onPitchEdited;
   std::function<void()> onPitchEditFinished; // Called when dragging ends
   std::function<void()> onAmplitudeEdited; // Gain commit, undo, or redo
+  // Restore actions are applied here and then handed to the host exactly as
+  // an undo/redo is: same UI refresh, same resynthesis trigger, nothing sent
+  // to the plugin before the render lands. The argument mirrors
+  // UndoableAction::requiresAudioResynthesis().
+  std::function<void(bool requiresResynthesis)> onHistoryActionApplied;
   std::function<void()> onPitchPreviewRenderRequested;
   std::function<void()> onPitchEditCommitted;
   std::function<void(const Note &)> onNoteDragAudition;
@@ -269,7 +273,7 @@ private:
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
-  void updateAnchorConfirmationPopup();
+  void updatePitchDrawingConfirmationPopup();
 
   float midiToY(float midiNote) const;
   float yToMidi(float y) const;
@@ -303,6 +307,9 @@ private:
   void resetNoteEdits(Note &note, NoteRestoreMode mode = NoteRestoreMode::Pitch);
   std::unique_ptr<UndoableAction> createResetTimingAction(Note &note);
   void resetNoteTiming(Note &note);
+  // Runs a Restore action, records it, and reports it via
+  // onHistoryActionApplied so it is processed like undo/redo.
+  void applyRestoreAction(std::unique_ptr<UndoableAction> action);
   void showResetMenu(Note &note);
   void setHoveredNote(Note *note);
   void updateScrollBars();
@@ -389,13 +396,12 @@ private:
   // Interaction handlers (state machine pattern)
   std::unique_ptr<LoopDragHandler> loopDragHandler_;
   std::unique_ptr<SelectHandler> selectHandler_;
-  std::unique_ptr<DrawHandler> drawHandler_;
   std::unique_ptr<SplitHandler> splitHandler_;
-  std::unique_ptr<AnchorHandler> anchorHandler_;
+  std::unique_ptr<PitchDrawingHandler> pitchDrawingHandler_;
   std::unique_ptr<TimingHandler> timingHandler_;
   InteractionHandler *currentHandler_ = nullptr;
 
-  std::unique_ptr<AnchorConfirmationPanel> anchorConfirmationPanel;
+  std::unique_ptr<PitchDrawingConfirmationPanel> pitchDrawingConfirmationPanel;
 
   // Scrollbars
   juce::ScrollBar horizontalScrollBar{false};

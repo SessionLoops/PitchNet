@@ -227,18 +227,12 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     const bool sourceIsDirty = originalNote.isDirty();
     const bool sourceIsSynthDirty = originalNote.isSynthDirty();
     const bool sourceHasRenderedEdit = originalNote.hasRenderedEdit();
-    // A drawn curve spans the frames of the note that was split, so both halves
-    // inherit the mark - otherwise the half that keeps the drawing would be
-    // judged neutral and its audio discarded.
-    const bool sourceHasDirectF0Edit = originalNote.hasDirectF0Edit();
     note->setDirty(sourceIsDirty);
     note->setSynthDirty(sourceIsSynthDirty);
     note->setRenderedEdit(sourceHasRenderedEdit);
-    note->setDirectF0Edit(sourceHasDirectF0Edit);
     secondNote.setDirty(sourceIsDirty);
     secondNote.setSynthDirty(sourceIsSynthDirty);
     secondNote.setRenderedEdit(sourceHasRenderedEdit);
-    secondNote.setDirectF0Edit(sourceHasDirectF0Edit);
 
     // Save first note BEFORE addNote (addNote may invalidate note pointer due to vector reallocation)
     Note firstNote = *note;
@@ -400,10 +394,6 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
     mergedNote.setDirty(isDirty);
     mergedNote.setRenderedEdit(firstNote.hasRenderedEdit() ||
                                secondNote.hasRenderedEdit());
-    // mergedNote is a copy of the left note, so without this the right note's
-    // drawn edit would be dropped and its audio discarded.
-    mergedNote.setDirectF0Edit(firstNote.hasDirectF0Edit() ||
-                               secondNote.hasDirectF0Edit());
     if (isSynthDirty)
         mergedNote.markSynthDirty();
     else

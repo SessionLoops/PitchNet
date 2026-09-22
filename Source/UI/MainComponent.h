@@ -115,6 +115,10 @@ public:
   bool isInterestedInFileDrag(const juce::StringArray &files) override;
   void filesDropped(const juce::StringArray &files, int x, int y) override;
 
+  // Opens a project or audio file chosen outside the UI (command line, file
+  // manager). Ignored in plugin mode and for files that no longer exist.
+  void openFileFromPath(const juce::File &file);
+
   // Plugin mode
   bool isPluginMode() const { return !enableAudioDeviceFlag; }
   juce::Component *getComponent() override { return this; }
@@ -310,6 +314,9 @@ private:
 
   void undo();
   void redo();
+  // Shared by undo, redo and the note Restore menu, so all three process a
+  // history change identically.
+  void afterHistoryChange(bool requiresResynthesis);
   void setEditMode(EditMode mode);
   void setToolGroupEnabled(bool enabled);
 
@@ -399,6 +406,11 @@ private:
   // Cursor update throttling
   std::atomic<double> pendingCursorTime{0.0};
   std::atomic<bool> hasPendingCursorUpdate{false};
+
+  bool hasCachedHostTimelineState = false;
+  double cachedHostTempoBpm = 120.0;
+  int cachedHostBeatNumerator = 4;
+  int cachedHostBeatDenominator = 4;
 
   bool hasCachedHostLoopRange = false;
   double cachedHostLoopStartSeconds = 0.0;

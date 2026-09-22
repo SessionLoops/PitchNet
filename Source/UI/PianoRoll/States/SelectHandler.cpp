@@ -29,12 +29,7 @@ void rebuildProjectForNotes(Project *project,
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
 
-  if (minFrame <= maxFrame)
-  {
-    const int f0Size = static_cast<int>(project->getAudioData().f0.size());
-    project->setF0DirtyRange(std::max(0, minFrame - 60),
-                             std::min(f0Size, maxFrame + 60));
-  }
+  project->markNoteEditDirtyRange(minFrame, maxFrame);
 }
 }
 
@@ -440,13 +435,19 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       for (auto *note : deltaScaleTargetNotes)
         newParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
-      // Set dirty range for synthesis
-      const int f0Size = static_cast<int>(audioData.f0.size());
-      const int smoothStart =
-          std::max(0, deltaScaleMinFrame - 60);
-      const int smoothEnd =
-          std::min(f0Size, deltaScaleMaxFrame + 60);
-      project->setF0DirtyRange(smoothStart, smoothEnd);
+      // Set dirty range for synthesis (the same range its undo marks)
+      {
+        int dirtyStart = std::numeric_limits<int>::max();
+        int dirtyEnd = std::numeric_limits<int>::min();
+        for (const auto *note : deltaScaleTargetNotes)
+        {
+          if (!note)
+            continue;
+          dirtyStart = std::min(dirtyStart, note->getStartFrame());
+          dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
+        }
+        project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
+      }
 
       // Create undo action using PitchToolAction (saves per-note params)
       if (owner_.undoManager)
@@ -522,13 +523,19 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       for (auto *note : deltaOffsetTargetNotes)
         newParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
-      // Set dirty range for synthesis
-      const int f0Size = static_cast<int>(audioData.f0.size());
-      const int smoothStart =
-          std::max(0, deltaOffsetMinFrame - 60);
-      const int smoothEnd =
-          std::min(f0Size, deltaOffsetMaxFrame + 60);
-      project->setF0DirtyRange(smoothStart, smoothEnd);
+      // Set dirty range for synthesis (the same range its undo marks)
+      {
+        int dirtyStart = std::numeric_limits<int>::max();
+        int dirtyEnd = std::numeric_limits<int>::min();
+        for (const auto *note : deltaOffsetTargetNotes)
+        {
+          if (!note)
+            continue;
+          dirtyStart = std::min(dirtyStart, note->getStartFrame());
+          dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
+        }
+        project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
+      }
 
       // Create undo action using PitchToolAction (saves per-note params)
       if (owner_.undoManager)
@@ -604,36 +611,12 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       draggedNote->setPitchOffset(0.0f);
       draggedNote->markSynthDirty();
 
-      // Find adjacent notes to expand dirty range
-      const auto &notes = project->getNotes();
-      int expandedStart = startFrame;
-      int expandedEnd = endFrame;
-      for (const auto &note : notes)
-      {
-        if (&note == draggedNote)
-          continue;
-        if (note.getEndFrame() > startFrame - 30 &&
-            note.getEndFrame() <= startFrame)
-        {
-          expandedStart =
-              std::min(expandedStart, note.getStartFrame());
-        }
-        if (note.getStartFrame() < endFrame + 30 &&
-            note.getStartFrame() >= endFrame)
-        {
-          expandedEnd =
-              std::max(expandedEnd, note.getEndFrame());
-        }
-      }
-
       // Rebuild base pitch curve and F0
       PitchCurveProcessor::rebuildBaseFromNotes(*project);
       owner_.invalidateBasePitchCache();
 
       // Mark dirty range for synthesis
-      int smoothStart = std::max(0, expandedStart - 60);
-      int smoothEnd = std::min(f0Size, expandedEnd + 60);
-      project->setF0DirtyRange(smoothStart, smoothEnd);
+      project->markNoteEditDirtyRange(startFrame, endFrame);
 
       // Create undo action
       if (owner_.undoManager)
@@ -652,25 +635,20 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
           edit.newF0 = audioData.f0[static_cast<size_t>(i)];
           f0Edits.push_back(edit);
         }
-        int capturedExpandedStart = expandedStart;
-        int capturedExpandedEnd = expandedEnd;
-        int capturedF0Size = f0Size;
+        const int capturedStart = startFrame;
+        const int capturedEnd = endFrame;
         auto *projectPtr = project;
         auto action = std::make_unique<NotePitchDragAction>(
             draggedNote, &audioData.f0, originalMidiNote,
             finalMidiNote, std::move(f0Edits),
-            [projectPtr, capturedExpandedStart, capturedExpandedEnd,
-             capturedF0Size](Note *n)
+            [projectPtr, capturedStart, capturedEnd](Note *n)
             {
               if (projectPtr)
               {
                 PitchCurveProcessor::rebuildBaseFromNotes(
                     *projectPtr);
-                int smoothStart =
-                    std::max(0, capturedExpandedStart - 60);
-                int smoothEnd = std::min(capturedF0Size,
-                                         capturedExpandedEnd + 60);
-                projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
+                projectPtr->markNoteEditDirtyRange(capturedStart,
+                                                   capturedEnd);
                 if (n)
                 {
                   n->markSynthDirty();
@@ -829,8 +807,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
                   std::max(maxFrame, note->getEndFrame());
             }
           }
-          if (minFrame <= maxFrame)
-            project->setF0DirtyRange(minFrame, maxFrame);
+          project->markNoteEditDirtyRange(minFrame, maxFrame);
 
           owner_.updatePitchToolHandlesFromSelection();
           if (owner_.onPitchEdited)

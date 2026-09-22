@@ -7,11 +7,11 @@
 
 enum class EditMode
 {
-  Select,
-  Draw,
-  Split,
-  Anchor,
-  Timing
+  Select = 0,
+  // Value 1 belonged to the removed freehand tool.
+  Split = 2,
+  PitchDrawing = 3,
+  Timing = 4
 };
 
 struct PianoRollViewState

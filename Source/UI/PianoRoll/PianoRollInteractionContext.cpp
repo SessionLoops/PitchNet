@@ -95,7 +95,7 @@ void PianoRollInteractionContext::invalidateBasePitchCache()
   component.invalidateBasePitchCache();
 }
 
-void PianoRollInteractionContext::updateAnchorConfirmation()
+void PianoRollInteractionContext::updatePitchDrawingConfirmation()
 {
-  component.updateAnchorConfirmationPopup();
+  component.updatePitchDrawingConfirmationPopup();
 }

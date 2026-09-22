@@ -6,7 +6,6 @@
  *   - Undo/UndoableAction.h    (base class)
  *   - Undo/F0FrameEdit.h       (shared struct)
  *   - Undo/NoteActions.h       (note-related actions)
- *   - Undo/F0Actions.h         (pitch curve actions)
  *   - Undo/DragActions.h       (drag actions)
  *   - Undo/PitchToolAction.h   (pitch tool action)
  *   - Undo/PitchUndoManager.h  (undo manager class)

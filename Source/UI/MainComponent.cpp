@@ -53,7 +53,7 @@ juce::String getCurrentApplicationVersion()
 #elif defined(JucePlugin_VersionString)
   return JucePlugin_VersionString;
 #else
-  return "0.6.0";
+  return "0.6.1";
 #endif
 }
 
@@ -687,6 +687,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
+    if (hasCachedHostTimelineState)
+      updateHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
+                              cachedHostBeatDenominator);
   };
   // The Regions card changes the panel's natural height when it appears, and
   // that height is what the side panel scrolls against.
@@ -871,6 +874,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       notifyProjectDataChanged();
     }
   };
+  pianoRoll.onHistoryActionApplied = [this](bool requiresResynthesis)
+  { afterHistoryChange(requiresResynthesis); };
   pianoRoll.onPitchEditFinished = [this]()
   {
     resynthesizeIncremental();
@@ -2701,56 +2706,45 @@ void MainComponent::notifyProjectDataChanged()
 
 void MainComponent::undo()
 {
-  // Restore any transient drawing/anchor preview before changing history.
-  pianoRoll.cancelDrawing();
+  // Restore any transient anchor preview before changing history.
+  pianoRoll.cancelPitchDrawingPreview();
 
   if (undoManager && undoManager->canUndo())
   {
-    const bool requiresResynthesis = undoManager->undo();
-    parameterPanel.updateFromNote();
-    pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
-    pianoRoll.repaint();
-    pianoRollView.refreshOverview();
-
-    if (requiresResynthesis && getProject())
-    {
-      // Don't mark all notes as dirty - let undo action callbacks handle
-      // the specific dirty range. This avoids synthesizing the entire project.
-      // The undo action's callback will set the correct F0 dirty range.
-      resynthesizeIncremental();
-    }
-
-    // Update command states (undo/redo availability changed)
-    if (commandManager)
-      commandManager->commandStatusChanged();
+    LOG("history: undo " + undoManager->getUndoName());
+    afterHistoryChange(undoManager->undo());
   }
 }
 
 void MainComponent::redo()
 {
-  // Restore any transient drawing/anchor preview before changing history.
-  pianoRoll.cancelDrawing();
+  // Restore any transient anchor preview before changing history.
+  pianoRoll.cancelPitchDrawingPreview();
 
   if (undoManager && undoManager->canRedo())
   {
-    const bool requiresResynthesis = undoManager->redo();
-    parameterPanel.updateFromNote();
-    pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
-    pianoRoll.repaint();
-    pianoRollView.refreshOverview();
-
-    if (requiresResynthesis && getProject())
-    {
-      // Don't mark all notes as dirty - let redo action callbacks handle
-      // the specific dirty range. This avoids synthesizing the entire project.
-      // The redo action's callback will set the correct F0 dirty range.
-      resynthesizeIncremental();
-    }
-
-    // Update command states (undo/redo availability changed)
-    if (commandManager)
-      commandManager->commandStatusChanged();
+    LOG("history: redo " + undoManager->getRedoName());
+    afterHistoryChange(undoManager->redo());
   }
+}
+
+void MainComponent::afterHistoryChange(bool requiresResynthesis)
+{
+  parameterPanel.updateFromNote();
+  pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
+  pianoRoll.repaint();
+  pianoRollView.refreshOverview();
+
+  if (requiresResynthesis && getProject())
+  {
+    // Don't mark all notes as dirty - the action marked the notes it changed
+    // and set any F0 dirty range. This avoids synthesizing the entire project.
+    resynthesizeIncremental();
+  }
+
+  // Update command states (undo/redo availability changed)
+  if (commandManager)
+    commandManager->commandStatusChanged();
 }
 
 void MainComponent::setEditMode(EditMode mode)
@@ -2987,21 +2981,34 @@ bool MainComponent::isInterestedInFileDrag(const juce::StringArray &files)
 void MainComponent::filesDropped(const juce::StringArray &files, int /*x*/,
                                  int /*y*/)
 {
-  if (isPluginMode())
-    return;
-
   if (files.isEmpty())
     return;
 
-  juce::File audioFile(files[0]);
-  if (!audioFile.existsAsFile())
+  openFileFromPath(juce::File(files[0]));
+}
+
+void MainComponent::openFileFromPath(const juce::File &file)
+{
+  if (isPluginMode())
     return;
 
-  if (audioFile.hasFileExtension("pitchnet") ||
-      audioFile.hasFileExtension(".pitchnet"))
-    openProjectFile(audioFile);
+  if (!file.existsAsFile())
+    return;
+
+  if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
+  {
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis, file]()
+                                    {
+      if (safeThis != nullptr)
+        safeThis->openFileFromPath(file); });
+    return;
+  }
+
+  if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
+    openProjectFile(file);
   else
-    loadAudioFile(audioFile);
+    loadAudioFile(file);
 }
 
 void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
@@ -3335,6 +3342,18 @@ void MainComponent::updateHostTimelineState(double bpm, int numerator,
   if (!isPluginMode())
     return;
 
+  hasCachedHostTimelineState = true;
+  cachedHostTempoBpm = bpm;
+  cachedHostBeatNumerator = numerator;
+  cachedHostBeatDenominator = denominator;
+
+  // Analysis and project restoration can replace timeline settings without a
+  // host tempo change. Reapply the host values whenever a project is bound.
+  if (auto *project = getProject())
+  {
+    project->setTimelineTempoBpm(bpm);
+    project->setTimelineBeatSignature(numerator, denominator);
+  }
   parameterPanel.setHostTimelineState(bpm, numerator, denominator);
   pianoRoll.setTimelineTempoBpm(bpm);
   pianoRoll.setTimelineBeatSignature(numerator, denominator);
@@ -3582,11 +3601,9 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::goToEnd,
 
       // Edit mode commands
-      CommandIDs::toggleDrawMode,
-      CommandIDs::exitDrawMode,
       CommandIDs::activateMainTool,
       CommandIDs::activateSplitTool,
-      CommandIDs::activateAnchorTool,
+      CommandIDs::activatePitchDrawingTool,
       CommandIDs::activateTimingTool};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
@@ -3725,17 +3742,6 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     break;
 
   // Edit mode commands
-  case CommandIDs::toggleDrawMode:
-    result.setInfo(TR("command.toggle_draw"), TR("command.toggle_draw.desp"), TR("category.edit_mode"), 0);
-    result.setActive(project != nullptr);
-    result.setTicked(pianoRoll.getEditMode() == EditMode::Draw);
-    break;
-
-  case CommandIDs::exitDrawMode:
-    result.setInfo(TR("command.exit_draw"), TR("command.exit_draw.desp"), TR("category.edit_mode"), 0);
-    result.setActive(pianoRoll.getEditMode() == EditMode::Draw);
-    break;
-
   case CommandIDs::activateMainTool:
     result.setInfo(TR("command.main_tool"), TR("command.main_tool.desp"),
                    TR("category.edit_mode"), 0);
@@ -3752,12 +3758,12 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
     break;
 
-  case CommandIDs::activateAnchorTool:
-    result.setInfo(TR("command.draw_tool"), TR("command.draw_tool.desp"),
+  case CommandIDs::activatePitchDrawingTool:
+    result.setInfo(TR("command.pitch_drawing_tool"), TR("command.pitch_drawing_tool.desp"),
                    TR("category.edit_mode"), 0);
     result.addDefaultKeypress('3', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
-    result.setTicked(pianoRoll.getEditMode() == EditMode::Anchor);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::PitchDrawing);
     break;
 
   case CommandIDs::activateTimingTool:
@@ -3885,20 +3891,6 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     return true;
 
   // Edit mode commands
-  case CommandIDs::toggleDrawMode:
-    if (pianoRoll.getEditMode() == EditMode::Draw)
-      setEditMode(EditMode::Select);
-    else
-      setEditMode(EditMode::Draw);
-    return true;
-
-  case CommandIDs::exitDrawMode:
-    if (pianoRoll.getEditMode() == EditMode::Draw)
-    {
-      setEditMode(EditMode::Select);
-    }
-    return true;
-
   case CommandIDs::activateMainTool:
     if (toolGroupEnabled)
       setEditMode(EditMode::Select);
@@ -3909,9 +3901,9 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
       setEditMode(EditMode::Split);
     return true;
 
-  case CommandIDs::activateAnchorTool:
+  case CommandIDs::activatePitchDrawingTool:
     if (toolGroupEnabled)
-      setEditMode(EditMode::Anchor);
+      setEditMode(EditMode::PitchDrawing);
     return true;
 
   case CommandIDs::activateTimingTool:

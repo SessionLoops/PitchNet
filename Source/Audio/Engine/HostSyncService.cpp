@@ -68,16 +68,18 @@ void HostSyncService::updateFromPositionInfo(const juce::AudioPlayHead::Position
         newPosition.hasBarCount = true;
     }
 
-    // Update tempo info
-    TempoInfo newTempo;
+    // Hosts may omit musical metadata in stopped or partial updates.
+    // Keep the last valid values until the host supplies replacements.
+    TempoInfo newTempo = currentState.tempo;
 
-    if (auto bpm = info.getBpm())
+    if (auto bpm = info.getBpm(); bpm && std::isfinite(*bpm) && *bpm > 0.0)
     {
         newTempo.bpm = *bpm;
         newTempo.hasBpm = true;
     }
 
-    if (auto timeSig = info.getTimeSignature())
+    if (auto timeSig = info.getTimeSignature();
+        timeSig && timeSig->numerator > 0 && timeSig->denominator > 0)
     {
         newTempo.timeSigNumerator = timeSig->numerator;
         newTempo.timeSigDenominator = timeSig->denominator;
@@ -112,6 +114,10 @@ void HostSyncService::updateFromPositionInfo(const juce::AudioPlayHead::Position
     auto state = atomicState;
     state->positionSeconds.store(newPosition.timeInSeconds, std::memory_order_relaxed);
     state->bpm.store(newTempo.bpm, std::memory_order_relaxed);
+    state->timeSigNumerator.store(newTempo.timeSigNumerator, std::memory_order_relaxed);
+    state->timeSigDenominator.store(newTempo.timeSigDenominator, std::memory_order_relaxed);
+    state->hasBpm.store(newTempo.hasBpm, std::memory_order_relaxed);
+    state->hasTimeSignature.store(newTempo.hasTimeSignature, std::memory_order_relaxed);
     state->isPlaying.store(newTransport.isPlaying, std::memory_order_relaxed);
     state->isRecording.store(newTransport.isRecording, std::memory_order_relaxed);
     state->isLooping.store(newTransport.isLooping, std::memory_order_relaxed);
@@ -126,7 +132,9 @@ void HostSyncService::updateFromPositionInfo(const juce::AudioPlayHead::Position
     }
 
     // Tempo change notification
-    bool tempoChanged = (newTempo.hasBpm && std::abs(newTempo.bpm - previousTempo.bpm) > 0.001) ||
+    bool tempoChanged = newTempo.hasBpm != previousTempo.hasBpm ||
+                        newTempo.hasTimeSignature != previousTempo.hasTimeSignature ||
+                        (newTempo.hasBpm && std::abs(newTempo.bpm - previousTempo.bpm) > 0.001) ||
                         (newTempo.hasTimeSignature &&
                          (newTempo.timeSigNumerator != previousTempo.timeSigNumerator ||
                           newTempo.timeSigDenominator != previousTempo.timeSigDenominator));
@@ -302,6 +310,7 @@ void HostSyncService::notifyPositionUpdate(double seconds)
 
 void HostSyncService::notifyTempoChange(const TempoInfo& tempo)
 {
+    juce::ignoreUnused(tempo);
     auto state_ptr = atomicState;
 
     if (!state_ptr->tempoPending.exchange(true, std::memory_order_acq_rel))
@@ -309,12 +318,18 @@ void HostSyncService::notifyTempoChange(const TempoInfo& tempo)
         auto cb = std::atomic_load(&tempoCallback);
         if (cb && *cb)
         {
-            TempoInfo tempoCopy = tempo;
-            juce::MessageManager::callAsync([cb, tempoCopy, state_ptr]()
+            juce::MessageManager::callAsync([cb, state_ptr]()
             {
                 state_ptr->tempoPending.store(false, std::memory_order_release);
+                // Deliver the latest values, including changes coalesced while queued.
+                TempoInfo latest;
+                latest.bpm = state_ptr->bpm.load(std::memory_order_relaxed);
+                latest.timeSigNumerator = state_ptr->timeSigNumerator.load(std::memory_order_relaxed);
+                latest.timeSigDenominator = state_ptr->timeSigDenominator.load(std::memory_order_relaxed);
+                latest.hasBpm = state_ptr->hasBpm.load(std::memory_order_relaxed);
+                latest.hasTimeSignature = state_ptr->hasTimeSignature.load(std::memory_order_relaxed);
                 if (*cb)
-                    (*cb)(tempoCopy);
+                    (*cb)(latest);
             });
         }
         else

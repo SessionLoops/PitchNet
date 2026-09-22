@@ -3,17 +3,14 @@
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
 #include "../../Undo/UndoActions.h"
-#include "../../Utils/UI/DrawCurve.h"
 #include "../../Utils/BasePitchPreview.h"
 #include "../../Utils/PitchCurveProcessor.h"
 #include "CoordinateMapper.h"
-#include <deque>
 #include <memory>
-#include <unordered_map>
 #include <functional>
 
 /**
- * Handles pitch editing operations including note dragging and pitch drawing.
+ * Handles pitch editing operations including single-note and multi-note dragging.
  */
 class PitchEditor {
 public:
@@ -46,12 +43,6 @@ public:
     const std::vector<Note*>& getDraggedNotes() const { return draggedNotes; }
     Note* getHoveredMultiDragNote() const { return hoveredMultiDragNote; }
 
-    // Pitch drawing
-    void startDrawing(float x, float y);
-    void continueDrawing(float x, float y);
-    void endDrawing();
-    bool isDrawingPitch() const { return isDrawing; }
-
     // Snap note to semitone
     void snapNoteToSemitone(Note* note);
 
@@ -62,8 +53,6 @@ public:
     std::function<void()> onBasePitchCacheInvalidated;
 
 private:
-    void applyPitchPoint(int frameIndex, int midiCents);
-    void startNewPitchCurve(int frameIndex, int midiCents);
     void prepareDragBasePreview();
     void applyDragBasePreview(float pitchOffsetSemitones);
     void restoreDragBasePreview();
@@ -99,15 +88,6 @@ private:
     bool snapToSemitoneDragEnabled = false;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     int pitchReferenceHz = 440;
-
-    // Draw state
-    bool isDrawing = false;
-    std::vector<F0FrameEdit> drawingEdits;
-    std::unordered_map<int, size_t> drawingEditIndexByFrame;
-    int lastDrawFrame = -1;
-    int lastDrawValueCents = 0;
-    DrawCurve* activeDrawCurve = nullptr;
-    std::deque<std::unique_ptr<DrawCurve>> drawCurves;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchEditor)
 };

@@ -70,7 +70,7 @@ cat > "$PAYLOAD/usr/share/applications/pitchnet.desktop" <<EOF
 Type=Application
 Name=PitchNet
 Comment=Neural pitch editor
-Exec=/usr/local/bin/pitchnet
+Exec=/usr/local/bin/pitchnet %f
 Icon=pitchnet
 Terminal=false
 Categories=AudioVideo;Audio;Music;

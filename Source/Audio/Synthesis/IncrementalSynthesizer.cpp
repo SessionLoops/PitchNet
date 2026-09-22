@@ -1,5 +1,6 @@
 #include "IncrementalSynthesizer.h"
 #include "FormantShifter.h"
+#include "OriginalWaveformRestore.h"
 #include "../../Utils/NoteGainCurve.h"
 #include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
@@ -12,6 +13,7 @@
 
 namespace {
 constexpr int kAdjacentFrameTolerance = 1;
+constexpr int kTimingClearFadeSamples = 128;
 
 struct EditedClusterSelection {
   std::vector<uint8_t> members;
@@ -1439,47 +1441,131 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 sampleGain[static_cast<size_t>(i)];
           }
 
-          // A neutral dirty note is an explicit reset. Restore its pristine
-          // source body instead of committing a vocoder round-trip at neutral
-          // pitch; short fades keep the reset continuous with any rendered
-          // adjacent notes that remain in the composite.
-          constexpr int kResetFadeSamples = 512;
-          for (const auto &note : capturedProject->getNotes()) {
-            if (hasGlobalFormant || note.isRest() || !note.isDirty() ||
-                !note.isNeutralForOriginalWaveform())
-              continue;
+          // A neutral dirty note is an explicit reset: its body must be the
+          // pristine source, not a vocoder round-trip at neutral pitch.
+          //
+          // Consecutive neutral notes form one contiguous reset span. Fading
+          // at every internal note boundary crossfaded the synthesized pass
+          // against the original, and those two match in energy but not in
+          // phase, so the blend cancels instead of smoothing - no fade length
+          // avoids that. Inside a span there is nothing to smooth between,
+          // since both sides are the same source audio, so the span is copied
+          // wholesale. Only its outer edges, where it meets genuinely edited
+          // audio, need a transition, and those are placed where the two
+          // signals agree best rather than on the note boundary.
+          constexpr int kResetFadeHalfSamples = 256;
+          constexpr int kResetSpliceSearchRadiusSamples = 128;
 
-            const int localStart = std::max(
-                0, (note.getStartFrame() - capturedStartFrame) * hopSize);
-            const int localEnd = std::min(
-                samplesToWrite,
-                (note.getEndFrame() - capturedStartFrame) * hopSize);
-            const int bodySamples = localEnd - localStart;
+          struct ResetSpan {
+            int startSample;
+            int endSample;
+          };
+          std::vector<ResetSpan> resetSpans;
+          if (!hasGlobalFormant) {
+            // Notes are not guaranteed to be in frame order, so collect and
+            // sort before looking for contiguity.
+            std::vector<std::pair<int, int>> neutralFrameRanges;
+            for (const auto &note : capturedProject->getNotes()) {
+              if (note.isRest() || !note.isDirty() ||
+                  !note.isNeutralForOriginalWaveform())
+                continue;
+              neutralFrameRanges.emplace_back(note.getStartFrame(),
+                                              note.getEndFrame());
+            }
+            std::sort(neutralFrameRanges.begin(), neutralFrameRanges.end());
+
+            int spanStartFrame = -1;
+            int spanEndFrame = -1;
+            auto flushSpan = [&]() {
+              if (spanStartFrame < 0)
+                return;
+              const int first =
+                  std::max(0, (spanStartFrame - capturedStartFrame) * hopSize);
+              const int last =
+                  std::min(samplesToWrite,
+                           (spanEndFrame - capturedStartFrame) * hopSize);
+              if (last > first)
+                resetSpans.push_back({first, last});
+              spanStartFrame = -1;
+              spanEndFrame = -1;
+            };
+            for (const auto &range : neutralFrameRanges) {
+              // Only exactly contiguous notes join a span. Any gap - a rest,
+              // or an edited note between two neutral ones - ends it, so the
+              // restore is never silently widened past what it covered before.
+              if (spanStartFrame >= 0 && range.first == spanEndFrame) {
+                spanEndFrame = std::max(spanEndFrame, range.second);
+              } else {
+                flushSpan();
+                spanStartFrame = range.first;
+                spanEndFrame = range.second;
+              }
+            }
+            flushSpan();
+          }
+
+          auto resetSmoothstep = [](float t) {
+            t = std::clamp(t, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+          };
+
+          for (size_t spanIndex = 0; spanIndex < resetSpans.size();
+               ++spanIndex) {
+            const auto &span = resetSpans[spanIndex];
+            const int bodySamples = span.endSample - span.startSample;
             if (bodySamples <= 0)
               continue;
 
-            const int fadeSamples =
-                std::min(kResetFadeSamples, bodySamples / 2);
-            for (int sample = localStart; sample < localEnd; ++sample) {
-              const int bodySample = sample - localStart;
-              float resetBlend = 1.0f;
-              if (fadeSamples > 0 && bodySample < fadeSamples) {
-                const float t = static_cast<float>(bodySample) /
-                                static_cast<float>(fadeSamples);
-                resetBlend = t * t * (3.0f - 2.0f * t);
-              }
-              if (fadeSamples > 0 &&
-                  bodySample >= bodySamples - fadeSamples) {
-                const float t =
-                    static_cast<float>(bodySamples - 1 - bodySample) /
-                    static_cast<float>(fadeSamples);
-                resetBlend = std::min(
-                    resetBlend, t * t * (3.0f - 2.0f * t));
-              }
+            const int fadeHalf =
+                std::min(kResetFadeHalfSamples, std::max(1, bodySamples / 4));
+            const int searchRadius =
+                std::min(kResetSpliceSearchRadiusSamples,
+                         std::max(0, bodySamples / 2 - fadeHalf));
+            const bool fadeLeft = span.startSample > 0;
+            const bool fadeRight = span.endSample < samplesToWrite;
 
+            const int leftCenter =
+                fadeLeft ? findBestCommitSpliceCenter(
+                               originalSegment.data(), targetSegment,
+                               span.startSample, searchRadius, fadeHalf)
+                         : span.startSample;
+            const int rightCenter =
+                fadeRight ? findBestCommitSpliceCenter(
+                                originalSegment.data(), targetSegment,
+                                span.endSample, searchRadius, fadeHalf)
+                          : span.endSample;
+
+            // A fade needs room outside the span, so keep it from reaching
+            // into a neighbouring span and blending the same samples twice.
+            const int previousEnd =
+                spanIndex > 0 ? resetSpans[spanIndex - 1].endSample : 0;
+            const int nextStart = spanIndex + 1 < resetSpans.size()
+                                      ? resetSpans[spanIndex + 1].startSample
+                                      : samplesToWrite;
+            const int firstSample = std::max(
+                {0, previousEnd,
+                 fadeLeft ? leftCenter - fadeHalf : span.startSample});
+            const int lastSample = std::min(
+                {samplesToWrite, nextStart,
+                 fadeRight ? rightCenter + fadeHalf : span.endSample});
+
+            for (int sample = firstSample; sample < lastSample; ++sample) {
+              float leftBlend = 1.0f;
+              if (fadeLeft && sample < leftCenter + fadeHalf)
+                leftBlend = resetSmoothstep(
+                    static_cast<float>(sample - (leftCenter - fadeHalf)) /
+                    static_cast<float>(2 * fadeHalf));
+
+              float rightBlend = 1.0f;
+              if (fadeRight && sample >= rightCenter - fadeHalf)
+                rightBlend = resetSmoothstep(
+                    static_cast<float>((rightCenter + fadeHalf) - sample) /
+                    static_cast<float>(2 * fadeHalf));
+
+              const float blend = std::min(leftBlend, rightBlend);
               const auto index = static_cast<size_t>(sample);
               targetSegment[index] +=
-                  resetBlend * (originalSegment[index] - targetSegment[index]);
+                  blend * (originalSegment[index] - targetSegment[index]);
             }
           }
 
@@ -1569,10 +1655,124 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
+          // Exact restore next to unedited audio.
+          //
+          // Reverting a note (undo or Restore) copies the original into its
+          // body, but the splices above still crossfade each edge between the
+          // original, this pass's render and whatever the composite already
+          // held - which includes the reverted edit's own earlier crossfade.
+          // So a revert never gave back the original around the edges, and
+          // every edit/revert cycle left slightly different audio there (up to
+          // -21 dBFS in an A/B of two identical edit/undo exports).
+          //
+          // Where no edited audio is nearby, the composite around the note
+          // should simply be the original, so copy it sample for sample over
+          // the note and past each such edge far enough to cover any earlier
+          // splice. A straight copy, not a blend: blending with weight 1.0 is
+          // not bit-exact in float. Edges next to edited audio keep their
+          // crossfade; there the body is still copied up to where it starts.
+          //
+          // Timing patches protect only their own samples (including fades).
+          // A global formant shift still means no note is neutral.
+          {
+            // Covers the widest splice any version has written past a note
+            // edge: commit fade (512 before, 384 now) + 128 search, and the
+            // reset fade 256 + 128 search.
+            constexpr int kExactRestoreReachSamples = 2 * 512;
+            static_assert(kExactRestoreReachSamples >=
+                              kCommitFadeHalfSamples + kSpliceSearchRadiusSamples,
+                          "exact restore must cover the commit splice");
+            static_assert(kExactRestoreReachSamples >=
+                              kResetFadeHalfSamples +
+                                  kResetSpliceSearchRadiusSamples,
+                          "exact restore must cover the reset splice");
+
+            const auto &original = audioData.originalWaveform;
+            const int originalSamples = original.getNumSamples();
+            if (!hasGlobalFormant && !resetSpans.empty() && originalSamples > 0 &&
+                original.getNumChannels() > 0) {
+              std::vector<OriginalWaveformRestore::Range> timingProtectedRanges;
+              for (const auto &patch : audioMovePatches) {
+                // Timing clear fades extend 128 samples outside the gap.
+                if (patch.clearStartSample >= 0 &&
+                    patch.clearEndSample > patch.clearStartSample)
+                  timingProtectedRanges.push_back({
+                      patch.clearStartSample - kTimingClearFadeSamples,
+                      patch.clearEndSample + kTimingClearFadeSamples});
+                if (!patch.samples.empty())
+                  timingProtectedRanges.push_back({
+                      patch.destinationStartSample,
+                      patch.destinationStartSample +
+                          static_cast<int>(patch.samples.size())});
+              }
+              const auto &allNotes = capturedProject->getNotes();
+
+              // True if audio of an edited note (current edit, or rendered
+              // audio still in the composite) can reach [absStart, absEnd).
+              // Notes being reverted in this pass are excluded: their
+              // renderedEdit flag is only cleared after this block.
+              auto editedAudioNear = [&](int absStart, int absEnd) {
+                for (const auto &note : allNotes) {
+                  if (note.isRest())
+                    continue;
+                  const bool neutral = note.isNeutralForOriginalWaveform();
+                  if (note.isDirty() && neutral)
+                    continue;
+                  if (neutral && !note.hasRenderedEdit())
+                    continue;
+                  const int first = std::min(
+                      {note.getStartFrame(), note.getSrcStartFrame(),
+                       note.getRenderedStartFrame()});
+                  const int last = std::max(
+                      {note.getEndFrame(), note.getSrcEndFrame(),
+                       note.getRenderedEndFrame()});
+                  const int footprintStart =
+                      first * hopSize - kExactRestoreReachSamples;
+                  const int footprintEnd =
+                      last * hopSize + kExactRestoreReachSamples;
+                  if (footprintStart < absEnd && footprintEnd > absStart)
+                    return true;
+                }
+                return false;
+              };
+
+              const int writeLimit =
+                  std::min(samplesToWrite, originalSamples - startSample);
+              for (const auto &span : resetSpans) {
+                const int absStart = startSample + span.startSample;
+                const int absEnd = startSample + span.endSample;
+                const bool leftExact = !editedAudioNear(
+                    absStart - kExactRestoreReachSamples, absStart);
+                const bool rightExact = !editedAudioNear(
+                    absEnd, absEnd + kExactRestoreReachSamples);
+
+                const int copyStart = std::max(
+                    0, leftExact ? span.startSample - kExactRestoreReachSamples
+                                 : span.startSample + kExactRestoreReachSamples);
+                const int copyEnd = std::min(
+                    writeLimit, rightExact
+                                    ? span.endSample + kExactRestoreReachSamples
+                                    : span.endSample - kExactRestoreReachSamples);
+                if (copyEnd <= copyStart)
+                  continue;
+
+                for (int channel = 0;
+                     channel < audioData.waveform.getNumChannels(); ++channel) {
+                  const int sourceChannel =
+                      std::min(channel, original.getNumChannels() - 1);
+                  OriginalWaveformRestore::copy(
+                      audioData.waveform.getWritePointer(channel),
+                      original.getReadPointer(sourceChannel),
+                      startSample + copyStart, startSample + copyEnd,
+                      timingProtectedRanges);
+                }
+              }
+            }
+          }
+
           // Apply fixed-length audio attached to timing-region boundaries.
           // These joins happen after the synthesized commit, so they need
           // their own smoothing instead of hard clear/copy operations.
-          constexpr int kTimingClearFadeSamples = 128;
           constexpr int kTimingPatchBoundaryMarginSamples = 512;
           constexpr int kTimingPatchFadeHalfSamples = 128;
           constexpr int kTimingPatchAnalysisHalfSamples = 128;
@@ -1726,7 +1926,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (note.isDirty())
               return true;
 
-            // Draw/F0 edits may not mark a specific note dirty. In that case,
+            // F0-range edits may not mark a specific note dirty. In that case,
             // notes overlapping the F0 dirty range are the edited anchors.
             return !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
           };

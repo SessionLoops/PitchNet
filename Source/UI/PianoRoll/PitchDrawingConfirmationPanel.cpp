@@ -1,12 +1,12 @@
-#include "AnchorConfirmationPanel.h"
+#include "PitchDrawingConfirmationPanel.h"
 #include "../Components/AppFont.h"
 #include "../../Utils/Localization.h"
 #include "../../Utils/UI/Theme.h"
 #include "BinaryData.h"
 
-AnchorConfirmationPanel::AnchorConfirmationPanel()
+PitchDrawingConfirmationPanel::PitchDrawingConfirmationPanel()
 {
-    prompt.setText(TR("anchor.apply_prompt"), juce::dontSendNotification);
+    prompt.setText(TR("pitch_drawing.apply_prompt"), juce::dontSendNotification);
     prompt.setFont(AppFont::getFont(11.0f).withPointHeight(11.0f));
     prompt.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
     prompt.setJustificationType(juce::Justification::centredLeft);
@@ -23,14 +23,14 @@ AnchorConfirmationPanel::AnchorConfirmationPanel()
     addAndMakeVisible(okButton);
 }
 
-AnchorConfirmationPanel::~AnchorConfirmationPanel() = default;
+PitchDrawingConfirmationPanel::~PitchDrawingConfirmationPanel() = default;
 
-void AnchorConfirmationPanel::refreshLocalisedText()
+void PitchDrawingConfirmationPanel::refreshLocalisedText()
 {
-    prompt.setText(TR("anchor.apply_prompt"), juce::dontSendNotification);
+    prompt.setText(TR("pitch_drawing.apply_prompt"), juce::dontSendNotification);
 }
 
-void AnchorConfirmationPanel::paint(juce::Graphics& g)
+void PitchDrawingConfirmationPanel::paint(juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
     g.setColour(juce::Colour(0xFF2E2E2D));
@@ -39,7 +39,7 @@ void AnchorConfirmationPanel::paint(juce::Graphics& g)
     g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.0f);
 }
 
-void AnchorConfirmationPanel::resized()
+void PitchDrawingConfirmationPanel::resized()
 {
     auto area = getLocalBounds().reduced(7, 2);
     constexpr int buttonSize = 26;
