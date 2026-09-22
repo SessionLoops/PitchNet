@@ -133,6 +133,17 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
     return true;
   }
 
+  // The drag previews through rebuildDeltaForNotes(), which leaves basePitch
+  // as it was. Commit through the same full rebuild PitchToolAction's undo and
+  // redo use, so the edit renders from the curves its undo would reproduce.
+  if (project)
+  {
+    for (auto* note : affectedNotes)
+      if (note)
+        note->markSynthDirty();
+    PitchCurveProcessor::rebuildBaseFromNotes(*project);
+  }
+
   // Capture new transformation parameters (not curves)
   std::vector<TransformParams> newParams;
   newParams.reserve(affectedNotes.size());
@@ -309,7 +320,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       minFrame = std::min(minFrame, note->getStartFrame());
       maxFrame = std::max(maxFrame, note->getEndFrame());
     }
-    project->setF0DirtyRange(minFrame, maxFrame);
+    project->markNoteEditDirtyRange(minFrame, maxFrame);
   }
 
   // Trigger visual update

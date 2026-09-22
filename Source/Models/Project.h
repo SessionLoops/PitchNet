@@ -221,6 +221,15 @@ public:
 
     // F0 curve dirty tracking (for pitch tools and undo/redo)
     void setF0DirtyRange(int startFrame, int endFrame);
+
+    // The one F0 dirty range for note edits that re-render audio (pitch drag,
+    // nudge, snap, pitch macro, pitch tools, formant, curve drawing) and for
+    // their undo, redo and Restore. Pass the edited notes' own frame span; any
+    // note ending or starting within 30 frames of that span is included, then
+    // 60 frames of padding are added. This range sets the synthesiser's
+    // render window, so an edit, its undo and its Restore must mark it the
+    // same way or the re-rendered audio around the note differs and clicks.
+    void markNoteEditDirtyRange(int startFrame, int endFrame);
     void clearF0DirtyRange();
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;

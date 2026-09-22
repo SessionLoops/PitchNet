@@ -228,32 +228,8 @@ namespace
       }
       project.setModified(true);
       PitchCurveProcessor::rebuildBaseFromNotes(project);
-      if (dirtyStart > dirtyEnd)
-        return;
-
-      // Mark exactly the F0 dirty range a pitch drag's undo marks (see
-      // PitchEditor::endNoteDrag / endMultiNoteDrag): the span grows to any
-      // note ending or starting within 30 frames of it, then gets 60 frames of
-      // padding. That range decides the synthesiser's render window. Marking
-      // only the notes' own frames gave Restore a shorter window than the
-      // edit and its undo ([634,1062) vs [634,1373) in the debug log), so the
-      // re-rendered audio around the note differed and clicked.
-      int expandedStart = dirtyStart;
-      int expandedEnd = dirtyEnd;
-      for (const auto& candidate : project.getNotes())
-      {
-        if (std::find(notes.begin(), notes.end(), &candidate) != notes.end())
-          continue;
-        if (candidate.getEndFrame() > dirtyStart - 30 &&
-            candidate.getEndFrame() <= dirtyStart)
-          expandedStart = std::min(expandedStart, candidate.getStartFrame());
-        if (candidate.getStartFrame() < dirtyEnd + 30 &&
-            candidate.getStartFrame() >= dirtyEnd)
-          expandedEnd = std::max(expandedEnd, candidate.getEndFrame());
-      }
-      const int f0Size = static_cast<int>(project.getAudioData().f0.size());
-      project.setF0DirtyRange(std::max(0, expandedStart - 60),
-                              std::min(f0Size, expandedEnd + 60));
+      // Same range the edit and its undo mark (Project::markNoteEditDirtyRange).
+      project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
     }
 
     Project& project;
@@ -2297,13 +2273,7 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
     invalidateBasePitchCache();
 
-    const int f0Size = static_cast<int>(project->getAudioData().f0.size());
-    if (f0Size > 0 && dirtyStartFrame <= dirtyEndFrame)
-    {
-      const int smoothStart = std::max(0, dirtyStartFrame - 60);
-      const int smoothEnd = std::min(f0Size, dirtyEndFrame + 60);
-      project->setF0DirtyRange(smoothStart, smoothEnd);
-    }
+    project->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
 
     if (onPitchEdited)
       onPitchEdited();
@@ -2327,11 +2297,7 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
           for (auto *note : notes)
             if (note)
               note->markSynthDirty();
-          const int f0Size = static_cast<int>(
-              projectPtr->getAudioData().f0.size());
-          projectPtr->setF0DirtyRange(
-              std::max(0, dirtyStartFrame - 60),
-              std::min(f0Size, dirtyEndFrame + 60));
+          projectPtr->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
         });
     undoManager->addAction(std::move(action));
   }
@@ -3364,9 +3330,7 @@ void PianoRollComponent::reapplyBasePitchForNote(Note *note)
 
   // Always set F0 dirty range for synthesis (needed for undo/redo to trigger
   // resynthesis)
-  int smoothStart = std::max(0, startFrame - 60);
-  int smoothEnd = std::min(f0Size, endFrame + 60);
-  project->setF0DirtyRange(smoothStart, smoothEnd);
+  project->markNoteEditDirtyRange(startFrame, endFrame);
 
   // Trigger repaint
   repaint();

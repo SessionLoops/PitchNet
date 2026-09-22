@@ -524,7 +524,7 @@ void PitchDrawingHandler::applyPreviewToProject()
   }
 
   PitchCurveProcessor::rebuildBaseFromNotes(project);
-  project.setF0DirtyRange(dirtyStart, dirtyEnd);
+  project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
   previewDirtyStart = previewDirtyStart < 0
                           ? dirtyStart
                           : std::min(previewDirtyStart, dirtyStart);
@@ -563,7 +563,7 @@ void PitchDrawingHandler::restoreOriginalNoteStates(bool requestRender)
 
   PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
   if (previewDirtyStart >= 0 && previewDirtyEnd > previewDirtyStart)
-    owner_.project->setF0DirtyRange(previewDirtyStart, previewDirtyEnd);
+    owner_.project->markNoteEditDirtyRange(previewDirtyStart, previewDirtyEnd);
   owner_.invalidateBasePitchCache();
   if (owner_.onPitchEdited)
     owner_.onPitchEdited();

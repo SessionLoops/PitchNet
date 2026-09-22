@@ -66,7 +66,7 @@ private:
                     minFrame = std::min(minFrame, note->getStartFrame());
                     maxFrame = std::max(maxFrame, note->getEndFrame());
                 }
-                project->setF0DirtyRange(minFrame, maxFrame);
+                project->markNoteEditDirtyRange(minFrame, maxFrame);
             }
         }
 

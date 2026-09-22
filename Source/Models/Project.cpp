@@ -161,6 +161,33 @@ void Project::setF0DirtyRange(int startFrame, int endFrame)
         f0DirtyEnd = endFrame;
 }
 
+void Project::markNoteEditDirtyRange(int startFrame, int endFrame)
+{
+    if (startFrame > endFrame)
+        return;
+
+    constexpr int kAdjacentNoteFrames = 30;
+    constexpr int kPaddingFrames = 60;
+
+    // Neighbours are measured against the span's own bounds (not a growing
+    // span), matching the pitch-drag undo this rule was verified against.
+    int expandedStart = startFrame;
+    int expandedEnd = endFrame;
+    for (const auto &note : notes)
+    {
+        if (note.getEndFrame() > startFrame - kAdjacentNoteFrames &&
+            note.getEndFrame() <= startFrame)
+            expandedStart = std::min(expandedStart, note.getStartFrame());
+        if (note.getStartFrame() < endFrame + kAdjacentNoteFrames &&
+            note.getStartFrame() >= endFrame)
+            expandedEnd = std::max(expandedEnd, note.getEndFrame());
+    }
+
+    const int frameCount = static_cast<int>(audioData.f0.size());
+    setF0DirtyRange(std::max(0, expandedStart - kPaddingFrames),
+                    std::min(frameCount, expandedEnd + kPaddingFrames));
+}
+
 void Project::clearF0DirtyRange()
 {
     f0DirtyStart = -1;

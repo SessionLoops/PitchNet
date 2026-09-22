@@ -156,26 +156,6 @@ void PitchEditor::endNoteDrag()
     draggedNote->setPitchOffset(0.0f);
     draggedNote->markSynthDirty();
 
-    // Find adjacent notes to expand dirty range
-    const auto &notes = project->getNotes();
-    int expandedStart = startFrame;
-    int expandedEnd = endFrame;
-    for (const auto &note : notes)
-    {
-      if (&note == draggedNote)
-        continue;
-      if (note.getEndFrame() > startFrame - 30 &&
-          note.getEndFrame() <= startFrame)
-      {
-        expandedStart = std::min(expandedStart, note.getStartFrame());
-      }
-      if (note.getStartFrame() < endFrame + 30 &&
-          note.getStartFrame() >= endFrame)
-      {
-        expandedEnd = std::max(expandedEnd, note.getEndFrame());
-      }
-    }
-
     // Rebuild pitch curves
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
 
@@ -183,9 +163,7 @@ void PitchEditor::endNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    int smoothStart = std::max(0, expandedStart - 60);
-    int smoothEnd = std::min(f0Size, expandedEnd + 60);
-    project->setF0DirtyRange(smoothStart, smoothEnd);
+    project->markNoteEditDirtyRange(startFrame, endFrame);
 
     // Create undo action
     if (undoManager)
@@ -203,23 +181,18 @@ void PitchEditor::endNoteDrag()
         f0Edits.push_back(edit);
       }
 
-      int capturedExpandedStart = expandedStart;
-      int capturedExpandedEnd = expandedEnd;
-      int capturedF0Size = f0Size;
+      const int capturedStart = startFrame;
+      const int capturedEnd = endFrame;
       auto *projectPtr = project;
       auto action = std::make_unique<NotePitchDragAction>(
           draggedNote, &audioData.f0, originalMidiNote,
           originalMidiNote + newOffset, std::move(f0Edits),
-          [projectPtr, capturedExpandedStart, capturedExpandedEnd,
-           capturedF0Size](Note *n)
+          [projectPtr, capturedStart, capturedEnd](Note *n)
           {
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              int smoothStart = std::max(0, capturedExpandedStart - 60);
-              int smoothEnd =
-                  std::min(capturedF0Size, capturedExpandedEnd + 60);
-              projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
+              projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
               if (n)
                 n->markSynthDirty();
             }
@@ -385,18 +358,6 @@ void PitchEditor::endMultiNoteDrag()
       expandedEnd = std::max(expandedEnd, note->getEndFrame());
     }
 
-    // Find adjacent notes to expand dirty range
-    const auto &allNotes = project->getNotes();
-    for (const auto &note : allNotes)
-    {
-      if (note.getEndFrame() > expandedStart - 30 &&
-          note.getEndFrame() <= expandedStart)
-        expandedStart = std::min(expandedStart, note.getStartFrame());
-      if (note.getStartFrame() < expandedEnd + 30 &&
-          note.getStartFrame() >= expandedEnd)
-        expandedEnd = std::max(expandedEnd, note.getEndFrame());
-    }
-
     // Rebuild pitch curves
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
 
@@ -404,9 +365,7 @@ void PitchEditor::endMultiNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    int smoothStart = std::max(0, expandedStart - 60);
-    int smoothEnd = std::min(f0Size, expandedEnd + 60);
-    project->setF0DirtyRange(smoothStart, smoothEnd);
+    project->markNoteEditDirtyRange(expandedStart, expandedEnd);
 
     // Create undo action for multi-note drag
     if (undoManager)
@@ -431,9 +390,8 @@ void PitchEditor::endMultiNoteDrag()
         }
       }
 
-      int capturedExpandedStart = expandedStart;
-      int capturedExpandedEnd = expandedEnd;
-      int capturedF0Size = f0Size;
+      const int capturedStart = expandedStart;
+      const int capturedEnd = expandedEnd;
       std::vector<Note *> capturedNotes = draggedNotes;
       std::vector<float> capturedOriginalMidi = originalMidiNotes;
       float capturedNewOffset = newOffset;
@@ -442,16 +400,12 @@ void PitchEditor::endMultiNoteDrag()
       auto action = std::make_unique<MultiNotePitchDragAction>(
           capturedNotes, &audioData.f0, capturedOriginalMidi, capturedNewOffset,
           std::move(f0Edits),
-          [projectPtr, capturedExpandedStart, capturedExpandedEnd,
-           capturedF0Size](const std::vector<Note *> &)
+          [projectPtr, capturedStart, capturedEnd](const std::vector<Note *> &)
           {
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              int smoothStart = std::max(0, capturedExpandedStart - 60);
-              int smoothEnd =
-                  std::min(capturedF0Size, capturedExpandedEnd + 60);
-              projectPtr->setF0DirtyRange(smoothStart, smoothEnd);
+              projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
             }
           });
       undoManager->addAction(std::move(action));

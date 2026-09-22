@@ -61,7 +61,7 @@ private:
             return;
 
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        project->setF0DirtyRange(minFrame, maxFrame);
+        project->markNoteEditDirtyRange(minFrame, maxFrame);
     }
 
     Project* project = nullptr;
