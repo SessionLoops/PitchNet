@@ -892,6 +892,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         juce::String(static_cast<double>(committedFrames) * framesToSeconds,
                      2) + "s");
 
+#if PITCHNET_SYNTH_NOTE_DIAGNOSTICS
     // The exact inputs to collectCommitFrameRanges' branch, per dirty note.
     // pendingTiming=YES on an edit that moved nothing is the false positive
     // that promotes the commit from one note to the whole F0 dirty range.
@@ -913,6 +914,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           "  neutral=" +
           (note.isNeutralForOriginalWaveform() ? "yes" : "no"));
     }
+#endif
   }
 
   std::vector<float> blendMask = generateBlendMask(startFrame, endFrame, hopSize);
