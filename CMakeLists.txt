@@ -288,6 +288,26 @@ juce_add_plugin(PitchNetPlugin
     MICROPHONE_PERMISSION_ENABLED TRUE
     FILE_SHARING_ENABLED TRUE)
 
+# MSVC writes the incremental-link database (.ilk) beside whatever the linker
+# outputs. For a VST3 that output path is inside the bundle payload folder, so
+# a scratch file the size of the plug-in itself ends up in the thing users
+# install - and installing a Windows VST3 is a copy of the whole folder, so it
+# rides along every time. /ILK relocates the database without disabling
+# incremental linking, which is worth keeping on a debug-capable build.
+#
+# Only Debug and RelWithDebInfo link incrementally; Release does not produce an
+# .ilk at all, so the option is scoped to the configurations that do.
+if(MSVC)
+    set(PITCHNET_ILK_DIR "${CMAKE_BINARY_DIR}/ilk")
+    file(MAKE_DIRECTORY "${PITCHNET_ILK_DIR}")
+    foreach(_pn_ilk_target PitchNet PitchNetPlugin_VST3 PitchNetPlugin_AAX)
+        if(TARGET ${_pn_ilk_target})
+            target_link_options(${_pn_ilk_target} PRIVATE
+                "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/ILK:${PITCHNET_ILK_DIR}/${_pn_ilk_target}.ilk>")
+        endif()
+    endforeach()
+endif()
+
 # ARA compile definitions
 if(ARA_AVAILABLE)
     target_compile_definitions(PitchNetPlugin PRIVATE
