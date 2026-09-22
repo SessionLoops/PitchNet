@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "../Utils/AppLogger.h"
 #include "../Undo/AmplitudeAction.h"
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
@@ -227,8 +228,32 @@ namespace
       }
       project.setModified(true);
       PitchCurveProcessor::rebuildBaseFromNotes(project);
-      if (dirtyStart <= dirtyEnd)
-        project.setF0DirtyRange(dirtyStart, dirtyEnd);
+      if (dirtyStart > dirtyEnd)
+        return;
+
+      // Mark exactly the F0 dirty range a pitch drag's undo marks (see
+      // PitchEditor::endNoteDrag / endMultiNoteDrag): the span grows to any
+      // note ending or starting within 30 frames of it, then gets 60 frames of
+      // padding. That range decides the synthesiser's render window. Marking
+      // only the notes' own frames gave Restore a shorter window than the
+      // edit and its undo ([634,1062) vs [634,1373) in the debug log), so the
+      // re-rendered audio around the note differed and clicked.
+      int expandedStart = dirtyStart;
+      int expandedEnd = dirtyEnd;
+      for (const auto& candidate : project.getNotes())
+      {
+        if (std::find(notes.begin(), notes.end(), &candidate) != notes.end())
+          continue;
+        if (candidate.getEndFrame() > dirtyStart - 30 &&
+            candidate.getEndFrame() <= dirtyStart)
+          expandedStart = std::min(expandedStart, candidate.getStartFrame());
+        if (candidate.getStartFrame() < dirtyEnd + 30 &&
+            candidate.getStartFrame() >= dirtyEnd)
+          expandedEnd = std::max(expandedEnd, candidate.getEndFrame());
+      }
+      const int f0Size = static_cast<int>(project.getAudioData().f0.size());
+      project.setF0DirtyRange(std::max(0, expandedStart - 60),
+                              std::min(f0Size, expandedEnd + 60));
     }
 
     Project& project;
@@ -3008,31 +3033,50 @@ void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
     std::vector<float> before, after(targets.size(), 0.0f);
     for (const auto* target : targets) before.push_back(target->getVolumeDb());
     if (before == after) return;
-    auto action = std::make_unique<AmplitudeAction>(
+    applyRestoreAction(std::make_unique<AmplitudeAction>(
         *project, targets, before, after, pitchToolController->onAmplitudeEdited,
-        "Restore Amplitude");
-    action->redo();
-    if (undoManager) undoManager->addAction(std::move(action));
+        "Restore Amplitude"));
     return;
   }
 
   const bool all = mode == NoteRestoreMode::All;
-  auto action = std::make_unique<ResetNoteEditsAction>(
+  applyRestoreAction(std::make_unique<ResetNoteEditsAction>(
       *project, targets, all || mode == NoteRestoreMode::Pitch,
       all || mode == NoteRestoreMode::Formant, all,
       all ? "Restore All Edits" : mode == NoteRestoreMode::Formant
           ? "Restore Formant" : "Restore Pitch",
-      all ? createResetTimingAction(note) : nullptr);
+      all ? createResetTimingAction(note) : nullptr));
+}
+
+void PianoRollComponent::applyRestoreAction(std::unique_ptr<UndoableAction> action)
+{
+  if (!action)
+    return;
+
+  // Same order as MainComponent::undo(): drop any transient drawing preview,
+  // change the data, record history, then let the shared post-history path
+  // refresh the UI and trigger the render.
+  cancelPitchDrawingPreview();
+  const bool requiresResynthesis = action->requiresAudioResynthesis();
+  LOG("history: apply " + action->getName());
   action->redo();
   if (undoManager)
     undoManager->addAction(std::move(action));
 
-  invalidateBasePitchCache();
   updatePitchToolHandlesFromSelection();
   updatePreviewButtonBounds();
+
+  if (onHistoryActionApplied)
+  {
+    onHistoryActionApplied(requiresResynthesis);
+    return;
+  }
+
+  // No host wiring (e.g. a bare component): keep the old behaviour.
+  invalidateBasePitchCache();
   if (onPitchEdited)
     onPitchEdited();
-  if (onPitchEditFinished)
+  if (requiresResynthesis && onPitchEditFinished)
     onPitchEditFinished();
   repaint();
 }
@@ -3169,17 +3213,7 @@ std::unique_ptr<UndoableAction> PianoRollComponent::createResetTimingAction(Note
 
 void PianoRollComponent::resetNoteTiming(Note &note)
 {
-  auto action = createResetTimingAction(note);
-  if (!action) return;
-  action->redo();
-  if (undoManager) undoManager->addAction(std::move(action));
-
-  invalidateBasePitchCache();
-  if (onPitchEdited)
-    onPitchEdited();
-  if (onPitchEditFinished)
-    onPitchEditFinished();
-  repaint();
+  applyRestoreAction(createResetTimingAction(note));
 }
 
 void PianoRollComponent::triggerPreviewForNote(Note &note)

@@ -871,6 +871,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       notifyProjectDataChanged();
     }
   };
+  pianoRoll.onHistoryActionApplied = [this](bool requiresResynthesis)
+  { afterHistoryChange(requiresResynthesis); };
   pianoRoll.onPitchEditFinished = [this]()
   {
     resynthesizeIncremental();
@@ -2705,23 +2707,8 @@ void MainComponent::undo()
 
   if (undoManager && undoManager->canUndo())
   {
-    const bool requiresResynthesis = undoManager->undo();
-    parameterPanel.updateFromNote();
-    pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
-    pianoRoll.repaint();
-    pianoRollView.refreshOverview();
-
-    if (requiresResynthesis && getProject())
-    {
-      // Don't mark all notes as dirty - let undo action callbacks handle
-      // the specific dirty range. This avoids synthesizing the entire project.
-      // The undo action's callback will set the correct F0 dirty range.
-      resynthesizeIncremental();
-    }
-
-    // Update command states (undo/redo availability changed)
-    if (commandManager)
-      commandManager->commandStatusChanged();
+    LOG("history: undo " + undoManager->getUndoName());
+    afterHistoryChange(undoManager->undo());
   }
 }
 
@@ -2732,24 +2719,28 @@ void MainComponent::redo()
 
   if (undoManager && undoManager->canRedo())
   {
-    const bool requiresResynthesis = undoManager->redo();
-    parameterPanel.updateFromNote();
-    pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
-    pianoRoll.repaint();
-    pianoRollView.refreshOverview();
-
-    if (requiresResynthesis && getProject())
-    {
-      // Don't mark all notes as dirty - let redo action callbacks handle
-      // the specific dirty range. This avoids synthesizing the entire project.
-      // The redo action's callback will set the correct F0 dirty range.
-      resynthesizeIncremental();
-    }
-
-    // Update command states (undo/redo availability changed)
-    if (commandManager)
-      commandManager->commandStatusChanged();
+    LOG("history: redo " + undoManager->getRedoName());
+    afterHistoryChange(undoManager->redo());
   }
+}
+
+void MainComponent::afterHistoryChange(bool requiresResynthesis)
+{
+  parameterPanel.updateFromNote();
+  pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
+  pianoRoll.repaint();
+  pianoRollView.refreshOverview();
+
+  if (requiresResynthesis && getProject())
+  {
+    // Don't mark all notes as dirty - the action marked the notes it changed
+    // and set any F0 dirty range. This avoids synthesizing the entire project.
+    resynthesizeIncremental();
+  }
+
+  // Update command states (undo/redo availability changed)
+  if (commandManager)
+    commandManager->commandStatusChanged();
 }
 
 void MainComponent::setEditMode(EditMode mode)

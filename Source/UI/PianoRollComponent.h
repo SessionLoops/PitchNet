@@ -217,6 +217,11 @@ public:
   std::function<void()> onPitchEdited;
   std::function<void()> onPitchEditFinished; // Called when dragging ends
   std::function<void()> onAmplitudeEdited; // Gain commit, undo, or redo
+  // Restore actions are applied here and then handed to the host exactly as
+  // an undo/redo is: same UI refresh, same resynthesis trigger, nothing sent
+  // to the plugin before the render lands. The argument mirrors
+  // UndoableAction::requiresAudioResynthesis().
+  std::function<void(bool requiresResynthesis)> onHistoryActionApplied;
   std::function<void()> onPitchPreviewRenderRequested;
   std::function<void()> onPitchEditCommitted;
   std::function<void(const Note &)> onNoteDragAudition;
@@ -296,6 +301,9 @@ private:
   void resetNoteEdits(Note &note, NoteRestoreMode mode = NoteRestoreMode::Pitch);
   std::unique_ptr<UndoableAction> createResetTimingAction(Note &note);
   void resetNoteTiming(Note &note);
+  // Runs a Restore action, records it, and reports it via
+  // onHistoryActionApplied so it is processed like undo/redo.
+  void applyRestoreAction(std::unique_ptr<UndoableAction> action);
   void showResetMenu(Note &note);
   void setHoveredNote(Note *note);
   void updateScrollBars();

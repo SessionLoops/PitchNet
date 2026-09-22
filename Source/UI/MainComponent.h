@@ -309,6 +309,9 @@ private:
 
   void undo();
   void redo();
+  // Shared by undo, redo and the note Restore menu, so all three process a
+  // history change identically.
+  void afterHistoryChange(bool requiresResynthesis);
   void setEditMode(EditMode mode);
   void setToolGroupEnabled(bool enabled);
 
