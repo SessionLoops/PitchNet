@@ -22,7 +22,7 @@ ToolbarComponent::ToolbarComponent()
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
     selectModeButton.setImage(loadImage(BinaryData::select_png, BinaryData::select_pngSize));
     splitModeButton.setImage(loadImage(BinaryData::split_png, BinaryData::split_pngSize));
-    anchorModeButton.setImage(loadImage(BinaryData::drawing_png, BinaryData::drawing_pngSize));
+    pitchDrawingModeButton.setImage(loadImage(BinaryData::drawing_png, BinaryData::drawing_pngSize));
     timingModeButton.setImage(loadImage(BinaryData::timing_png, BinaryData::timing_pngSize));
     logoImage = loadImage(BinaryData::logo_png, BinaryData::logo_pngSize);
 
@@ -36,7 +36,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(loopButton);
     addAndMakeVisible(selectModeButton);
     addAndMakeVisible(splitModeButton);
-    addAndMakeVisible(anchorModeButton);
+    addAndMakeVisible(pitchDrawingModeButton);
     addAndMakeVisible(timingModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(scaleSelectionButton);
@@ -52,7 +52,7 @@ ToolbarComponent::ToolbarComponent()
     loopButton.addListener(this);
     selectModeButton.addListener(this);
     splitModeButton.addListener(this);
-    anchorModeButton.addListener(this);
+    pitchDrawingModeButton.addListener(this);
     timingModeButton.addListener(this);
     followButton.addListener(this);
     quantizeButton.addListener(this);
@@ -250,8 +250,8 @@ void ToolbarComponent::resized()
                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                               editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
-    anchorModeButton.setVisible(true);
-    anchorModeButton.setBounds(editToolX,
+    pitchDrawingModeButton.setVisible(true);
+    pitchDrawingModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                                editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
@@ -317,7 +317,7 @@ void ToolbarComponent::refreshLocalisedText()
 {
     selectModeButton.setTooltip(TR("tooltip.select_tool"));
     splitModeButton.setTooltip(TR("tooltip.split_tool"));
-    anchorModeButton.setTooltip(TR("tooltip.draw_tool"));
+    pitchDrawingModeButton.setTooltip(TR("tooltip.pitch_drawing_tool"));
     timingModeButton.setTooltip(TR("tooltip.timing_tool"));
     followButton.setTooltip(TR("tooltip.auto_scroll"));
     quantizeButton.setTooltip(TR("tooltip.quantize_macro"));
@@ -379,11 +379,11 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onEditModeChanged)
             onEditModeChanged(EditMode::Split);
     }
-    else if (button == &anchorModeButton)
+    else if (button == &pitchDrawingModeButton)
     {
-        setEditMode(EditMode::Anchor);
+        setEditMode(EditMode::PitchDrawing);
         if (onEditModeChanged)
-            onEditModeChanged(EditMode::Anchor);
+            onEditModeChanged(EditMode::PitchDrawing);
     }
     else if (button == &timingModeButton)
     {
@@ -465,7 +465,7 @@ void ToolbarComponent::setToolGroupEnabled(bool enabled)
 {
     selectModeButton.setEnabled(enabled);
     splitModeButton.setEnabled(enabled);
-    anchorModeButton.setEnabled(enabled);
+    pitchDrawingModeButton.setEnabled(enabled);
     timingModeButton.setEnabled(enabled);
 }
 
@@ -493,7 +493,7 @@ void ToolbarComponent::setEditMode(EditMode mode)
                                     juce::dontSendNotification);
     splitModeButton.setToggleState(mode == EditMode::Split,
                                    juce::dontSendNotification);
-    anchorModeButton.setToggleState(mode == EditMode::Anchor,
+    pitchDrawingModeButton.setToggleState(mode == EditMode::PitchDrawing,
                                     juce::dontSendNotification);
     timingModeButton.setToggleState(mode == EditMode::Timing,
                                     juce::dontSendNotification);

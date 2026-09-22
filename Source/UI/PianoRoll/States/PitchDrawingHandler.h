@@ -5,10 +5,10 @@
 
 #include <vector>
 
-class AnchorHandler final : public InteractionHandler
+class PitchDrawingHandler final : public InteractionHandler
 {
 public:
-  explicit AnchorHandler(PianoRollComponent& owner);
+  explicit PitchDrawingHandler(PianoRollComponent& owner);
 
   bool mouseDown(const juce::MouseEvent& e, float worldX,
                  float worldY) override;

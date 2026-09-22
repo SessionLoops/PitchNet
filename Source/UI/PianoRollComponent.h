@@ -33,11 +33,10 @@ class PianoRollInteractionContext;
 class InteractionHandler;
 class LoopDragHandler;
 class SelectHandler;
-class DrawHandler;
 class SplitHandler;
-class AnchorHandler;
+class PitchDrawingHandler;
 class TimingHandler;
-class AnchorConfirmationPanel;
+class PitchDrawingConfirmationPanel;
 
 /**
  * Piano roll component for displaying and editing notes.
@@ -159,7 +158,7 @@ public:
   EditMode getEditMode() const { return editMode; }
 
   // Cancel any transient pitch edit before undo/redo changes project history.
-  void cancelDrawing();
+  void cancelPitchDrawingPreview();
 
   // View settings
   void setShowDeltaPitch(bool show)
@@ -263,7 +262,7 @@ private:
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
-  void updateAnchorConfirmationPopup();
+  void updatePitchDrawingConfirmationPopup();
 
   float midiToY(float midiNote) const;
   float yToMidi(float y) const;
@@ -383,13 +382,12 @@ private:
   // Interaction handlers (state machine pattern)
   std::unique_ptr<LoopDragHandler> loopDragHandler_;
   std::unique_ptr<SelectHandler> selectHandler_;
-  std::unique_ptr<DrawHandler> drawHandler_;
   std::unique_ptr<SplitHandler> splitHandler_;
-  std::unique_ptr<AnchorHandler> anchorHandler_;
+  std::unique_ptr<PitchDrawingHandler> pitchDrawingHandler_;
   std::unique_ptr<TimingHandler> timingHandler_;
   InteractionHandler *currentHandler_ = nullptr;
 
-  std::unique_ptr<AnchorConfirmationPanel> anchorConfirmationPanel;
+  std::unique_ptr<PitchDrawingConfirmationPanel> pitchDrawingConfirmationPanel;
 
   // Scrollbars
   juce::ScrollBar horizontalScrollBar{false};

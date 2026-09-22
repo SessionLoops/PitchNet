@@ -219,7 +219,7 @@ public:
     // Check if any notes are dirty
     bool hasDirtyNotes() const;
 
-    // F0 direct edit dirty tracking (for Draw mode)
+    // F0 curve dirty tracking (for pitch tools and undo/redo)
     void setF0DirtyRange(int startFrame, int endFrame);
     void clearF0DirtyRange();
     bool hasF0DirtyRange() const;

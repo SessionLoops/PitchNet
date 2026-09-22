@@ -6,11 +6,11 @@
 
 #include <functional>
 
-class AnchorConfirmationPanel final : public juce::Component
+class PitchDrawingConfirmationPanel final : public juce::Component
 {
 public:
-    AnchorConfirmationPanel();
-    ~AnchorConfirmationPanel() override;
+    PitchDrawingConfirmationPanel();
+    ~PitchDrawingConfirmationPanel() override;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -28,5 +28,5 @@ private:
 
     LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnchorConfirmationPanel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchDrawingConfirmationPanel)
 };

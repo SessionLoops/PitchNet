@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-struct AnchorPitchNoteState
+struct PitchDrawingNoteState
 {
     Note* note = nullptr;
     TransformParams params;
@@ -23,12 +23,12 @@ struct AnchorPitchNoteState
  * resets its pitch-tool transforms. The immutable analysis contour is never
  * changed; the previous baked contour and transforms are restored by undo/redo.
  */
-class AnchorPitchAction final : public UndoableAction
+class PitchDrawingAction final : public UndoableAction
 {
 public:
-    AnchorPitchAction(Project* projectToEdit,
-                      std::vector<AnchorPitchNoteState> beforeStates,
-                      std::vector<AnchorPitchNoteState> afterStates)
+    PitchDrawingAction(Project* projectToEdit,
+                      std::vector<PitchDrawingNoteState> beforeStates,
+                      std::vector<PitchDrawingNoteState> afterStates)
         : project(projectToEdit), before(std::move(beforeStates)),
           after(std::move(afterStates))
     {
@@ -36,10 +36,10 @@ public:
 
     void undo() override { apply(before); }
     void redo() override { apply(after); }
-    juce::String getName() const override { return "Apply Anchor Pitch Curve"; }
+    juce::String getName() const override { return "Apply Pitch Drawing"; }
 
 private:
-    void apply(const std::vector<AnchorPitchNoteState>& states)
+    void apply(const std::vector<PitchDrawingNoteState>& states)
     {
         int minFrame = std::numeric_limits<int>::max();
         int maxFrame = std::numeric_limits<int>::min();
@@ -65,6 +65,6 @@ private:
     }
 
     Project* project = nullptr;
-    std::vector<AnchorPitchNoteState> before;
-    std::vector<AnchorPitchNoteState> after;
+    std::vector<PitchDrawingNoteState> before;
+    std::vector<PitchDrawingNoteState> after;
 };

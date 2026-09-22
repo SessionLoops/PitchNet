@@ -2700,8 +2700,8 @@ void MainComponent::notifyProjectDataChanged()
 
 void MainComponent::undo()
 {
-  // Restore any transient drawing/anchor preview before changing history.
-  pianoRoll.cancelDrawing();
+  // Restore any transient anchor preview before changing history.
+  pianoRoll.cancelPitchDrawingPreview();
 
   if (undoManager && undoManager->canUndo())
   {
@@ -2727,8 +2727,8 @@ void MainComponent::undo()
 
 void MainComponent::redo()
 {
-  // Restore any transient drawing/anchor preview before changing history.
-  pianoRoll.cancelDrawing();
+  // Restore any transient anchor preview before changing history.
+  pianoRoll.cancelPitchDrawingPreview();
 
   if (undoManager && undoManager->canRedo())
   {
@@ -3572,11 +3572,9 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::goToEnd,
 
       // Edit mode commands
-      CommandIDs::toggleDrawMode,
-      CommandIDs::exitDrawMode,
       CommandIDs::activateMainTool,
       CommandIDs::activateSplitTool,
-      CommandIDs::activateAnchorTool,
+      CommandIDs::activatePitchDrawingTool,
       CommandIDs::activateTimingTool};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
@@ -3715,17 +3713,6 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     break;
 
   // Edit mode commands
-  case CommandIDs::toggleDrawMode:
-    result.setInfo(TR("command.toggle_draw"), TR("command.toggle_draw.desp"), TR("category.edit_mode"), 0);
-    result.setActive(project != nullptr);
-    result.setTicked(pianoRoll.getEditMode() == EditMode::Draw);
-    break;
-
-  case CommandIDs::exitDrawMode:
-    result.setInfo(TR("command.exit_draw"), TR("command.exit_draw.desp"), TR("category.edit_mode"), 0);
-    result.setActive(pianoRoll.getEditMode() == EditMode::Draw);
-    break;
-
   case CommandIDs::activateMainTool:
     result.setInfo(TR("command.main_tool"), TR("command.main_tool.desp"),
                    TR("category.edit_mode"), 0);
@@ -3742,12 +3729,12 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
     break;
 
-  case CommandIDs::activateAnchorTool:
-    result.setInfo(TR("command.draw_tool"), TR("command.draw_tool.desp"),
+  case CommandIDs::activatePitchDrawingTool:
+    result.setInfo(TR("command.pitch_drawing_tool"), TR("command.pitch_drawing_tool.desp"),
                    TR("category.edit_mode"), 0);
     result.addDefaultKeypress('3', juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
-    result.setTicked(pianoRoll.getEditMode() == EditMode::Anchor);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::PitchDrawing);
     break;
 
   case CommandIDs::activateTimingTool:
@@ -3875,20 +3862,6 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     return true;
 
   // Edit mode commands
-  case CommandIDs::toggleDrawMode:
-    if (pianoRoll.getEditMode() == EditMode::Draw)
-      setEditMode(EditMode::Select);
-    else
-      setEditMode(EditMode::Draw);
-    return true;
-
-  case CommandIDs::exitDrawMode:
-    if (pianoRoll.getEditMode() == EditMode::Draw)
-    {
-      setEditMode(EditMode::Select);
-    }
-    return true;
-
   case CommandIDs::activateMainTool:
     if (toolGroupEnabled)
       setEditMode(EditMode::Select);
@@ -3899,9 +3872,9 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
       setEditMode(EditMode::Split);
     return true;
 
-  case CommandIDs::activateAnchorTool:
+  case CommandIDs::activatePitchDrawingTool:
     if (toolGroupEnabled)
-      setEditMode(EditMode::Anchor);
+      setEditMode(EditMode::PitchDrawing);
     return true;
 
   case CommandIDs::activateTimingTool:

@@ -1726,7 +1726,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (note.isDirty())
               return true;
 
-            // Draw/F0 edits may not mark a specific note dirty. In that case,
+            // F0-range edits may not mark a specific note dirty. In that case,
             // notes overlapping the F0 dirty range are the edited anchors.
             return !hasDirtyNoteAnchors && overlapsF0DirtyRange(note);
           };

@@ -194,7 +194,7 @@ std::pair<int, int> Project::getDirtyFrameRange() const
         }
     }
 
-    // Also include F0 dirty range from Draw mode edits
+    // Also include the F0 dirty range from pitch-curve edits
     if (f0DirtyStart >= 0)
     {
         if (minStart < 0 || f0DirtyStart < minStart)

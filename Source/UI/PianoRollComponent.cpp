@@ -13,11 +13,10 @@
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
-#include "PianoRoll/States/DrawHandler.h"
 #include "PianoRoll/States/SplitHandler.h"
-#include "PianoRoll/States/AnchorHandler.h"
+#include "PianoRoll/States/PitchDrawingHandler.h"
 #include "PianoRoll/States/TimingHandler.h"
-#include "PianoRoll/AnchorConfirmationPanel.h"
+#include "PianoRoll/PitchDrawingConfirmationPanel.h"
 #include "Components/PitchPopupMenu.h"
 #include "Components/CanvasPopupMenu.h"
 #include "BinaryData.h"
@@ -251,9 +250,8 @@ PianoRollComponent::PianoRollComponent()
   // Initialize interaction handlers
   loopDragHandler_ = std::make_unique<LoopDragHandler>(*this);
   selectHandler_ = std::make_unique<SelectHandler>(*this);
-  drawHandler_ = std::make_unique<DrawHandler>(*this);
   splitHandler_ = std::make_unique<SplitHandler>(*this);
-  anchorHandler_ = std::make_unique<AnchorHandler>(*this);
+  pitchDrawingHandler_ = std::make_unique<PitchDrawingHandler>(*this);
   timingHandler_ = std::make_unique<TimingHandler>(*this);
   currentHandler_ = selectHandler_.get();
 
@@ -404,10 +402,10 @@ PianoRollComponent::PianoRollComponent()
   };
   addAndMakeVisible(resetButton);
 
-  anchorConfirmationPanel = std::make_unique<AnchorConfirmationPanel>();
-  anchorConfirmationPanel->onApply = [this]
+  pitchDrawingConfirmationPanel = std::make_unique<PitchDrawingConfirmationPanel>();
+  pitchDrawingConfirmationPanel->onApply = [this]
   {
-    if (!anchorHandler_ || !anchorHandler_->apply())
+    if (!pitchDrawingHandler_ || !pitchDrawingHandler_->apply())
       return;
 
     // The preview has already been rendered. Confirmation only promotes the
@@ -418,13 +416,13 @@ PianoRollComponent::PianoRollComponent()
     if (onPitchEditCommitted)
       onPitchEditCommitted();
   };
-  anchorConfirmationPanel->onCancel = [this]
+  pitchDrawingConfirmationPanel->onCancel = [this]
   {
-    if (anchorHandler_)
-      anchorHandler_->cancel();
+    if (pitchDrawingHandler_)
+      pitchDrawingHandler_->cancel();
   };
-  addAndMakeVisible(*anchorConfirmationPanel);
-  anchorConfirmationPanel->setVisible(false);
+  addAndMakeVisible(*pitchDrawingConfirmationPanel);
+  pitchDrawingConfirmationPanel->setVisible(false);
 }
 
 PianoRollComponent::~PianoRollComponent()
@@ -602,7 +600,7 @@ void PianoRollComponent::resized()
 
   updateScrollBars();
   updatePreviewButtonBounds();
-  updateAnchorConfirmationPopup();
+  updatePitchDrawingConfirmationPopup();
 }
 
 void PianoRollComponent::drawBackgroundWaveform(
@@ -1052,8 +1050,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
   params.hidePitchCurves = false;
   params.componentWidth = getWidth();
 
-  if (editMode == EditMode::Anchor && anchorHandler_ &&
-      anchorHandler_->hasAnchors())
+  if (editMode == EditMode::PitchDrawing && pitchDrawingHandler_ &&
+      pitchDrawingHandler_->hasAnchors())
   {
     auto oldParams = params;
     oldParams.showDeltaPitch = true;
@@ -1063,12 +1061,12 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
     oldParams.showCleanedF0Debug = false;
     oldParams.showVocoderF0Debug = false;
     oldParams.pitchCurveAlpha = 0.24f;
-    oldParams.midiCurveOverride = &anchorHandler_->getOriginalMidiCurve();
+    oldParams.midiCurveOverride = &pitchDrawingHandler_->getOriginalMidiCurve();
     pitchCurveRenderer->draw(g, oldParams);
 
     params.showDeltaPitch = true;
     params.pitchCurveAlpha = 1.0f;
-    params.midiCurveOverride = &anchorHandler_->getPreviewMidiCurve();
+    params.midiCurveOverride = &pitchDrawingHandler_->getPreviewMidiCurve();
   }
   pitchCurveRenderer->draw(g, params);
 }
@@ -1276,7 +1274,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       else if (*choice >= 2 && *choice <= 5)
       {
         const EditMode modes[] = { EditMode::Select, EditMode::Split,
-                                   EditMode::Anchor, EditMode::Timing };
+                                   EditMode::PitchDrawing, EditMode::Timing };
         const auto mode = modes[*choice - 2];
         if (safeThis->onEditModeRequested)
           safeThis->onEditModeRequested(mode);
@@ -1531,13 +1529,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   {
     noteUnderMouse = hoveredNote;
   }
-  // Anchor mode uses its own point hover treatment. Split mode must wait until
+  // Pitch Drawing mode uses its own point hover treatment. Split mode must wait until
   // its handler has resolved merge-boundary hover before changing hoveredNote.
   // Otherwise the preview/reset child components are shown and hidden again
   // during the same mouse event, which can stall the Windows mouse-message
   // loop while a custom cursor is active over a boundary.
   if (editMode != EditMode::Split)
-    setHoveredNote(editMode == EditMode::Anchor ? nullptr : noteUnderMouse);
+    setHoveredNote(editMode == EditMode::PitchDrawing ? nullptr : noteUnderMouse);
 
   // Loop timeline cursor handling (always active)
   loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
@@ -1604,14 +1602,14 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
                                          : juce::MouseCursor::NormalCursor));
     }
   }
-  else if (editMode == EditMode::Anchor)
+  else if (editMode == EditMode::PitchDrawing)
   {
-    if (!isCanvasPoint(e) || !anchorHandler_)
+    if (!isCanvasPoint(e) || !pitchDrawingHandler_)
       setMouseCursor(juce::MouseCursor::NormalCursor);
-    else if (anchorHandler_->isHoveringAnchor())
+    else if (pitchDrawingHandler_->isHoveringAnchor())
       setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     else
-      setMouseCursor(anchorHandler_->isPointerOverPitchRegion()
+      setMouseCursor(pitchDrawingHandler_->isPointerOverPitchRegion()
                          ? juce::MouseCursor::CrosshairCursor
                          : juce::MouseCursor::NormalCursor);
   }
@@ -1662,8 +1660,8 @@ void PianoRollComponent::modifierKeysChanged(
 
 void PianoRollComponent::mouseExit(const juce::MouseEvent &)
 {
-  if (editMode == EditMode::Anchor && anchorHandler_)
-    anchorHandler_->clearHover();
+  if (editMode == EditMode::PitchDrawing && pitchDrawingHandler_)
+    pitchDrawingHandler_->clearHover();
 
   if (previewButton.isMouseOverOrDragging() ||
       resetButton.isMouseOverOrDragging())
@@ -1729,10 +1727,10 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
   // Anchors may be placed vertically outside their owning note rectangle, so
-  // give Anchor mode first chance to remove one before the empty-canvas
+  // give Pitch Drawing mode first chance to remove one before the empty-canvas
   // double-click transport behavior runs.
-  if (editMode == EditMode::Anchor && anchorHandler_ &&
-      anchorHandler_->removeAnchorAt(adjustedX, adjustedY))
+  if (editMode == EditMode::PitchDrawing && pitchDrawingHandler_ &&
+      pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
 
   // Keep note-specific double-click interactions with their edit handlers.
@@ -1948,8 +1946,8 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 
 void PianoRollComponent::setProject(Project *proj)
 {
-  if (anchorHandler_)
-    anchorHandler_->cancel();
+  if (pitchDrawingHandler_)
+    pitchDrawingHandler_->cancel();
   liveTimelineEndSeconds = 0.0;
   liveRecordingSampleRate = 0.0;
   project = proj;
@@ -2623,17 +2621,17 @@ void PianoRollComponent::fitPitchRangeToView(float minMidi, float maxMidi)
 void PianoRollComponent::setEditMode(EditMode mode)
 {
   const EditMode previousMode = editMode;
-  if (previousMode == EditMode::Anchor && mode != EditMode::Anchor &&
-      anchorHandler_)
+  if (previousMode == EditMode::PitchDrawing && mode != EditMode::PitchDrawing &&
+      pitchDrawingHandler_)
   {
-    anchorHandler_->cancel();
+    pitchDrawingHandler_->cancel();
   }
   if (previousMode == EditMode::Timing && mode != EditMode::Timing &&
       timingHandler_)
     timingHandler_->cancel();
   editMode = mode;
 
-  if (mode == EditMode::Anchor)
+  if (mode == EditMode::PitchDrawing)
     setHoveredNote(nullptr);
 
   // Clear split guide when leaving split mode
@@ -2650,14 +2648,11 @@ void PianoRollComponent::setEditMode(EditMode mode)
   case EditMode::Select:
     currentHandler_ = selectHandler_.get();
     break;
-  case EditMode::Draw:
-    currentHandler_ = drawHandler_.get();
-    break;
   case EditMode::Split:
     currentHandler_ = splitHandler_.get();
     break;
-  case EditMode::Anchor:
-    currentHandler_ = anchorHandler_.get();
+  case EditMode::PitchDrawing:
+    currentHandler_ = pitchDrawingHandler_.get();
     break;
   case EditMode::Timing:
     currentHandler_ = timingHandler_.get();
@@ -2671,37 +2666,18 @@ void PianoRollComponent::setEditMode(EditMode mode)
       pitchToolHandles->setHoveredHandleIndex(-1);
   }
   updatePitchToolHandlesFromSelection();
-  updateAnchorConfirmationPopup();
+  updatePitchDrawingConfirmationPopup();
 
   repaint();
 }
 
 void PianoRollComponent::updateMouseCursorForEditMode()
 {
-  if (editMode == EditMode::Draw)
-  {
-    // Create a custom pen cursor
-    // Simple pen icon: 16x16 pixels with pen tip at bottom-left
-    juce::Image penImage(juce::Image::ARGB, 16, 16, true);
-    juce::Graphics g(penImage);
-
-    // Draw a simple pen shape
-    g.setColour(juce::Colours::white);
-    // Pen body (diagonal line from top-right to bottom-left)
-    g.drawLine(12.0f, 2.0f, 2.0f, 12.0f, 2.0f);
-    // Pen tip (small triangle at bottom-left)
-    juce::Path tip;
-    tip.addTriangle(0.0f, 14.0f, 4.0f, 10.0f, 2.0f, 12.0f);
-    g.fillPath(tip);
-
-    // Set hotspot at pen tip (bottom-left corner)
-    setMouseCursor(juce::MouseCursor(penImage, 0, 14));
-  }
-  else if (editMode == EditMode::Split)
+  if (editMode == EditMode::Split)
   {
     setMouseCursor(juce::MouseCursor::NormalCursor);
   }
-  else if (editMode == EditMode::Anchor)
+  else if (editMode == EditMode::PitchDrawing)
   {
     const auto pointer = getMouseXYRelative();
     const bool overCanvas = pointer.x >= pianoKeysWidth &&
@@ -2710,9 +2686,9 @@ void PianoRollComponent::updateMouseCursorForEditMode()
                             pointer.y < headerHeight + getVisibleContentHeight();
     const float worldX = pointer.x - pianoKeysWidth +
                          static_cast<float>(scrollX);
-    if (overCanvas && anchorHandler_ &&
-        anchorHandler_->isPitchRegionAtWorldX(worldX))
-      setMouseCursor(anchorHandler_->isHoveringAnchor()
+    if (overCanvas && pitchDrawingHandler_ &&
+        pitchDrawingHandler_->isPitchRegionAtWorldX(worldX))
+      setMouseCursor(pitchDrawingHandler_->isHoveringAnchor()
                          ? juce::MouseCursor::DraggingHandCursor
                          : juce::MouseCursor::CrosshairCursor);
     else
@@ -2753,8 +2729,7 @@ void PianoRollComponent::updatePitchToolHandlesFromSelection()
                           selectHandler_->getIsDeltaOffsetDragging())) ||
       (pitchToolController && pitchToolController->isDragging()) ||
       (pitchEditor && (pitchEditor->isDraggingNote() ||
-                       pitchEditor->isDraggingMultiNotes() ||
-                       pitchEditor->isDrawingPitch()));
+                       pitchEditor->isDraggingMultiNotes()));
 
   if (!project || editMode != EditMode::Select)
   {
@@ -2954,8 +2929,7 @@ void PianoRollComponent::updatePreviewButtonBounds()
                           selectHandler_->getIsDeltaOffsetDragging())) ||
       (pitchToolController && pitchToolController->isDragging()) ||
       (pitchEditor && (pitchEditor->isDraggingNote() ||
-                       pitchEditor->isDraggingMultiNotes() ||
-                       pitchEditor->isDrawingPitch()));
+                       pitchEditor->isDraggingMultiNotes()));
 
   const bool supportsNoteHoverControls =
       editMode == EditMode::Select || editMode == EditMode::Split ||
@@ -3350,22 +3324,20 @@ void PianoRollComponent::reapplyBasePitchForNote(Note *note)
   repaint();
 }
 
-void PianoRollComponent::cancelDrawing()
+void PianoRollComponent::cancelPitchDrawingPreview()
 {
-  if (drawHandler_)
-    drawHandler_->cancel();
-  if (anchorHandler_ && anchorHandler_->isActive())
-    anchorHandler_->cancel();
+  if (pitchDrawingHandler_ && pitchDrawingHandler_->isActive())
+    pitchDrawingHandler_->cancel();
 }
 
-void PianoRollComponent::updateAnchorConfirmationPopup()
+void PianoRollComponent::updatePitchDrawingConfirmationPopup()
 {
-  if (!anchorConfirmationPanel)
+  if (!pitchDrawingConfirmationPanel)
     return;
 
-  const bool shouldShow = editMode == EditMode::Anchor && anchorHandler_ &&
-                          anchorHandler_->hasAnchors();
-  anchorConfirmationPanel->setVisible(shouldShow);
+  const bool shouldShow = editMode == EditMode::PitchDrawing && pitchDrawingHandler_ &&
+                          pitchDrawingHandler_->hasAnchors();
+  pitchDrawingConfirmationPanel->setVisible(shouldShow);
   if (!shouldShow)
     return;
 
@@ -3373,10 +3345,10 @@ void PianoRollComponent::updateAnchorConfirmationPopup()
   constexpr int popupHeight = 30;
   const int canvasWidth = getVisibleContentWidth();
   const int popupX = pianoKeysWidth + std::max(0, (canvasWidth - popupWidth) / 2);
-  anchorConfirmationPanel->setBounds(popupX, headerHeight + 10,
+  pitchDrawingConfirmationPanel->setBounds(popupX, headerHeight + 10,
                                      std::min(popupWidth, canvasWidth),
                                      popupHeight);
-  anchorConfirmationPanel->toFront(false);
+  pitchDrawingConfirmationPanel->toFront(false);
 }
 
 void PianoRollComponent::drawSelectionRect(juce::Graphics &g)

@@ -74,7 +74,7 @@ public:
     {
         const juce::String names[] = {
             TR("canvas.select_all"), TR("canvas.select"), TR("canvas.split"),
-            TR("canvas.drawing"),    TR("canvas.timing"), TR("command.undo"),
+            TR("canvas.pitch_drawing"),    TR("canvas.timing"), TR("command.undo"),
             TR("command.redo")
         };
         const void* data[] = { BinaryData::selectmenu_png, BinaryData::splitmenu_png,

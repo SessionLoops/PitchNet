@@ -69,7 +69,7 @@ public:
   void updatePitchToolHandlesFromSelection();
   void invalidateWaveformCache();
   void invalidateBasePitchCache();
-  void updateAnchorConfirmation();
+  void updatePitchDrawingConfirmation();
 
 private:
   PianoRollComponent &component;
