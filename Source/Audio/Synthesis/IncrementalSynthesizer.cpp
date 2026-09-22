@@ -1653,6 +1653,109 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
+          // Exact restore next to unedited audio.
+          //
+          // Reverting a note (undo or Restore) copies the original into its
+          // body, but the splices above still crossfade each edge between the
+          // original, this pass's render and whatever the composite already
+          // held - which includes the reverted edit's own earlier crossfade.
+          // So a revert never gave back the original around the edges, and
+          // every edit/revert cycle left slightly different audio there (up to
+          // -21 dBFS in an A/B of two identical edit/undo exports).
+          //
+          // Where no edited audio is nearby, the composite around the note
+          // should simply be the original, so copy it sample for sample over
+          // the note and past each such edge far enough to cover any earlier
+          // splice. A straight copy, not a blend: blending with weight 1.0 is
+          // not bit-exact in float. Edges next to edited audio keep their
+          // crossfade; there the body is still copied up to where it starts.
+          //
+          // Skipped when timing moves are in play (their patches follow) or a
+          // global formant shift means no note is neutral to the original.
+          {
+            // Covers the widest splice any version has written past a note
+            // edge: commit fade (512 before, 384 now) + 128 search, and the
+            // reset fade 256 + 128 search.
+            constexpr int kExactRestoreReachSamples = 2 * 512;
+            static_assert(kExactRestoreReachSamples >=
+                              kCommitFadeHalfSamples + kSpliceSearchRadiusSamples,
+                          "exact restore must cover the commit splice");
+            static_assert(kExactRestoreReachSamples >=
+                              kResetFadeHalfSamples +
+                                  kResetSpliceSearchRadiusSamples,
+                          "exact restore must cover the reset splice");
+
+            const auto &original = audioData.originalWaveform;
+            const int originalSamples = original.getNumSamples();
+            if (!hasGlobalFormant && audioMovePatches.empty() &&
+                !resetSpans.empty() && originalSamples > 0 &&
+                original.getNumChannels() > 0) {
+              const auto &allNotes = capturedProject->getNotes();
+
+              // True if audio of an edited note (current edit, or rendered
+              // audio still in the composite) can reach [absStart, absEnd).
+              // Notes being reverted in this pass are excluded: their
+              // renderedEdit flag is only cleared after this block.
+              auto editedAudioNear = [&](int absStart, int absEnd) {
+                for (const auto &note : allNotes) {
+                  if (note.isRest())
+                    continue;
+                  const bool neutral = note.isNeutralForOriginalWaveform();
+                  if (note.isDirty() && neutral)
+                    continue;
+                  if (neutral && !note.hasRenderedEdit())
+                    continue;
+                  const int first = std::min(
+                      {note.getStartFrame(), note.getSrcStartFrame(),
+                       note.getRenderedStartFrame()});
+                  const int last = std::max(
+                      {note.getEndFrame(), note.getSrcEndFrame(),
+                       note.getRenderedEndFrame()});
+                  const int footprintStart =
+                      first * hopSize - kExactRestoreReachSamples;
+                  const int footprintEnd =
+                      last * hopSize + kExactRestoreReachSamples;
+                  if (footprintStart < absEnd && footprintEnd > absStart)
+                    return true;
+                }
+                return false;
+              };
+
+              const int writeLimit =
+                  std::min(samplesToWrite, originalSamples - startSample);
+              for (const auto &span : resetSpans) {
+                const int absStart = startSample + span.startSample;
+                const int absEnd = startSample + span.endSample;
+                const bool leftExact = !editedAudioNear(
+                    absStart - kExactRestoreReachSamples, absStart);
+                const bool rightExact = !editedAudioNear(
+                    absEnd, absEnd + kExactRestoreReachSamples);
+
+                const int copyStart = std::max(
+                    0, leftExact ? span.startSample - kExactRestoreReachSamples
+                                 : span.startSample + kExactRestoreReachSamples);
+                const int copyEnd = std::min(
+                    writeLimit, rightExact
+                                    ? span.endSample + kExactRestoreReachSamples
+                                    : span.endSample - kExactRestoreReachSamples);
+                if (copyEnd <= copyStart)
+                  continue;
+
+                for (int channel = 0;
+                     channel < audioData.waveform.getNumChannels(); ++channel) {
+                  const int sourceChannel =
+                      std::min(channel, original.getNumChannels() - 1);
+                  const float *source =
+                      original.getReadPointer(sourceChannel, startSample);
+                  float *destination =
+                      audioData.waveform.getWritePointer(channel, startSample);
+                  std::copy(source + copyStart, source + copyEnd,
+                            destination + copyStart);
+                }
+              }
+            }
+          }
+
           // Apply fixed-length audio attached to timing-region boundaries.
           // These joins happen after the synthesized commit, so they need
           // their own smoothing instead of hard clear/copy operations.
