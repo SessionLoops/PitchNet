@@ -296,14 +296,18 @@ juce_add_plugin(PitchNetPlugin
 # incremental linking, which is worth keeping on a debug-capable build.
 #
 # Only Debug and RelWithDebInfo link incrementally; Release does not produce an
-# .ilk at all, so the option is scoped to the configurations that do.
+# .ilk at all, so the option is scoped to the configurations that do. The
+# filename carries $<CONFIG> because a multi-configuration generator shares one
+# binary directory across configurations - without it, building Debug would
+# overwrite RelWithDebInfo's database and force a full relink on the next
+# switch, which is the cost this change exists to avoid.
 if(MSVC)
     set(PITCHNET_ILK_DIR "${CMAKE_BINARY_DIR}/ilk")
     file(MAKE_DIRECTORY "${PITCHNET_ILK_DIR}")
     foreach(_pn_ilk_target PitchNet PitchNetPlugin_VST3 PitchNetPlugin_AAX)
         if(TARGET ${_pn_ilk_target})
             target_link_options(${_pn_ilk_target} PRIVATE
-                "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/ILK:${PITCHNET_ILK_DIR}/${_pn_ilk_target}.ilk>")
+                "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/ILK:${PITCHNET_ILK_DIR}/${_pn_ilk_target}-$<CONFIG>.ilk>")
         endif()
     endforeach()
 endif()
