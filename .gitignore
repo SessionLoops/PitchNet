@@ -43,3 +43,4 @@ tempcalude-*
 third_party/ASIOSDK/
 /build-xcode
 /third_party
+sign.sh
