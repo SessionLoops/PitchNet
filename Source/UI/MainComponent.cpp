@@ -796,7 +796,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       pianoRoll.repaint();
 
       if (isPluginMode() && onRequestHostLoopRange)
-        onRequestHostLoopRange(range.startSeconds, range.endSeconds,
+        onRequestHostLoopRange(pianoRoll.projectToTimeline(range.startSeconds),
+                               pianoRoll.projectToTimeline(range.endSeconds),
                                range.enabled, hasValidRange);
 
       if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
@@ -917,7 +918,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     toolbar.setLoopEnabled(range.enabled);
     pianoRoll.repaint();
     if (isPluginMode() && onRequestHostLoopRange)
-      onRequestHostLoopRange(range.startSeconds, range.endSeconds,
+      onRequestHostLoopRange(pianoRoll.projectToTimeline(range.startSeconds),
+                             pianoRoll.projectToTimeline(range.endSeconds),
                              range.enabled,
                              range.endSeconds > range.startSeconds);
 
@@ -3122,6 +3124,19 @@ void MainComponent::appendLiveRecordingAudio(
 void MainComponent::setTimelineDisplayOffset(double seconds)
 {
   pianoRoll.setTimelineDisplayOffset(seconds);
+
+  // pianoRoll's own setter skips repainting when the offset is unchanged,
+  // which a right-edge-only resize never changes (the offset is purely
+  // start-derived). This is the only signal PluginProcessor sends on ANY
+  // active-region property update though, so the highlighted region's
+  // extent - which does change on a right-edge resize - would otherwise
+  // stay stale until the region is deselected and reselected.
+  pianoRoll.repaint();
+
+  // The cached loop range is host timeline seconds, mapped to project time
+  // through this same offset - a moved region invalidates that mapping until
+  // it is recomputed here.
+  applyCachedHostLoopRange();
 }
 
 void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
@@ -3383,8 +3398,11 @@ void MainComponent::applyCachedHostLoopRange()
   if (cachedHostLoopHasRange &&
       cachedHostLoopEndSeconds > cachedHostLoopStartSeconds)
   {
-    project->setLoopRange(cachedHostLoopStartSeconds,
-                          cachedHostLoopEndSeconds);
+    // Cached values are host timeline seconds; the project's loop range is
+    // stored in project (modification) time, same as everything else drawn.
+    project->setLoopRange(
+        pianoRoll.timelineToProject(cachedHostLoopStartSeconds),
+        pianoRoll.timelineToProject(cachedHostLoopEndSeconds));
     project->setLoopEnabled(cachedHostLoopEnabled);
   }
   else
