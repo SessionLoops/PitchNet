@@ -2301,6 +2301,26 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   if (mainComponent != nullptr)
     mainComponent->bindUndoManager(incomingUndoManager);
 
+  // Edits from an older build play and save but cannot be edited: their note
+  // data is timeline-anchored. Show nothing rather than "Analyzing...", which
+  // would never finish - the document controller refuses to analyse them.
+  if (mainComponent != nullptr && activeModification != nullptr &&
+      activeModification->hasLegacyEntries()) {
+    regionCanvasAnalysisGeneration.fetch_add(1);
+    if (regionCanvasController)
+      regionCanvasController->requestCancelLoading();
+    pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+    if (mainComponent->getProject() != nullptr) {
+      auto displaced = mainComponent->exchangeProject(nullptr);
+      juce::ignoreUnused(displaced);
+    }
+    canvasShowsActiveAraRegion = false;
+    mainComponent->hideAnalysisProgress();
+    mainComponent->setStatusMessage(TR("progress.legacy_region_locked"));
+    return;
+  }
+
   // Show the incoming region's project. A project analysed in this session is
   // ready immediately. A restored ARA archive has all analysis/edit data but
   // deliberately lacks project waveforms and mel, so it takes the source-read

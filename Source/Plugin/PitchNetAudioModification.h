@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 // PROCESSED audio and project archive owned by the ARA audio modification, so
 // the analysed/processed result lives independently of the editor: the timeline
@@ -86,6 +87,7 @@ public:
             sourceModification->processedAudio->startSampleInModification);
       }
       projectArchive = sourceModification->projectArchive;
+      legacyEntries = sourceModification->legacyEntries;
     }
   }
 
@@ -179,6 +181,107 @@ public:
   // by the modification.
 
   //============================================================================
+  // Legacy (pre-v4) edits
+  //
+  // Edits saved by PitchNet builds that wrote ARA archive v3, kept exactly as
+  // they were archived: one entry per playback region of the old build, each
+  // with its editable project and, when the region was edited, its rendered
+  // audio. They are never installed as v4 state. The v3 project is
+  // timeline-anchored and the v4 editor cannot use it, so a modification
+  // holding legacy entries is played back and saved but not edited.
+  //
+  // The rendered audio needs no conversion. It is region-local and carries its
+  // start in modification time - the convention the playback mixer already
+  // uses - so it plays through the ordinary mixer as saved.
+  //
+  // The project bytes are kept verbatim, although nothing reads them yet, so a
+  // later migration to v4 still has everything the old build wrote. Clearing
+  // the entries is the only way out of the legacy state; a migration would
+  // install v4 state and then call clearLegacyEntries().
+  struct LegacyEntry {
+    int regionIndex = 0;
+    juce::MemoryBlock projectArchive;
+    juce::AudioBuffer<float> audio;
+    double sampleRate = 0.0;
+    juce::int64 startSampleInModification = 0;
+
+    bool hasAudio() const {
+      return audio.getNumSamples() > 0 && sampleRate > 0.0;
+    }
+  };
+
+  void setLegacyEntries(std::vector<LegacyEntry> entries) {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    legacyEntries = std::move(entries);
+  }
+
+  void clearLegacyEntries() {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    legacyEntries.clear();
+  }
+
+  bool hasLegacyEntries() const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    return !legacyEntries.empty();
+  }
+
+  // The entry whose rendered audio a region starting at startInModification
+  // should play, or nullptr to play the raw source. Legacy clips could not be
+  // moved or resized in the builds that wrote them, so an entry starts exactly
+  // where its region does; covering is the fallback for a region trimmed
+  // since. An old split sibling left unedited has no audio and matches
+  // nothing. Caller holds tryLockProcessedAudio(); allocation-free.
+  const LegacyEntry *findLegacyEntryFor(juce::int64 startInModification,
+                                        double modificationSampleRate) const
+      noexcept {
+    const LegacyEntry *covering = nullptr;
+    for (const auto &entry : legacyEntries) {
+      if (!entry.hasAudio())
+        continue;
+      if (entry.startSampleInModification == startInModification)
+        return &entry;
+
+      const double lengthInModification =
+          modificationSampleRate > 0.0
+              ? entry.audio.getNumSamples() * modificationSampleRate /
+                    entry.sampleRate
+              : static_cast<double>(entry.audio.getNumSamples());
+      const auto end = entry.startSampleInModification +
+                       static_cast<juce::int64>(lengthInModification);
+      if (covering == nullptr &&
+          startInModification > entry.startSampleInModification &&
+          startInModification < end)
+        covering = &entry;
+    }
+    return covering;
+  }
+
+  // Writes the entries in the archive-v3 region-entry layout, so the bytes
+  // restored are the bytes saved.
+  bool writeLegacyEntriesToStream(juce::OutputStream &output) const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    if (!output.writeInt(static_cast<int>(legacyEntries.size())))
+      return false;
+    for (const auto &entry : legacyEntries) {
+      if (!output.writeInt(entry.regionIndex) ||
+          !output.writeInt64(
+              static_cast<juce::int64>(entry.projectArchive.getSize())))
+        return false;
+      if (entry.projectArchive.getSize() > 0 &&
+          !output.write(entry.projectArchive.getData(),
+                        entry.projectArchive.getSize()))
+        return false;
+      if (!output.writeInt(entry.hasAudio() ? 1 : 0))
+        return false;
+      if (entry.hasAudio() &&
+          !writeAudioToStream(output, entry.audio, entry.sampleRate,
+                              entry.startSampleInModification))
+        return false;
+    }
+    return true;
+  }
+
+  //============================================================================
   // Persistence. Stream this modification's processed audio.
   bool writeProcessedAudioToStream(juce::OutputStream &output) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
@@ -186,34 +289,56 @@ public:
       return false;
 
     const auto &data = *processedAudio;
-    output.writeDouble(data.sampleRate);
-    output.writeInt64(data.startSampleInModification);
-    output.writeInt(data.audio.getNumChannels());
-    output.writeInt(data.audio.getNumSamples());
-    for (int ch = 0; ch < data.audio.getNumChannels(); ++ch)
-      if (!output.write(data.audio.getReadPointer(ch),
-                        static_cast<size_t>(data.audio.getNumSamples()) *
+    return writeAudioToStream(output, data.audio, data.sampleRate,
+                              data.startSampleInModification);
+  }
+
+  bool readProcessedAudioFromStream(juce::InputStream &input) {
+    juce::AudioBuffer<float> restored;
+    double sampleRateIn = 0.0;
+    juce::int64 startSampleIn = 0;
+    if (!readAudioFromStream(input, restored, sampleRateIn, startSampleIn))
+      return false;
+
+    setProcessedAudio(restored, sampleRateIn, startSampleIn);
+    return true;
+  }
+
+  // The processed-audio wire format, shared by v4 processed audio and legacy
+  // entries: it has not changed since archive v3.
+  static bool writeAudioToStream(juce::OutputStream &output,
+                                 const juce::AudioBuffer<float> &audio,
+                                 double sampleRate,
+                                 juce::int64 startSampleInModification) {
+    output.writeDouble(sampleRate);
+    output.writeInt64(startSampleInModification);
+    output.writeInt(audio.getNumChannels());
+    output.writeInt(audio.getNumSamples());
+    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+      if (!output.write(audio.getReadPointer(ch),
+                        static_cast<size_t>(audio.getNumSamples()) *
                             sizeof(float)))
         return false;
     return true;
   }
 
-  bool readProcessedAudioFromStream(juce::InputStream &input) {
-    const auto sampleRateIn = input.readDouble();
-    const auto startSampleIn = input.readInt64();
+  static bool readAudioFromStream(juce::InputStream &input,
+                                  juce::AudioBuffer<float> &audio,
+                                  double &sampleRate,
+                                  juce::int64 &startSampleInModification) {
+    sampleRate = input.readDouble();
+    startSampleInModification = input.readInt64();
     const auto numChannels = input.readInt();
     const auto numSamples = input.readInt();
-    if (sampleRateIn <= 0.0 || numChannels < 0 || numSamples < 0)
+    if (sampleRate <= 0.0 || numChannels < 0 || numSamples < 0)
       return false;
 
-    juce::AudioBuffer<float> restored(numChannels, numSamples);
+    audio.setSize(numChannels, numSamples);
     for (int ch = 0; ch < numChannels; ++ch)
-      if (input.read(restored.getWritePointer(ch),
+      if (input.read(audio.getWritePointer(ch),
                      numSamples * static_cast<int>(sizeof(float))) !=
           numSamples * static_cast<int>(sizeof(float)))
         return false;
-
-    setProcessedAudio(restored, sampleRateIn, startSampleIn);
     return true;
   }
 
@@ -242,6 +367,7 @@ private:
   mutable juce::SpinLock processedAudioLock;
   std::unique_ptr<ProcessedRegionData> processedAudio;
   mutable juce::MemoryBlock projectArchive;
+  std::vector<LegacyEntry> legacyEntries;
 };
 
 #endif // JucePlugin_Enable_ARA

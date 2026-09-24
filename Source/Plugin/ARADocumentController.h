@@ -440,8 +440,12 @@ private:
   void flushPendingAraRegionProjects();
   void snapshotRegionState(juce::ARAPlaybackRegion &region);
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
+  void showLegacyArchiveWarningIfPending();
 
   bool hostEditing = false;
+  // Set when a restore kept edits from an older build as read-only legacy
+  // entries; the warning waits for an editor and is shown once per document.
+  bool legacyArchiveWarningPending = false;
   std::vector<juce::ARAPlaybackRegion *> deferredRegionUpdates;
   void stopAnalysisThread();
 
