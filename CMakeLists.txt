@@ -217,6 +217,15 @@ else()
     set(PITCHNET_PLUGIN_CODE PTE1)
 endif()
 
+# Per-dirty-note synthesis diagnostics. synthesizeRegion() always logs a few
+# fixed lines per pass, which is bounded and cheap. Underneath them it can also
+# log one line per dirty note, and that scales: a bulk edit that dirties every
+# note turns one pass into one log line per note. AppLogger::log() opens,
+# appends and closes the file on every call, so the cost is a filesystem round
+# trip each time, not just bytes. Opt-in, because it is only wanted when
+# working on the commit-range logic itself.
+option(PITCHNET_SYNTH_NOTE_DIAGNOSTICS "Log one line per dirty note on every synthesis pass" OFF)
+
 # Create GUI application
 juce_add_gui_app(PitchNet
     PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
@@ -378,6 +387,11 @@ add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
 add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
 
 target_include_directories(pitchnet_core PRIVATE ${R8BRAIN_INCLUDE_DIR})
+
+if(PITCHNET_SYNTH_NOTE_DIAGNOSTICS)
+    target_compile_definitions(pitchnet_core PUBLIC PITCHNET_SYNTH_NOTE_DIAGNOSTICS=1)
+    message(STATUS "PitchNet: per-note synthesis diagnostics ENABLED")
+endif()
 
 # Binary data for toolbar images/icons
 file(GLOB IMAGE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/*")
