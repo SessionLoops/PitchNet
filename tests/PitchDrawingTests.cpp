@@ -1,7 +1,7 @@
 #include "../Source/Models/ProjectSerializer.h"
 #include "../Source/Undo/PitchDrawingAction.h"
 #include "../Source/Utils/Constants.h"
-#include <cassert>
+#include "TestAssert.h"
 #include <cmath>
 #include <iostream>
 
@@ -23,30 +23,30 @@ int main() {
     PitchDrawingAction action(&project, {{&note, params, {}}},
                             {{&note, params, contour}});
     action.redo();
-    assert(note.getBakedDeltaPitch() == contour);
-    assert(!note.isNeutralForOriginalWaveform());
-    assert(project.hasF0DirtyRange());
-    assert(std::abs(audio.f0[10] - midiToFreq(70)) < 0.01f);
+    CHECK(note.getBakedDeltaPitch() == contour);
+    CHECK(!note.isNeutralForOriginalWaveform());
+    CHECK(project.hasF0DirtyRange());
+    CHECK(std::abs(audio.f0[10] - midiToFreq(70)) < 0.01f);
     action.undo();
-    assert(note.isNeutralForOriginalWaveform());
-    assert(note.getOriginalDeltaPitch() == original.getOriginalDeltaPitch());
-    assert(std::abs(audio.f0[10] - 440) < 0.01f);
+    CHECK(note.isNeutralForOriginalWaveform());
+    CHECK(note.getOriginalDeltaPitch() == original.getOriginalDeltaPitch());
+    CHECK(std::abs(audio.f0[10] - 440) < 0.01f);
     action.redo();
-    assert(!note.isNeutralForOriginalWaveform());
+    CHECK(!note.isNeutralForOriginalWaveform());
 
     Project jsonRestored;
-    assert(ProjectSerializer::fromJson(jsonRestored,
+    CHECK(ProjectSerializer::fromJson(jsonRestored,
                                        ProjectSerializer::toJson(project)));
-    assert(jsonRestored.getNotes()[0].getBakedDeltaPitch() == contour);
-    assert(!jsonRestored.getNotes()[0].isNeutralForOriginalWaveform());
+    CHECK(jsonRestored.getNotes()[0].getBakedDeltaPitch() == contour);
+    CHECK(!jsonRestored.getNotes()[0].isNeutralForOriginalWaveform());
     for (auto mode : {ProjectSerializer::BinaryArchiveMode::selfContained,
                       ProjectSerializer::BinaryArchiveMode::hostBackedARA}) {
         juce::MemoryBlock archive;
-        assert(ProjectSerializer::toBinaryArchive(project, archive, mode));
+        CHECK(ProjectSerializer::toBinaryArchive(project, archive, mode));
         Project restored;
-        assert(ProjectSerializer::fromBinaryArchive(restored, archive.getData(), archive.getSize()));
-        assert(restored.getNotes()[0].getBakedDeltaPitch() == contour);
-        assert(!restored.getNotes()[0].isNeutralForOriginalWaveform());
+        CHECK(ProjectSerializer::fromBinaryArchive(restored, archive.getData(), archive.getSize()));
+        CHECK(restored.getNotes()[0].getBakedDeltaPitch() == contour);
+        CHECK(!restored.getNotes()[0].isNeutralForOriginalWaveform());
     }
     std::cout << "Pitch drawing undo/redo, neutrality and persistence passed\n";
 }

@@ -1,5 +1,5 @@
 #include "../Source/Audio/Synthesis/OriginalWaveformRestore.h"
-#include <cassert>
+#include "TestAssert.h"
 #include <cmath>
 #include <iostream>
 
@@ -19,9 +19,9 @@ int main() {
     OriginalWaveformRestore::copy(waveform.data(), original.data(),
                                   1024, 4096, remoteGap);
     for (int i = 1024; i < 4096; ++i)
-      assert(waveform[i] == original[i]);
+      CHECK(waveform[i] == original[i]);
     for (int i = 6000; i < 7000; ++i)
-      assert(waveform[i] == 0.0f);
+      CHECK(waveform[i] == 0.0f);
   }
 
   // Preserve overlapping timing patches and fades, even when unsorted;
@@ -32,10 +32,10 @@ int main() {
                                  {-100, 150}, {600, 600}});
   for (int i = 0; i < static_cast<int>(waveform.size()); ++i) {
     const bool restored = (i >= 150 && i < 300) || (i >= 500 && i < 700);
-    assert(waveform[i] == (restored ? original[i] : -2.0f));
+    CHECK(waveform[i] == (restored ? original[i] : -2.0f));
   }
   OriginalWaveformRestore::copy(waveform.data(), original.data(), 0,
                                 static_cast<int>(waveform.size()), {});
-  assert(waveform == original);
+  CHECK(waveform == original);
   std::cout << "Original waveform restore tests passed\n";
 }

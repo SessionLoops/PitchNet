@@ -16,8 +16,12 @@ set(PITCHNET_TEST_SOURCES
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
     FormantShiftTests.cpp
+    HostSyncTempoTests.cpp
     NoteGainCurveTests.cpp
+    OriginalWaveformRestoreTests.cpp
+    PitchDrawingTests.cpp
     PitchDriftTests.cpp
+    PluginStateArchiveTests.cpp
     ProjectModificationRangeTests.cpp
     VisualWaveformEnvelopeTests.cpp)
 
