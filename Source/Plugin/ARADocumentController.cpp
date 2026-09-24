@@ -46,12 +46,17 @@ juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region) {
   if (modification == nullptr)
     return {};
 
-  // Modification live key first so siblings group together in a log; the region
-  // address distinguishes them. No persistent ID here either - the selector
-  // would inherit the same instability.
-  const auto address = reinterpret_cast<std::uintptr_t>(&region);
+  // Modification live key first so siblings group together in a log; the
+  // region's live serial distinguishes them. No persistent ID here either - the
+  // selector would inherit the same instability. Every region is created by
+  // doCreatePlaybackRegion(), so the cast only fails for a region we did not
+  // make, which then has no selector rather than a reusable one.
+  const auto *pitchRegion =
+      dynamic_cast<const PitchNetPlaybackRegion *>(&region);
+  if (pitchRegion == nullptr)
+    return {};
   return pitchnetModificationKey(*modification) + "#" +
-         juce::String::toHexString(static_cast<juce::int64>(address));
+         juce::String(pitchRegion->getLiveSerial());
 }
 
 namespace {
@@ -2307,6 +2312,12 @@ PitchNetDocumentController::doCreatePlaybackRenderer() noexcept {
 juce::ARAEditorRenderer *PitchNetDocumentController::doCreateEditorRenderer() {
   return new PitchNetEditorRenderer(
       ARADocumentControllerSpecialisation::getDocumentController());
+}
+
+juce::ARAPlaybackRegion *PitchNetDocumentController::doCreatePlaybackRegion(
+    juce::ARAAudioModification *modification,
+    ARA::ARAPlaybackRegionHostRef hostRef) {
+  return new PitchNetPlaybackRegion(modification, hostRef);
 }
 
 juce::ARAAudioModification *PitchNetDocumentController::doCreateAudioModification(

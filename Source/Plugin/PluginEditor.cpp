@@ -621,8 +621,9 @@ void PitchNetAudioProcessorEditor::activateAraRegionByKey(
   }
 
   audioProcessor.setActiveAraRegion(target);
-  mainView->focusTimelineRange(target->getStartInPlaybackTime(),
-                               target->getEndInPlaybackTime());
+  // The canvas is in modification time; the region's host position is not.
+  const auto span = audioProcessor.activeRegionSpanInModificationTime();
+  mainView->focusTimelineRange(span.first, span.second);
 
   // The active key just changed; let the next refresh publish it.
   lastPublishedRegionSignature.clear();
@@ -709,8 +710,9 @@ void PitchNetAudioProcessorEditor::onNewSelection(
       }
     }
     audioProcessor.setActiveAraRegion(target);
-    mainView->focusTimelineRange(target->getStartInPlaybackTime(),
-                                 target->getEndInPlaybackTime());
+    // The canvas is in modification time; the region's host position is not.
+    const auto span = audioProcessor.activeRegionSpanInModificationTime();
+    mainView->focusTimelineRange(span.first, span.second);
   }
 
   // The selection is also what tells us which track's regions to list, so

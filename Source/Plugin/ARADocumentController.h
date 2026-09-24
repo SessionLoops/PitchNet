@@ -60,11 +60,35 @@ juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
     shares it. This answers "which window of those edits is selected?" and is
     unique per playback region.
 
-    Ephemeral and UI-only - it combines the modification's live key with a
-    region object address, so it is meaningful for this session and must never
-    be stored, archived or compared across runs. Callers resolve it by
-    re-collecting live regions, never by dereferencing it. */
+    Ephemeral and UI-only - it combines the modification's live key with the
+    region's live serial (PitchNetPlaybackRegion), so it is meaningful for this
+    session and must never be stored, archived or compared across runs. Callers
+    resolve it by re-collecting live regions, never by dereferencing it. */
 juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region);
+
+/** A playback region with a live serial, minted at construction.
+
+    Gives pitchnetRegionSelector() an identity that cannot collide. An address
+    is lifetime-stable, but the allocator can reuse it after destruction, so a
+    stale selector could come to match a new region - the same hazard
+    PitchNetAudioModification's live key avoids. Never archived. */
+class PitchNetPlaybackRegion final : public juce::ARAPlaybackRegion {
+public:
+  PitchNetPlaybackRegion(juce::ARAAudioModification *audioModification,
+                         ARA::ARAPlaybackRegionHostRef hostRef)
+      : juce::ARAPlaybackRegion(audioModification, hostRef),
+        liveSerial(nextLiveSerial().fetch_add(1)) {}
+
+  juce::uint64 getLiveSerial() const noexcept { return liveSerial; }
+
+private:
+  static std::atomic<juce::uint64> &nextLiveSerial() {
+    static std::atomic<juce::uint64> serial{1};
+    return serial;
+  }
+
+  const juce::uint64 liveSerial;
+};
 
 // There is deliberately no archived-key helper. The persistent ID is written
 // to and read from the archive stream in doStore/doRestoreObjectsFromStream()
@@ -421,6 +445,10 @@ protected:
       juce::ARAAudioSource *audioSource,
       ARA::ARAAudioModificationHostRef hostRef,
       const juce::ARAAudioModification *optionalModificationToClone) override;
+  // Regions carry a live serial for pitchnetRegionSelector().
+  juce::ARAPlaybackRegion *
+  doCreatePlaybackRegion(juce::ARAAudioModification *modification,
+                         ARA::ARAPlaybackRegionHostRef hostRef) override;
   bool doRestoreObjectsFromStream(
       juce::ARAInputStream &input,
       const juce::ARARestoreObjectsFilter *filter) noexcept override;

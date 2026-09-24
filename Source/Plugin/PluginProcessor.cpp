@@ -2360,7 +2360,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
           mainComponent->exchangeProject(std::move(it->second.project));
       juce::ignoreUnused(displaced);
       mainComponent->updateHostAudioTimelineOffset(0.0);
-  pushTimelineDisplayOffset();
+      pushTimelineDisplayOffset();
       if (auto *shown = mainComponent->getProject())
         stampActiveRegionSpan(*shown);
       mainComponent->bindRealtimeProcessor(realtimeProcessor);
@@ -2434,6 +2434,14 @@ void PitchNetAudioProcessor::updateActiveAraRegionProperties(
   const auto newStart = std::max(0.0, region->getStartInPlaybackTime());
   if (key.isEmpty() || key != activeRegionKey)
     return;
+  // Siblings share the modification key, so the key alone would let an
+  // unselected sibling's move or resize overwrite the selected region's
+  // placement - and reselecting the selected region then returns early in
+  // setActiveAraRegion(), leaving the ruler and seek mapping on the sibling.
+  // Only the selected window updates the placement.
+  if (activeRegionSelector.isNotEmpty() &&
+      pitchnetRegionSelector(*region) != activeRegionSelector)
+    return;
 
   activeModification = region->getAudioModification<PitchNetAudioModification>();
   activeRegionStartSeconds = newStart;
@@ -2444,7 +2452,7 @@ void PitchNetAudioProcessor::updateActiveAraRegionProperties(
 
   if (mainComponent != nullptr && canvasShowsActiveAraRegion) {
     mainComponent->updateHostAudioTimelineOffset(0.0);
-  pushTimelineDisplayOffset();
+    pushTimelineDisplayOffset();
 
     if (auto *project = mainComponent->getProject()) {
       stampRegionSpanInModificationTime(*project, region);
@@ -2545,15 +2553,41 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
         if (completedPendingRegion && activeRegionKey.isEmpty()) {
           activeRegionKey = regionKey;
           activeModification = modification;
-          activeRegionStartSeconds = std::max(0.0, timelineOffsetSeconds);
-          activeRegionEndSeconds = project->getAudioData().getDuration();
-          activeStartSampleInModification = startSampleInModification;
+          // Placement is the live region's, in host time, exactly as
+          // setActiveAraRegion() records it. The analysis offset is always
+          // zero and the project spans the whole modification, so neither can
+          // stand in for the region's position or length.
+          juce::ARAPlaybackRegion *placement = nullptr;
+          if (araDocumentController != nullptr) {
+            auto *current = araDocumentController->getCurrentPlaybackRegion();
+            if (current != nullptr && pitchnetRegionKey(*current) == regionKey)
+              placement = current;
+          }
+          if (placement == nullptr && modification != nullptr) {
+            const auto &regions =
+                modification->getPlaybackRegions<juce::ARAPlaybackRegion>();
+            if (!regions.empty())
+              placement = regions.front();
+          }
+          if (placement != nullptr) {
+            activeRegionSelector = pitchnetRegionSelector(*placement);
+            activeRegionStartSeconds =
+                std::max(0.0, placement->getStartInPlaybackTime());
+            activeRegionEndSeconds = std::max(
+                activeRegionStartSeconds, placement->getEndInPlaybackTime());
+            activeStartSampleInModification =
+                placement->getStartInAudioModificationSamples();
+          } else {
+            activeRegionStartSeconds = 0.0;
+            activeRegionEndSeconds = project->getAudioData().getDuration();
+            activeStartSampleInModification = startSampleInModification;
+          }
         }
 
         // Paint it onto the canvas if it is still the active region.
         if (regionKey == activeRegionKey && mainComponent) {
-          const double latestStart = activeRegionStartSeconds;
-          const double latestEnd = activeRegionEndSeconds;
+          // The canvas is in modification time; the placement is host time.
+          const auto latestSpan = activeRegionSpanInModificationTime();
           auto displaced = mainComponent->exchangeProject(
               std::move(araRegions[regionKey].project));
           juce::ignoreUnused(displaced);
@@ -2563,7 +2597,7 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
           // repad every waveform/F0/note array to the latest host position
           // before exposing it, so content and boundary move together.
           mainComponent->updateHostAudioTimelineOffset(0.0);
-  pushTimelineDisplayOffset();
+          pushTimelineDisplayOffset();
           if (auto *positionedProject = mainComponent->getProject())
             stampActiveRegionSpan(*positionedProject);
           mainComponent->bindRealtimeProcessor(realtimeProcessor);
@@ -2571,7 +2605,7 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
 
           // Once the newly analysed project is on the canvas, bring its ARA
           // region into view instead of leaving the viewport at the prior one.
-          mainComponent->focusTimelineRange(latestStart, latestEnd);
+          mainComponent->focusTimelineRange(latestSpan.first, latestSpan.second);
         }
 
         if (modification != nullptr) {
@@ -2968,7 +3002,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     juce::ignoreUnused(displaced);
     mainComponent->bindUndoManager(liveUndoManager);
     mainComponent->updateHostAudioTimelineOffset(0.0);
-  pushTimelineDisplayOffset();
+    pushTimelineDisplayOffset();
     if (auto *shown = mainComponent->getProject())
       stampActiveRegionSpan(*shown);
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
