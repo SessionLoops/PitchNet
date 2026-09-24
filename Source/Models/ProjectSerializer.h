@@ -85,7 +85,6 @@ private:
     // Pitch data serialization
     static juce::var pitchDataToJson(const AudioData& audioData);
     static bool pitchDataFromJson(AudioData& audioData, const juce::var& json);
-
     static juce::var audioBufferToJson(const juce::AudioBuffer<float>& buffer);
     static bool audioBufferFromJson(juce::AudioBuffer<float>& buffer, const juce::var& json);
     static juce::var melSpectrogramToJson(const std::vector<std::vector<float>>& mel);

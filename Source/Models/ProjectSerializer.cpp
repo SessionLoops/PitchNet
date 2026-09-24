@@ -394,7 +394,6 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     if (pitchDataVar.isObject()) {
         pitchDataFromJson(audioData, pitchDataVar);
     }
-
     audioBufferFromJson(audioData.waveform,
                         json.getProperty("waveform", juce::var()));
     audioBufferFromJson(audioData.originalWaveform,
