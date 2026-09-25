@@ -200,9 +200,9 @@ public:
                                  const juce::AudioBuffer<float> &buffer,
                                  double sampleRate);
 
-  // Called when a playback region is removed. Its Project and undo history
-  // have the same lifetime and are destroyed together.
-
+  // Clear the selection when the host destroys the selected playback region.
+  // Its Project and undo history belong to the modification and are kept.
+  void forgetAraPlaybackRegion(juce::ARAPlaybackRegion *region);
   // Drop the canvas binding if it is showing this modification, without
   // discarding its cached edit state. Used when the host deactivates a
   // modification into its undo history, where the object survives and can be

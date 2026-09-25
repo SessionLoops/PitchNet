@@ -2631,6 +2631,21 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
   canvasShowsActiveAraRegion = false;
 }
 
+// The host is destroying the selected region. Its selector would outlive it,
+// and the sibling guard in updateActiveAraRegionProperties() would then ignore
+// every surviving sibling, leaving the ruler, seek mapping and highlighted span
+// on the deleted slice. Nothing is selected afterwards, as when a host deletes
+// a selected event; the edits stay with the modification.
+void PitchNetAudioProcessor::forgetAraPlaybackRegion(
+    juce::ARAPlaybackRegion *region) {
+  if (region == nullptr || activeRegionSelector.isEmpty() ||
+      pitchnetRegionSelector(*region) != activeRegionSelector)
+    return;
+
+  releaseAraModificationCanvas(
+      region->getAudioModification<PitchNetAudioModification>());
+}
+
 void PitchNetAudioProcessor::forgetAraModification(
     PitchNetAudioModification *modification) {
   if (modification == nullptr)

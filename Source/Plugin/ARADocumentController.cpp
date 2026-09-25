@@ -2100,6 +2100,8 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
     previewState.previewedRegion.store(nullptr);
     currentPlaybackRegion = nullptr;
   }
+  if (auto *processor = getRegionCanvasProcessor())
+    processor->forgetAraPlaybackRegion(playbackRegion);
 
   // Edit state belongs to the audio modification, and this key is shared by
   // every region referencing it, so dropping it here destroyed the Project and
