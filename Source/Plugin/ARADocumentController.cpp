@@ -8,7 +8,6 @@
 #include "PluginProcessor.h"
 #include "PitchNetAudioModification.h"
 #include "../UI/IMainView.h"
-#include "../UI/Components/StyledMessageBox.h"
 
 #include <algorithm>
 #include <cmath>
@@ -65,22 +64,12 @@ constexpr juce::int64 kPitchNetAraModificationArchiveMagic =
 // Alpha archive layout: one document-level project archive, followed by
 // per-modification region projects and processed audio.
 // v4: projects are stored in AUDIO MODIFICATION time, not timeline time, and
-// identity is the modification rather than the playback region.
-// v3 (every build before v4): one entry per playback region. Its projects are
-// timeline-anchored, so they are never installed as v4 state; the
-// modification keeps them, with their rendered audio, as read-only legacy
-// entries (see PitchNetAudioModification::LegacyEntry). That rendered audio is
-// already in modification time and plays unchanged.
+// identity is the modification rather than the playback region. v3 payloads are
+// read for stream alignment only and then discarded - their note frames and
+// waveforms are timeline-anchored, so reusing them here would place edits and
+// rendered audio at the wrong offset. Affected modifications simply re-analyse.
 constexpr int kPitchNetAraModificationArchiveVersion = 4;
 constexpr int kPitchNetAraFirstModificationTimeArchiveVersion = 4;
-// v4 plus legacy carry, not a successor to v4: the v4 layout with an int32
-// kind after each modification's persistent ID, so legacy entries survive a
-// save. Written only when a stored modification holds legacy entries; every
-// other store still writes plain v4. The number only has to differ from 4
-// so a reader knows the kinds are there.
-constexpr int kPitchNetAraArchiveVersionWithLegacyCarry = 5;
-constexpr int kPitchNetAraModificationKindCurrent = 0;
-constexpr int kPitchNetAraModificationKindLegacy = 1;
 
 juce::AudioBuffer<float> resampleAuditionBuffer(
     const juce::AudioBuffer<float> &source, double sourceRate,
@@ -464,25 +453,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         // render from it. This replaces the former per-region rule, which
         // existed when regions owned their own state and a shared fallback
         // would have made an unedited region play an edited sibling's audio.
-        auto *source = modification->getAudioSource();
-        const double modificationRate =
-            source != nullptr ? source->getSampleRate() : 0.0;
         const auto *data = modification->getProcessedData();
-        // Edits from an older build (archive v3) are still per region: each
-        // region plays its own saved render, through the same mixer, with the
-        // start it was saved with.
-        const auto *legacy = modification->findLegacyEntryFor(
-            region->getStartInAudioModificationSamples(), modificationRate);
-        if (legacy != nullptr) {
-          auto processedState = processedResamplingStates.find(region);
-          renderedRegion = mixProcessedRegionAudio(
-              buffer, *region, legacy->audio, legacy->sampleRate,
-              legacy->startSampleInModification, modificationRate, sampleRate,
-              timeInSamples,
-              processedState != processedResamplingStates.end()
-                  ? &processedState->second
-                  : nullptr);
-        } else if (data != nullptr && data->hasAudio()) {
+        if (data != nullptr && data->hasAudio()) {
+          auto *source = modification->getAudioSource();
+          const double modificationRate =
+              source != nullptr ? source->getSampleRate() : 0.0;
           // Never operator[] here: it would insert and allocate on the audio
           // thread. A missing slot degrades resampling quality for a block
           // rather than dropping the region.
@@ -867,22 +842,14 @@ void PitchNetEditorRenderer::renderPreviewBuffer(
           region->getAudioModification<PitchNetAudioModification>()) {
     const auto lock = modification->tryLockProcessedAudio();
     if (lock.isLocked()) {
-      // One modification, one processed buffer - see the playback renderer,
-      // including for legacy entries.
-      auto *source = modification->getAudioSource();
-      const double modificationRate =
-          source != nullptr ? source->getSampleRate() : 0.0;
-      const auto previewStartSample = static_cast<juce::int64>(
-          std::llround(previewRange.getStart() * sampleRate));
+      // One modification, one processed buffer - see the playback renderer.
       const auto *data = modification->getProcessedData();
-      const auto *legacy = modification->findLegacyEntryFor(
-          region->getStartInAudioModificationSamples(), modificationRate);
-      if (legacy != nullptr) {
-        renderedPreview = mixProcessedRegionAudio(
-            input, *region, legacy->audio, legacy->sampleRate,
-            legacy->startSampleInModification, modificationRate, sampleRate,
-            previewStartSample);
-      } else if (data != nullptr && data->hasAudio()) {
+      if (data != nullptr && data->hasAudio()) {
+        auto *source = modification->getAudioSource();
+        const double modificationRate =
+            source != nullptr ? source->getSampleRate() : 0.0;
+        const auto previewStartSample = static_cast<juce::int64>(
+            std::llround(previewRange.getStart() * sampleRate));
         renderedPreview = mixProcessedRegionAudio(
             input, *region, data->audio, data->sampleRate,
             data->startSampleInModification, modificationRate, sampleRate,
@@ -1315,26 +1282,7 @@ void PitchNetDocumentController::setMainComponent(IMainView *mc) {
         pendingRestoredProjectData.getSize());
     mainComponent->restoreProjectJson(jsonString);
   }
-  showLegacyArchiveWarningIfPending();
 }
-
-// Restore can run before any editor exists, and headless playback and bounce
-// need no warning, so it waits here for the first editor. Deferred to the
-// message loop because restore runs inside the host's edit cycle.
-void PitchNetDocumentController::showLegacyArchiveWarningIfPending() {
-  if (!legacyArchiveWarningPending || mainComponent == nullptr)
-    return;
-
-  legacyArchiveWarningPending = false;
-  juce::Component::SafePointer<juce::Component> parent(
-      dynamic_cast<juce::Component *>(mainComponent));
-  juce::MessageManager::callAsync([parent] {
-    StyledMessageBox::show(parent.getComponent(), TR("dialog.legacy_archive"),
-                           TR("dialog.legacy_archive_message"),
-                           StyledMessageBox::WarningIcon);
-  });
-}
-
 void PitchNetDocumentController::setPersistenceCallbacks(
     std::function<bool(juce::MemoryBlock &)> serializeProjectState,
     std::function<bool(const void *, size_t)> restoreProjectState) {
@@ -1772,13 +1720,6 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
     return;
 
   auto *modification = region->getAudioModification();
-  // Every analysis request lands here. A fresh analysis would replace edits
-  // from an older build with new, unedited notes, so legacy modifications
-  // never analyse.
-  if (auto *pitchModification =
-          dynamic_cast<PitchNetAudioModification *>(modification);
-      pitchModification != nullptr && pitchModification->hasLegacyEntries())
-    return;
   auto *source = modification ? modification->getAudioSource() : nullptr;
   if (source == nullptr || !source->isSampleAccessEnabled() ||
       source->getSampleRate() <= 0.0)
@@ -2349,15 +2290,14 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
   auto dataSize = input.readInt64();
   if (dataSize == kPitchNetAraModificationArchiveMagic) {
     const auto version = input.readInt();
-    if (version < 3 || version > kPitchNetAraArchiveVersionWithLegacyCarry)
+    if (version < 3 || version > kPitchNetAraModificationArchiveVersion)
       return !input.failed();
 
-    // See the version constants: pre-v4 payloads are timeline-anchored, so
-    // they are never installed as v4 state but kept as legacy entries.
-    const bool archiveIsLegacy =
-        version < kPitchNetAraFirstModificationTimeArchiveVersion;
-    const bool archiveHasModificationKinds =
-        version >= kPitchNetAraArchiveVersionWithLegacyCarry;
+    // See the version constant: pre-v4 payloads are timeline-anchored and
+    // cannot be mapped into the modification-time model, so they are consumed
+    // and dropped rather than restored.
+    const bool payloadIsUsable =
+        version >= kPitchNetAraFirstModificationTimeArchiveVersion;
 
     auto restoreProjectArchive = [this](const juce::MemoryBlock &data) {
       if (data.getSize() == 0)
@@ -2389,22 +2329,12 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
             documentArchiveSize)
       return false;
 
-    if (!archiveIsLegacy)
+    if (payloadIsUsable)
       restoreProjectArchive(documentData);
 
     const auto numAudioModifications = input.readInt64();
     for (juce::int64 i = 0; i < numAudioModifications; ++i) {
       const auto persistentID = input.readString();
-      const int kind = archiveHasModificationKinds
-                           ? input.readInt()
-                           : kPitchNetAraModificationKindCurrent;
-      if (kind != kPitchNetAraModificationKindCurrent &&
-          kind != kPitchNetAraModificationKindLegacy)
-        return false; // An unknown layout follows; the stream cannot be read.
-      const bool modificationIsLegacy =
-          archiveIsLegacy || kind == kPitchNetAraModificationKindLegacy;
-      const bool payloadIsUsable = !modificationIsLegacy;
-      std::vector<PitchNetAudioModification::LegacyEntry> legacyEntries;
 
       // Match the modification first so per-region audio (which has no size
       // prefix) can be read or skipped inline, keeping the stream aligned.
@@ -2419,12 +2349,7 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
       ARA_DIAG("restoreMod archivedId=" + persistentID +
                " matched=" + juce::String(audioModification != nullptr ? 1 : 0) +
                " version=" + juce::String(version) +
-               " legacy=" + juce::String(modificationIsLegacy ? 1 : 0));
-
-      // Restored state replaces whatever the modification held, including
-      // legacy entries from an earlier restore.
-      if (payloadIsUsable && pitchModification != nullptr)
-        pitchModification->clearLegacyEntries();
+               " payloadUsable=" + juce::String(payloadIsUsable ? 1 : 0));
 
       // Per region: a project JSON and, optionally, rendered processed audio.
       // Read in stream order; restore when the region is matched, otherwise
@@ -2441,33 +2366,8 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
           return false;
         const int hasAudio = input.readInt();
 
-        if (modificationIsLegacy) {
-          // Kept whole, one entry per old region, never installed as v4 state.
-          ARA_DIAG("restoreLegacyEntry archivedId=" + persistentID +
-                   " regionIndex=" + juce::String(regionIndex) +
-                   " projectBytes=" + juce::String((int)json.getSize()) +
-                   " hasAudio=" + juce::String(hasAudio));
-          if (pitchModification == nullptr) {
-            if (hasAudio != 0 &&
-                !PitchNetAudioModification::skipProcessedAudioFromStream(input))
-              return false;
-            continue;
-          }
-
-          PitchNetAudioModification::LegacyEntry entry;
-          entry.regionIndex = regionIndex;
-          entry.projectArchive = std::move(json);
-          if (hasAudio != 0 &&
-              !PitchNetAudioModification::readAudioFromStream(
-                  input, entry.audio, entry.sampleRate,
-                  entry.startSampleInModification))
-            return false;
-          legacyEntries.push_back(std::move(entry));
-          continue;
-        }
-
-        // v4 carries one entry per modification. Every entry restores into
-        // the modification's one slot, so the index carries nothing.
+        // Legacy archives carry one entry per region index; live identity is
+        // the modification, so every entry restores into the same slot.
         juce::ignoreUnused(regionIndex);
         // The archived persistent ID has now done its only job - asking the
         // host's filter which live modification this payload belongs to. From
@@ -2504,20 +2404,6 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
       if (!audioModification)
         continue;
 
-      // Only edited audio makes a modification legacy. Without any there is
-      // nothing audible to keep, so the modification analyses afresh and
-      // stays editable - as every v3 modification did before legacy entries
-      // existed.
-      if (pitchModification != nullptr &&
-          std::any_of(legacyEntries.begin(), legacyEntries.end(),
-                      [](const auto &entry) { return entry.hasAudio(); })) {
-        ARA_DIAG("restoreLegacy mod=" + ARA_DIAG_PTR(pitchModification) +
-                 " entries=" + juce::String((int)legacyEntries.size()));
-        pitchModification->clearProcessedAudio();
-        pitchModification->setLegacyEntries(std::move(legacyEntries));
-        legacyArchiveWarningPending = true;
-      }
-
       audioModification->notifyContentChanged(
           juce::ARAContentUpdateScopes::samplesAreAffected(), false);
       for (auto *region : audioModification->getPlaybackRegions())
@@ -2526,7 +2412,6 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
               juce::ARAContentUpdateScopes::samplesAreAffected(), false);
     }
 
-    showLegacyArchiveWarningIfPending();
     return !input.failed();
   }
 
@@ -2576,22 +2461,9 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
         filter->getAudioModificationsToStore<juce::ARAAudioModification>();
 
     if (!audioModificationsToPersist.empty()) {
-      // Plain v4 unless legacy entries must be carried, so a document with
-      // nothing from an older build saves exactly as before.
-      const bool carriesLegacy = std::any_of(
-          audioModificationsToPersist.begin(),
-          audioModificationsToPersist.end(), [](const auto *modification) {
-            const auto *pitchModification =
-                dynamic_cast<const PitchNetAudioModification *>(modification);
-            return pitchModification != nullptr &&
-                   pitchModification->hasLegacyEntries();
-          });
-
       if (!output.writeInt64(kPitchNetAraModificationArchiveMagic))
         return false;
-      if (!output.writeInt(carriesLegacy
-                               ? kPitchNetAraArchiveVersionWithLegacyCarry
-                               : kPitchNetAraModificationArchiveVersion))
+      if (!output.writeInt(kPitchNetAraModificationArchiveVersion))
         return false;
       if (!output.writeInt64(static_cast<juce::int64>(archiveData.getSize())))
         return false;
@@ -2619,31 +2491,14 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
         if (!output.writeString(archivedModificationID))
           return false;
 
-        const auto *pitchModification =
-            dynamic_cast<const PitchNetAudioModification *>(audioModification);
-        const bool isLegacy =
-            pitchModification != nullptr && pitchModification->hasLegacyEntries();
-        if (carriesLegacy &&
-            !output.writeInt(isLegacy ? kPitchNetAraModificationKindLegacy
-                                      : kPitchNetAraModificationKindCurrent))
-          return false;
-
-        // Legacy entries are written back as they were read, so the next
-        // restore sees exactly what the old build saved. A legacy modification
-        // has no v4 project, and the v4 path below would write nothing for it.
-        if (isLegacy) {
-          ARA_DIAG("storeLegacy mod=" + ARA_DIAG_PTR(pitchModification) +
-                   " archivedId=" + archivedModificationID);
-          if (!pitchModification->writeLegacyEntriesToStream(output))
-            return false;
-          continue;
-        }
-
         // One entry per audio modification. Identity is the modification, not
         // the playback region: every region referencing it is a window onto the
         // same edit layer, so a clip split into ten slices writes one payload
         // instead of ten copies of it. Archives written before this carry one
-        // entry per region index; restore keeps those as legacy entries.
+        // entry per region index; restore still reads them and collapses every
+        // entry into this same slot.
+        const auto *pitchModification =
+            dynamic_cast<const PitchNetAudioModification *>(audioModification);
         struct RegionEntry {
           int index;
           juce::MemoryBlock json;
