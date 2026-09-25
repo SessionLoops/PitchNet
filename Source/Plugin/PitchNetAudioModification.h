@@ -4,19 +4,26 @@
 
 #if JucePlugin_Enable_ARA
 
-#include <map>
+#include <atomic>
 #include <memory>
-#include <vector>
 
-// Per-region PROCESSED audio stored on the ARA audio modification, so that each
-// playback region/track carries its own analysed/processed result independent of
-// the editor. This mirrors VocalNet's ARADemoPluginAudioModification /
-// ConvertedRegionData model: the timeline draws each clip from here and the
-// playback renderer mixes each region's processed audio from here, both of which
-// work with the UI closed.
+// PROCESSED audio and project archive owned by the ARA audio modification, so
+// the analysed/processed result lives independently of the editor: the timeline
+// draws each clip from here and the playback renderer mixes from here, both of
+// which work with the UI closed.
 //
-// Live regions use pitchnetRegionKey(); archived slots use the modification
-// persistent ID plus region index. Callers supply the appropriate regionID.
+// State is held in single slots, not keyed containers. ARA gives persistent
+// identity to the audio modification, and every playback region referencing one
+// is a window onto the same edit layer, so a modification owns exactly one
+// project archive and one processed-audio buffer. A key would carry no
+// information.
+//
+// The modification's host-assigned persistent ID is deliberately NOT used as an
+// identity here. ARA treats it as an archive-reconnection token and a mutable
+// model property - hosts may adjust it on restore or import, and REAPER changes
+// it from an absolute to a project-relative path on a project's first save. It
+// belongs in the archive stream and in diagnostics, nowhere else. Live identity
+// is getLiveKey(), a process-local serial minted at construction.
 class PitchNetAudioModification final : public juce::ARAAudioModification {
 public:
   struct ProcessedRegionData {
@@ -58,191 +65,127 @@ public:
       ARA::ARAAudioModificationHostRef hostRef,
       const juce::ARAAudioModification *optionalModificationToClone)
       : juce::ARAAudioModification(audioSource, hostRef,
-                                   optionalModificationToClone) {
+                                   optionalModificationToClone),
+        liveKey("mod:" + juce::String(nextLiveKeySerial().fetch_add(1))) {
+    // ARA defines the source passed here as the object whose internal state the
+    // clone must copy, and the host assigns the clone's own properties straight
+    // afterwards. Copying synchronously here is therefore complete: nothing can
+    // arrive on the source in between, and later edits to the source correctly
+    // do not bleed into an existing clone.
     if (const auto *sourceModification =
             dynamic_cast<const PitchNetAudioModification *>(
                 optionalModificationToClone)) {
       const juce::SpinLock::ScopedLockType lock(
           sourceModification->processedAudioLock);
-      for (const auto &[regionID, sourceData] :
-           sourceModification->processedRegions) {
-        if (sourceData == nullptr || !sourceData->hasAudio())
-          continue;
-        auto copy = std::make_unique<ProcessedRegionData>();
-        copy->setAudio(sourceData->audio, sourceData->sampleRate,
-                       sourceData->startSampleInModification);
-        processedRegions[regionID] = std::move(copy);
+      if (sourceModification->processedAudio != nullptr &&
+          sourceModification->processedAudio->hasAudio()) {
+        processedAudio = std::make_unique<ProcessedRegionData>();
+        processedAudio->setAudio(
+            sourceModification->processedAudio->audio,
+            sourceModification->processedAudio->sampleRate,
+            sourceModification->processedAudio->startSampleInModification);
       }
-      regionProjectArchives = sourceModification->regionProjectArchives;
-      clonedPersistentID = sourceModification->getPersistentID();
+      projectArchive = sourceModification->projectArchive;
     }
   }
 
-  // The host assigns the clone's persistent ID after construction. Rebase
-  // archived slots before the first playback region can request its state.
-  void adoptClonedRegionState() {
-    if (clonedPersistentID.isEmpty())
-      return;
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto oldPrefix = clonedPersistentID + ":";
-    const auto newPrefix = juce::String(getPersistentID()) + ":";
-    decltype(processedRegions) audio;
-    for (auto &[key, value] : processedRegions)
-      if (key.startsWith(oldPrefix) &&
-          !key.substring(oldPrefix.length()).startsWith("live:"))
-        audio[newPrefix + key.substring(oldPrefix.length())] = std::move(value);
-    processedRegions = std::move(audio);
-    decltype(regionProjectArchives) archives;
-    for (auto &[key, value] : regionProjectArchives)
-      if (key.startsWith(oldPrefix) &&
-          !key.substring(oldPrefix.length()).startsWith("live:"))
-        archives[newPrefix + key.substring(oldPrefix.length())] = std::move(value);
-    regionProjectArchives = std::move(archives);
-    clonedPersistentID.clear();
-  }
+  //============================================================================
+  // Live identity
+  //
+  // Stable for this object's lifetime and unique within the process. A raw
+  // address would also be lifetime-stable, but destruction lets the allocator
+  // reuse it, so a stale key could come to equal a live object's key. A serial
+  // cannot collide.
+  //
+  // MUST NEVER be written to any archive. It is meaningless across runs.
+  const juce::String &getLiveKey() const noexcept { return liveKey; }
 
   //============================================================================
   // Mutators
-  void setProcessedAudioForRegion(const juce::String &regionID,
-                                  const juce::AudioBuffer<float> &buffer,
-                                  double sampleRateIn,
-                                  juce::int64 startSampleInModificationIn) {
+  void setProcessedAudio(const juce::AudioBuffer<float> &buffer,
+                         double sampleRateIn,
+                         juce::int64 startSampleInModificationIn) {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    auto &data = processedRegions[regionID];
-    if (data == nullptr)
-      data = std::make_unique<ProcessedRegionData>();
-    data->setAudio(buffer, sampleRateIn, startSampleInModificationIn);
-  }
-
-  void clearProcessedAudioForRegion(const juce::String &regionID) {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    processedRegions.erase(regionID);
+    if (processedAudio == nullptr)
+      processedAudio = std::make_unique<ProcessedRegionData>();
+    processedAudio->setAudio(buffer, sampleRateIn, startSampleInModificationIn);
   }
 
   void clearProcessedAudio() {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    processedRegions.clear();
+    processedAudio.reset();
   }
 
-  void setProjectArchiveForRegion(const juce::String &regionID,
-                                  const void *data, size_t sizeInBytes) const {
-    if (regionID.isEmpty() || data == nullptr || sizeInBytes == 0)
+  void setProjectArchive(const void *data, size_t sizeInBytes) const {
+    if (data == nullptr || sizeInBytes == 0)
       return;
 
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    regionProjectArchives[regionID] = juce::MemoryBlock(data, sizeInBytes);
-  }
-
-  bool copyProjectArchiveForRegion(const juce::String &regionID,
-                                   juce::MemoryBlock &dest) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = regionProjectArchives.find(regionID);
-    if (it == regionProjectArchives.end() || it->second.getSize() == 0)
-      return false;
-
-    dest = it->second;
-    return true;
-  }
-
-  std::vector<juce::String> getProjectArchiveRegionIDs() const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    std::vector<juce::String> ids;
-    for (const auto &[key, archive] : regionProjectArchives)
-      if (archive.getSize() > 0)
-        ids.push_back(key);
-    return ids;
-  }
-
-  bool hasProjectArchiveForRegion(const juce::String &regionID) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = regionProjectArchives.find(regionID);
-    return it != regionProjectArchives.end() && it->second.getSize() > 0;
+    projectArchive = juce::MemoryBlock(data, sizeInBytes);
   }
 
   //============================================================================
   // Queries
-  bool hasProcessedAudioForRegion(const juce::String &regionID) const {
+  bool copyProjectArchive(juce::MemoryBlock &dest) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    if (const auto it = processedRegions.find(regionID);
-        it != processedRegions.end() && it->second != nullptr)
-      return it->second->hasAudio();
-    return false;
-  }
-
-  bool copyProcessedAudioForRegion(const juce::String &regionID,
-                                   juce::AudioBuffer<float> &buffer,
-                                   double &sampleRateOut,
-                                   juce::int64 &startSampleOut) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = processedRegions.find(regionID);
-    if (it == processedRegions.end() || it->second == nullptr ||
-        !it->second->hasAudio())
+    if (projectArchive.getSize() == 0)
       return false;
 
-    buffer.makeCopyOf(it->second->audio);
-    sampleRateOut = it->second->sampleRate;
-    startSampleOut = it->second->startSampleInModification;
+    dest = projectArchive;
     return true;
+  }
+
+  bool hasProjectArchive() const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    return projectArchive.getSize() > 0;
   }
 
   bool hasProcessedAudio() const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    for (const auto &[_, data] : processedRegions)
-      if (data != nullptr && data->hasAudio())
-        return true;
-    return false;
+    return processedAudio != nullptr && processedAudio->hasAudio();
+  }
+
+  bool copyProcessedAudio(juce::AudioBuffer<float> &buffer,
+                          double &sampleRateOut,
+                          juce::int64 &startSampleOut) const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    if (processedAudio == nullptr || !processedAudio->hasAudio())
+      return false;
+
+    buffer.makeCopyOf(processedAudio->audio);
+    sampleRateOut = processedAudio->sampleRate;
+    startSampleOut = processedAudio->startSampleInModification;
+    return true;
   }
 
   // Read access must hold the lock while the returned pointer is used on the
   // audio thread. tryLockProcessedAudio() gives a try-lock for the renderer so
-  // it never blocks; getProcessedRegionData() returns the raw pointer.
+  // it never blocks; getProcessedData() returns the raw pointer.
   juce::SpinLock::ScopedTryLockType tryLockProcessedAudio() const {
     return juce::SpinLock::ScopedTryLockType(processedAudioLock);
   }
 
-  const ProcessedRegionData *
-  getProcessedRegionData(const juce::String &regionID) const noexcept {
-    if (const auto it = processedRegions.find(regionID);
-        it != processedRegions.end())
-      return it->second.get();
-    return nullptr;
+  const ProcessedRegionData *getProcessedData() const noexcept {
+    return processedAudio.get();
   }
 
-  ProcessedRegionData *
-  getProcessedRegionData(const juce::String &regionID) noexcept {
-    if (const auto it = processedRegions.find(regionID);
-        it != processedRegions.end())
-      return it->second.get();
-    return nullptr;
+  ProcessedRegionData *getProcessedData() noexcept {
+    return processedAudio.get();
   }
 
-  // NOTE: there is deliberately no "only one processed region" fallback
-  // (VocalNet's getOnlyConvertedRegionData()): returning another region's
-  // processed audio makes every region sharing this modification play the
-  // edited region's audio. A region either finds ITS OWN processed audio by
-  // key, or it plays its raw source.
-
-  std::vector<juce::String> getProcessedRegionIDs() const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    std::vector<juce::String> ids;
-    ids.reserve(processedRegions.size());
-    for (const auto &[regionID, data] : processedRegions)
-      if (data != nullptr && data->hasAudio())
-        ids.push_back(regionID);
-    return ids;
-  }
+  // Every playback region referencing this modification shares its edit layer,
+  // so they all serve the same processed audio. This reverses the earlier
+  // per-region rule, which existed when state was owned by regions rather than
+  // by the modification.
 
   //============================================================================
-  // Persistence (Stage D). Stream one region's processed audio.
-  bool writeProcessedAudioForRegionToStream(const juce::String &regionID,
-                                            juce::OutputStream &output) const {
+  // Persistence. Stream this modification's processed audio.
+  bool writeProcessedAudioToStream(juce::OutputStream &output) const {
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    const auto it = processedRegions.find(regionID);
-    if (it == processedRegions.end() || it->second == nullptr ||
-        !it->second->hasAudio())
+    if (processedAudio == nullptr || !processedAudio->hasAudio())
       return false;
 
-    const auto &data = *it->second;
+    const auto &data = *processedAudio;
     output.writeDouble(data.sampleRate);
     output.writeInt64(data.startSampleInModification);
     output.writeInt(data.audio.getNumChannels());
@@ -255,8 +198,7 @@ public:
     return true;
   }
 
-  bool readProcessedAudioForRegionFromStream(const juce::String &regionID,
-                                             juce::InputStream &input) {
+  bool readProcessedAudioFromStream(juce::InputStream &input) {
     const auto sampleRateIn = input.readDouble();
     const auto startSampleIn = input.readInt64();
     const auto numChannels = input.readInt();
@@ -271,7 +213,7 @@ public:
           numSamples * static_cast<int>(sizeof(float)))
         return false;
 
-    setProcessedAudioForRegion(regionID, restored, sampleRateIn, startSampleIn);
+    setProcessedAudio(restored, sampleRateIn, startSampleIn);
     return true;
   }
 
@@ -291,10 +233,15 @@ public:
   }
 
 private:
-  juce::String clonedPersistentID;
+  static std::atomic<juce::uint64> &nextLiveKeySerial() {
+    static std::atomic<juce::uint64> serial{1};
+    return serial;
+  }
+
+  const juce::String liveKey;
   mutable juce::SpinLock processedAudioLock;
-  std::map<juce::String, std::unique_ptr<ProcessedRegionData>> processedRegions;
-  mutable std::map<juce::String, juce::MemoryBlock> regionProjectArchives;
+  std::unique_ptr<ProcessedRegionData> processedAudio;
+  mutable juce::MemoryBlock projectArchive;
 };
 
 #endif // JucePlugin_Enable_ARA

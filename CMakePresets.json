@@ -19,11 +19,12 @@
     {
       "name": "pitchnet-dev",
       "displayName": "PitchNet Dev (RelWithDebInfo + ARA diagnostics)",
-      "description": "Side-by-side dev plugin identity, optimized so realtime behaviour in a DAW matches a release build while symbols are kept for the debugger. NOTE: these are Ninja presets, which inherit the target architecture from the environment - configure from Visual Studio or an x64 developer shell, never a plain prompt, or cl.exe silently targets x86.",
+      "description": "Side-by-side dev plugin identity with ARA diagnostic logging. Optimized, so realtime behaviour in the DAW matches a release build, but symbols are kept so the VS debugger can attach to ARA callbacks. Logs to %APPDATA%/PitchNet/Logs/. NOTE: these are Ninja presets, which inherit the target architecture from the environment - configure from Visual Studio or an x64 developer shell, never a plain prompt, or cl.exe silently targets x86 and the x64 ONNX Runtime will not link.",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "PITCHNET_DEV_BUILD": "ON"
+        "PITCHNET_DEV_BUILD": "ON",
+        "PITCHNET_ARA_DIAGNOSTICS": "ON"
       }
     },
     {
@@ -33,17 +34,19 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "PITCHNET_DEV_BUILD": "ON"
+        "PITCHNET_DEV_BUILD": "ON",
+        "PITCHNET_ARA_DIAGNOSTICS": "ON"
       }
     },
     {
       "name": "pitchnet-release",
       "displayName": "PitchNet (Release)",
-      "description": "Shipping identity. This is the build that must keep resolving for projects saved against a released PitchNet.",
+      "description": "Shipping identity, no diagnostics. This is the build that must keep resolving for projects saved against a released PitchNet.",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "PITCHNET_DEV_BUILD": "OFF"
+        "PITCHNET_DEV_BUILD": "OFF",
+        "PITCHNET_ARA_DIAGNOSTICS": "OFF"
       }
     }
   ],

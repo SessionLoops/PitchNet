@@ -796,7 +796,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       pianoRoll.repaint();
 
       if (isPluginMode() && onRequestHostLoopRange)
-        onRequestHostLoopRange(range.startSeconds, range.endSeconds,
+        onRequestHostLoopRange(pianoRoll.projectToTimeline(range.startSeconds),
+                               pianoRoll.projectToTimeline(range.endSeconds),
                                range.enabled, hasValidRange);
 
       if (auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr)
@@ -917,7 +918,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     toolbar.setLoopEnabled(range.enabled);
     pianoRoll.repaint();
     if (isPluginMode() && onRequestHostLoopRange)
-      onRequestHostLoopRange(range.startSeconds, range.endSeconds,
+      onRequestHostLoopRange(pianoRoll.projectToTimeline(range.startSeconds),
+                             pianoRoll.projectToTimeline(range.endSeconds),
                              range.enabled,
                              range.endSeconds > range.startSeconds);
 
@@ -2263,8 +2265,9 @@ void MainComponent::seek(double time, bool scrollToCursor)
   // the UI cursor immediately for responsiveness.
   if (isPluginMode())
   {
+    // 'time' is project time; the host expects its own timeline.
     if (onRequestHostSeek)
-      onRequestHostSeek(time);
+      onRequestHostSeek(pianoRoll.projectToTimeline(time));
     pendingCursorTime.store(time);
     pianoRoll.setCursorTime(time);
     toolbar.setCurrentTime(time);
@@ -3118,6 +3121,24 @@ void MainComponent::appendLiveRecordingAudio(
   pianoRoll.appendLiveRecordingWaveform(buffer);
 }
 
+void MainComponent::setTimelineDisplayOffset(double seconds)
+{
+  pianoRoll.setTimelineDisplayOffset(seconds);
+
+  // pianoRoll's own setter skips repainting when the offset is unchanged,
+  // which a right-edge-only resize never changes (the offset is purely
+  // start-derived). This is the only signal PluginProcessor sends on ANY
+  // active-region property update though, so the highlighted region's
+  // extent - which does change on a right-edge resize - would otherwise
+  // stay stale until the region is deselected and reselected.
+  pianoRoll.repaint();
+
+  // The cached loop range is host timeline seconds, mapped to project time
+  // through this same offset - a moved region invalidates that mapping until
+  // it is recomputed here.
+  applyCachedHostLoopRange();
+}
+
 void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
 {
   if (!isPluginMode())
@@ -3303,7 +3324,11 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   if (!isPluginMode())
     return;
 
-  double displayTime = std::max(0.0, timeSeconds);
+  // The host reports transport position on ITS timeline; everything below is
+  // in project time. Convert here, at the boundary. Do not clamp before the
+  // conversion - with a negative display offset a valid host position maps to
+  // a valid project position that a zero clamp would destroy.
+  double displayTime = std::max(0.0, pianoRoll.timelineToProject(timeSeconds));
 
   // The host playhead can continue past the active ARA region. Retain that
   // furthest position as part of the timeline so follow-playback can scroll
@@ -3373,8 +3398,11 @@ void MainComponent::applyCachedHostLoopRange()
   if (cachedHostLoopHasRange &&
       cachedHostLoopEndSeconds > cachedHostLoopStartSeconds)
   {
-    project->setLoopRange(cachedHostLoopStartSeconds,
-                          cachedHostLoopEndSeconds);
+    // Cached values are host timeline seconds; the project's loop range is
+    // stored in project (modification) time, same as everything else drawn.
+    project->setLoopRange(
+        pianoRoll.timelineToProject(cachedHostLoopStartSeconds),
+        pianoRoll.timelineToProject(cachedHostLoopEndSeconds));
     project->setLoopEnabled(cachedHostLoopEnabled);
   }
   else

@@ -37,6 +37,28 @@ public:
         return MAX_MIDI_NOTE - y / pixelsPerSemitone;
     }
 
+    // Host timeline <-> project time.
+    //
+    // Project time is what everything is DRAWN in: the waveform, notes and
+    // pitch curve are stored in audio-modification time and never move. This
+    // offset is display only - it says where that content currently sits on
+    // the host's timeline, so the ruler can be labelled and the transport
+    // playhead can be placed correctly.
+    //
+    // For ARA it is (regionStartInPlaybackTime - regionStartInModificationTime).
+    // It MUST NOT be clamped to zero: a region that windows the back half of a
+    // take and sits near the start of the timeline produces a negative offset.
+    void setTimelineDisplayOffset(double seconds) { timelineDisplayOffset = seconds; }
+    double getTimelineDisplayOffset() const { return timelineDisplayOffset; }
+
+    double projectToTimeline(double projectSeconds) const {
+        return projectSeconds + timelineDisplayOffset;
+    }
+
+    double timelineToProject(double timelineSeconds) const {
+        return timelineSeconds - timelineDisplayOffset;
+    }
+
     // Time <-> X coordinate conversion (in world space, before scroll)
     float timeToX(double time) const {
         return static_cast<float>(time * pixelsPerSecond);
@@ -86,4 +108,5 @@ private:
     float pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
     double scrollX = 0.0;
     double scrollY = 0.0;
+    double timelineDisplayOffset = 0.0;
 };

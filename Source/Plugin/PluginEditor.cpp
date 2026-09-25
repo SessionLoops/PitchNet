@@ -101,7 +101,6 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
         // closes. The processor detaches them in its destructor.
         if (pitchDocController->getMainComponent() == mainView.get()) {
           pitchDocController->releaseEditorProcessor(&audioProcessor);
-          pitchDocController->setAnalysisCallbacks(nullptr, nullptr);
           pitchDocController->setMainComponent(nullptr);
         }
       }
@@ -170,21 +169,6 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   // ARA playback/bounce must keep working after the UI is closed.
   audioProcessor.setAraDocumentController(pitchDocController);
   pitchDocController->setEditorProcessor(&audioProcessor);
-  pitchDocController->setAnalysisCallbacks(
-      [this](std::uintptr_t sourceKey, double timelineOffsetSeconds,
-             const std::vector<std::pair<double, double>> &regionRanges) {
-        return audioProcessor.attachCachedAraAnalysis(sourceKey,
-                                                      timelineOffsetSeconds,
-                                                      regionRanges);
-      },
-      [this](std::uintptr_t sourceKey,
-             const juce::AudioBuffer<float> &buffer, double sampleRate,
-             double timelineOffsetSeconds,
-             const std::vector<std::pair<double, double>> &regionRanges) {
-        audioProcessor.requestAraSourceAnalysis(sourceKey, buffer, sampleRate,
-                                                timelineOffsetSeconds,
-                                                regionRanges);
-      });
   // Persistence callbacks are owned by the processor (set in didBindToARA) so
   // that saved-project restore works with the UI closed; the editor must not
   // install editor-capturing callbacks that would dangle on close.
@@ -560,12 +544,16 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
     if (duplicates > 0)
       name << " (" << (duplicates + 1) << ")";
 
-    entries.push_back({pitchnetRegionKey(*region), name});
+    // The list selects a playback region, so it is keyed by the region
+    // selector. Keying it by the modification would give every sibling of a
+    // split clip the same entry key: none of them could be told apart, and all
+    // of them would render as active.
+    entries.push_back({pitchnetRegionSelector(*region), name});
   }
 
-  const auto activeKey = audioProcessor.getActiveAraRegionKey();
+  const auto activeSelector = audioProcessor.getActiveAraRegionSelector();
 
-  juce::String signature = activeKey;
+  juce::String signature = activeSelector;
   for (const auto &entry : entries)
     signature << "\n" << entry.key << "\t" << entry.name;
 
@@ -574,13 +562,13 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
 
   regionListPublished = true;
   lastPublishedRegionSignature = signature;
-  mainView->updateRegionList(entries, activeKey);
+  mainView->updateRegionList(entries, activeSelector);
 
   // Only fires when the list actually changes, so this stays quiet - one line
   // per change saying what the card is showing and where it came from.
   juce::String diagnostic;
   diagnostic << "ARA region list: " << static_cast<int>(entries.size())
-             << " region(s), active='" << activeKey << "'";
+             << " region(s), active='" << activeSelector << "'";
   if (auto *renderer = audioProcessor.getPlaybackRenderer())
     diagnostic << " renderer="
                << static_cast<int>(
@@ -611,7 +599,7 @@ void PitchNetAudioProcessorEditor::activateAraRegionByKey(
   // host may have destroyed a region since the list was last published.
   juce::ARAPlaybackRegion *target = nullptr;
   for (auto *region : collectAraPlaybackRegions()) {
-    if (pitchnetRegionKey(*region) == regionKey) {
+    if (pitchnetRegionSelector(*region) == regionKey) {
       target = region;
       break;
     }
@@ -633,8 +621,9 @@ void PitchNetAudioProcessorEditor::activateAraRegionByKey(
   }
 
   audioProcessor.setActiveAraRegion(target);
-  mainView->focusTimelineRange(target->getStartInPlaybackTime(),
-                               target->getEndInPlaybackTime());
+  // The canvas is in modification time; the region's host position is not.
+  const auto span = audioProcessor.activeRegionSpanInModificationTime();
+  mainView->focusTimelineRange(span.first, span.second);
 
   // The active key just changed; let the next refresh publish it.
   lastPublishedRegionSignature.clear();
@@ -721,8 +710,9 @@ void PitchNetAudioProcessorEditor::onNewSelection(
       }
     }
     audioProcessor.setActiveAraRegion(target);
-    mainView->focusTimelineRange(target->getStartInPlaybackTime(),
-                                 target->getEndInPlaybackTime());
+    // The canvas is in modification time; the region's host position is not.
+    const auto span = audioProcessor.activeRegionSpanInModificationTime();
+    mainView->focusTimelineRange(span.first, span.second);
   }
 
   // The selection is also what tells us which track's regions to list, so

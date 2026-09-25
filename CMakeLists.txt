@@ -29,6 +29,7 @@ option(USE_DIRECTML "Enable DirectML execution provider (Windows only)" ${PITCHN
 option(USE_BUNDLED_CUDA_RUNTIME "Bundle minimal CUDA runtime DLLs (Windows only)" OFF)
 option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)" OFF)
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
+option(PITCHNET_BUILD_TESTS "Build the unit tests in tests/ and register them with CTest" OFF)
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
 set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
@@ -203,6 +204,12 @@ endif()
 # and projects saved with a release build keep resolving to that release build.
 option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OFF)
 
+# Diagnostic logging for the ARA model graph and render path. Writes through the
+# existing AppLogger to %APPDATA%/PitchNet/Logs/debug_<session>.log. Model-graph
+# events are low frequency; the render report is one line per region, once. Off
+# by default - release builds contain none of it.
+option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF)
+
 if(PITCHNET_DEV_BUILD)
     set(PITCHNET_PRODUCT_NAME "PitchNet Dev")
     set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet.dev")
@@ -325,6 +332,12 @@ endif()
 if(ARA_AVAILABLE)
     target_compile_definitions(PitchNetPlugin PRIVATE
         JucePlugin_Enable_ARA=1)
+    if(PITCHNET_ARA_DIAGNOSTICS)
+        target_compile_definitions(PitchNetPlugin PRIVATE
+            PITCHNET_ARA_DIAGNOSTICS=1)
+        message(STATUS "PitchNet: ARA diagnostics ENABLED "
+                       "(logs to %APPDATA%/PitchNet/Logs/debug_<session>.log)")
+    endif()
 endif()
 if(AAX_AVAILABLE)
     target_include_directories(PitchNetPlugin PRIVATE
@@ -972,4 +985,11 @@ if(APPLE)
             COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>" 2>/dev/null || true
             COMMENT "Re-signing AAX bundle")
     endif()
+endif()
+
+# Unit tests. Off by default so a normal build and CI are unaffected; enable
+# with -DPITCHNET_BUILD_TESTS=ON and run with ctest --test-dir <build-dir>.
+if(PITCHNET_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

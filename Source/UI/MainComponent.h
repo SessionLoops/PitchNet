@@ -245,6 +245,7 @@ public:
 
   // Plugin mode - update playback position from host
   void updatePlaybackPosition(double timeSeconds) override;
+  void setTimelineDisplayOffset(double seconds) override;
   void updateHostPlaybackState(bool isPlaying) override;
   void updateHostTimelineState(double bpm, int numerator,
                                int denominator) override;

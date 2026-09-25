@@ -11,6 +11,7 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if JucePlugin_Enable_ARA
@@ -31,20 +32,78 @@ class PitchNetAudioProcessor;
 class PitchNetDocumentController;
 class PitchNetEditorRenderer;
 
-// Persistent identity for an ARA playback region: the audio-modification
-// persistent ID plus the region's current index within that modification. Host
-// refs are reassigned every session, so they cannot be used for saved DAW
-// projects. Used to key per-region Projects and per-region processed audio so
-// each region/track is analysed, edited, and played back independently.
-juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
-juce::String pitchnetRegionKeyForIndex(const juce::String &modificationID,
-                                       int regionIndex);
+/** Live ownership key for an audio modification.
+
+    ARA gives persistent identity to audio modifications, not to playback
+    regions, so every region referencing a modification resolves to one key and
+    shares one edit layer.
+
+    This is a process-local serial minted when the modification is constructed,
+    NOT its host-assigned persistent ID. ARA treats that ID as an
+    archive-reconnection token and a mutable model property: hosts may adjust it
+    when restoring or importing, and REAPER rewrites it from an absolute to a
+    project-relative path on a project's first save, which silently orphaned
+    every edit. The persistent ID belongs in the archive stream and in
+    diagnostics only.
+
+    Session-local by construction, so it must never be stored or archived. */
 juce::String
-pitchnetArchivedRegionKey(const juce::ARAPlaybackRegion &region);
+pitchnetModificationKey(const juce::ARAAudioModification &modification);
+
+/** The owning modification's live key, reached through a playback region. */
+juce::String pitchnetRegionKey(const juce::ARAPlaybackRegion &region);
+/** Which window of a modification's edits is currently selected.
+
+    The two identities answer different questions and must not be conflated:
+    pitchnetRegionKey() answers "whose edits are these?" and owns the Project,
+    the archive and the undo history, so every region of one modification
+    shares it. This answers "which window of those edits is selected?" and is
+    unique per playback region.
+
+    Ephemeral and UI-only - it combines the modification's live key with the
+    region's live serial (PitchNetPlaybackRegion), so it is meaningful for this
+    session and must never be stored, archived or compared across runs. Callers
+    resolve it by re-collecting live regions, never by dereferencing it. */
+juce::String pitchnetRegionSelector(const juce::ARAPlaybackRegion &region);
+
+/** A playback region with a live serial, minted at construction.
+
+    Gives pitchnetRegionSelector() an identity that cannot collide. An address
+    is lifetime-stable, but the allocator can reuse it after destruction, so a
+    stale selector could come to match a new region - the same hazard
+    PitchNetAudioModification's live key avoids. Never archived. */
+class PitchNetPlaybackRegion final : public juce::ARAPlaybackRegion {
+public:
+  PitchNetPlaybackRegion(juce::ARAAudioModification *audioModification,
+                         ARA::ARAPlaybackRegionHostRef hostRef)
+      : juce::ARAPlaybackRegion(audioModification, hostRef),
+        liveSerial(nextLiveSerial().fetch_add(1)) {}
+
+  juce::uint64 getLiveSerial() const noexcept { return liveSerial; }
+
+private:
+  static std::atomic<juce::uint64> &nextLiveSerial() {
+    static std::atomic<juce::uint64> serial{1};
+    return serial;
+  }
+
+  const juce::uint64 liveSerial;
+};
+
+// There is deliberately no archived-key helper. The persistent ID is written
+// to and read from the archive stream in doStore/doRestoreObjectsFromStream()
+// and used nowhere else; a helper that returns it as a "key" is how it leaked
+// into live lookups in the first place.
 
 struct AraPreviewState {
   std::atomic<double> previewStartTime{0.0};
   std::atomic<double> previewEndTime{0.0};
+  // Bumped on every explicit audition request. The render path plays a preview
+  // through ONCE and then empties its loop range, so it must re-render to make
+  // a sound again - but it only re-rendered when the range or region changed.
+  // Auditioning the same span twice therefore fell silent until something else
+  // reset the cached range, which is why nudging the transport "fixed" it.
+  std::atomic<std::uint32_t> previewGeneration{0};
   std::atomic<juce::ARAPlaybackRegion *> previewedRegion{nullptr};
   std::atomic<PitchNetEditorRenderer *> previewClaimedRenderer{nullptr};
   std::shared_ptr<juce::AudioBuffer<float>> auditionBuffer;
@@ -251,18 +310,15 @@ private:
   juce::int64 previousPreviewLoopPosition = 0;
   int previewTransitionRemaining = 0;
   int previewTransitionTotal = 0;
-  // Bumped by configure() once readers exist, so a preview that was requested
-  // before its reader was created gets retried instead of staying silent.
-  // configure() runs on the message thread while processBlock() may be
-  // running, so this crosses threads and must be atomic; the cached copy below
-  // is render-thread only.
+  std::uint32_t lastPreviewGeneration = 0;
+  // Bumped by configure() once every reader is in place, so a preview that was
+  // requested before its reader existed is retried instead of staying silent.
+  // configure() runs on the message thread while processBlock() may be running,
+  // so this crosses threads; the cached copy and the outcome flag below are
+  // render-thread only.
   std::atomic<std::uint32_t> readerConfigGeneration{0};
-  // Whether the last renderPreviewBuffer() call produced playable audio.
-  // Render thread only. Recorded at render time because playback clears
-  // previewLoopRange, which would otherwise make a finished preview look like
-  // one that never rendered.
-  bool lastPreviewRenderProducedAudio = false;
   std::uint32_t lastReaderConfigGeneration = 0;
+  bool lastPreviewRenderProducedAudio = false;
   double lastPreviewStartTime = -1.0;
   double lastPreviewEndTime = -1.0;
   juce::ARAPlaybackRegion *lastPreviewRegion = nullptr;
@@ -303,6 +359,13 @@ public:
       override;
   void didUpdateAudioModificationProperties(
       juce::ARAAudioModification *audioModification) override;
+  // ARA gives persistent identity to audio modifications, and the processor
+  // holds a raw pointer to the one on the canvas. Track its lifetime so that
+  // pointer cannot outlive the object.
+  void willDeactivateAudioModificationForUndoHistory(
+      juce::ARAAudioModification *audioModification, bool deactivate) override;
+  void willDestroyAudioModification(
+      juce::ARAAudioModification *audioModification) override;
   void didAddPlaybackRegionToAudioModification(
       juce::ARAAudioModification *audioModification,
       juce::ARAPlaybackRegion *playbackRegion) override;
@@ -313,7 +376,6 @@ public:
       juce::ARAPlaybackRegion *playbackRegion) override;
   void willDestroyPlaybackRegion(juce::ARAPlaybackRegion *playbackRegion)
       override;
-  void reanalyze();
 
   // Extract a single region's audio and hand it to the processor for per-region
   // analysis (populates that region's persistent Project and, if it is the
@@ -324,15 +386,6 @@ public:
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
-  void setAnalysisCallbacks(
-      std::function<bool(
-          std::uintptr_t, double,
-          const std::vector<std::pair<double, double>> &)>
-          attachCachedAnalysis,
-      std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &,
-                         double, double,
-                         const std::vector<std::pair<double, double>> &)>
-          requestAnalysis);
   void setPersistenceCallbacks(
       std::function<bool(juce::MemoryBlock &)> serializeProjectState,
       std::function<bool(const void *, size_t)> restoreProjectState);
@@ -352,13 +405,6 @@ public:
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,
                                   bool notifyHost = true);
-  // Publish the edited parts of a COMPOSITE (timeline-anchored) project onto
-  // the per-region modifications: every playback region overlapping an edited
-  // note gets its slice of the composite waveform stored as processed audio,
-  // so ARA playback (strictly modification-or-original) reflects edits made
-  // without selecting a region. Regions not touching any edit stay unpublished
-  // and keep playing their original source. Message thread only.
-  void publishCompositeEditsToRegions(const Project &project);
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
@@ -373,7 +419,9 @@ public:
   getCurrentPlaybackRegions() const {
     return currentPlaybackRegions;
   }
-  void startPreviewRange(double previewStartSeconds, double previewEndSeconds);
+  // Takes MODIFICATION seconds, matching the Project's coordinate space.
+  void startPreviewRange(double previewStartInModificationSeconds,
+                         double previewEndInModificationSeconds);
   void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRate);
   void stopPreview();
@@ -397,6 +445,10 @@ protected:
       juce::ARAAudioSource *audioSource,
       ARA::ARAAudioModificationHostRef hostRef,
       const juce::ARAAudioModification *optionalModificationToClone) override;
+  // Regions carry a live serial for pitchnetRegionSelector().
+  juce::ARAPlaybackRegion *
+  doCreatePlaybackRegion(juce::ARAAudioModification *modification,
+                         ARA::ARAPlaybackRegionHostRef hostRef) override;
   bool doRestoreObjectsFromStream(
       juce::ARAInputStream &input,
       const juce::ARARestoreObjectsFilter *filter) noexcept override;
@@ -405,9 +457,6 @@ protected:
       const juce::ARAStoreObjectsFilter *filter) noexcept override;
 
 private:
-  void processDocument(juce::ARADocument *document,
-                       juce::ARAPlaybackRegion *excludedRegion = nullptr,
-                       juce::ARAAudioSource *excludedSource = nullptr);
   void clearStaleRegionSequenceFilter(juce::ARADocument *document);
   bool shouldProcessPlaybackRegion(juce::ARAPlaybackRegion *region) const;
   void clearMainComponentHostAudio();
@@ -420,19 +469,7 @@ private:
   void snapshotRegionState(juce::ARAPlaybackRegion &region);
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
-  struct SplitSnapshot {
-    juce::String key;
-    juce::ARAAudioSource *source = nullptr;
-    juce::ARARegionSequence *sequence = nullptr;
-    double start = 0.0, end = 0.0, sourceStart = 0.0, sourceDuration = 0.0;
-    std::unique_ptr<Project> project;
-    juce::AudioBuffer<float> processed;
-    double processedRate = 0.0;
-    juce::int64 processedStart = 0;
-    double sourceRate = 0.0;
-  };
   bool hostEditing = false;
-  std::vector<SplitSnapshot> splitSnapshots;
   std::vector<juce::ARAPlaybackRegion *> deferredRegionUpdates;
   void stopAnalysisThread();
 
@@ -457,13 +494,6 @@ private:
   PitchNetAudioProcessor *owningProcessor = nullptr;
   PitchNetAudioProcessor *editorProcessor = nullptr;
   AraPreviewState previewState;
-  std::function<bool(std::uintptr_t, double,
-                     const std::vector<std::pair<double, double>> &)>
-      attachCachedAnalysisCallback;
-  std::function<void(std::uintptr_t, const juce::AudioBuffer<float> &, double,
-                     double,
-                     const std::vector<std::pair<double, double>> &)>
-      requestAnalysisCallback;
   std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
   std::function<bool(const void *, size_t)> restoreProjectStateCallback;
   juce::MemoryBlock pendingRestoredProjectData;

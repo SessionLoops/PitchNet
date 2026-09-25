@@ -8,7 +8,7 @@
 #include "../Source/Models/ProjectSerializer.h"
 #include "../Source/Utils/Constants.h"
 #include "../Source/Utils/MelSpectrogram.h"
-#include <cassert>
+#include "TestAssert.h"
 #include <cmath>
 #include <iostream>
 
@@ -77,7 +77,7 @@ Project makeProject(double timelineOffsetSeconds) {
 void expectNear(float a, float b, const char *what) {
   if (std::abs(a - b) > 1.0e-4f) {
     std::cerr << "mismatch in " << what << ": " << a << " vs " << b << "\n";
-    assert(false);
+    CHECK(false);
   }
 }
 
@@ -85,7 +85,7 @@ void roundTripRebuildsMel(double timelineOffsetSeconds) {
   const Project source = makeProject(timelineOffsetSeconds);
 
   juce::MemoryBlock archive;
-  assert(ProjectSerializer::toBinaryArchive(
+  CHECK(ProjectSerializer::toBinaryArchive(
       source, archive, ProjectSerializer::BinaryArchiveMode::selfContained));
 
   // The mel must genuinely be absent from the bytes, not merely cleared on
@@ -95,7 +95,7 @@ void roundTripRebuildsMel(double timelineOffsetSeconds) {
   const auto &sourceAudio = source.getAudioData();
   const size_t melBytes =
       sourceAudio.melSpectrogram.size() * NUM_MELS * sizeof(float);
-  assert(melBytes > 0);
+  CHECK(melBytes > 0);
   const size_t waveformBytes =
       2 * (size_t)sourceAudio.waveform.getNumSamples() * sizeof(float);
   const size_t curveBytes = 7 * (size_t)kFrames * sizeof(float);
@@ -103,38 +103,38 @@ void roundTripRebuildsMel(double timelineOffsetSeconds) {
   const size_t noteBytes = 4 * 30 * sizeof(float);
   const size_t payloadBytes =
       waveformBytes + curveBytes + maskBytes + noteBytes;
-  assert(archive.getSize() >= payloadBytes);
-  assert(archive.getSize() < payloadBytes + melBytes);
+  CHECK(archive.getSize() >= payloadBytes);
+  CHECK(archive.getSize() < payloadBytes + melBytes);
 
   Project restored;
-  assert(ProjectSerializer::fromBinaryArchive(restored, archive.getData(),
+  CHECK(ProjectSerializer::fromBinaryArchive(restored, archive.getData(),
                                               archive.getSize()));
 
   const auto &a = sourceAudio;
   const auto &b = restored.getAudioData();
-  assert(b.sampleRate == a.sampleRate);
-  assert(b.waveform.getNumSamples() == a.waveform.getNumSamples());
-  assert(b.originalWaveform.getNumSamples() == a.originalWaveform.getNumSamples());
+  CHECK(b.sampleRate == a.sampleRate);
+  CHECK(b.waveform.getNumSamples() == a.waveform.getNumSamples());
+  CHECK(b.originalWaveform.getNumSamples() == a.originalWaveform.getNumSamples());
   expectNear(b.waveform.getSample(0, 5000), a.waveform.getSample(0, 5000),
              "rendered waveform");
-  assert(b.f0.size() == a.f0.size());
+  CHECK(b.f0.size() == a.f0.size());
   expectNear(b.deltaPitch[3], a.deltaPitch[3], "deltaPitch");
-  assert(b.voicedMask == a.voicedMask);
+  CHECK(b.voicedMask == a.voicedMask);
 
   // Rebuilt, same length, same content - including the zero-filled frames in
   // front of the timeline offset.
-  assert(!b.melSpectrogram.empty());
-  assert(b.melSpectrogram.size() == a.melSpectrogram.size());
+  CHECK(!b.melSpectrogram.empty());
+  CHECK(b.melSpectrogram.size() == a.melSpectrogram.size());
   for (size_t f = 0; f < a.melSpectrogram.size(); ++f) {
-    assert(b.melSpectrogram[f].size() == (size_t)NUM_MELS);
+    CHECK(b.melSpectrogram[f].size() == (size_t)NUM_MELS);
     for (size_t bin = 0; bin < a.melSpectrogram[f].size(); ++bin)
       expectNear(b.melSpectrogram[f][bin], a.melSpectrogram[f][bin], "mel");
   }
 
-  assert(restored.getNotes().size() == 1);
+  CHECK(restored.getNotes().size() == 1);
   const auto &note = restored.getNotes()[0];
-  assert(note.getStartFrame() == 10 && note.getEndFrame() == 40);
-  assert(note.getLyric() == "la");
+  CHECK(note.getStartFrame() == 10 && note.getEndFrame() == 40);
+  CHECK(note.getLyric() == "la");
   expectNear(note.getVolumeDb(), -3.0f, "note volume");
   expectNear(note.getDeltaPitch()[0], 0.5f, "note deltaPitch");
   expectNear(note.getBakedDeltaPitch()[0], 0.75f, "note bakedDeltaPitch");
@@ -145,7 +145,7 @@ void streamWriterMatchesMemoryBlockWriter() {
   const Project source = makeProject(0.0);
 
   juce::MemoryBlock viaBlock;
-  assert(ProjectSerializer::toBinaryArchive(source, viaBlock));
+  CHECK(ProjectSerializer::toBinaryArchive(source, viaBlock));
 
   // The plug-in state path writes the archive into a stream that already has a
   // header in it and gets a length prefix patched in afterwards, so the writer
@@ -160,50 +160,50 @@ void streamWriterMatchesMemoryBlockWriter() {
     const auto lengthField = out.getPosition();
     out.writeInt64(0);
     archiveStart = out.getPosition();
-    assert(ProjectSerializer::toBinaryArchive(source, out));
+    CHECK(ProjectSerializer::toBinaryArchive(source, out));
     archiveEnd = out.getPosition();
     out.setPosition(lengthField);
     out.writeInt64(archiveEnd - archiveStart);
     out.setPosition(archiveEnd);
   }
 
-  assert(archiveEnd - archiveStart == (juce::int64)viaBlock.getSize());
-  assert(std::memcmp(static_cast<const char *>(envelope.getData()) + archiveStart,
+  CHECK(archiveEnd - archiveStart == (juce::int64)viaBlock.getSize());
+  CHECK(std::memcmp(static_cast<const char *>(envelope.getData()) + archiveStart,
                      viaBlock.getData(), viaBlock.getSize()) == 0);
 
   // And the patched length prefix has to describe the archive that follows it.
   juce::MemoryInputStream in(envelope, false);
-  assert((std::uint32_t)in.readInt() == 0x504E5053u);
-  assert(in.readInt() == 1);
-  assert(in.readInt64() == (juce::int64)viaBlock.getSize());
+  CHECK((std::uint32_t)in.readInt() == 0x504E5053u);
+  CHECK(in.readInt() == 1);
+  CHECK(in.readInt64() == (juce::int64)viaBlock.getSize());
 
   Project restored;
-  assert(ProjectSerializer::fromBinaryArchive(
+  CHECK(ProjectSerializer::fromBinaryArchive(
       restored, static_cast<const char *>(envelope.getData()) + archiveStart,
       viaBlock.getSize()));
-  assert(restored.getNotes().size() == 1);
-  assert(!restored.getAudioData().melSpectrogram.empty());
+  CHECK(restored.getNotes().size() == 1);
+  CHECK(!restored.getAudioData().melSpectrogram.empty());
 }
 
 void hostBackedArchiveStaysSourceless() {
   const Project source = makeProject(0.0);
 
   juce::MemoryBlock archive;
-  assert(ProjectSerializer::toBinaryArchive(
+  CHECK(ProjectSerializer::toBinaryArchive(
       source, archive, ProjectSerializer::BinaryArchiveMode::hostBackedARA));
 
   Project restored;
-  assert(ProjectSerializer::fromBinaryArchive(restored, archive.getData(),
+  CHECK(ProjectSerializer::fromBinaryArchive(restored, archive.getData(),
                                               archive.getSize()));
 
   // No source waveform to rebuild from: the mel stays empty for the ARA
   // hydration path to fill, rather than being invented from nothing.
   const auto &b = restored.getAudioData();
-  assert(b.originalWaveform.getNumSamples() == 0);
-  assert(b.waveform.getNumSamples() == 0);
-  assert(b.melSpectrogram.empty());
-  assert(b.deltaPitch.size() == (size_t)kFrames);
-  assert(restored.getNotes().size() == 1);
+  CHECK(b.originalWaveform.getNumSamples() == 0);
+  CHECK(b.waveform.getNumSamples() == 0);
+  CHECK(b.melSpectrogram.empty());
+  CHECK(b.deltaPitch.size() == (size_t)kFrames);
+  CHECK(restored.getNotes().size() == 1);
 }
 
 } // namespace

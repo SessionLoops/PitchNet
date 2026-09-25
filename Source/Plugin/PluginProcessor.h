@@ -93,45 +93,28 @@ public:
       lastEditorHeight = height;
     }
   }
-  bool attachCachedAraAnalysis(std::uintptr_t sourceKey,
-                               double timelineOffsetSeconds,
-                               const std::vector<std::pair<double, double>> &
-                                   playbackRegionRanges);
-  void requestAraSourceAnalysis(std::uintptr_t sourceKey,
-                               const juce::AudioBuffer<float> &buffer,
-                               double sampleRate, double timelineOffsetSeconds,
-                               const std::vector<std::pair<double, double>> &
-                                   playbackRegionRanges);
   void requestPluginProjectRender(const Project &project);
   void updateProjectStateFromEditor(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);
-  void updateAraTimelineOffset(double timelineOffsetSeconds);
-  bool serializePersistentProjectState(juce::MemoryBlock &destData,
-                                       bool hostBackedARA = false) const;
+  /** Same archive written straight into a caller-owned stream, so the
+      plug-in state path emits it once instead of staging a second full copy. */
   bool serializePersistentProjectState(juce::OutputStream &out,
                                        bool hostBackedARA = false) const;
-  bool restorePersistentProjectState(const void *data, size_t sizeInBytes);
-
-  // The project getStateInformation()/serializePersistentProjectState() would
-  // archive, and a cheap content fingerprint of it used to skip re-archiving
-  // an unchanged project. Returns 0 when there is nothing cacheable.
+  /** The project the two calls above archive, and a cheap content fingerprint
+      of it used to skip re-archiving an unchanged project. The fingerprint is
+      0 when there is nothing cacheable. */
   const Project *projectForPersistentState() const;
   std::uint64_t computePersistentStateKey(const juce::String &parametersXml,
                                           bool hostBackedARA) const;
-
   const juce::String &getAraAnalysisProjectJson() const;
   void invalidateAraAnalysisProjectJson();
   void setAraAnalysisProjectJson(juce::String json);
+  bool serializePersistentProjectState(juce::MemoryBlock &destData,
+                                       bool hostBackedARA = false) const;
+  bool restorePersistentProjectState(const void *data, size_t sizeInBytes);
 
-  void removeAraRegionFromProject(
-      std::uintptr_t newSourceKey, const std::pair<double, double> &removedRange,
-      const std::vector<std::pair<double, double>> &remainingRanges);
-  void analyzeAndMergeAraRegion(
-      std::uintptr_t newSourceKey, const juce::AudioBuffer<float> &buffer,
-      double sampleRate, const std::pair<double, double> &addedRange,
-      const std::vector<std::pair<double, double>> &allRanges);
 
   // ========== Host Transport Control ==========
 
@@ -183,7 +166,19 @@ public:
                               std::unique_ptr<Project> project);
   void setActiveAraRegion(juce::ARAPlaybackRegion *region);
   void updateActiveAraRegionProperties(juce::ARAPlaybackRegion *region);
+  // The active region's span expressed in MODIFICATION time. Projects are
+  // modification-scoped, so this is the only coordinate system they use;
+  // timeline placement is applied at render and draw time, never stored.
+  std::pair<double, double> activeRegionSpanInModificationTime() const;
+  void stampActiveRegionSpan(Project &project) const;
+  // Tell the editor where the active region's content sits on the host
+  // timeline, so the ruler and playhead line up with the drawn waveform.
+  // Display only - nothing in the project moves. May be negative.
+  void pushTimelineDisplayOffset() const;
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
+  juce::String getActiveAraRegionSelector() const {
+    return activeRegionSelector;
+  }
   bool isAraRegionCanvasAnalysisPending() const {
     return regionCanvasAnalysisPending.load();
   }
@@ -205,9 +200,17 @@ public:
                                  const juce::AudioBuffer<float> &buffer,
                                  double sampleRate);
 
-  // Called when a playback region is removed. Its Project and undo history
-  // have the same lifetime and are destroyed together.
-  void removeAraRegion(const juce::String &regionKey);
+  // Clear the selection when the host destroys the selected playback region.
+  // Its Project and undo history belong to the modification and are kept.
+  void forgetAraPlaybackRegion(juce::ARAPlaybackRegion *region);
+  // Drop the canvas binding if it is showing this modification, without
+  // discarding its cached edit state. Used when the host deactivates a
+  // modification into its undo history, where the object survives and can be
+  // reactivated by redo.
+  void releaseAraModificationCanvas(PitchNetAudioModification *modification);
+  // Release the canvas binding and discard every cached Project and undo
+  // history belonging to this modification. Used when it is destroyed.
+  void forgetAraModification(PitchNetAudioModification *modification);
 
   // Per-region project persistence. ARA archives omit both project waveforms
   // and the global mel spectrogram because they are rebuilt from the host
@@ -370,15 +373,13 @@ private:
   bool araAnalysisLoading = false;
   bool araAnalysisReady = false;
   double araAnalysisTimelineOffsetSeconds = 0.0;
-  std::vector<std::pair<double, double>> araPlaybackRegionRanges;
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
-
-  // Built on demand from araAnalysisProjectSnapshot. Serialising a multi-minute
-  // take to JSON text costs tens of MB of string work, and nothing in non-ARA
-  // plug-in mode ever reads it, so only pay for it where it is actually used.
+  // Built on demand from araAnalysisProjectSnapshot. Serialising a
+  // multi-minute take to JSON text costs tens of MB of string work, and
+  // nothing in non-ARA plug-in mode ever reads it, so only pay for it where it
+  // is actually used.
   mutable juce::String araAnalysisProjectJson;
   mutable bool araAnalysisProjectJsonValid = false;
-
   // Last blob handed to the host, keyed by content. Costs one extra resident
   // copy of the plug-in state in exchange for making repeat host saves free.
   juce::MemoryBlock cachedPluginStateBlock;
@@ -402,6 +403,9 @@ private:
   // raw pointers retained by that region's undo actions.
   std::map<juce::String, AraRegionState> araRegions;
   juce::String activeRegionKey;
+  // The selected window onto activeRegionKey's modification. Siblings share
+  // the key, so this is what distinguishes them for selection and placement.
+  juce::String activeRegionSelector;
   // True only while the canvas is showing the ACTIVE REGION's own (region-local)
   // project. onProjectDataChanged fires for every project change — including
   // completion of the composite/document analysis, whose waveform is anchored to

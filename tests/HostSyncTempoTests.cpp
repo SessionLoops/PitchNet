@@ -1,6 +1,6 @@
 // Run with JUCE core/events, JUCE_MODAL_LOOPS_PERMITTED=1 and HostSyncService.cpp.
 #include "../Source/Audio/Engine/HostSyncService.h"
-#include <cassert>
+#include "TestAssert.h"
 #include <iostream>
 
 int main()
@@ -22,8 +22,8 @@ int main()
     info.setBpm(120.0);
     sync.updateFromPositionInfo(info, 48000.0);
     drain();
-    assert(notifications == 1 && delivered.hasBpm);
-    assert(!delivered.hasTimeSignature);
+    CHECK(notifications == 1 && delivered.hasBpm);
+    CHECK(!delivered.hasTimeSignature);
 
     // Rapid changes must deliver the final tempo, not the first queued value.
     info.setBpm(140.0);
@@ -35,30 +35,30 @@ int main()
     info.setIsRecording(true);
     sync.updateFromPositionInfo(info, 48000.0);
     drain();
-    assert(notifications == 2);
-    assert(delivered.bpm == 172.0 && delivered.hasTimeSignature);
-    assert(delivered.timeSigNumerator == 3);
+    CHECK(notifications == 2);
+    CHECK(delivered.bpm == 172.0 && delivered.hasTimeSignature);
+    CHECK(delivered.timeSigNumerator == 3);
 
     // Stopping with omitted metadata must retain the recording's tempo/meter.
     juce::AudioPlayHead::PositionInfo stopped;
     sync.updateFromPositionInfo(stopped, 48000.0);
     drain();
     auto tempo = sync.getCurrentState().tempo;
-    assert(tempo.hasBpm && tempo.bpm == 172.0);
-    assert(tempo.hasTimeSignature && tempo.timeSigNumerator == 3);
-    assert(notifications == 2);
+    CHECK(tempo.hasBpm && tempo.bpm == 172.0);
+    CHECK(tempo.hasTimeSignature && tempo.timeSigNumerator == 3);
+    CHECK(notifications == 2);
 
     // Tempo-only changes while stopped still preserve the known meter.
     stopped.setBpm(95.0);
     sync.updateFromPositionInfo(stopped, 48000.0);
     drain();
-    assert(notifications == 3 && delivered.bpm == 95.0);
-    assert(delivered.timeSigNumerator == 3);
+    CHECK(notifications == 3 && delivered.bpm == 95.0);
+    CHECK(delivered.timeSigNumerator == 3);
 
     stopped.setBpm(0.0);
     stopped.setTimeSignature(juce::AudioPlayHead::TimeSignature{0, 0});
     sync.updateFromPositionInfo(stopped, 48000.0);
-    assert(sync.getCurrentState().tempo.bpm == 95.0);
-    assert(sync.getCurrentState().tempo.timeSigNumerator == 3);
+    CHECK(sync.getCurrentState().tempo.bpm == 95.0);
+    CHECK(sync.getCurrentState().tempo.timeSigNumerator == 3);
     std::cout << "Host tempo sync regressions passed\n";
 }
