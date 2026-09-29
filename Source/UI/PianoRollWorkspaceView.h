@@ -22,6 +22,13 @@ public:
   void dismissPitchCenterPopup();
   void showPitchCenterPopup();
   void refreshOverview();
+  void setOverviewVisible(bool visible);
+  std::function<void(bool)> onOverviewVisibilityChanged;
+  void setRegionPreviews(MainViewRegionPreviewList previews);
+  // Clip / Track mode (ARA only). The toggle itself lives in the toolbar.
+  void setTrackViewModeAvailable(bool available);
+  void setTrackViewMode(bool track);
+  bool isTrackViewMode() const { return pianoRoll.isTrackViewMode(); }
   void setShowSegmentsDebug(bool show);
   PianoRollComponent &getPianoRoll() { return pianoRoll; }
   std::function<void()> onAutoZoomRequested;
@@ -58,6 +65,7 @@ private:
 
   Button autoZoomButton;
   ToggleButton overviewToggleButton;
+  bool trackViewModeAvailable = false;
   bool overviewVisible = false;
   bool pitchCenterSnapToScale = false;
 

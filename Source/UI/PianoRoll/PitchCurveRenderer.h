@@ -42,6 +42,8 @@ public:
   }
   void setSelectHandler(SelectHandler *h) { selectHandler = h; }
   void setPitchEditor(PitchEditor *e) { pitchEditor = e; }
+  // Inactive regions in Track mode: draw the curves in grey.
+  void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
 
   void draw(juce::Graphics &g, const Params &params);
 
@@ -60,6 +62,7 @@ private:
   size_t cachedNoteCount = 0;
   int cachedTotalFrames = 0;
   bool cacheInvalidated = true;
+  bool greyscale = false;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchCurveRenderer)
 };

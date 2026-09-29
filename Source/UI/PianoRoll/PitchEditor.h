@@ -22,7 +22,7 @@ public:
     void setCoordinateMapper(CoordinateMapper* mapper) { coordMapper = mapper; }
     void setSnapToSemitoneDragEnabled(bool enabled) { snapToSemitoneDragEnabled = enabled; }
     void setDragSnapMode(DragSnapMode mode) { dragSnapMode = mode; }
-    void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(430, 450, hz); }
+    void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(420, 450, hz); }
     float getSnappedDragOffset(float rawOffsetSemitones,
                                float anchorMidiNote) const;
 

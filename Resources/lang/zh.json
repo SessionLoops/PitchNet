@@ -263,6 +263,8 @@
   "tooltip.split_tool": "音符分割工具（快捷键：2）",
   "tooltip.timing_tool": "时值工具（快捷键：4）",
   "tooltip.vertical_auto_zoom": "垂直自动缩放",
+  "tooltip.region_view_clip": "片段模式：显示所选片段的源音频。点击以显示轨道上的所有片段。",
+  "tooltip.region_view_track": "轨道模式：显示轨道上的所有片段。点击以只显示所选片段的源音频。",
   "update.ask_later": "稍后再说",
   "update.download_now": "立即下载",
   "update.message": "PitchNet 有新版本可用，是否下载？",

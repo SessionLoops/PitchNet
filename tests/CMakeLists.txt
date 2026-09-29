@@ -23,6 +23,7 @@ set(PITCHNET_TEST_SOURCES
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
     ProjectModificationRangeTests.cpp
+    TimelineCoordinateTests.cpp
     VisualWaveformEnvelopeTests.cpp)
 
 foreach(test_source IN LISTS PITCHNET_TEST_SOURCES)

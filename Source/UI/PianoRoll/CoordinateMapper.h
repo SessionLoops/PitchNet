@@ -23,7 +23,7 @@ public:
     float getPixelsPerSemitone() const { return pixelsPerSemitone; }
 
     // Scroll settings
-    void setScrollX(double x) { scrollX = std::max(0.0, x); }
+    void setScrollX(double x) { scrollX = std::max(viewStartSeconds * pixelsPerSecond, x); }
     void setScrollY(double y) { scrollY = std::max(0.0, y); }
     double getScrollX() const { return scrollX; }
     double getScrollY() const { return scrollY; }
@@ -51,12 +51,24 @@ public:
     void setTimelineDisplayOffset(double seconds) { timelineDisplayOffset = seconds; }
     double getTimelineDisplayOffset() const { return timelineDisplayOffset; }
 
+    // Project time at the left end of the scrollable timeline: 0 for the
+    // source view, the host's zero (possibly negative) in Track mode.
+    void setViewStartSeconds(double seconds) { viewStartSeconds = seconds; }
+    double getViewStartSeconds() const { return viewStartSeconds; }
+
     double projectToTimeline(double projectSeconds) const {
         return projectSeconds + timelineDisplayOffset;
     }
 
     double timelineToProject(double timelineSeconds) const {
         return timelineSeconds - timelineDisplayOffset;
+    }
+
+    // Snap against the host's grid, then return the result in canvas time.
+    double snapProjectTimeToTimelineGrid(double projectSeconds, double interval) const {
+        if (interval <= 0.0)
+            return projectSeconds;
+        return timelineToProject(std::round(projectToTimeline(projectSeconds) / interval) * interval);
     }
 
     // Time <-> X coordinate conversion (in world space, before scroll)
@@ -109,4 +121,5 @@ private:
     double scrollX = 0.0;
     double scrollY = 0.0;
     double timelineDisplayOffset = 0.0;
+    double viewStartSeconds = 0.0;
 };

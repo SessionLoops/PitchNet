@@ -22,6 +22,7 @@
 #include "PianoRoll/PianoRollViewState.h"
 #include "PianoRoll/ScrollZoomController.h"
 #include "Buttons.h"
+#include "RegionPreview.h"
 
 #include <memory>
 #include <optional>
@@ -151,7 +152,22 @@ public:
   double getScrollX() const { return scrollX; }
   void setScrollY(double y);
   double getScrollY() const { return scrollY; }
+  // End of the scrollable timeline, in the canvas's (project) time.
   double getTimelineDuration() const;
+  // Start of the scrollable timeline: 0 in Clip mode; the host's time zero,
+  // expressed in project time, in Track mode (may be negative).
+  double getTimelineStart() const;
+  double getTimelineLength() const;
+  // Host-timeline seconds at the left edge of the view.
+  double getHostScrollSeconds() const;
+
+  // Track mode (ARA): show the whole track on the host timeline. The canvas
+  // stays in the active modification's time; only its scrollable range
+  // widens to the song, the active take is clipped to its region, and the
+  // other regions (setRegionPreviews) are drawn and clickable. Clip mode is
+  // the plain source view.
+  void setTrackViewMode(bool shouldShowTrack);
+  bool isTrackViewMode() const { return trackViewMode; }
   void centerOnPitchRange(float minMidi, float maxMidi);
   bool centerOnCurrentPitchRange();
   void fitPitchRangeToView(float minMidi, float maxMidi);
@@ -249,6 +265,15 @@ public:
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame);
   void setPreviewPlaybackPosition(double timeSeconds);
 
+  // ARA: every region of the track, drawn behind the editable project. The
+  // active entry keeps the region backdrop; the others are dimmed read-only
+  // previews. A click inside an inactive region fires onInactiveRegionClicked
+  // so the owner can make it active; if the owner swaps the project in
+  // synchronously, the same click continues into the new region (selecting
+  // or dragging the note under the pointer).
+  void setRegionPreviews(MainViewRegionPreviewList previews);
+  std::function<void(const juce::String &)> onInactiveRegionClicked;
+
 private:
   enum class NoteRenderPass
   {
@@ -269,6 +294,19 @@ private:
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawAudioSourceRegionOverlay(juce::Graphics &g);
+  void drawRegionPreviews(juce::Graphics &g);
+  // Track mode: inactive regions' notes and pitch curves, drawn with the same
+  // renderers as the active region and then greyed.
+  void drawInactiveRegionEdits(juce::Graphics &g,
+                               const juce::Rectangle<int> &mainArea);
+  const MainViewRegionPreview *findActiveRegionPreview() const;
+  bool previewContains(const MainViewRegionPreview &region,
+                       double projectSeconds) const;
+  double clampScrollX(double x) const;
+  // The active region's span in project time, only in Track mode.
+  std::optional<std::pair<double, double>> getTrackModeActiveSpan() const;
+  const MainViewRegionPreview *findInactiveRegionAt(double timeSeconds) const;
+  bool isInsideActiveRegion(double timeSeconds) const;
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
@@ -331,6 +369,28 @@ private:
   double liveRecordingSampleRate = 0.0;
   std::unique_ptr<NoteRenderer> noteRenderer;
   std::unique_ptr<PitchCurveRenderer> pitchCurveRenderer;
+  std::unique_ptr<NoteRenderer> previewNoteRenderer;
+  std::unique_ptr<PitchCurveRenderer> previewCurveRenderer;
+  struct InactiveLayerKey
+  {
+    double scrollX = 0.0, scrollY = 0.0, displayOffset = 0.0;
+    float pixelsPerSecond = 0.0f, pixelsPerSemitone = 0.0f;
+    int width = 0, height = 0;
+    const void *previews = nullptr;
+    bool showDeltaPitch = false, showBasePitch = false;
+    bool operator==(const InactiveLayerKey &o) const
+    {
+      return scrollX == o.scrollX && scrollY == o.scrollY &&
+             displayOffset == o.displayOffset &&
+             pixelsPerSecond == o.pixelsPerSecond &&
+             pixelsPerSemitone == o.pixelsPerSemitone && width == o.width &&
+             height == o.height && previews == o.previews &&
+             showDeltaPitch == o.showDeltaPitch &&
+             showBasePitch == o.showBasePitch;
+    }
+  };
+  InactiveLayerKey inactiveLayerKey;
+  juce::Image inactiveLayer;
   std::unique_ptr<ScrollZoomController> scrollZoomController;
   std::unique_ptr<PitchEditor> pitchEditor;
   std::unique_ptr<BoxSelector> boxSelector;
@@ -421,6 +481,12 @@ private:
   juce::Point<float> modifierPanLastPosition;
   bool pianoKeyAuditionMouseDown = false;
   bool middleButtonScrubActive = false;
+  MainViewRegionPreviewList regionPreviews;
+  bool trackViewMode = false;
+  double regionPreviewsEndSeconds = 0.0;
+  // Set when a click only activated another region (its project was not
+  // ready yet), so the rest of that gesture must not edit anything.
+  bool swallowGestureUntilMouseUp = false;
 
   // Re-applies the hover-button tooltips after a language change; the menus
   // and handle labels are built on demand, so they need nothing here.

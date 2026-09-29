@@ -197,6 +197,18 @@ public:
       std::function<void(const juce::String &)> callback) override {
     parameterPanel.onRegionSelected = std::move(callback);
   }
+  void updateRegionPreviews(MainViewRegionPreviewList previews) override;
+  void setTrackViewModeAvailable(bool available) override;
+  bool isTrackViewMode() const override {
+    return pianoRollView.isTrackViewMode();
+  }
+  void setOnTrackViewModeChanged(std::function<void(bool)> callback) override {
+    onTrackViewModeChanged = std::move(callback);
+  }
+  void setOnRegionActivationRequested(
+      std::function<void(const juce::String &)> callback) override {
+    onRegionActivationRequested = std::move(callback);
+  }
   void setHostTransportControlAvailable(bool available) override;
   bool isHostTransportControlAvailable() const {
     return hostTransportControlAvailable;
@@ -379,6 +391,11 @@ private:
 
   bool isPlaying = false;
   bool hostTransportControlAvailable = true;
+  std::function<void(const juce::String &)> onRegionActivationRequested;
+  std::function<void(bool)> onTrackViewModeChanged;
+  // True while a canvas click is switching the active region. The clicked
+  // region is already on screen, so its project must not refit the view.
+  bool regionActivationFromCanvas = false;
   bool liveRecordingActive = false;
   bool pianoKeyAuditionActive = false;
   bool pianoKeyAuditionWasPlaying = false;

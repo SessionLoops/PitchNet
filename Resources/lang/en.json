@@ -263,6 +263,8 @@
   "tooltip.split_tool": "Note Separation Tool (Shortcut: 2)",
   "tooltip.timing_tool": "Timing Tool (Shortcut: 4)",
   "tooltip.vertical_auto_zoom": "Vertical Auto-Zoom",
+  "tooltip.region_view_clip": "Clip mode: showing the selected clip's source. Click to show every clip on the track.",
+  "tooltip.region_view_track": "Track mode: showing every clip on the track. Click to show only the selected clip's source.",
   "update.ask_later": "Ask Me Later",
   "update.download_now": "Download Now",
   "update.message": "A new version of PitchNet is available. Would you like to download it?",

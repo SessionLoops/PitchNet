@@ -204,6 +204,12 @@ void SettingsManager::loadConfig()
           uiBrightnessPercent = juce::jlimit(
               75.0, 200.0,
               static_cast<double>(configObj->getProperty("uiBrightnessPercent")));
+        if (configObj->hasProperty("overviewVisible"))
+          overviewVisible =
+              static_cast<bool>(configObj->getProperty("overviewVisible"));
+        if (configObj->hasProperty("trackViewMode"))
+          trackViewMode =
+              static_cast<bool>(configObj->getProperty("trackViewMode"));
         if (configObj->hasProperty("liveAuditionEnabled"))
           liveAuditionEnabled =
               static_cast<bool>(configObj->getProperty("liveAuditionEnabled"));
@@ -241,6 +247,8 @@ void SettingsManager::saveConfig()
 
   config->setProperty("windowWidth", windowWidth);
   config->setProperty("windowHeight", windowHeight);
+  config->setProperty("overviewVisible", overviewVisible);
+  config->setProperty("trackViewMode", trackViewMode);
   config->setProperty("showDeltaPitch", showDeltaPitch);
   config->setProperty("showBasePitch", showBasePitch);
   config->setProperty("showSegmentsDebug", showSegmentsDebug);

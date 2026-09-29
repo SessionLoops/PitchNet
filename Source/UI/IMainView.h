@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "RegionPreview.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -87,6 +88,31 @@ public:
   /** Called with a region key when the user picks one in the Regions card. */
   virtual void setOnRegionSelected(
       std::function<void(const juce::String &)> callback) = 0;
+  /**
+   * Draw every region of the track on the canvas and thumbnail. Exactly one
+   * entry may be flagged active; it keeps the editable backdrop, the others
+   * are shown dimmed and read-only. An empty list shows only the canvas
+   * project, as in standalone mode.
+   */
+  virtual void updateRegionPreviews(MainViewRegionPreviewList previews) = 0;
+  /**
+   * Called with a region key when the user clicks inside an inactive region on
+   * the canvas (empty space or one of its notes). Unlike setOnRegionSelected,
+   * the handler must not scroll or refit the view: the user clicked on what is
+   * already visible.
+   */
+  virtual void setOnRegionActivationRequested(
+      std::function<void(const juce::String &)> callback) = 0;
+  /**
+   * Clip / Track view (ARA only). Clip mode shows the selected region's
+   * modification in its own time; Track mode shows every region of the track
+   * on the host timeline (region previews are only drawn there). Making the
+   * mode available shows its toggle button and restores the saved choice.
+   */
+  virtual void setTrackViewModeAvailable(bool available) = 0;
+  virtual bool isTrackViewMode() const = 0;
+  virtual void setOnTrackViewModeChanged(
+      std::function<void(bool)> callback) = 0;
   /**
    * Tell the view whether the host transport can be driven from here.
    * False in non-ARA plugin mode: play / stop / cycle controls and cycle-range

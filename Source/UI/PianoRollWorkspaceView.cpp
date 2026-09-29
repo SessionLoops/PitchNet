@@ -94,21 +94,39 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   overviewCard.setContentComponent(&overviewPanel);
   overviewPanel.setDrawBackground(false);
 
+  // The thumbnail works in time relative to the canvas's timeline start
+  // (0 in Clip mode, the song start in Track mode).
   overviewPanel.getViewState = [this]()
   {
     OverviewPanel::ViewState state;
-    state.totalTime = pianoRoll.getTimelineDuration();
-    state.cursorTime = pianoRoll.getCursorTime();
-    state.scrollX = pianoRoll.getScrollX();
-    state.pixelsPerSecond = pianoRoll.getPixelsPerSecond();
+    const double viewStart = pianoRoll.getTimelineStart();
+    const float pps = pianoRoll.getPixelsPerSecond();
+    state.totalTime = pianoRoll.getTimelineLength();
+    state.cursorTime = pianoRoll.getCursorTime() - viewStart;
+    state.scrollX = pianoRoll.getScrollX() - viewStart * pps;
+    state.pixelsPerSecond = pps;
     state.visibleWidth = pianoRoll.getVisibleContentWidth();
+    state.trackMode = pianoRoll.isTrackViewMode();
+    state.viewStartSeconds = viewStart;
+    state.displayOffset = pianoRoll.projectToTimeline(0.0);
+    if (auto *project = pianoRoll.getProject())
+    {
+      const auto &ranges = project->getAudioData().playbackRegionRanges;
+      if (!ranges.empty() && ranges.front().second > ranges.front().first)
+      {
+        state.hasActiveSpan = true;
+        state.activeSpanStart = ranges.front().first;
+        state.activeSpanEnd = ranges.front().second;
+      }
+    }
     return state;
   };
   overviewPanel.onScrollXChanged = [this](double x)
   {
-    pianoRoll.setScrollX(x);
+    pianoRoll.setScrollX(x + pianoRoll.getTimelineStart() *
+                                 pianoRoll.getPixelsPerSecond());
     if (pianoRoll.onScrollChanged)
-      pianoRoll.onScrollChanged(x);
+      pianoRoll.onScrollChanged(pianoRoll.getScrollX());
   };
   overviewPanel.onZoomChanged = [this](float pps)
   {
@@ -161,6 +179,8 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   {
     overviewVisible = overviewToggleButton.getToggleState();
     updateOverviewVisibility();
+    if (onOverviewVisibilityChanged)
+      onOverviewVisibilityChanged(overviewVisible);
   };
 
   addAndMakeVisible(pianoCard);
@@ -257,6 +277,22 @@ void PianoRollWorkspaceView::resized()
 
   zoomXBackground.setBounds(zoomXBg.toNearestInt());
   zoomYBackground.setBounds(zoomYBg.toNearestInt());
+}
+
+void PianoRollWorkspaceView::setTrackViewModeAvailable(bool available)
+{
+  trackViewModeAvailable = available;
+  if (!available && pianoRoll.isTrackViewMode())
+    setTrackViewMode(false);
+}
+
+void PianoRollWorkspaceView::setTrackViewMode(bool track)
+{
+  track = track && trackViewModeAvailable;
+  if (pianoRoll.isTrackViewMode() == track)
+    return;
+  pianoRoll.setTrackViewMode(track);
+  overviewPanel.invalidateThumbnailCache();
 }
 
 void PianoRollWorkspaceView::setProject(Project *project)
@@ -440,6 +476,12 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       });
 }
 
+void PianoRollWorkspaceView::setRegionPreviews(
+    MainViewRegionPreviewList previews)
+{
+  overviewPanel.setRegionPreviews(std::move(previews));
+}
+
 void PianoRollWorkspaceView::refreshOverview()
 {
   if (overviewVisible)
@@ -449,6 +491,19 @@ void PianoRollWorkspaceView::refreshOverview()
 void PianoRollWorkspaceView::setShowSegmentsDebug(bool show)
 {
   overviewPanel.setShowSegmentsDebug(show);
+}
+
+void PianoRollWorkspaceView::setOverviewVisible(bool visible)
+{
+  overviewVisible = visible;
+  overviewToggleButton.setToggleState(visible, juce::dontSendNotification);
+  overviewAnimationActive = false;
+  overviewAnimationProgress = visible ? 1.0f : 0.0f;
+  overviewCard.setVisible(visible);
+  overviewPanel.setVisible(visible);
+  pianoRoll.setHorizontalScrollBarVisible(!visible);
+  resized();
+  repaint();
 }
 
 void PianoRollWorkspaceView::updateOverviewVisibility()
@@ -514,7 +569,9 @@ void PianoRollWorkspaceView::timerCallback()
   if (std::abs(zoomYSlider.getValue() - ppsY) > 0.05)
     zoomYSlider.setValue(ppsY, juce::dontSendNotification);
 
-  const double cursorTime = pianoRoll.getCursorTime();
+  // Relative to the timeline start, like the thumbnail's view state.
+  const double cursorTime =
+      pianoRoll.getCursorTime() - pianoRoll.getTimelineStart();
   if (overviewVisible && std::abs(lastOverviewCursorTime - cursorTime) > 0.0001)
   {
     const double previousCursorTime = lastOverviewCursorTime;

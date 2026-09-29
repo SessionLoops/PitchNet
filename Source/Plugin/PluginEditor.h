@@ -4,6 +4,7 @@
 #include "../UI/IMainView.h"
 #include "../UI/MainViewFactory.h"
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <vector>
 #include "PluginProcessor.h"
@@ -54,8 +55,17 @@ private:
     // Rebuild the Regions card's region list and push it to the UI, but only
     // when it actually differs from what the card already shows.
     void refreshAraRegionList();
-    // Switch the canvas to a region the user picked in the Regions card.
-    void activateAraRegionByKey(const juce::String& regionKey);
+    // Switch the canvas to a region the user picked in the Regions card, or
+    // clicked on the canvas. A canvas click leaves the view where it is
+    // (focusView = false): the region is already on screen.
+    void activateAraRegionByKey(const juce::String& regionKey,
+                                bool focusView = true);
+    // Push a preview of every region on the active region's track to the
+    // canvas and thumbnail, rebuilding only regions whose content changed.
+    void publishAraRegionPreviews(
+        const std::vector<juce::ARAPlaybackRegion*>& regions,
+        const std::vector<MainViewRegionEntry>& entries,
+        const juce::String& activeKey);
     // ARAEditorView::Listener. When the host selection changes, switch the
     // canvas to the selected region's per-region Project (each region/track is
     // analysed and edited independently). Format-agnostic: works in AAX/VST3/AU.
@@ -74,6 +84,17 @@ private:
 #if JucePlugin_Enable_ARA
     juce::String lastPublishedRegionSignature;
     bool regionListPublished = false;
+    struct RegionPreviewCacheEntry {
+        const Project* project = nullptr;
+        bool fromCanvas = false;
+        std::uint64_t revision = 0;
+        double startSeconds = 0.0;
+        double endSeconds = 0.0;
+        double startInModificationSeconds = 0.0;
+        MainViewRegionPreview preview;
+    };
+    std::map<juce::String, RegionPreviewCacheEntry> regionPreviewCache;
+    juce::String lastPublishedPreviewSignature;
     int regionListRefreshCountdown = 0;
 #endif
     bool lunaSoftwareRendererApplied = false;

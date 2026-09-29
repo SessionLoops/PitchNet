@@ -315,7 +315,11 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     if (drawBodies)
     {
       const NoteGradientColours noteColours =
-          getNoteGradientColours(note.getAdjustedMidiNote(), pitchReferenceHz);
+          greyscale
+              ? NoteGradientColours{juce::Colour(0xFFCCCCCCu),
+                                    juce::Colour(0xFF3A3A3Au)}
+              : getNoteGradientColours(note.getAdjustedMidiNote(),
+                                       pitchReferenceHz);
       juce::Rectangle<float> noteVisualBounds(x, y, renderedWidth, h);
 
       const float *samples = globalSamples;

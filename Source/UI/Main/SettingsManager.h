@@ -91,6 +91,11 @@ public:
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
 
   // View settings
+  bool getOverviewVisible() const { return overviewVisible; }
+  void setOverviewVisible(bool visible) { overviewVisible = visible; }
+  // ARA editor: Track mode (whole track) vs Clip mode (selected clip's source).
+  bool getTrackViewMode() const { return trackViewMode; }
+  void setTrackViewMode(bool track) { trackViewMode = track; }
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
   void setShowBasePitch(bool show) { showBasePitch = show; }
   void setShowSegmentsDebug(bool show) { showSegmentsDebug = show; }
@@ -135,6 +140,9 @@ private:
   juce::StringArray recentFiles;
   int windowWidth = 1000;
   int windowHeight = 628;
+  bool overviewVisible = false;
+  // ARA starts in Track mode unless the user saved a different preference.
+  bool trackViewMode = true;
   bool showDeltaPitch = true;
   bool showBasePitch = false;
   bool showSegmentsDebug = false;

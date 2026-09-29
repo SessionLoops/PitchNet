@@ -102,7 +102,10 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
   // any per-note pitch offset, including the live drag preview.
   if (params.showDeltaPitch)
   {
-    g.setColour(APP_COLOR_PITCH_CURVE.withMultipliedAlpha(
+    const auto curveColour =
+        greyscale ? APP_COLOR_PITCH_CURVE.withSaturation(0.0f)
+                  : APP_COLOR_PITCH_CURVE;
+    g.setColour(curveColour.withMultipliedAlpha(
         juce::jlimit(0.0f, 1.0f, params.pitchCurveAlpha)));
 
     juce::Path path;
@@ -344,7 +347,9 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
           static_cast<int>(basePitchCurve.size()),
           static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
 
-      g.setColour(APP_COLOR_SECONDARY.withAlpha(0.6f));
+      g.setColour((greyscale ? APP_COLOR_SECONDARY.withSaturation(0.0f)
+                             : APP_COLOR_SECONDARY)
+                      .withAlpha(0.6f));
       juce::Path basePath;
       bool basePathStarted = false;
 

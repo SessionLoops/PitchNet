@@ -1716,7 +1716,8 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
   if (hostEditing)
     return;
   auto *processor = getRegionCanvasProcessor();
-  if (region == nullptr || processor == nullptr)
+  if (region == nullptr || processor == nullptr ||
+      processor->isAraCanvasWorkerRunning())
     return;
 
   auto *modification = region->getAudioModification();

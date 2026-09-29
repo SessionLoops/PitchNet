@@ -381,6 +381,7 @@ public:
   // analysis (populates that region's persistent Project and, if it is the
   // active region, switches the canvas to it). Used for selection-driven
   // per-region editing without disturbing the composite pipeline.
+  bool isHostEditing() const { return hostEditing; }
   void requestRegionCanvasAnalysis(juce::ARAPlaybackRegion *region);
   void setCurrentPlaybackRegion(juce::ARAPlaybackRegion *region);
 

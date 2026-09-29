@@ -5,6 +5,7 @@
 #include "../../Utils/UI/Theme.h"
 
 #include <cmath>
+#include <limits>
 
 void WaveformBackgroundRenderer::beginLiveWaveform(
     double sampleRate, double timelineOffsetSeconds)
@@ -58,7 +59,13 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   const bool drawingProject =
       projectAudio && projectAudio->waveform.getNumSamples() > 0 &&
       projectAudio->sampleRate > 0;
-  if (!drawingLive && !drawingProject)
+  bool drawingPreviews = false;
+  if (regionPreviews)
+    for (const auto &region : *regionPreviews)
+      if (!region.active && region.waveformSamples &&
+          !region.waveformSamples->empty() && region.waveformSampleRate > 0.0)
+        drawingPreviews = true;
+  if (!drawingLive && !drawingProject && !drawingPreviews)
     return;
 
   const int viewWidth = visibleArea.getWidth();
@@ -138,10 +145,14 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   const int visibleWidth = stripWidth;
   const double scrollX = static_cast<double>(stripStart);
 
-  auto drawWaveform = [&](const juce::AudioBuffer<float> &source,
-                          int numSamples, double sampleRate,
-                          double timelineOffset, bool previewGain) {
-    if (numSamples <= 0 || sampleRate <= 0.0 || source.getNumChannels() <= 0)
+  auto drawWaveform = [&](const float *samples, int numSamples,
+                          double sampleRate, double timelineOffset,
+                          bool previewGain,
+                          double clipStartSeconds =
+                              std::numeric_limits<double>::lowest(),
+                          double clipEndSeconds =
+                              std::numeric_limits<double>::max()) {
+    if (samples == nullptr || numSamples <= 0 || sampleRate <= 0.0)
       return;
 
     const double samplesPerPixel = sampleRate / pixelsPerSecond;
@@ -150,10 +161,15 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
     const double waveformEndX =
         offsetPixels + static_cast<double>(numSamples) / samplesPerPixel -
         scrollX;
+    // An optional clip (Track mode) narrows the drawn span without moving it.
+    const double clipStartX = clipStartSeconds * pixelsPerSecond - scrollX;
+    const double clipEndX = clipEndSeconds * pixelsPerSecond - scrollX;
     const int firstPixel = juce::jlimit(
-        0, visibleWidth, static_cast<int>(std::floor(waveformStartX)));
+        0, visibleWidth,
+        static_cast<int>(std::floor(std::max(waveformStartX, clipStartX))));
     const int lastPixel = juce::jlimit(
-        0, visibleWidth, static_cast<int>(std::ceil(waveformEndX)));
+        0, visibleWidth,
+        static_cast<int>(std::ceil(std::min(waveformEndX, clipEndX))));
     if (lastPixel <= firstPixel)
       return;
 
@@ -183,7 +199,7 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
       }
 
     const auto displayEnvelope = VisualWaveformEnvelope::build(
-        source.getReadPointer(0), numSamples, startSample, endSample, pointCount,
+        samples, numSamples, startSample, endSample, pointCount,
         static_cast<float>(pointCount), sampleRate, pixelsPerSecond, true, 1.0f, gainRegions);
 
     juce::Path waveformPath;
@@ -213,13 +229,29 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
     cacheGraphics.fillPath(waveformPath);
   };
 
+  // Inactive regions of the track: same envelope, same colour.
+  if (drawingPreviews)
+    for (const auto &region : *regionPreviews)
+      if (!region.active && region.waveformSamples)
+        drawWaveform(region.waveformSamples->data(),
+                     static_cast<int>(region.waveformSamples->size()),
+                     region.waveformSampleRate,
+                     // Previews are in host time; the canvas in project time.
+                     coordMapper->timelineToProject(region.waveformStartSeconds),
+                     false);
+
   // Keep completed captures visible while a new region is being recorded.
-  if (drawingProject)
-    drawWaveform(projectAudio->waveform, projectAudio->waveform.getNumSamples(),
-                 projectAudio->sampleRate, 0.0, true);
-  if (drawingLive)
-    drawWaveform(liveWaveform, liveNumSamples, liveSampleRate,
-                 liveTimelineOffsetSeconds, false);
+  if (drawingProject && projectAudio->waveform.getNumChannels() > 0)
+    drawWaveform(projectAudio->waveform.getReadPointer(0),
+                 projectAudio->waveform.getNumSamples(),
+                 projectAudio->sampleRate, 0.0, true,
+                 projectDrawRange ? projectDrawRange->first
+                                  : std::numeric_limits<double>::lowest(),
+                 projectDrawRange ? projectDrawRange->second
+                                  : std::numeric_limits<double>::max());
+  if (drawingLive && liveWaveform.getNumChannels() > 0)
+    drawWaveform(liveWaveform.getReadPointer(0), liveNumSamples,
+                 liveSampleRate, liveTimelineOffsetSeconds, false);
 
   cachedAmplitudePreview = amplitudePreview;
   cachedStripStartX = stripStart;

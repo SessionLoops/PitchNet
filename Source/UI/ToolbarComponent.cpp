@@ -28,6 +28,8 @@ ToolbarComponent::ToolbarComponent()
 
     followButton.setImage(loadImage(BinaryData::scroll_png, BinaryData::scroll_pngSize));
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
+    // region.png: clip icon (off) / track icon (on), each with a hover frame.
+    trackViewButton.setImage(loadImage(BinaryData::region_png, BinaryData::region_pngSize));
 
     // Configure buttons
     addChildComponent(recordButton);
@@ -45,6 +47,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
     addAndMakeVisible(parametersButton);
+    addChildComponent(trackViewButton); // shown only in ARA mode
 
     recordButton.addListener(this);
     playButton.addListener(this);
@@ -60,6 +63,7 @@ ToolbarComponent::ToolbarComponent()
     undoButton.addListener(this);
     redoButton.addListener(this);
     parametersButton.addListener(this);
+    trackViewButton.addListener(this);
 
     scaleSelectionButton.onScaleRootChanged = [this](int rootNote)
     {
@@ -196,6 +200,21 @@ void ToolbarComponent::resized()
         capsuleY + (capsuleH - rightButtonSize) / 2,
         rightButtonSize, rightButtonSize);
 
+    // Everything left of the side-panel button sits 5px further right: the
+    // buttons below are laid out from this edge, and the scale selector
+    // follows the quantize button.
+    rightSection.setRight(rightSection.getRight() + 5);
+
+    // Clip / Track toggle, next to the side-panel button (ARA only). Takes no
+    // space when hidden, so the other modes' layout is unchanged.
+    if (trackViewAvailable)
+    {
+        auto trackViewBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
+        trackViewButton.setBounds(trackViewBtnArea.getRight() - rightButtonSize,
+                                  capsuleY + (capsuleH - rightButtonSize) / 2,
+                                  rightButtonSize, rightButtonSize);
+    }
+
     auto redoBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
     redoButton.setBounds(redoBtnArea.getRight() - rightButtonSize,
                          capsuleY + (capsuleH - rightButtonSize) / 2,
@@ -327,6 +346,7 @@ void ToolbarComponent::refreshLocalisedText()
     stopButton.setTooltip(TR("toolbar.stop"));
     loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
+    refreshTrackViewTooltip();
 #if JUCE_MAC
     undoButton.setTooltip(TR("command.undo") + " (\u2318Z)");
     redoButton.setTooltip(TR("command.redo") + " (\u21e7\u2318Z)");
@@ -414,6 +434,12 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         parametersVisible = parametersButton.getToggleState();
         if (onToggleParameters)
             onToggleParameters(parametersVisible);
+    }
+    else if (button == &trackViewButton)
+    {
+        refreshTrackViewTooltip();
+        if (onTrackViewModeChanged)
+            onTrackViewModeChanged(trackViewButton.getToggleState());
     }
 }
 
@@ -521,6 +547,28 @@ void ToolbarComponent::setParametersVisible(bool visible)
 {
     parametersVisible = visible;
     parametersButton.setToggleState(parametersVisible, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setTrackViewAvailable(bool available)
+{
+    if (trackViewAvailable == available)
+        return;
+    trackViewAvailable = available;
+    trackViewButton.setVisible(available);
+    resized();
+}
+
+void ToolbarComponent::setTrackViewMode(bool track)
+{
+    trackViewButton.setToggleState(track, juce::dontSendNotification);
+    refreshTrackViewTooltip();
+}
+
+void ToolbarComponent::refreshTrackViewTooltip()
+{
+    trackViewButton.setTooltip(TR(trackViewButton.getToggleState()
+                                      ? "tooltip.region_view_track"
+                                      : "tooltip.region_view_clip"));
 }
 
 void ToolbarComponent::setUndoRedoEnabled(bool undoEnabled, bool redoEnabled)

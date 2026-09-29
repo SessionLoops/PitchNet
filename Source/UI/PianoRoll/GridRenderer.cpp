@@ -19,14 +19,19 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
                        : DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
   if (duration <= 0.0f)
     duration = DEFAULT_EMPTY_PROJECT_DURATION_SECONDS;
+  // The timeline may start before project time zero (Track mode).
+  const float startX = static_cast<float>(
+      std::min(0.0, coordMapper->getViewStartSeconds()) * pixelsPerSecond);
   const float width =
       std::max(duration * pixelsPerSecond, static_cast<float>(params.componentWidth));
   const float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
   // Only draw the visible area to avoid spending time on off-screen rows/columns.
-  const float visibleStartX = juce::jlimit(0.0f, width, static_cast<float>(scrollX));
+  const float visibleStartX =
+      juce::jlimit(startX, width, static_cast<float>(scrollX));
   const float visibleEndX = juce::jlimit(
-      0.0f, width, visibleStartX + static_cast<float>(params.visibleContentWidth) + 2.0f);
+      startX, width,
+      visibleStartX + static_cast<float>(params.visibleContentWidth) + 2.0f);
   const float visibleTopY = juce::jlimit(0.0f, height, static_cast<float>(scrollY));
   const float visibleBottomY = juce::jlimit(
       0.0f, height,
@@ -124,8 +129,13 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
     if (params.gridSeconds > 1.0e-6 && params.beatSeconds > 1.0e-6 &&
         params.barSeconds > 1.0e-6)
     {
-      const double visibleStartTime = visibleStartX / pixelsPerSecond;
-      const double visibleEndTime = visibleEndX / pixelsPerSecond;
+      // Grid lines sit on HOST beats, like the ruler above them; the canvas
+      // is in project time, so each host position is mapped back through the
+      // display offset.
+      const double visibleStartTime =
+          coordMapper->projectToTimeline(visibleStartX / pixelsPerSecond);
+      const double visibleEndTime =
+          coordMapper->projectToTimeline(visibleEndX / pixelsPerSecond);
       const int firstGrid = std::max(
           0,
           static_cast<int>(std::floor(visibleStartTime / params.gridSeconds)) - 1);
@@ -136,7 +146,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
         if (time > visibleEndTime + params.gridSeconds)
           break;
 
-        const float x = static_cast<float>(time * pixelsPerSecond);
+        const float x = static_cast<float>(
+            coordMapper->timelineToProject(time) * pixelsPerSecond);
         if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
           continue;
 
@@ -180,10 +191,16 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
     if (pixelsPerLine > 1.0e-4f)
     {
       g.setColour(APP_COLOR_GRID);
-      const int firstLine =
-          std::max(0, static_cast<int>(std::floor(visibleStartX / pixelsPerLine)));
-      for (float x = firstLine * pixelsPerLine; x <= visibleEndX; x += pixelsPerLine)
-        g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+      const double startTime =
+          coordMapper->projectToTimeline(visibleStartX / pixelsPerSecond);
+      const double endTime =
+          coordMapper->projectToTimeline(visibleEndX / pixelsPerSecond);
+      const double firstTime = std::floor(startTime / secondsPerLine) * secondsPerLine;
+      for (double time = firstTime; time <= endTime; time += secondsPerLine) {
+        const float x = coordMapper->timeToX(coordMapper->timelineToProject(time));
+        if (x >= visibleStartX)
+          g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+      }
     }
   }
 }

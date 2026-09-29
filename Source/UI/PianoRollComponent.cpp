@@ -254,6 +254,12 @@ PianoRollComponent::PianoRollComponent()
   waveformBackgroundRenderer = std::make_unique<WaveformBackgroundRenderer>();
   noteRenderer = std::make_unique<NoteRenderer>();
   pitchCurveRenderer = std::make_unique<PitchCurveRenderer>();
+  // Track mode draws inactive regions with their own renderer instances. They
+  // get no interaction handlers, so drags, hovers and selections on the
+  // active region can never show up in them.
+  previewNoteRenderer = std::make_unique<NoteRenderer>();
+  previewCurveRenderer = std::make_unique<PitchCurveRenderer>();
+  previewNoteRenderer->setGreyscale(true);
   scrollZoomController = std::make_unique<ScrollZoomController>();
   pitchEditor = std::make_unique<PitchEditor>();
   boxSelector = std::make_unique<BoxSelector>();
@@ -285,6 +291,8 @@ PianoRollComponent::PianoRollComponent()
   noteRenderer->setPitchToolController(pitchToolController.get());
   noteRenderer->setBoxSelector(boxSelector.get());
   pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
+  previewNoteRenderer->setCoordinateMapper(coordMapper.get());
+  previewCurveRenderer->setCoordinateMapper(coordMapper.get());
   pitchCurveRenderer->setSelectHandler(selectHandler_.get());
   pitchCurveRenderer->setPitchEditor(pitchEditor.get());
   scrollZoomController->setCoordinateMapper(coordMapper.get());
@@ -532,8 +540,26 @@ void PianoRollComponent::paint(juce::Graphics &g)
                 headerHeight - static_cast<int>(scrollY));
 
     drawGrid(g, false, true);
+    drawRegionPreviews(g);
+    drawInactiveRegionEdits(g, mainArea);
     drawAudioSourceRegionOverlay(g);
     drawLoopOverlay(g);
+
+    // Track mode shows the active modification only through its region's
+    // window; the rest of the take would sit on top of the other regions.
+    std::optional<juce::Graphics::ScopedSaveState> trackClip;
+    if (const auto span = getTrackModeActiveSpan())
+    {
+      trackClip.emplace(g);
+      const float height =
+          (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+      g.reduceClipRegion(juce::Rectangle<float>(
+                             timeToX(span->first), 0.0f,
+                             timeToX(span->second) - timeToX(span->first),
+                             height)
+                             .getSmallestIntegerContainer());
+    }
+
     drawGameChunksDebugOverlay(g);
     drawNotes(g, NoteRenderPass::Body);
     drawNotes(g, NoteRenderPass::HoverShadow);
@@ -621,6 +647,8 @@ void PianoRollComponent::resized()
 void PianoRollComponent::drawBackgroundWaveform(
     juce::Graphics &g, const juce::Rectangle<int> &visibleArea)
 {
+  // Cheap when unchanged; picks up a region resize restamping the span.
+  waveformBackgroundRenderer->setProjectDrawRange(getTrackModeActiveSpan());
   waveformBackgroundRenderer->draw(g, visibleArea);
 }
 
@@ -699,6 +727,226 @@ void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
         xToTime(static_cast<float>(scrollX + getVisibleContentWidth()));
     drawRange(audioData.timelineOffsetSeconds,
               std::max(duration, visibleEndSeconds), false);
+  }
+}
+
+void PianoRollComponent::setRegionPreviews(MainViewRegionPreviewList previews)
+{
+  regionPreviews = std::move(previews);
+  waveformBackgroundRenderer->setRegionPreviews(regionPreviews);
+  regionPreviewsEndSeconds = 0.0;
+  if (regionPreviews)
+    for (const auto &region : *regionPreviews)
+      regionPreviewsEndSeconds =
+          std::max(regionPreviewsEndSeconds, region.endSeconds);
+
+  // The pointer may now sit over a region that changed state.
+  if (swallowGestureUntilMouseUp && !isMouseButtonDown())
+    swallowGestureUntilMouseUp = false;
+
+  updateScrollBars();
+  repaint();
+}
+
+const MainViewRegionPreview *PianoRollComponent::findActiveRegionPreview() const
+{
+  if (!regionPreviews)
+    return nullptr;
+  for (const auto &region : *regionPreviews)
+    if (region.active)
+      return &region;
+  return nullptr;
+}
+
+bool PianoRollComponent::previewContains(const MainViewRegionPreview &region,
+                                         double projectSeconds) const
+{
+  // Previews are placed in host-timeline seconds; the canvas is in the active
+  // modification's time.
+  return region.contains(projectToTimeline(projectSeconds));
+}
+
+bool PianoRollComponent::isInsideActiveRegion(double timeSeconds) const
+{
+  if (project != nullptr)
+  {
+    const auto &ranges = project->getAudioData().playbackRegionRanges;
+    for (const auto &[start, end] : ranges)
+      if (timeSeconds >= start && timeSeconds < end)
+        return true;
+    if (!ranges.empty())
+      return false;
+  }
+
+  if (const auto *active = findActiveRegionPreview())
+    return previewContains(*active, timeSeconds);
+  return false;
+}
+
+const MainViewRegionPreview *
+PianoRollComponent::findInactiveRegionAt(double timeSeconds) const
+{
+  if (!regionPreviews || regionPreviews->empty())
+    return nullptr;
+  // Where regions overlap, the active one keeps the click.
+  if (isInsideActiveRegion(timeSeconds))
+    return nullptr;
+  for (const auto &region : *regionPreviews)
+    if (!region.active && previewContains(region, timeSeconds))
+      return &region;
+  return nullptr;
+}
+
+void PianoRollComponent::drawInactiveRegionEdits(
+    juce::Graphics &g, const juce::Rectangle<int> &mainArea)
+{
+  if (!trackViewMode || !regionPreviews || regionPreviews->empty() ||
+      mainArea.isEmpty() || pixelsPerSecond <= 0.0f)
+    return;
+
+  // Preserve the active region's waveform geometry with a light-centred grey
+  // note gradient, then desaturate the remaining edits in the cached layer.
+  // Playhead and hover repaints only blit it.
+  InactiveLayerKey key;
+  key.scrollX = scrollX;
+  key.scrollY = scrollY;
+  key.pixelsPerSecond = pixelsPerSecond;
+  key.pixelsPerSemitone = pixelsPerSemitone;
+  key.width = mainArea.getWidth();
+  key.height = mainArea.getHeight();
+  key.previews = regionPreviews.get();
+  key.displayOffset = projectToTimeline(0.0);
+  key.showDeltaPitch = showDeltaPitch;
+  key.showBasePitch = showBasePitch;
+
+  if (!inactiveLayer.isValid() || !(key == inactiveLayerKey))
+  {
+    inactiveLayerKey = key;
+    inactiveLayer = juce::Image(juce::Image::ARGB, key.width, key.height, true);
+    juce::Graphics lg(inactiveLayer);
+
+    const double visibleHostStart =
+        projectToTimeline(scrollX / pixelsPerSecond);
+    const double visibleHostEnd = projectToTimeline(
+        (scrollX + key.width) / pixelsPerSecond);
+    const float height =
+        (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+    const double savedScrollX = coordMapper->getScrollX();
+
+    for (const auto &region : *regionPreviews)
+    {
+      if (region.active || region.project == nullptr ||
+          region.endSeconds <= visibleHostStart ||
+          region.startSeconds >= visibleHostEnd)
+        continue;
+
+      // Draw the region's window as if the canvas were scrolled onto it: the
+      // window project's zero sits at this canvas time.
+      const double zero = timelineToProject(region.projectHostOffsetSeconds);
+      const double localScrollX = scrollX - zero * pixelsPerSecond;
+      coordMapper->setScrollX(localScrollX);
+
+      juce::Graphics::ScopedSaveState state(lg);
+      lg.addTransform(juce::AffineTransform::translation(
+          static_cast<float>(-localScrollX), static_cast<float>(-scrollY)));
+      const double windowStart =
+          region.startSeconds - region.projectHostOffsetSeconds;
+      const double windowEnd =
+          region.endSeconds - region.projectHostOffsetSeconds;
+      lg.reduceClipRegion(
+          juce::Rectangle<float>(
+              static_cast<float>(windowStart * pixelsPerSecond), 0.0f,
+              static_cast<float>((windowEnd - windowStart) * pixelsPerSecond),
+              height)
+              .getSmallestIntegerContainer());
+
+      previewNoteRenderer->setProject(region.project.get());
+      previewCurveRenderer->setProject(region.project.get());
+      previewNoteRenderer->draw(lg, NoteRenderer::Pass::Body, false, getWidth());
+
+      PitchCurveRenderer::Params params;
+      params.showDeltaPitch = showDeltaPitch;
+      params.showBasePitch = showBasePitch;
+      params.showUvInterpolationDebug = false;
+      params.showActualF0Debug = false;
+      params.showCleanedF0Debug = false;
+      params.showVocoderF0Debug = false;
+      params.componentWidth = getWidth();
+      previewCurveRenderer->draw(lg, params);
+    }
+
+    coordMapper->setScrollX(savedScrollX);
+    previewNoteRenderer->setProject(nullptr);
+    previewCurveRenderer->setProject(nullptr);
+    inactiveLayer.desaturate();
+  }
+
+  // World coordinates: the graphics origin is already scrolled. JUCE draws
+  // images with the current colour's opacity, and the region outlines just
+  // set a faint one - so set it explicitly. Slightly below full opacity to
+  // keep inactive regions a step darker than the active one.
+  constexpr float inactiveLayerOpacity = 0.6f;
+  juce::Graphics::ScopedSaveState opaque(g);
+  g.setOpacity(inactiveLayerOpacity);
+  g.drawImageAt(inactiveLayer, static_cast<int>(scrollX),
+                static_cast<int>(scrollY));
+}
+
+void PianoRollComponent::drawRegionPreviews(juce::Graphics &g)
+{
+  if (!regionPreviews || regionPreviews->empty())
+    return;
+
+  const float height =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  // Previews carry host-timeline seconds; compare in host time and place
+  // them on the canvas through the active modification's display offset.
+  const double visibleStart =
+      projectToTimeline(xToTime(static_cast<float>(scrollX)));
+  const double visibleEnd = projectToTimeline(
+      xToTime(static_cast<float>(scrollX + getVisibleContentWidth())));
+  const auto hx = [this](double hostSeconds) {
+    return timeToX(timelineToProject(hostSeconds));
+  };
+
+  // drawAudioSourceRegionOverlay() paints the active backdrop from the canvas
+  // project. While that project is missing (analysis pending) the active
+  // region still gets its backdrop from the preview.
+  const bool projectDrawsActiveBackdrop =
+      project != nullptr &&
+      project->getAudioData().waveform.getNumSamples() > 0 &&
+      project->getAudioData().getDuration() > 0.0f;
+
+  for (const auto &region : *regionPreviews)
+  {
+    if (region.endSeconds <= visibleStart || region.startSeconds >= visibleEnd ||
+        region.endSeconds <= region.startSeconds)
+      continue;
+
+    const float x1 = hx(region.startSeconds);
+    const float x2 = hx(region.endSeconds);
+
+    if (region.active)
+    {
+      if (!projectDrawsActiveBackdrop)
+      {
+        g.setColour(juce::Colours::white.withAlpha(0.04f));
+        g.fillRect(x1, 0.0f, x2 - x1, height);
+        g.setColour(juce::Colours::white.withAlpha(0.25f));
+        g.fillRect(x1 - 0.5f, 0.0f, 1.0f, height);
+        g.fillRect(x2 - 0.5f, 0.0f, 1.0f, height);
+      }
+    }
+    else
+    {
+      // No backdrop: only the active region carries the backdrop colour.
+      g.setColour(juce::Colours::white.withAlpha(0.12f));
+      g.fillRect(x1 - 0.5f, 0.0f, 1.0f, height);
+      g.fillRect(x2 - 0.5f, 0.0f, 1.0f, height);
+      // The region's notes and pitch curve are drawn by
+      // drawInactiveRegionEdits() with the active region's renderers.
+    }
+
   }
 }
 
@@ -1158,11 +1406,12 @@ bool PianoRollComponent::shouldSnapCycleToGrid() const
 double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const
 {
   if (!shouldSnapCycleToGrid())
-    return std::max(0.0, timeSeconds);
+    return std::max(getTimelineStart(), timeSeconds);
 
   const double interval = getTimelineGridSeconds();
-  const double snapped = std::round(timeSeconds / interval) * interval;
-  return std::max(0.0, snapped);
+  const double snapped =
+      coordMapper->snapProjectTimeToTimelineGrid(timeSeconds, interval);
+  return std::max(getTimelineStart(), snapped);
 }
 
 bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
@@ -1198,7 +1447,7 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
     const float zoomFactorX = std::pow(1.0065f, deltaX);
     const double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
     const int visibleWidth = getVisibleContentWidth();
-    const double totalTime = getTimelineDuration();
+    const double totalTime = getTimelineLength();
     const float minPpsX =
         (visibleWidth > 0 && totalTime > 0.0)
             ? std::max(MIN_PIXELS_PER_SECOND,
@@ -1211,7 +1460,7 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
     coordMapper->setPixelsPerSecond(newPpsX);
 
     const float newMouseX = static_cast<float>(timeAtMouse * newPpsX);
-    scrollX = std::max(0.0, static_cast<double>(newMouseX - mouseX));
+    scrollX = clampScrollX(static_cast<double>(newMouseX - mouseX));
     coordMapper->setScrollX(scrollX);
   }
 
@@ -1252,8 +1501,25 @@ void PianoRollComponent::applyModifierPanDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 {
+  swallowGestureUntilMouseUp = false;
+
   if (!project)
+  {
+    // The active region may still be analysing; the other regions stay
+    // clickable so the user can move on to one that is ready.
+    if (e.mods.isLeftButtonDown() && isCanvasPoint(e) && onInactiveRegionClicked)
+    {
+      const float x = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+      if (const auto *region = findInactiveRegionAt(xToTime(x)))
+      {
+        const juce::String key = region->key;
+        swallowGestureUntilMouseUp = true;
+        onInactiveRegionClicked(key);
+        repaint();
+      }
+    }
     return;
+  }
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
@@ -1307,7 +1573,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (e.mods.isMiddleButtonDown() && e.x >= pianoKeysWidth)
   {
     middleButtonScrubActive = true;
-    double time = std::max(0.0, xToTime(adjustedX));
+    double time = std::max(getTimelineStart(), xToTime(adjustedX));
     setCursorTime(time);
     if (onSeek)
       onSeek(time);
@@ -1336,7 +1602,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   // Handle timeline clicks - seek to position
   if (e.y < timelineHeight && e.x >= pianoKeysWidth)
   {
-    double time = std::max(0.0, xToTime(adjustedX));
+    double time = std::max(getTimelineStart(), xToTime(adjustedX));
     setCursorTime(time);
     if (onSeek)
       onSeek(time);
@@ -1372,6 +1638,61 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
 
+  // A click anywhere inside an inactive region (empty space or one of its
+  // notes) makes that region the active one. When the owner can swap the
+  // region's project in right away, the same click carries on into it, so a
+  // note can be selected or dragged in one gesture.
+  if (e.mods.isLeftButtonDown() && onInactiveRegionClicked && isCanvasPoint(e))
+  {
+    const double clickTime = xToTime(adjustedX);
+    if (const auto *region = findInactiveRegionAt(clickTime))
+    {
+      const juce::String key = region->key; // previews may be replaced below
+      const double clickHostTime = projectToTimeline(clickTime);
+      const auto *previousProject = project;
+      const double previousOffset = coordMapper->getTimelineDisplayOffset();
+      const double previousHostScroll = getHostScrollSeconds();
+      const double previousScrollY = scrollY;
+
+      onInactiveRegionClicked(key);
+      repaint();
+
+      // The new region may belong to another modification (new project) or be
+      // a sibling of this one (same project, new window and offset). Either
+      // way the host view must not have moved for the click to carry on.
+      const bool regionChanged =
+          project != previousProject ||
+          !juce::approximatelyEqual(coordMapper->getTimelineDisplayOffset(),
+                                    previousOffset);
+      const bool viewStill =
+          std::abs(getHostScrollSeconds() - previousHostScroll) * pixelsPerSecond <
+              0.5 &&
+          juce::approximatelyEqual(scrollY, previousScrollY);
+      const double newClickTime = timelineToProject(clickHostTime);
+      const bool continuesIntoRegion = project != nullptr && regionChanged &&
+                                       viewStill &&
+                                       isInsideActiveRegion(newClickTime);
+      if (!continuesIntoRegion)
+      {
+        swallowGestureUntilMouseUp = true;
+        return;
+      }
+
+      // Same screen point, now in the new region's time.
+      adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+      adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+      setHoveredNote(nullptr);
+    }
+    else if (trackViewMode && project != nullptr &&
+             !isInsideActiveRegion(clickTime))
+    {
+      // Outside every region in Track mode: the active take's audio there is
+      // hidden, so nothing may be edited.
+      swallowGestureUntilMouseUp = true;
+      return;
+    }
+  }
+
   if (editMode == EditMode::Select)
   {
     if (auto *note = findPreviewButtonNoteAt(adjustedX, adjustedY))
@@ -1393,10 +1714,12 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
   if (e.mods.isPopupMenu())
     return;
+  if (swallowGestureUntilMouseUp)
+    return;
   if (middleButtonScrubActive)
   {
     float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-    double time = std::max(0.0, xToTime(adjustedX));
+    double time = std::max(getTimelineStart(), xToTime(adjustedX));
     setCursorTime(time);
     if (onSeek)
       onSeek(time);
@@ -1450,6 +1773,11 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
   if (e.mods.isPopupMenu())
     return;
+  if (swallowGestureUntilMouseUp)
+  {
+    swallowGestureUntilMouseUp = false;
+    return;
+  }
   if (middleButtonScrubActive)
   {
     middleButtonScrubActive = false;
@@ -1511,6 +1839,33 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       !altControlsNoteSnap)
   {
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    return;
+  }
+
+  // Track mode hides the active take outside its region: no hover there.
+  if (!showZoomCursor && isCanvasPoint(e) && trackViewMode && project &&
+      !isInsideActiveRegion(xToTime(adjustedX)) &&
+      findInactiveRegionAt(xToTime(adjustedX)) == nullptr)
+  {
+    setHoveredNote(nullptr);
+    loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
+    setMouseCursor(loopDragHandler_->isHoveringHandle()
+                       ? juce::MouseCursor::LeftRightResizeCursor
+                       : juce::MouseCursor::NormalCursor);
+    return;
+  }
+
+  // Inactive regions are read-only previews: no note hover, and a pointing
+  // hand to show that a click will make the region active.
+  if (!showZoomCursor && isCanvasPoint(e) &&
+      findInactiveRegionAt(xToTime(adjustedX)) != nullptr)
+  {
+    setHoveredNote(nullptr);
+    loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
+    if (loopDragHandler_->isHoveringHandle())
+      setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+    else
+      setMouseCursor(juce::MouseCursor::PointingHandCursor);
     return;
   }
 
@@ -1741,6 +2096,11 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  // Inactive regions are read-only: the first click already asked for the
+  // region to become active, so do not also toggle transport there.
+  if (findInactiveRegionAt(xToTime(adjustedX)) != nullptr)
+    return;
+
   // Anchors may be placed vertically outside their owning note rectangle, so
   // give Pitch Drawing mode first chance to remove one before the empty-canvas
   // double-click transport behavior runs.
@@ -1754,7 +2114,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   if (!findNoteAt(adjustedX, adjustedY))
   {
     if (onCanvasEmptyDoubleClick)
-      onCanvasEmptyDoubleClick(std::max(0.0, xToTime(adjustedX)));
+      onCanvasEmptyDoubleClick(std::max(getTimelineStart(), xToTime(adjustedX)));
     return;
   }
 
@@ -1821,7 +2181,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
 
       // Adjust scroll position to keep time at mouse position fixed
       double newScrollX = timeAtMouse * pixelsPerSecond - mouseX;
-      newScrollX = std::max(0.0, newScrollX);
+      newScrollX = clampScrollX(newScrollX);
       scrollX = newScrollX;
       coordMapper->setScrollX(newScrollX);
 
@@ -1845,7 +2205,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     if (std::abs(deltaX) > 0.001f)
     {
       double newScrollX = scrollX - deltaX * scrollMultiplier;
-      newScrollX = std::max(0.0, newScrollX);
+      newScrollX = clampScrollX(newScrollX);
       horizontalScrollBar.setCurrentRangeStart(newScrollX);
     }
 
@@ -1889,11 +2249,12 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
           juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, newPps);
 
       // Adjust scroll to keep mouse position stable
+      pixelsPerSecond = newPps;
+      coordMapper->setPixelsPerSecond(newPps);
       float newMouseX = static_cast<float>(timeAtMouse * newPps);
-      scrollX = std::max(0.0, static_cast<double>(newMouseX - mouseX));
+      scrollX = clampScrollX(static_cast<double>(newMouseX - mouseX));
       coordMapper->setScrollX(scrollX);
 
-      pixelsPerSecond = newPps;
       coordMapper->setPixelsPerSecond(newPps);
       updateScrollBars();
       repaint();
@@ -1909,7 +2270,7 @@ void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
 {
   // Pinch-to-zoom on trackpad - horizontal zoom, center on mouse position
   const int visibleWidth = getVisibleContentWidth();
-  const double totalTime = getTimelineDuration();
+  const double totalTime = getTimelineLength();
   const float minPpsX =
       (visibleWidth > 0 && totalTime > 0.0)
           ? std::max(MIN_PIXELS_PER_SECOND,
@@ -1922,11 +2283,12 @@ void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
   newPps = juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, newPps);
 
   // Adjust scroll to keep mouse position stable
+  pixelsPerSecond = newPps;
+  coordMapper->setPixelsPerSecond(newPps);
   float newMouseX = static_cast<float>(timeAtMouse * newPps);
-  scrollX = std::max(0.0, static_cast<double>(newMouseX - mouseX));
+  scrollX = clampScrollX(static_cast<double>(newMouseX - mouseX));
   coordMapper->setScrollX(scrollX);
 
-  pixelsPerSecond = newPps;
   coordMapper->setPixelsPerSecond(newPps);
   updateScrollBars();
   repaint();
@@ -1940,10 +2302,7 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 {
   if (scrollBar == &horizontalScrollBar)
   {
-    const double totalWidth = getTimelineDuration() * pixelsPerSecond;
-    const double maxScrollX =
-        std::max(0.0, totalWidth - static_cast<double>(getVisibleContentWidth()));
-    scrollX = juce::jlimit(0.0, maxScrollX, newRangeStart);
+    scrollX = clampScrollX(newRangeStart);
     coordMapper->setScrollX(scrollX);
 
     // Notify scroll changed for synchronization
@@ -2127,7 +2486,7 @@ void PianoRollComponent::setDragSnapMode(DragSnapMode mode)
 
 void PianoRollComponent::setPitchReferenceHz(int hz)
 {
-  const int normalized = juce::jlimit(430, 450, hz);
+  const int normalized = juce::jlimit(420, 450, hz);
   if (pitchReferenceHz == normalized)
     return;
 
@@ -2355,8 +2714,31 @@ void PianoRollComponent::setTimelineDisplayOffset(double seconds)
       juce::approximatelyEqual(coordMapper->getTimelineDisplayOffset(), seconds))
     return;
 
+  const double previous = coordMapper->getTimelineDisplayOffset();
   coordMapper->setTimelineDisplayOffset(seconds);
+
+  if (trackViewMode)
+  {
+    // The canvas is in the active modification's time, so a new offset (a
+    // different region became active, or it moved) shifts where the host
+    // timeline sits on it. Move the scroll with it so the track itself stays
+    // still on screen.
+    scrollX -= (seconds - previous) * pixelsPerSecond;
+    coordMapper->setViewStartSeconds(getTimelineStart());
+    coordMapper->setScrollX(scrollX);
+    updateScrollBars();
+  }
+
+  // Region previews and the Track-mode clip are placed through the offset.
+  waveformBackgroundRenderer->setProjectDrawRange(getTrackModeActiveSpan());
+  invalidateWaveformCache();
+  updatePreviewButtonBounds();
   repaint();
+}
+
+double PianoRollComponent::getHostScrollSeconds() const
+{
+  return projectToTimeline(scrollX / std::max(1.0e-6, (double)pixelsPerSecond));
 }
 
 double PianoRollComponent::projectToTimeline(double projectSeconds) const
@@ -2417,7 +2799,7 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
 {
   float oldPps = pixelsPerSecond;
   const int visibleWidth = getVisibleContentWidth();
-  const double totalTime = getTimelineDuration();
+  const double totalTime = getTimelineLength();
   const float minPpsX =
       (visibleWidth > 0 && totalTime > 0.0)
           ? std::max(MIN_PIXELS_PER_SECOND,
@@ -2437,8 +2819,9 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
 
     // Calculate new scroll position to keep cursor at same relative position
     float newCursorX = static_cast<float>(cursorTime * newPps);
-    scrollX = static_cast<double>(newCursorX - cursorRelativeX);
-    scrollX = std::max(0.0, scrollX);
+    pixelsPerSecond = newPps;
+    coordMapper->setPixelsPerSecond(newPps);
+    scrollX = clampScrollX(static_cast<double>(newCursorX - cursorRelativeX));
     coordMapper->setScrollX(scrollX);
   }
 
@@ -2495,10 +2878,7 @@ void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 
 void PianoRollComponent::setScrollX(double x)
 {
-  const double totalWidth = getTimelineDuration() * pixelsPerSecond;
-  const double maxScrollX =
-      std::max(0.0, totalWidth - static_cast<double>(getVisibleContentWidth()));
-  const double clampedX = juce::jlimit(0.0, maxScrollX, x);
+  const double clampedX = clampScrollX(x);
 
   if (std::abs(scrollX - clampedX) < 0.01)
     return; // No significant change
@@ -3291,19 +3671,18 @@ void PianoRollComponent::updateScrollBars()
 {
   if (project)
   {
-    float totalWidth =
-        static_cast<float>(getTimelineDuration()) * pixelsPerSecond;
     float totalHeight = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
     int visibleWidth = getVisibleContentWidth();
     int visibleHeight = getVisibleContentHeight();
-    const double maxScrollX =
-        std::max(0.0, static_cast<double>(totalWidth) -
-                          static_cast<double>(visibleWidth));
-    scrollX = juce::jlimit(0.0, maxScrollX, scrollX);
+    scrollX = clampScrollX(scrollX);
     coordMapper->setScrollX(scrollX);
 
-    horizontalScrollBar.setRangeLimits(0, totalWidth);
+    horizontalScrollBar.setRangeLimits(
+        getTimelineStart() * pixelsPerSecond,
+        std::max(getTimelineStart() * pixelsPerSecond +
+                     static_cast<double>(visibleWidth),
+                 getTimelineDuration() * pixelsPerSecond));
     horizontalScrollBar.setCurrentRange(scrollX, visibleWidth);
 
     verticalScrollBar.setRangeLimits(0, totalHeight);
@@ -3311,8 +3690,34 @@ void PianoRollComponent::updateScrollBars()
   }
 }
 
+double PianoRollComponent::getTimelineStart() const
+{
+  // Clip mode: the canvas starts at the modification's own time zero.
+  // Track mode: it starts at the host's time zero, which in the active
+  // modification's time can be negative (a region placed later in the song
+  // than its offset in the take) or positive.
+  return trackViewMode ? timelineToProject(0.0) : 0.0;
+}
+
 double PianoRollComponent::getTimelineDuration() const
 {
+  if (trackViewMode)
+  {
+    // The track's extent: every region on it plus the active region. The
+    // rest of the active take is hidden in Track mode, so it does not extend
+    // the timeline.
+    double end = std::max(liveTimelineEndSeconds, hostTimelineEndSeconds);
+    if (regionPreviewsEndSeconds > 0.0)
+      end = std::max(end, timelineToProject(regionPreviewsEndSeconds));
+    if (const auto span = getTrackModeActiveSpan())
+      end = std::max(end, span->second);
+    else if (project != nullptr)
+      end = std::max(end, static_cast<double>(
+                              project->getAudioData().getDuration()));
+    end += getTimelineBarSeconds();
+    return std::max(end, getTimelineStart() + getTimelineBarSeconds());
+  }
+
   const double projectDuration =
       project ? static_cast<double>(project->getAudioData().getDuration()) : 0.0;
   double timelineDuration =
@@ -3326,6 +3731,47 @@ double PianoRollComponent::getTimelineDuration() const
     timelineDuration += getTimelineBarSeconds();
 
   return timelineDuration;
+}
+
+double PianoRollComponent::getTimelineLength() const
+{
+  return std::max(0.0, getTimelineDuration() - getTimelineStart());
+}
+
+double PianoRollComponent::clampScrollX(double x) const
+{
+  const double minScrollX = getTimelineStart() * pixelsPerSecond;
+  const double maxScrollX =
+      std::max(minScrollX, getTimelineDuration() * pixelsPerSecond -
+                               static_cast<double>(getVisibleContentWidth()));
+  return juce::jlimit(minScrollX, maxScrollX, x);
+}
+
+std::optional<std::pair<double, double>>
+PianoRollComponent::getTrackModeActiveSpan() const
+{
+  if (!trackViewMode || project == nullptr)
+    return std::nullopt;
+  const auto &ranges = project->getAudioData().playbackRegionRanges;
+  if (ranges.empty() || ranges.front().second <= ranges.front().first)
+    return std::nullopt;
+  return ranges.front();
+}
+
+void PianoRollComponent::setTrackViewMode(bool shouldShowTrack)
+{
+  if (trackViewMode == shouldShowTrack)
+    return;
+
+  trackViewMode = shouldShowTrack;
+  if (coordMapper)
+    coordMapper->setViewStartSeconds(getTimelineStart());
+  waveformBackgroundRenderer->setProjectDrawRange(getTrackModeActiveSpan());
+  invalidateWaveformCache();
+  setHoveredNote(nullptr);
+  updateScrollBars();
+  updatePreviewButtonBounds();
+  repaint();
 }
 
 void PianoRollComponent::reapplyBasePitchForNote(Note *note)

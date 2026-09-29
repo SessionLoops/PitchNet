@@ -9,6 +9,7 @@
 #include "NonAraCaptureController.h"
 #include <atomic>
 #include <map>
+#include <set>
 #include <limits>
 #include <memory>
 
@@ -179,8 +180,22 @@ public:
   juce::String getActiveAraRegionSelector() const {
     return activeRegionSelector;
   }
+  // Read-only view of a modification's Project, for drawing the regions of a
+  // track in Track mode. For the modification on the canvas this is the live
+  // canvas Project (fromCanvas = true, revision = araCanvasEditSerial, which
+  // moves on every edit); otherwise the stored Project (revision = its store
+  // revision). Loads an inactive modification's saved edit shell and render
+  // on demand; nullptr when no analysis has been saved or loaded yet.
+  // Message thread only; the pointer is valid until the next region
+  // switch/install or edit.
+  const Project *getAraProjectForPreview(PitchNetAudioModification *modification,
+                                         std::uint64_t &revision,
+                                         bool &fromCanvas);
+  void updateAraTrackAnalysisQueue(const std::vector<juce::ARAPlaybackRegion *> &regions);
+  void cancelAraTrackAnalysisQueue();
+  bool isAraCanvasWorkerRunning() const;
   bool isAraRegionCanvasAnalysisPending() const {
-    return regionCanvasAnalysisPending.load();
+    return regionCanvasAnalysisPending.load() || trackAnalysisRunning;
   }
 
   // Analyse a single region's audio into its own persistent Project (keyed by
@@ -403,6 +418,9 @@ private:
   // raw pointers retained by that region's undo actions.
   std::map<juce::String, AraRegionState> araRegions;
   juce::String activeRegionKey;
+  // Bumped whenever the canvas Project changes, so Track-mode previews of the
+  // active modification's other regions can tell when to rebuild.
+  std::uint64_t araCanvasEditSerial = 0;
   // The selected window onto activeRegionKey's modification. Siblings share
   // the key, so this is what distinguishes them for selection and placement.
   juce::String activeRegionSelector;
@@ -429,6 +447,14 @@ private:
   std::atomic<bool> regionCanvasAnalysisPending{false};
   std::atomic<std::uint64_t> regionCanvasAnalysisGeneration{0};
   juce::String pendingRegionCanvasAnalysisKey;
+  // Message-thread queue bookkeeping; never retain host-owned region pointers.
+  std::set<juce::String> trackAnalysisAttempted;
+  bool trackAnalysisRunning = false;
+  bool trackAnalysisCancelled = false;
+  int trackAnalysisTotal = 0;
+  int trackAnalysisFinished = 0;
+  int trackAnalysisFailed = 0;
+
   std::atomic<bool> regionCanvasRenderPendingRerun{false};
 
   // Non-ARA capture (Stage 2A): decoupled controller

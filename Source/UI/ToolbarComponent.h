@@ -122,6 +122,10 @@ public:
     std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
+    // Clip / Track view toggle (ARA only). Hidden until made available.
+    void setTrackViewAvailable(bool available);
+    void setTrackViewMode(bool track);
+    std::function<void(bool)> onTrackViewModeChanged; // true = Track mode
     // Note: Removed onRender - Melodyne-style: edits automatically trigger real-time processing
 
 private:
@@ -151,6 +155,9 @@ private:
     Button undoButton;
     Button redoButton;
     ToggleButton parametersButton;
+    ToggleButton trackViewButton;
+    bool trackViewAvailable = false;
+    void refreshTrackViewTooltip();
     juce::Rectangle<int> toolContainerBounds;    // For drawing container background
     juce::Rectangle<int> transportCapsuleBounds; // For drawing transport capsule background
     juce::Rectangle<int> timeCapsuleBounds;      // For drawing centered time capsule

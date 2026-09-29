@@ -337,7 +337,7 @@ ParameterPanel::ParameterPanel()
         button->addListener(this);
     }
 
-    referenceSlider.setRange(430.0, 450.0, 1.0);
+    referenceSlider.setRange(420.0, 450.0, 1.0);
     referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
     referenceSlider.setNumDecimalPlacesToDisplay(0);
     referenceSlider.setTextValueSuffix(" Hz");
@@ -1353,7 +1353,7 @@ void ParameterPanel::setDragSnapModeInternal(DragSnapMode mode, bool notify)
 
 void ParameterPanel::setPitchReferenceInternal(int hz, bool notify)
 {
-    const int normalized = juce::jlimit(430, 450, hz);
+    const int normalized = juce::jlimit(420, 450, hz);
     const bool changed = pitchReferenceHz != normalized;
     pitchReferenceHz = normalized;
     referenceSlider.setValue(normalized, juce::dontSendNotification);

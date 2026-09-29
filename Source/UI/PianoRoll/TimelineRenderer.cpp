@@ -74,7 +74,7 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
             static_cast<double>(beatIndex) * beatSeconds);
         if (time > duration + beatSeconds)
           break;
-        if (time < -beatSeconds)
+        if (time < coordMapper->getViewStartSeconds() - beatSeconds)
           continue;
 
         const float x =
@@ -117,9 +117,11 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
     secondsPerTick = 10.0f;
 
   // Ticks are labelled in HOST time and drawn at the matching project time.
-  const auto firstTick =
-      static_cast<float>(std::floor(coordMapper->projectToTimeline(0.0) /
-                                    secondsPerTick) * secondsPerTick);
+  const auto firstTick = static_cast<float>(
+      std::floor(coordMapper->projectToTimeline(
+                     coordMapper->getViewStartSeconds()) /
+                 secondsPerTick) *
+      secondsPerTick);
   for (float time = firstTick;
        time <= static_cast<float>(coordMapper->projectToTimeline(duration)) +
                    secondsPerTick;
@@ -240,11 +242,15 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
       while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
         beatStep *= 2;
 
+      // Beat indices are HOST timeline positions; the view is in project time.
+      const double viewStartTimeline =
+          coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
+      const double viewEndTimeline = coordMapper->projectToTimeline(
+          (scrollX + loopArea.getWidth()) / pixelsPerSecond);
       const int firstBeat = std::max(
-          0, static_cast<int>(std::floor((scrollX / pixelsPerSecond) / beatSeconds)));
-      const int lastBeat = static_cast<int>(
-                               std::ceil((scrollX + loopArea.getWidth()) / pixelsPerSecond / beatSeconds)) +
-                           beatStep;
+          0, static_cast<int>(std::floor(viewStartTimeline / beatSeconds)));
+      const int lastBeat =
+          static_cast<int>(std::ceil(viewEndTimeline / beatSeconds)) + beatStep;
 
       for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
       {
@@ -254,7 +260,7 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
             static_cast<double>(beatIndex) * beatSeconds);
         if (time > duration + beatSeconds)
           break;
-        if (time < -beatSeconds)
+        if (time < coordMapper->getViewStartSeconds() - beatSeconds)
           continue;
 
         const float x =
@@ -288,15 +294,17 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
     else
       secondsPerTick = 10.0f;
 
-    for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick)
+    const double majorTickSeconds = secondsPerTick * 2.0;
+    const double visibleStart = coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
+    const double visibleEnd = coordMapper->projectToTimeline(
+        (scrollX + loopArea.getWidth()) / pixelsPerSecond);
+    const double firstTick = std::floor(visibleStart / majorTickSeconds) * majorTickSeconds;
+    for (double time = firstTick; time <= visibleEnd; time += majorTickSeconds)
     {
       const float x =
-          pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
+          pianoKeysWidth + coordMapper->timeToX(coordMapper->timelineToProject(time)) -
+          static_cast<float>(scrollX);
       if (x < pianoKeysWidth || x > loopArea.getRight())
-        continue;
-
-      const bool isMajor = std::fmod(time, secondsPerTick * 2.0f) < 0.001f;
-      if (!isMajor)
         continue;
 
       g.setColour(markerColour);

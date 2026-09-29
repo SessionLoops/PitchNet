@@ -3,6 +3,8 @@
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
+#include "../RegionPreview.h"
+#include <optional>
 
 class PitchToolController;
 
@@ -43,6 +45,22 @@ public:
   }
 
   void draw(juce::Graphics &g, const juce::Rectangle<int> &visibleArea);
+  // ARA: the other regions of the track are drawn into the same strip, with
+  // the same envelope and colour as the active region's waveform.
+  // Track mode: draw the project's waveform only within this span (project
+  // seconds); std::nullopt draws all of it.
+  void setProjectDrawRange(std::optional<std::pair<double, double>> range)
+  {
+    if (range == projectDrawRange)
+      return;
+    projectDrawRange = range;
+    invalidateCache();
+  }
+  void setRegionPreviews(MainViewRegionPreviewList previews)
+  {
+    regionPreviews = std::move(previews);
+    invalidateCache();
+  }
   void beginLiveWaveform(double sampleRate, double timelineOffsetSeconds);
   void appendLiveWaveform(const juce::AudioBuffer<float> &buffer);
 
@@ -57,6 +75,9 @@ private:
 
   CoordinateMapper *coordMapper = nullptr;
   Project *project = nullptr;
+  MainViewRegionPreviewList regionPreviews;
+  // Track mode: only this span of the project (project seconds) is drawn.
+  std::optional<std::pair<double, double>> projectDrawRange;
   PitchToolController* pitchToolController = nullptr;
   bool cachedAmplitudePreview = false;
 

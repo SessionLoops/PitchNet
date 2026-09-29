@@ -623,6 +623,20 @@ MainComponent::MainComponent(bool enableAudioDevice)
   LOG("MainComponent: setting up callbacks...");
 
   // Initialize view state from settings
+  pianoRollView.setOverviewVisible(settingsManager->getOverviewVisible());
+  pianoRollView.onOverviewVisibilityChanged = [this](bool visible)
+  {
+    settingsManager->setOverviewVisible(visible);
+    settingsManager->saveConfig();
+  };
+  toolbar.onTrackViewModeChanged = [this](bool track)
+  {
+    pianoRollView.setTrackViewMode(track);
+    settingsManager->setTrackViewMode(track);
+    settingsManager->saveConfig();
+    if (onTrackViewModeChanged)
+      onTrackViewModeChanged(track);
+  };
   pianoRoll.setShowDeltaPitch(settingsManager->getShowDeltaPitch());
   pianoRoll.setShowBasePitch(settingsManager->getShowBasePitch());
   pianoRoll.setShowSegmentsDebug(
@@ -847,6 +861,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // real-time processing
 
   // Setup piano roll callbacks
+  pianoRoll.onInactiveRegionClicked = [this](const juce::String &regionKey)
+  {
+    if (!onRegionActivationRequested)
+      return;
+    const bool wasFromCanvas = regionActivationFromCanvas;
+    regionActivationFromCanvas = true;
+    onRegionActivationRequested(regionKey);
+    regionActivationFromCanvas = wasFromCanvas;
+  };
   pianoRoll.onSeek = [this](double time)
   { seek(time); };
   pianoRoll.onCanvasEmptyDoubleClick = [this](double time)
@@ -1244,7 +1267,7 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
     toolbar.setTransportEnabled(true);
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
     applyCachedHostLoopRange();
-    if (hasAnalyzedProject())
+    if (hasAnalyzedProject() && !regionActivationFromCanvas)
       fitAnalyzedPitchRangeToView(*project);
   }
   repaint();
@@ -3123,7 +3146,24 @@ void MainComponent::appendLiveRecordingAudio(
 
 void MainComponent::setTimelineDisplayOffset(double seconds)
 {
+  // Switching active modifications changes project-time coordinates, not the
+  // host transport. Preserve both the drawn cursor and any queued host update
+  // in host time so the next timer tick cannot restore the old coordinates.
+  const bool preserveTrackCursor = pianoRoll.isTrackViewMode();
+  const double cursorHostTime =
+      pianoRoll.projectToTimeline(pianoRoll.getCursorTime());
+  const double pendingHostTime =
+      pianoRoll.projectToTimeline(pendingCursorTime.load());
+
   pianoRoll.setTimelineDisplayOffset(seconds);
+
+  if (preserveTrackCursor)
+  {
+    const double cursorTime = pianoRoll.timelineToProject(cursorHostTime);
+    pianoRoll.setCursorTime(cursorTime);
+    pendingCursorTime.store(pianoRoll.timelineToProject(pendingHostTime));
+    toolbar.setCurrentTime(cursorTime);
+  }
 
   // pianoRoll's own setter skips repainting when the offset is unchanged,
   // which a right-edge-only resize never changes (the offset is purely
@@ -3137,6 +3177,9 @@ void MainComponent::setTimelineDisplayOffset(double seconds)
   // through this same offset - a moved region invalidates that mapping until
   // it is recomputed here.
   applyCachedHostLoopRange();
+  // Track mode places every other region through this offset.
+  if (pianoRoll.isTrackViewMode())
+    pianoRollView.refreshOverview();
 }
 
 void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
@@ -3295,7 +3338,7 @@ void MainComponent::clearHostAudio()
 
 void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
 {
-  const double start = std::max(0.0, startSeconds);
+  const double start = std::max(pianoRoll.getTimelineStart(), startSeconds);
   const double end = std::max(start, endSeconds);
   const double pixelsPerSecond = pianoRoll.getPixelsPerSecond();
   const int visibleWidth = pianoRoll.getVisibleContentWidth();
@@ -3310,7 +3353,7 @@ void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
   else
     newScrollX -= static_cast<double>(visibleWidth) * 0.12;
 
-  pianoRoll.setScrollX(std::max(0.0, newScrollX));
+  pianoRoll.setScrollX(newScrollX); // clamps to the timeline start/end
   pianoRollView.refreshOverview();
 
   // Let a host selection visually win over the playback follow cursor for a
@@ -3328,7 +3371,10 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   // in project time. Convert here, at the boundary. Do not clamp before the
   // conversion - with a negative display offset a valid host position maps to
   // a valid project position that a zero clamp would destroy.
-  double displayTime = std::max(0.0, pianoRoll.timelineToProject(timeSeconds));
+  // Track mode may show host time before the active take's own zero, i.e. a
+  // negative project time; the canvas's timeline start is the true floor.
+  double displayTime = std::max(pianoRoll.getTimelineStart(),
+                                pianoRoll.timelineToProject(timeSeconds));
 
   // The host playhead can continue past the active ARA region. Retain that
   // furthest position as part of the timeline so follow-playback can scroll
@@ -3527,6 +3573,20 @@ void MainComponent::triggerResynthesis()
   notifyProjectDataChanged();
   if (onPitchEditFinished)
     onPitchEditFinished();
+}
+
+void MainComponent::setTrackViewModeAvailable(bool available) {
+  toolbar.setTrackViewAvailable(available);
+  pianoRollView.setTrackViewModeAvailable(available);
+  const bool track = available && settingsManager != nullptr &&
+                     settingsManager->getTrackViewMode();
+  pianoRollView.setTrackViewMode(track);
+  toolbar.setTrackViewMode(track);
+}
+
+void MainComponent::updateRegionPreviews(MainViewRegionPreviewList previews) {
+  pianoRoll.setRegionPreviews(previews);
+  pianoRollView.setRegionPreviews(std::move(previews));
 }
 
 void MainComponent::setRegionListVisible(bool visible) {

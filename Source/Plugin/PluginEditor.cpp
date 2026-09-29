@@ -5,9 +5,11 @@
 #include "../Utils/Constants.h"
 
 #include <algorithm>
+#include <cmath>
 
 #if JucePlugin_Enable_ARA
 #include "ARADocumentController.h"
+#include "PitchNetAudioModification.h"
 #endif
 
 namespace
@@ -15,6 +17,170 @@ namespace
 #if JucePlugin_Enable_ARA
 // How often the Regions card re-reads the host's region list.
 constexpr int kRegionListRefreshHz = 8;
+#endif
+
+#if JucePlugin_Enable_ARA
+// A copy of the part of `source` between windowStart and windowEnd
+// (modification seconds), rebased so its time zero is the window's first
+// analysis frame, and holding only what the note and pitch-curve renderers read:
+// notes, pitch arrays and the window's audio (for the notes' inline waveform).
+// No mel spectrogram or original audio, so its size follows the region, not
+// the take. windowZeroSeconds receives the window zero in modification time.
+std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
+                                                 double windowStart,
+                                                 double windowEnd,
+                                                 double &windowZeroSeconds)
+{
+  windowZeroSeconds = 0.0;
+  const auto &src = source.getAudioData();
+  const int frameCount = static_cast<int>(src.f0.size());
+  if (frameCount <= 0 || windowEnd <= windowStart)
+    return nullptr;
+
+  const double framesPerSecond =
+      static_cast<double>(SAMPLE_RATE) / static_cast<double>(HOP_SIZE);
+  int firstFrame = juce::jlimit(
+      0, frameCount, static_cast<int>(std::floor(windowStart * framesPerSecond)));
+  int lastFrame = juce::jlimit(
+      firstFrame, frameCount,
+      static_cast<int>(std::ceil(windowEnd * framesPerSecond)) + 1);
+  if (lastFrame <= firstFrame)
+    return nullptr;
+  // Keep notes whole: widen the window to every note it touches, so no note
+  // starts before the copy's frame zero (the canvas clips to the region).
+  {
+    const int windowFirst = firstFrame;
+    const int windowLast = lastFrame;
+    for (const auto &note : source.getNotes())
+      if (note.getEndFrame() > windowFirst && note.getStartFrame() < windowLast)
+      {
+        firstFrame = std::min(firstFrame, note.getStartFrame());
+        lastFrame = std::max(lastFrame, note.getEndFrame());
+      }
+    firstFrame = juce::jlimit(0, frameCount, firstFrame);
+    lastFrame = juce::jlimit(firstFrame, frameCount, lastFrame);
+  }
+  windowZeroSeconds = framesToSeconds(firstFrame);
+
+  auto window = std::make_shared<Project>();
+  window->setPitchReferenceHz(source.getPitchReferenceHz());
+  auto &dst = window->getAudioData();
+  dst.sampleRate = src.sampleRate;
+
+  const auto sliceFloats = [&](const std::vector<float> &from,
+                               std::vector<float> &to) {
+    const int end = std::min(lastFrame, static_cast<int>(from.size()));
+    if (end > firstFrame)
+      to.assign(from.begin() + firstFrame, from.begin() + end);
+  };
+  const auto sliceBools = [&](const std::vector<bool> &from,
+                              std::vector<bool> &to) {
+    const int end = std::min(lastFrame, static_cast<int>(from.size()));
+    if (end > firstFrame)
+      to.assign(from.begin() + firstFrame, from.begin() + end);
+  };
+  sliceFloats(src.rawF0, dst.rawF0);
+  sliceFloats(src.cleanedF0, dst.cleanedF0);
+  sliceFloats(src.denseF0, dst.denseF0);
+  sliceFloats(src.f0, dst.f0);
+  sliceFloats(src.baseF0, dst.baseF0);
+  sliceFloats(src.basePitch, dst.basePitch);
+  sliceFloats(src.deltaPitch, dst.deltaPitch);
+  sliceBools(src.voicedMask, dst.voicedMask);
+  sliceBools(src.vadMask, dst.vadMask);
+
+  const int numSamples = src.waveform.getNumSamples();
+  if (numSamples > 0 && src.sampleRate > 0 && src.waveform.getNumChannels() > 0)
+  {
+    const int firstSample = juce::jlimit(
+        0, numSamples,
+        static_cast<int>(std::llround(windowZeroSeconds * src.sampleRate)));
+    const int lastSample = juce::jlimit(
+        firstSample, numSamples,
+        static_cast<int>(std::ceil(framesToSeconds(lastFrame) * src.sampleRate)));
+    if (lastSample > firstSample)
+    {
+      dst.waveform.setSize(1, lastSample - firstSample);
+      dst.waveform.copyFrom(0, 0, src.waveform, 0, firstSample,
+                            lastSample - firstSample);
+    }
+  }
+
+  auto &notes = window->getNotes();
+  for (const auto &note : source.getNotes())
+  {
+    // Every note touching the region was covered by widening the window; a
+    // note starting before it lies wholly outside the region and is skipped.
+    if (note.getStartFrame() < firstFrame || note.getStartFrame() >= lastFrame)
+      continue;
+    Note copy = note;
+    copy.setStartFrame(copy.getStartFrame() - firstFrame);
+    copy.setEndFrame(copy.getEndFrame() - firstFrame);
+    copy.setSrcStartFrame(copy.getSrcStartFrame() - firstFrame);
+    copy.setSrcEndFrame(copy.getSrcEndFrame() - firstFrame);
+    copy.setSelected(false); // selection belongs to the canvas, not a preview
+    notes.push_back(std::move(copy));
+  }
+  return window;
+}
+
+// Snapshot of one playback region's window onto its modification's Project,
+// as plain drawing data placed at the region's host-timeline position.
+// Projects are stored in MODIFICATION time (PR #8), so the window starts at
+// the region's start in the modification and is shifted by
+// (host start - modification start) onto the timeline.
+MainViewRegionPreview buildRegionPreview(const Project &project,
+                                         double regionStart, double regionEnd,
+                                         double startInModificationSeconds)
+{
+  MainViewRegionPreview preview;
+  preview.hasContent = true;
+
+  const auto &audioData = project.getAudioData();
+  const double shift = regionStart - std::max(0.0, startInModificationSeconds);
+  const double localStart = regionStart - shift;
+  const double localEnd = regionEnd - shift;
+
+  for (const auto &note : project.getNotes())
+  {
+    if (note.isRest())
+      continue;
+    const double start =
+        std::max(regionStart, framesToSeconds(note.getVisualStartFrame()) + shift);
+    const double end =
+        std::min(regionEnd, framesToSeconds(note.getVisualEndFrame()) + shift);
+    if (end <= start)
+      continue;
+    preview.notes.push_back({start, end, note.getAdjustedMidiNote()});
+  }
+
+  preview.project = makeRegionWindowProject(
+      project, localStart, localEnd, preview.projectHostOffsetSeconds);
+  if (preview.project != nullptr)
+    preview.projectHostOffsetSeconds += shift;
+
+  const auto &waveform = audioData.waveform;
+  const int numSamples = waveform.getNumSamples();
+  const double sampleRate = static_cast<double>(audioData.sampleRate);
+  if (numSamples > 0 && sampleRate > 0.0 && waveform.getNumChannels() > 0)
+  {
+    const int firstSample = juce::jlimit(
+        0, numSamples, static_cast<int>(std::floor(localStart * sampleRate)));
+    const int lastSample = juce::jlimit(
+        firstSample, numSamples,
+        static_cast<int>(std::ceil(localEnd * sampleRate)));
+    if (lastSample > firstSample)
+    {
+      const float *data = waveform.getReadPointer(0);
+      preview.waveformSamples = std::make_shared<const std::vector<float>>(
+          data + firstSample, data + lastSample);
+      preview.waveformSampleRate = sampleRate;
+      preview.waveformStartSeconds = firstSample / sampleRate + shift;
+    }
+  }
+
+  return preview;
+}
 #endif
 
 bool isLunaHostProcess()
@@ -162,6 +328,19 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   mainView->setOnRegionSelected([this](const juce::String &regionKey) {
     activateAraRegionByKey(regionKey);
   });
+  // Clicking inside an inactive region on the canvas makes it active in place.
+  mainView->setOnRegionActivationRequested(
+      [this](const juce::String &regionKey) {
+        activateAraRegionByKey(regionKey, false);
+      });
+  // Clip / Track toggle. Track mode needs the other regions' previews; Clip
+  // mode drops them. Republish right away rather than on the next poll.
+  mainView->setOnTrackViewModeChanged([this](bool) {
+    lastPublishedPreviewSignature.clear();
+    lastPublishedRegionSignature.clear();
+    refreshAraRegionList();
+  });
+  mainView->setTrackViewModeAvailable(true);
 
   // Connect ARA controller to UI
   pitchDocController->setMainComponent(mainView.get());
@@ -553,6 +732,9 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
 
   const auto activeSelector = audioProcessor.getActiveAraRegionSelector();
 
+  audioProcessor.updateAraTrackAnalysisQueue(regions);
+  publishAraRegionPreviews(regions, entries, activeSelector);
+
   juce::String signature = activeSelector;
   for (const auto &entry : entries)
     signature << "\n" << entry.key << "\t" << entry.name;
@@ -590,8 +772,124 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
   LOG(diagnostic);
 }
 
+void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
+    const std::vector<juce::ARAPlaybackRegion *> &regions,
+    const std::vector<MainViewRegionEntry> &entries,
+    const juce::String &activeSelector) {
+  if (mainView == nullptr)
+    return;
+
+  // Clip mode shows one modification in its own time and draws no other
+  // regions. Publish nothing, and skip the work of building previews.
+  if (!mainView->isTrackViewMode()) {
+    regionPreviewCache.clear();
+    if (lastPublishedPreviewSignature != "clip") {
+      lastPublishedPreviewSignature = "clip";
+      mainView->updateRegionPreviews(nullptr);
+    }
+    return;
+  }
+
+  // Only the track of the active region: other tracks have their own plug-in
+  // instance and must not be drawn over this one.
+  juce::ARARegionSequence *activeSequence = nullptr;
+  for (size_t i = 0; i < regions.size() && i < entries.size(); ++i)
+    if (entries[i].key == activeSelector) {
+      activeSequence = regions[i]->getRegionSequence();
+      break;
+    }
+
+  auto previews = std::make_shared<std::vector<MainViewRegionPreview>>();
+  juce::String signature = "track\n" + activeSelector;
+  std::map<juce::String, RegionPreviewCacheEntry> nextCache;
+
+  for (size_t i = 0; i < regions.size() && i < entries.size(); ++i) {
+    auto *region = regions[i];
+    if (activeSequence != nullptr &&
+        region->getRegionSequence() != activeSequence)
+      continue;
+
+    const auto &entry = entries[i];
+    // entry.key is the region selector (which window); edits are owned by
+    // the modification, so the Project is looked up by the modification key.
+    const bool isActive = entry.key == activeSelector;
+    const double start = std::max(0.0, region->getStartInPlaybackTime());
+    const double end = std::max(start, region->getEndInPlaybackTime());
+    double startInModification = 0.0;
+    if (auto *modification = region->getAudioModification())
+      if (auto *source = modification->getAudioSource())
+        if (source->getSampleRate() > 0.0)
+          startInModification =
+              static_cast<double>(
+                  region->getStartInAudioModificationSamples()) /
+              source->getSampleRate();
+
+    std::uint64_t revision = 0;
+    bool fromCanvas = false;
+    // The active region is drawn live from the canvas; its preview only
+    // carries its range. Siblings of the active modification read the live
+    // canvas Project, other modifications their stored Project.
+    const Project *project =
+        isActive ? nullptr
+                 : audioProcessor.getAraProjectForPreview(
+                       region->getAudioModification<PitchNetAudioModification>(),
+                       revision, fromCanvas);
+
+    RegionPreviewCacheEntry cacheEntry;
+    const auto cached = regionPreviewCache.find(entry.key);
+    const bool reusable =
+        cached != regionPreviewCache.end() && !isActive &&
+        cached->second.project == project &&
+        cached->second.fromCanvas == fromCanvas &&
+        cached->second.revision == revision &&
+        juce::approximatelyEqual(cached->second.startSeconds, start) &&
+        juce::approximatelyEqual(cached->second.endSeconds, end) &&
+        juce::approximatelyEqual(cached->second.startInModificationSeconds,
+                                 startInModification);
+
+    if (reusable) {
+      cacheEntry = cached->second;
+    } else {
+      cacheEntry.project = project;
+      cacheEntry.fromCanvas = fromCanvas;
+      cacheEntry.revision = revision;
+      cacheEntry.startSeconds = start;
+      cacheEntry.endSeconds = end;
+      cacheEntry.startInModificationSeconds = startInModification;
+      if (project != nullptr)
+        cacheEntry.preview =
+            buildRegionPreview(*project, start, end, startInModification);
+    }
+
+    auto &preview = cacheEntry.preview;
+    preview.key = entry.key;
+    preview.name = entry.name;
+    preview.startSeconds = start;
+    preview.endSeconds = end;
+    preview.active = isActive;
+    previews->push_back(preview);
+
+    signature << "\n" << entry.key << "\t" << entry.name << "\t"
+              << juce::String(start, 6) << "\t" << juce::String(end, 6)
+              << "\t" << juce::String(startInModification, 6) << "\t"
+              << (isActive ? "A" : "-") << (fromCanvas ? "C" : "S") << "\t"
+              << juce::String::toHexString(
+                     static_cast<juce::int64>(
+                         reinterpret_cast<std::uintptr_t>(project)))
+              << "\t" << juce::String(static_cast<juce::int64>(revision));
+    nextCache[entry.key] = std::move(cacheEntry);
+  }
+
+  regionPreviewCache = std::move(nextCache);
+
+  if (signature == lastPublishedPreviewSignature)
+    return;
+  lastPublishedPreviewSignature = signature;
+  mainView->updateRegionPreviews(std::move(previews));
+}
+
 void PitchNetAudioProcessorEditor::activateAraRegionByKey(
-    const juce::String &regionKey) {
+    const juce::String &regionKey, bool focusView) {
   if (regionKey.isEmpty())
     return;
 
@@ -621,12 +919,17 @@ void PitchNetAudioProcessorEditor::activateAraRegionByKey(
   }
 
   audioProcessor.setActiveAraRegion(target);
-  // The canvas is in modification time; the region's host position is not.
-  const auto span = audioProcessor.activeRegionSpanInModificationTime();
-  mainView->focusTimelineRange(span.first, span.second);
+  if (focusView) {
+    // The canvas is in modification time; the region's host position is not.
+    const auto span = audioProcessor.activeRegionSpanInModificationTime();
+    mainView->focusTimelineRange(span.first, span.second);
+  }
 
-  // The active key just changed; let the next refresh publish it.
+  // The active key just changed. Publish now rather than on the next poll so
+  // the canvas never shows the new region twice (as project and as preview)
+  // or the old one not at all.
   lastPublishedRegionSignature.clear();
+  refreshAraRegionList();
 }
 
 void PitchNetAudioProcessorEditor::onNewSelection(

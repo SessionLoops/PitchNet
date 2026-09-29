@@ -263,6 +263,8 @@
   "tooltip.split_tool": "노트 분리 도구 (단축키: 2)",
   "tooltip.timing_tool": "타이밍 도구 (단축키: 4)",
   "tooltip.vertical_auto_zoom": "세로 자동 확대",
+  "tooltip.region_view_clip": "클립 모드: 선택한 클립의 소스를 표시 중입니다. 클릭하면 트랙의 모든 클립을 표시합니다.",
+  "tooltip.region_view_track": "트랙 모드: 트랙의 모든 클립을 표시 중입니다. 클릭하면 선택한 클립의 소스만 표시합니다.",
   "update.ask_later": "나중에 묻기",
   "update.download_now": "지금 다운로드",
   "update.message": "PitchNet의 새 버전이 있습니다. 다운로드할까요?",

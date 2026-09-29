@@ -4,6 +4,7 @@
 #include "../../Models/Project.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
+#include "../RegionPreview.h"
 
 class OverviewPanel : public juce::Component {
 public:
@@ -14,6 +15,16 @@ public:
     double scrollX = 0.0;
     float pixelsPerSecond = 0.0f;
     int visibleWidth = 0;
+    // Track mode: totalTime, cursorTime and scrollX are relative to
+    // viewStartSeconds (project time at the thumbnail's left edge); region
+    // previews are placed through displayOffset (host = project + offset),
+    // and the active project is drawn only within its span.
+    bool trackMode = false;
+    double viewStartSeconds = 0.0;
+    double displayOffset = 0.0;
+    bool hasActiveSpan = false;
+    double activeSpanStart = 0.0;
+    double activeSpanEnd = 0.0;
   };
 
   void setProject(Project *proj) {
@@ -27,6 +38,12 @@ public:
   }
   void setDrawBackground(bool shouldDraw) {
     drawBackground = shouldDraw;
+    invalidateThumbnailCache();
+  }
+  // ARA: every region of the track. The active one gets the region backdrop,
+  // the others are drawn dimmed.
+  void setRegionPreviews(MainViewRegionPreviewList previews) {
+    regionPreviews = std::move(previews);
     invalidateThumbnailCache();
   }
   void setShowSegmentsDebug(bool show) {
@@ -70,6 +87,7 @@ private:
   void updateCursor(DragMode mode);
 
   Project *project = nullptr;
+  MainViewRegionPreviewList regionPreviews;
   juce::Image staticCache;
   bool cacheDirty = true;
   bool drawBackground = true;

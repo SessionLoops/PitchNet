@@ -107,113 +107,197 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
     g.fillRoundedRectangle(content, cornerRadius);
   }
 
-  if (!project)
-    return;
-
-  const auto &audioData = project->getAudioData();
-  const int numSamples = audioData.waveform.getNumSamples();
-  if (numSamples <= 0 || audioData.sampleRate <= 0)
-    return;
-
-  const float *samples = audioData.waveform.getReadPointer(0);
   const int width = static_cast<int>(content.getWidth());
   const int height = static_cast<int>(content.getHeight());
-
   if (width <= 0 || height <= 0)
     return;
 
+  const bool hasPreviews = regionPreviews && !regionPreviews->empty();
+  const auto *audioData = project ? &project->getAudioData() : nullptr;
+  const int numSamples =
+      audioData ? audioData->waveform.getNumSamples() : 0;
+  const bool hasProjectAudio =
+      audioData != nullptr && numSamples > 0 && audioData->sampleRate > 0;
+  if (!hasProjectAudio && !hasPreviews)
+    return;
+
   const double audioDuration =
-      static_cast<double>(numSamples) / audioData.sampleRate;
+      hasProjectAudio
+          ? static_cast<double>(numSamples) / audioData->sampleRate
+          : 0.0;
   const auto state = getViewState ? getViewState() : ViewState{};
-  const double timelineDuration = std::max(audioDuration, state.totalTime);
+  // Track mode spans the song (state.totalTime); the take may be longer than
+  // what is shown, so its duration does not stretch the thumbnail.
+  const double timelineDuration =
+      state.trackMode ? state.totalTime
+                      : std::max(audioDuration, state.totalTime);
   if (timelineDuration <= 0.0)
     return;
 
+  // Project seconds -> x. Region previews are host seconds; hostToProject
+  // brings them onto the same axis.
+  const auto timeToOverviewX = [&](double seconds) {
+    return content.getX() +
+           static_cast<float>(((seconds - state.viewStartSeconds) /
+                               timelineDuration) *
+                              content.getWidth());
+  };
+  const auto hostToProject = [&](double hostSeconds) {
+    return hostSeconds - state.displayOffset;
+  };
+  // In Track mode only the active region's window of the take is shown.
+  const bool clipToSpan = state.trackMode && state.hasActiveSpan;
+  const auto inActiveSpan = [&](double startSeconds, double endSeconds) {
+    return !clipToSpan || (endSeconds > state.activeSpanStart &&
+                           startSeconds < state.activeSpanEnd);
+  };
+
   const float centerY = content.getY() + content.getHeight() * 0.5f;
   const float waveformHeight = content.getHeight() * 0.8f;
+
+  // Region backdrops: only the active region carries the backdrop colour; the
+  // other regions of the track are outlined by their boundaries.
+  if (hasPreviews) {
+    for (const auto &region : *regionPreviews) {
+      if (region.endSeconds <= region.startSeconds)
+        continue;
+      const float x1 = timeToOverviewX(hostToProject(region.startSeconds));
+      const float x2 = timeToOverviewX(hostToProject(region.endSeconds));
+      if (region.active) {
+        g.setColour(juce::Colours::white.withAlpha(0.06f));
+        g.fillRect(juce::Rectangle<float>(x1, content.getY(),
+                                          std::max(1.0f, x2 - x1),
+                                          content.getHeight()));
+        g.setColour(juce::Colours::white.withAlpha(0.25f));
+      } else {
+        g.setColour(juce::Colours::white.withAlpha(0.12f));
+      }
+      g.fillRect(x1 - 0.5f, content.getY(), 1.0f, content.getHeight());
+      g.fillRect(x2 - 0.5f, content.getY(), 1.0f, content.getHeight());
+    }
+
+  }
+
+  // Every waveform, active or not, uses the same envelope, colour and one
+  // shared scale, so the regions read as one continuous track.
+  struct OverviewWaveform {
+    int startPixel = 0;
+    std::vector<float> envelope;
+  };
+  std::vector<OverviewWaveform> waveforms;
   const float overviewPixelsPerSecond =
       static_cast<float>(content.getWidth() / timelineDuration);
-  const int waveformWidth = std::max(
-      1, static_cast<int>(std::ceil(content.getWidth() * audioDuration /
-                                    timelineDuration)));
-  auto displayEnvelope = VisualWaveformEnvelope::build(
-      samples, numSamples, 0, numSamples, waveformWidth,
-      static_cast<float>(waveformWidth),
-      audioData.sampleRate, overviewPixelsPerSecond, false);
-  const auto peakIt =
-      std::max_element(displayEnvelope.begin(), displayEnvelope.end());
-  if (peakIt != displayEnvelope.end() && *peakIt > 0.0f) {
-    const float scale = 1.0f / *peakIt;
-    for (auto &value : displayEnvelope)
-      value *= scale;
+  const auto addWaveform = [&](const float *samples, int count,
+                               double sampleRate, double startSeconds) {
+    if (samples == nullptr || count <= 0 || sampleRate <= 0.0)
+      return;
+    const int startPixel =
+        static_cast<int>(std::floor(timeToOverviewX(startSeconds)));
+    const double durationSeconds = static_cast<double>(count) / sampleRate;
+    const int width = std::max(
+        1, static_cast<int>(std::ceil(content.getWidth() * durationSeconds /
+                                      timelineDuration)));
+    waveforms.push_back(
+        {startPixel, VisualWaveformEnvelope::build(
+                         samples, count, 0, count, width,
+                         static_cast<float>(width), sampleRate,
+                         overviewPixelsPerSecond, false)});
+  };
+
+  if (hasPreviews)
+    for (const auto &region : *regionPreviews)
+      if (!region.active && region.waveformSamples)
+        addWaveform(region.waveformSamples->data(),
+                    static_cast<int>(region.waveformSamples->size()),
+                    region.waveformSampleRate,
+                    hostToProject(region.waveformStartSeconds));
+  if (hasProjectAudio && audioData->waveform.getNumChannels() > 0) {
+    int first = 0;
+    int last = numSamples;
+    if (clipToSpan) {
+      const double rate = static_cast<double>(audioData->sampleRate);
+      first = juce::jlimit(0, numSamples,
+                           static_cast<int>(state.activeSpanStart * rate));
+      last = juce::jlimit(first, numSamples,
+                          static_cast<int>(state.activeSpanEnd * rate));
+    }
+    addWaveform(audioData->waveform.getReadPointer(0) + first, last - first,
+                audioData->sampleRate,
+                static_cast<double>(first) / audioData->sampleRate);
   }
+
+  float maxEnvelope = 0.0f;
+  for (const auto &waveform : waveforms)
+    for (const float value : waveform.envelope)
+      maxEnvelope = std::max(maxEnvelope, value);
+  const float envelopeScale = maxEnvelope > 0.0f ? 1.0f / maxEnvelope : 1.0f;
 
   g.setColour(juce::Colour(0xFF484546u));
-  juce::Path waveformPath;
-  waveformPath.startNewSubPath(content.getX(), centerY);
-
-  for (int px = 0; px < waveformWidth; ++px) {
-    const float envelope = displayEnvelope[static_cast<size_t>(px)];
-    const float x = content.getX() + static_cast<float>(px);
-    const float y = centerY - envelope * waveformHeight * 0.5f;
-    waveformPath.lineTo(x, y);
+  for (const auto &waveform : waveforms) {
+    const int count = static_cast<int>(waveform.envelope.size());
+    juce::Path waveformPath;
+    waveformPath.startNewSubPath(static_cast<float>(waveform.startPixel),
+                                 centerY);
+    for (int px = 0; px < count; ++px)
+      waveformPath.lineTo(
+          static_cast<float>(waveform.startPixel + px),
+          centerY - waveform.envelope[static_cast<size_t>(px)] *
+                        envelopeScale * waveformHeight * 0.5f);
+    for (int px = count - 1; px >= 0; --px)
+      waveformPath.lineTo(
+          static_cast<float>(waveform.startPixel + px),
+          centerY + waveform.envelope[static_cast<size_t>(px)] *
+                        envelopeScale * waveformHeight * 0.5f);
+    waveformPath.closeSubPath();
+    g.fillPath(waveformPath);
   }
 
-  for (int px = waveformWidth - 1; px >= 0; --px) {
-    const float envelope = displayEnvelope[static_cast<size_t>(px)];
-    const float x = content.getX() + static_cast<float>(px);
-    const float y = centerY + envelope * waveformHeight * 0.5f;
-    waveformPath.lineTo(x, y);
-  }
+  if (hasProjectAudio) {
 
-  waveformPath.closeSubPath();
-  g.fillPath(waveformPath);
+    if (showSegmentsDebug) {
+      g.setColour(juce::Colours::orange.withAlpha(0.16f));
+      for (const auto &range : audioData->segmentChunkRanges) {
+        const int startFrame = std::max(0, range.first);
+        const int endFrame = std::max(startFrame, range.second);
+        if (endFrame <= startFrame)
+          continue;
 
-  if (showSegmentsDebug && timelineDuration > 0.0) {
-    g.setColour(juce::Colours::orange.withAlpha(0.16f));
-    for (const auto &range : audioData.segmentChunkRanges) {
-      const int startFrame = std::max(0, range.first);
-      const int endFrame = std::max(startFrame, range.second);
-      if (endFrame <= startFrame)
-        continue;
+        const double startTime =
+            static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
+        const double endTime =
+            static_cast<double>(endFrame) * HOP_SIZE / SAMPLE_RATE;
+        const float x1 = timeToOverviewX(startTime);
+        const float x2 = timeToOverviewX(endTime);
+        g.fillRect(juce::Rectangle<float>(x1, content.getY(),
+                                          std::max(1.0f, x2 - x1),
+                                          content.getHeight()));
+      }
 
-      const double startTime =
-          static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
-      const double endTime =
-          static_cast<double>(endFrame) * HOP_SIZE / SAMPLE_RATE;
-      const float x1 = content.getX() +
-                       static_cast<float>((startTime / timelineDuration) *
-                                          content.getWidth());
-      const float x2 = content.getX() +
-                       static_cast<float>((endTime / timelineDuration) *
-                                          content.getWidth());
-      g.fillRect(juce::Rectangle<float>(x1, content.getY(),
-                                        std::max(1.0f, x2 - x1),
-                                        content.getHeight()));
-    }
-
-    g.setColour(juce::Colours::orange.withAlpha(0.75f));
-    for (const auto &range : audioData.segmentChunkRanges) {
-      const int startFrame = std::max(0, range.first);
-      const int endFrame = std::max(startFrame, range.second);
-      if (endFrame <= startFrame)
-        continue;
-      const double startTime =
-          static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
-      const float x = content.getX() +
-                      static_cast<float>((startTime / timelineDuration) *
-                                         content.getWidth());
-      g.drawLine(x, content.getY(), x, content.getBottom(), 1.0f);
+      g.setColour(juce::Colours::orange.withAlpha(0.75f));
+      for (const auto &range : audioData->segmentChunkRanges) {
+        const int startFrame = std::max(0, range.first);
+        const int endFrame = std::max(startFrame, range.second);
+        if (endFrame <= startFrame)
+          continue;
+        const double startTime =
+            static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
+        const float x = timeToOverviewX(startTime);
+        g.drawLine(x, content.getY(), x, content.getBottom(), 1.0f);
+      }
     }
   }
 
-  if (timelineDuration > 0.0) {
-    float minPitch = std::numeric_limits<float>::max();
-    float maxPitch = std::numeric_limits<float>::lowest();
-    bool hasNotePitch = false;
+  // One pitch range across every region so notes line up between them.
+  float minPitch = std::numeric_limits<float>::max();
+  float maxPitch = std::numeric_limits<float>::lowest();
+  bool hasNotePitch = false;
 
+  if (project != nullptr) {
     for (const auto &note : project->getNotes()) {
       if (note.isRest())
+        continue;
+      if (!inActiveSpan(framesToSeconds(note.getVisualStartFrame()),
+                        framesToSeconds(note.getVisualEndFrame())))
         continue;
 
       const float midi = note.getAdjustedMidiNote();
@@ -226,60 +310,82 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
         maxPitch = std::max(maxPitch, midi + delta);
       }
     }
-
-    if (!hasNotePitch) {
-      minPitch = static_cast<float>(MIN_MIDI_NOTE);
-      maxPitch = static_cast<float>(MAX_MIDI_NOTE);
-    } else {
-      minPitch -= 1.0f;
-      maxPitch += 1.0f;
-      if (maxPitch - minPitch < 2.0f) {
-        const float centerPitch = (minPitch + maxPitch) * 0.5f;
-        minPitch = centerPitch - 1.0f;
-        maxPitch = centerPitch + 1.0f;
+  }
+  if (hasPreviews) {
+    for (const auto &region : *regionPreviews) {
+      if (region.active)
+        continue;
+      for (const auto &note : region.notes) {
+        minPitch = std::min(minPitch, note.midi);
+        maxPitch = std::max(maxPitch, note.midi);
+        hasNotePitch = true;
       }
-    }
-
-    const float pitchRange = std::max(1.0f, maxPitch - minPitch);
-    if (pitchRange > 0.0f) {
-      const float noteHeight =
-          juce::jlimit(1.0f, 5.0f, content.getHeight() / pitchRange);
-      const float thickness =
-          juce::jlimit(1.0f, 3.0f, noteHeight);
-      const int pitchReferenceHz = project->getPitchReferenceHz();
-
-      for (const auto &note : project->getNotes()) {
-        if (note.isRest())
-          continue;
-
-        const double startTime =
-            static_cast<double>(note.getVisualStartFrame()) * HOP_SIZE /
-            SAMPLE_RATE;
-        const double endTime =
-            static_cast<double>(note.getVisualEndFrame()) * HOP_SIZE /
-            SAMPLE_RATE;
-
-        if (endTime <= startTime)
-          continue;
-
-        float midi = note.getAdjustedMidiNote();
-        const auto noteColour =
-            getNoteGradientColours(midi, pitchReferenceHz).side;
-
-        const float x1 = content.getX() +
-                         static_cast<float>((startTime / timelineDuration) *
-                                            content.getWidth());
-        const float x2 = content.getX() +
-                         static_cast<float>((endTime / timelineDuration) *
-                                            content.getWidth());
-        const float y = noteRangeY(midi, minPitch, maxPitch, content);
-        g.setColour(noteColour.withAlpha(0.9f));
-        g.drawLine(x1, y, x2, y, thickness);
-      }
-
     }
   }
 
+  if (!hasNotePitch)
+    return;
+
+  minPitch -= 1.0f;
+  maxPitch += 1.0f;
+  if (maxPitch - minPitch < 2.0f) {
+    const float centerPitch = (minPitch + maxPitch) * 0.5f;
+    minPitch = centerPitch - 1.0f;
+    maxPitch = centerPitch + 1.0f;
+  }
+
+  const float pitchRange = std::max(1.0f, maxPitch - minPitch);
+  const float noteHeight =
+      juce::jlimit(1.0f, 5.0f, content.getHeight() / pitchRange);
+  const float thickness = juce::jlimit(1.0f, 3.0f, noteHeight);
+  const int pitchReferenceHz =
+      project != nullptr ? project->getPitchReferenceHz() : 440;
+
+  if (hasPreviews) {
+    for (const auto &region : *regionPreviews) {
+      if (region.active)
+        continue;
+      for (const auto &note : region.notes) {
+        if (note.endSeconds <= note.startSeconds)
+          continue;
+        const auto noteColour =
+            getNoteGradientColours(note.midi, pitchReferenceHz).side;
+        const float x1 = timeToOverviewX(hostToProject(note.startSeconds));
+        const float x2 = timeToOverviewX(hostToProject(note.endSeconds));
+        const float y = noteRangeY(note.midi, minPitch, maxPitch, content);
+        // Same as the active region's notes, but grey.
+        g.setColour(noteColour.withSaturation(0.0f).withAlpha(0.9f));
+        g.drawLine(x1, y, x2, y, thickness);
+      }
+    }
+  }
+
+  if (project != nullptr) {
+    for (const auto &note : project->getNotes()) {
+      if (note.isRest())
+        continue;
+
+      const double startTime =
+          static_cast<double>(note.getVisualStartFrame()) * HOP_SIZE /
+          SAMPLE_RATE;
+      const double endTime =
+          static_cast<double>(note.getVisualEndFrame()) * HOP_SIZE /
+          SAMPLE_RATE;
+
+      if (endTime <= startTime || !inActiveSpan(startTime, endTime))
+        continue;
+
+      const float midi = note.getAdjustedMidiNote();
+      const auto noteColour =
+          getNoteGradientColours(midi, pitchReferenceHz).side;
+
+      const float x1 = timeToOverviewX(startTime);
+      const float x2 = timeToOverviewX(endTime);
+      const float y = noteRangeY(midi, minPitch, maxPitch, content);
+      g.setColour(noteColour.withAlpha(0.9f));
+      g.drawLine(x1, y, x2, y, thickness);
+    }
+  }
 }
 
 void OverviewPanel::paintViewport(juce::Graphics &g) {
@@ -316,7 +422,9 @@ void OverviewPanel::paintPlayhead(juce::Graphics &g) {
   auto state = getViewState ? getViewState() : ViewState{};
   const double audioDuration =
       static_cast<double>(numSamples) / audioData.sampleRate;
-  const double timelineDuration = std::max(audioDuration, state.totalTime);
+  const double timelineDuration =
+      state.trackMode ? state.totalTime
+                      : std::max(audioDuration, state.totalTime);
   if (timelineDuration > 0.0 && state.cursorTime >= 0.0 &&
       state.cursorTime <= timelineDuration) {
     auto content = getContentBounds();
@@ -553,7 +661,9 @@ juce::Rectangle<int> OverviewPanel::getPlayheadRepaintBounds(double time) const 
   const double audioDuration =
       static_cast<double>(numSamples) / audioData.sampleRate;
   const auto state = getViewState ? getViewState() : ViewState{};
-  const double timelineDuration = std::max(audioDuration, state.totalTime);
+  const double timelineDuration =
+      state.trackMode ? state.totalTime
+                      : std::max(audioDuration, state.totalTime);
   if (timelineDuration <= 0.0 || time < 0.0 || time > timelineDuration)
     return {};
 

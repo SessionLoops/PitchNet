@@ -340,7 +340,7 @@ void Project::setScaleRootNote(int noteInOctave)
 
 void Project::setPitchReferenceHz(int hz)
 {
-    const int normalized = juce::jlimit(430, 450, hz);
+    const int normalized = juce::jlimit(420, 450, hz);
     if (macroParameters->pitchReferenceHz == normalized)
         return;
 

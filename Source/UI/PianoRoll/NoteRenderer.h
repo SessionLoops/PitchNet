@@ -41,6 +41,9 @@ public:
   void setBoxSelector(BoxSelector *b) { boxSelector = b; }
   void setHoveredNote(Note *note) { hoveredNote = note; }
   void setShowNoteFramesDebug(bool show) { showNoteFramesDebug = show; }
+  // Inactive regions in Track mode: note bodies use a grey ramp (light along
+  // the centre line, dark at the edges) instead of the pitch-accuracy colours.
+  void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
                                double currentTime)
   {
@@ -63,6 +66,7 @@ private:
   BoxSelector *boxSelector = nullptr;
   Note *hoveredNote = nullptr;
   bool showNoteFramesDebug = false;
+  bool greyscale = false;
   bool previewPlaybackActive = false;
   int previewStartFrame = 0;
   int previewEndFrame = 0;
