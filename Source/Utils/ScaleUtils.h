@@ -162,7 +162,7 @@ inline void detectAndApplyScale(Project& project)
 
 inline float getReferenceOffsetSemitones(int referenceHz)
 {
-    const int normalized = juce::jlimit(430, 450, referenceHz);
+    const int normalized = juce::jlimit(420, 450, referenceHz);
     return 12.0f * std::log2(static_cast<float>(normalized) / FREQ_A4);
 }
 
