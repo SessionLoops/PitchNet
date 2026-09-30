@@ -13,17 +13,21 @@ enum class SynthesisEngineType
 
 /**
  * Default engine for a fresh install/instance with no saved preference.
- * Linux defaults to the classic PSOLA engine, since the neural vocoder path
- * only runs on CPU there (no CUDA/DirectML/CoreML execution provider).
+ *
+ * - macOS: the neural vocoder, which Core ML always takes off the CPU.
+ * - Linux: classic PSOLA, since the vocoder only runs on CPU there (no
+ *   CUDA/DirectML/CoreML execution provider).
+ * - Windows: the vocoder only when there is real GPU headroom for it. A
+ *   machine with no hardware adapter, or whose only adapter is an integrated
+ *   GPU sharing system memory, starts on classic PSOLA instead - DirectML on an
+ *   iGPU is barely faster than the CPU for this model, and every edit would
+ *   render slowly. Machines with a discrete card (including iGPU + dGPU
+ *   laptops) keep the vocoder.
+ *
+ * The Windows check touches DXGI/D3D12, so the result is computed once and
+ * cached for the life of the process.
  */
-inline SynthesisEngineType defaultSynthesisEngineType()
-{
-#if JUCE_LINUX
-    return SynthesisEngineType::Psola;
-#else
-    return SynthesisEngineType::Vocoder;
-#endif
-}
+SynthesisEngineType defaultSynthesisEngineType();
 
 /**
  * Convert SynthesisEngineType to string for display/storage.
