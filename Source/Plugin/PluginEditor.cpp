@@ -322,12 +322,6 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   // region (per-region Projects).
   editorView->addListener(this);
 
-  // ARA is the only mode with playback regions, so the Regions card lives here.
-  // Picking an entry takes the same path as a host selection change.
-  mainView->setRegionListVisible(true);
-  mainView->setOnRegionSelected([this](const juce::String &regionKey) {
-    activateAraRegionByKey(regionKey);
-  });
   // Clicking inside an inactive region on the canvas makes it active in place.
   mainView->setOnRegionActivationRequested(
       [this](const juce::String &regionKey) {
@@ -765,10 +759,9 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
 
   regionListPublished = true;
   lastPublishedRegionSignature = signature;
-  mainView->updateRegionList(entries, activeSelector);
 
   // Only fires when the list actually changes, so this stays quiet - one line
-  // per change saying what the card is showing and where it came from.
+  // per change saying what the region list holds and where it came from.
   juce::String diagnostic;
   diagnostic << "ARA region list: " << static_cast<int>(entries.size())
              << " region(s), active='" << activeSelector << "'";

@@ -191,9 +191,6 @@ public:
   void setRecordControlVisible(bool visible) override {
     toolbar.setRecordControlVisible(visible);
   }
-  void setRegionListVisible(bool visible) override;
-  void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
-                        const juce::String &activeKey) override;
   void updateTrackList(const std::vector<MainViewTrackEntry> &tracks,
                        const juce::String &activeKey) override;
   void setOnTrackSelected(
@@ -209,10 +206,6 @@ public:
   }
   void setOnTrackColourModeChanged(std::function<void()> callback) override {
     onTrackColourModeChanged = std::move(callback);
-  }
-  void setOnRegionSelected(
-      std::function<void(const juce::String &)> callback) override {
-    parameterPanel.onRegionSelected = std::move(callback);
   }
   void updateRegionPreviews(MainViewRegionPreviewList previews) override;
   void setTrackViewModeAvailable(bool available) override;

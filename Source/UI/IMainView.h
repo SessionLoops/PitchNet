@@ -100,17 +100,6 @@ public:
   virtual void setOnRecordArmChanged(std::function<void(bool)> callback) = 0;
   virtual void setRecordControlVisible(bool visible) = 0;
   /**
-   * Show or hide the Regions card in the side panel. Only ARA plugin mode has
-   * playback regions to list, so only that mode turns it on.
-   */
-  virtual void setRegionListVisible(bool visible) = 0;
-  /**
-   * Replace the regions the Regions card lists and mark which one the canvas is
-   * currently showing (an empty key means none of them).
-   */
-  virtual void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
-                                const juce::String &activeKey) = 0;
-  /**
    * Replace the tracks the left side panel lists and mark the active one (an
    * empty key means none of them).
    */
@@ -126,9 +115,6 @@ public:
   virtual bool getUseDawTrackColour() const = 0;
   /** Called after the "Use DAW Track Color" switch changes. */
   virtual void setOnTrackColourModeChanged(std::function<void()> callback) = 0;
-  /** Called with a region key when the user picks one in the Regions card. */
-  virtual void setOnRegionSelected(
-      std::function<void(const juce::String &)> callback) = 0;
   /**
    * Draw every region of the track on the canvas and thumbnail. Exactly one
    * entry may be flagged active; it keeps the editable backdrop, the others
@@ -138,8 +124,8 @@ public:
   virtual void updateRegionPreviews(MainViewRegionPreviewList previews) = 0;
   /**
    * Called with a region key when the user clicks inside an inactive region on
-   * the canvas (empty space or one of its notes). Unlike setOnRegionSelected,
-   * the handler must not scroll or refit the view: the user clicked on what is
+   * the canvas (empty space or one of its notes). Unlike a host selection
+   * change, the handler must not scroll or refit the view: the user clicked on what is
    * already visible.
    */
   virtual void setOnRegionActivationRequested(

@@ -30,17 +30,9 @@ public:
     void setProject(Project* proj);
     void setPluginMode(bool pluginMode);
 
-    // ===== Regions card =====
-    // Only ARA plugin mode has playback regions, so the card is off by default
-    // and the hosting panel is told to re-measure whenever it appears or goes
-    // away - the card stack's natural height is what the panel scrolls against.
     /** Re-applies every caption and tooltip after a language change. */
     void refreshLocalisedText();
 
-    void setRegionsCardVisible(bool visible);
-    bool isRegionsCardVisible() const { return regionsCardVisible; }
-    void setRegionList(const std::vector<MainViewRegionEntry>& regions,
-                       const juce::String& activeKey);
     void setUiBrightness(double brightnessPercent);
     void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
@@ -65,7 +57,6 @@ public:
     int getPreferredHeight() const override;
 
     std::function<void()> onParameterChanged;
-    std::function<void(const juce::String&)> onRegionSelected;
 
     // Fired with the code to persist ("auto", "en", "zh-TW", ...) whenever the
     // language card changes. The panel applies the language itself; the owner
@@ -89,11 +80,9 @@ public:
 
 private:
     void setupTextButton(juce::TextButton& button);
-    void showRegionsMenu();
     void showLanguageMenu();
     void refreshLanguageButtonText();
     void applyLanguageSelection(const juce::String& languageCode);
-    void refreshRegionsButtonText();
     void showDragSnapModeMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
@@ -121,8 +110,6 @@ private:
 
     // Card titles and control captions all come from the string table; see
     // refreshLocalisedText(), which is also what a language change calls.
-    juce::Label regionsSectionLabel;
-    juce::Rectangle<int> regionsCardBounds;
     juce::Label pitchSectionLabel;
     juce::Rectangle<int> pitchCardBounds;
     juce::Label timeSectionLabel;
@@ -134,11 +121,9 @@ private:
     juce::Label brightnessSectionLabel;
     juce::Rectangle<int> brightnessCardBounds;
 
-    ComboSelectionButton regionsSelectorButton;
-
     // Interface language. "auto" follows the system language; anything else is
-    // an explicit choice. The selector matches the Regions one: a button that
-    // opens a ticked menu rather than a combo box.
+    // an explicit choice. The selector is a button that opens a ticked
+    // menu rather than a combo box.
     ComboSelectionButton languageSelectorButton;
     juce::String selectedLanguageCode { "auto" };
 
@@ -176,10 +161,6 @@ private:
     CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle;
     MacroSlider brightnessSlider;
-
-    std::vector<MainViewRegionEntry> regionEntries;
-    juce::String activeRegionKey;
-    bool regionsCardVisible = false;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;

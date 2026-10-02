@@ -3624,16 +3624,6 @@ void MainComponent::updateRegionPreviews(MainViewRegionPreviewList previews) {
   pianoRollView.setRegionPreviews(std::move(previews));
 }
 
-void MainComponent::setRegionListVisible(bool visible) {
-  parameterPanel.setRegionsCardVisible(visible);
-}
-
-void MainComponent::updateRegionList(
-    const std::vector<MainViewRegionEntry> &regions,
-    const juce::String &activeKey) {
-  parameterPanel.setRegionList(regions, activeKey);
-}
-
 void MainComponent::updateTrackList(
     const std::vector<MainViewTrackEntry> &tracks,
     const juce::String &activeKey) {

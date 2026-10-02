@@ -30,14 +30,13 @@ constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
-constexpr int kRegionsRowHeight = 26;           // region selector row
 constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
 
-// The inference device row is optional in the same way the Regions card is: it
-// adds itself, leading gap included, only while it is showing.
+// The inference device row is optional: it adds itself, leading gap included,
+// only while it is showing.
 constexpr int kRenderDeviceRowExtraHeight = (kRowGap + 1) + kControlRowHeight;
 constexpr int kTimeCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kTimelineModeRowHeight +
@@ -47,8 +46,6 @@ constexpr int kPitchCardHeight =
     (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight + kInnerPadY;
 constexpr int kBrightnessCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kBrightnessRowHeight + kInnerPadY;
-constexpr int kRegionsCardHeight =
-    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRegionsRowHeight + kInnerPadY;
 constexpr int kLanguageCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
 
@@ -58,11 +55,6 @@ constexpr int kPreferredPanelHeight =
     kCardPadY * 2 + kCardGap * 4 + kSynthesisCardHeight + kLanguageCardHeight +
     kTimeCardHeight + kPitchCardHeight + kBrightnessCardHeight;
 
-// The Regions card only exists in ARA plugin mode, so it is not part of the
-// base sum - it adds itself, gap included, when it is showing.
-constexpr int kRegionsCardExtraHeight = kCardGap + kRegionsCardHeight;
-
-constexpr int kRegionMenuBaseId = 7401;
 // "System default" sits above the real languages in the picker.
 constexpr int kLanguageMenuAutoId = 7601;
 constexpr int kLanguageMenuBaseId = 7602;
@@ -271,16 +263,6 @@ ParameterPanel::ParameterPanel()
     languageSelectorButton.addListener(this);
     selectedLanguageCode = Localization::getInstance().getPersistedLanguageCode();
 
-    // Regions card: added but not shown. Standalone and non-ARA plugin mode
-    // have no playback regions, so the card only appears once a host tells us
-    // otherwise (see setRegionsCardVisible).
-    addChildComponent(regionsSectionLabel);
-    regionsSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
-    regionsSectionLabel.setFont(AppFont::getBoldFont(16.0f));
-    addChildComponent(regionsSelectorButton);
-    regionsSelectorButton.addListener(this);
-    regionsSelectorButton.setEnabled(false);
-
     for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
         addAndMakeVisible(toggle);
@@ -472,15 +454,6 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.drawRoundedRectangle(languageRect.reduced(0.5f), radius, 0.75f);
     }
 
-    if (regionsCardVisible && !regionsCardBounds.isEmpty())
-    {
-        auto regionsRect = regionsCardBounds.toFloat();
-        g.setColour(juce::Colour(0xFF171717u));
-        g.fillRoundedRectangle(regionsRect, radius);
-        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
-        g.drawRoundedRectangle(regionsRect.reduced(0.5f), radius, 0.75f);
-    }
-
     if (!brightnessCardBounds.isEmpty())
     {
         auto brightnessRect = brightnessCardBounds.toFloat();
@@ -582,38 +555,9 @@ void ParameterPanel::resized()
                                               languageCardBottom - languageCardStart);
 
     // =========================================================================
-    // REGIONS CARD (ARA plugin mode only)
-    //
-    // Sits below Language. When hidden it contributes nothing: no bounds, no
-    // gap, and no height in getPreferredHeight().
-    // =========================================================================
-    int stackBottom = languageCardBottom;
-    if (regionsCardVisible)
-    {
-        const int regionsCardStart = languageCardBottom + cardGap;
-        bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
-                                      regionsCardStart + innerPadY,
-                                      cardArea.getWidth() - innerPadX * 2,
-                                      cardArea.getBottom() - regionsCardStart - innerPadY * 2);
-
-        regionsSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
-        bounds.removeFromTop(kSectionLabelGap);
-        regionsSelectorButton.setBounds(bounds.removeFromTop(kRegionsRowHeight));
-
-        stackBottom = bounds.getY() + innerPadY;
-        regionsCardBounds = juce::Rectangle<int>(cardArea.getX(), regionsCardStart,
-                                                cardArea.getWidth(),
-                                                stackBottom - regionsCardStart);
-    }
-    else
-    {
-        regionsCardBounds = {};
-    }
-
-    // =========================================================================
     // TIME CARD
     // =========================================================================
-    const int timeCardStart = stackBottom + cardGap;
+    const int timeCardStart = languageCardBottom + cardGap;
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
@@ -722,7 +666,6 @@ void ParameterPanel::resized()
 int ParameterPanel::getPreferredHeight() const
 {
     return kPreferredPanelHeight +
-           (regionsCardVisible ? kRegionsCardExtraHeight : 0) +
            (renderDeviceRowVisible ? kRenderDeviceRowExtraHeight : 0);
 }
 
@@ -744,11 +687,6 @@ void ParameterPanel::buttonClicked(juce::Button* button)
     if (button == &dragSnapModeButton)
     {
         showDragSnapModeMenu();
-        return;
-    }
-    if (button == &regionsSelectorButton)
-    {
-        showRegionsMenu();
         return;
     }
     if (button == &languageSelectorButton)
@@ -863,7 +801,6 @@ void ParameterPanel::refreshLocalisedText()
     languageSectionLabel.setText(TR("panel.language"), juce::dontSendNotification);
     refreshLanguageButtonText();
 
-    regionsSectionLabel.setText(TR("panel.regions"), juce::dontSendNotification);
     pitchSectionLabel.setText(TR("panel.pitch"), juce::dontSendNotification);
     timeSectionLabel.setText(TR("panel.time"), juce::dontSendNotification);
     synthesisSectionLabel.setText(TR("panel.rendering"), juce::dontSendNotification);
@@ -896,56 +833,7 @@ void ParameterPanel::refreshLocalisedText()
 
     // Values whose text is itself a translated word.
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
-    refreshRegionsButtonText();
     refreshRenderDeviceRow();
-}
-
-void ParameterPanel::setRegionsCardVisible(bool visible)
-{
-    if (regionsCardVisible == visible)
-        return;
-
-    regionsCardVisible = visible;
-    regionsSectionLabel.setVisible(visible);
-    regionsSelectorButton.setVisible(visible);
-    if (!visible)
-        regionsCardBounds = {};
-
-    resized();
-    repaint();
-
-    // The card stack just got taller or shorter, and the hosting panel caches
-    // that height to decide when to scroll.
-    if (onPreferredHeightChanged)
-        onPreferredHeightChanged();
-}
-
-void ParameterPanel::setRegionList(const std::vector<MainViewRegionEntry>& regions,
-                                   const juce::String& activeKey)
-{
-    regionEntries = regions;
-    activeRegionKey = activeKey;
-    refreshRegionsButtonText();
-}
-
-void ParameterPanel::refreshRegionsButtonText()
-{
-    juce::String text;
-    for (const auto& entry : regionEntries)
-    {
-        if (entry.key == activeRegionKey)
-        {
-            text = entry.name;
-            break;
-        }
-    }
-
-    if (text.isEmpty())
-        text = regionEntries.empty() ? TR("param.no_regions")
-                                     : TR("param.select_region");
-
-    regionsSelectorButton.setButtonText(text);
-    regionsSelectorButton.setEnabled(!regionEntries.empty());
 }
 
 void ParameterPanel::refreshLanguageButtonText()
@@ -1029,49 +917,6 @@ void ParameterPanel::applyLanguageSelection(const juce::String& languageCode)
     // listening component re-read their strings. The owner only persists it.
     if (onLanguageChanged)
         onLanguageChanged(languageCode);
-}
-
-void ParameterPanel::showRegionsMenu()
-{
-    if (regionEntries.empty())
-        return;
-
-    juce::PopupMenu menu;
-    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
-    for (size_t i = 0; i < regionEntries.size(); ++i)
-    {
-        const auto& entry = regionEntries[i];
-        menu.addCustomItem(kRegionMenuBaseId + static_cast<int>(i),
-                           std::make_unique<HoverMenuItemComponent>(
-                               entry.name, entry.key == activeRegionKey),
-                           nullptr, entry.name);
-    }
-
-    menu.showMenuAsync(
-        juce::PopupMenu::Options()
-            .withTargetComponent(&regionsSelectorButton)
-            .withParentComponent(this)
-            .withMinimumWidth(regionsSelectorButton.getWidth()),
-        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
-        {
-            if (safeThis == nullptr || result < kRegionMenuBaseId)
-                return;
-
-            const auto index = static_cast<size_t>(result - kRegionMenuBaseId);
-            if (index >= safeThis->regionEntries.size())
-                return;
-
-            const auto key = safeThis->regionEntries[index].key;
-            if (key == safeThis->activeRegionKey)
-                return;
-
-            // Show the pick straight away; the host round-trip that actually
-            // switches the canvas confirms it on the next region-list update.
-            safeThis->activeRegionKey = key;
-            safeThis->refreshRegionsButtonText();
-            if (safeThis->onRegionSelected)
-                safeThis->onRegionSelected(key);
-        });
 }
 
 void ParameterPanel::setPluginMode(bool pluginMode)
