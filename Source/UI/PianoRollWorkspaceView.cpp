@@ -479,7 +479,8 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
 void PianoRollWorkspaceView::setRegionPreviews(
     MainViewRegionPreviewList previews)
 {
-  overviewPanel.setRegionPreviews(std::move(previews));
+  // The overview shows this track only; pinned tracks are canvas-only.
+  overviewPanel.setRegionPreviews(withoutPinnedRegions(previews));
 }
 
 void PianoRollWorkspaceView::refreshOverview()

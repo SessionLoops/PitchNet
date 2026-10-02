@@ -297,6 +297,9 @@ private:
   void drawRegionPreviews(juce::Graphics &g);
   // Track mode: inactive regions' notes and pitch curves, drawn with the same
   // renderers as the active region and then greyed.
+  // Notes of pinned tracks: inactive-region bodies, outlined in track colour.
+  void drawPinnedTrackNotes(juce::Graphics &g,
+                            const juce::Rectangle<int> &mainArea);
   void drawInactiveRegionEdits(juce::Graphics &g,
                                const juce::Rectangle<int> &mainArea);
   const MainViewRegionPreview *findActiveRegionPreview() const;
@@ -391,6 +394,8 @@ private:
   };
   InactiveLayerKey inactiveLayerKey;
   juce::Image inactiveLayer;
+  InactiveLayerKey pinnedLayerKey;
+  juce::Image pinnedLayer;
   std::unique_ptr<ScrollZoomController> scrollZoomController;
   std::unique_ptr<PitchEditor> pitchEditor;
   std::unique_ptr<BoxSelector> boxSelector;

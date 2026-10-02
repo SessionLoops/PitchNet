@@ -28,6 +28,7 @@ ToolbarComponent::ToolbarComponent()
 
     followButton.setImage(loadImage(BinaryData::scroll_png, BinaryData::scroll_pngSize));
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
+    leftPanelButton.setImage(loadImage(BinaryData::tracks_png, BinaryData::tracks_pngSize));
     // region.png: clip icon (off) / track icon (on), each with a hover frame.
     trackViewButton.setImage(loadImage(BinaryData::region_png, BinaryData::region_pngSize));
 
@@ -47,6 +48,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
     addAndMakeVisible(parametersButton);
+    addChildComponent(leftPanelButton); // shown only in ARA mode
     addChildComponent(trackViewButton); // shown only in ARA mode
 
     recordButton.addListener(this);
@@ -63,6 +65,7 @@ ToolbarComponent::ToolbarComponent()
     undoButton.addListener(this);
     redoButton.addListener(this);
     parametersButton.addListener(this);
+    leftPanelButton.addListener(this);
     trackViewButton.addListener(this);
 
     scaleSelectionButton.onScaleRootChanged = [this](int rootNote)
@@ -103,6 +106,7 @@ ToolbarComponent::ToolbarComponent()
     undoButton.setEnabled(false);
     redoButton.setEnabled(false);
     parametersButton.setToggleState(false, juce::dontSendNotification);
+    leftPanelButton.setToggleState(false, juce::dontSendNotification);
 
     // Time label with app font (larger and bold for readability)
     addAndMakeVisible(timeLabel);
@@ -160,6 +164,13 @@ void ToolbarComponent::paint(juce::Graphics &g)
         const int logoY = (getHeight() - logoH) / 2;
         g.drawImage(logoImage, logoX, logoY, logoW, logoH,
                     0, 0, logoImage.getWidth(), logoImage.getHeight());
+    }
+
+    // Left-panel group background
+    if (!leftPanelCapsuleBounds.isEmpty())
+    {
+        g.setColour(juce::Colour(0xFF191818u));
+        g.fillRoundedRectangle(leftPanelCapsuleBounds.toFloat(), 8.0f);
     }
 
     // Transport capsule background
@@ -299,9 +310,29 @@ void ToolbarComponent::resized()
     const int capsuleW = transportSlotSize
                          + (numTransport - 1) * transportSlotStride
                          + transportPad * 2 + 6;
-    const int capsuleX = logoRight + 24;
     const int transportCapsuleH = 38;
     const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
+
+    // Left-panel group (ARA only): its own capsule between the logo and the
+    // transport. When hidden it takes no space and the transport sits beside
+    // the logo.
+    const int firstGroupX = logoRight + 19;
+    int capsuleX = firstGroupX;
+    if (leftPanelAvailable)
+    {
+        constexpr int groupGap = 6;
+        const int leftGroupW = transportSlotSize + transportPad * 2 + 6 - 15;
+        leftPanelCapsuleBounds = {firstGroupX, transportCapsuleY,
+                                  leftGroupW, transportCapsuleH};
+        leftPanelButton.setBounds(leftPanelCapsuleBounds.getCentreX() - transportSlotSize / 2,
+                                  leftPanelCapsuleBounds.getCentreY() - transportSlotSize / 2,
+                                  transportSlotSize, transportSlotSize);
+        capsuleX = leftPanelCapsuleBounds.getRight() + groupGap;
+    }
+    else
+    {
+        leftPanelCapsuleBounds = {};
+    }
     transportCapsuleBounds = juce::Rectangle<int>(capsuleX, transportCapsuleY, capsuleW, transportCapsuleH);
     if (showingProgress)
         progressBar.setBounds(toolContainerBounds.getX(),
@@ -346,6 +377,7 @@ void ToolbarComponent::refreshLocalisedText()
     stopButton.setTooltip(TR("toolbar.stop"));
     loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
+    leftPanelButton.setTooltip(TR("panel.tracks"));
     refreshTrackViewTooltip();
 #if JUCE_MAC
     undoButton.setTooltip(TR("command.undo") + " (\u2318Z)");
@@ -434,6 +466,11 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         parametersVisible = parametersButton.getToggleState();
         if (onToggleParameters)
             onToggleParameters(parametersVisible);
+    }
+    else if (button == &leftPanelButton)
+    {
+        if (onToggleLeftPanel)
+            onToggleLeftPanel(leftPanelButton.getToggleState());
     }
     else if (button == &trackViewButton)
     {
@@ -547,6 +584,21 @@ void ToolbarComponent::setParametersVisible(bool visible)
 {
     parametersVisible = visible;
     parametersButton.setToggleState(parametersVisible, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setLeftPanelAvailable(bool available)
+{
+    if (leftPanelAvailable == available)
+        return;
+    leftPanelAvailable = available;
+    leftPanelButton.setVisible(available);
+    resized();
+    repaint();
+}
+
+void ToolbarComponent::setLeftPanelVisible(bool visible)
+{
+    leftPanelButton.setToggleState(visible, juce::dontSendNotification);
 }
 
 void ToolbarComponent::setTrackViewAvailable(bool available)

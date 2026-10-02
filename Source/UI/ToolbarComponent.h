@@ -88,6 +88,9 @@ public:
     void setLoopEnabled(bool enabled);
     void setAuditionEnabled(bool enabled);
     void setParametersVisible(bool visible);
+    void setLeftPanelVisible(bool visible);
+    // Left-panel group is ARA only; hidden (and takes no space) otherwise.
+    void setLeftPanelAvailable(bool available);
     void setUndoRedoEnabled(bool undoEnabled, bool redoEnabled);
     void setProject(Project* project);
     bool isFollowPlayback() const { return followPlayback; }
@@ -122,6 +125,7 @@ public:
     std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
+    std::function<void(bool)> onToggleLeftPanel;  // Called with new left-panel visibility
     // Clip / Track view toggle (ARA only). Hidden until made available.
     void setTrackViewAvailable(bool available);
     void setTrackViewMode(bool track);
@@ -155,11 +159,14 @@ private:
     Button undoButton;
     Button redoButton;
     ToggleButton parametersButton;
+    ToggleButton leftPanelButton; // sits in its own group between logo and transport
+    bool leftPanelAvailable = false;
     ToggleButton trackViewButton;
     bool trackViewAvailable = false;
     void refreshTrackViewTooltip();
     juce::Rectangle<int> toolContainerBounds;    // For drawing container background
     juce::Rectangle<int> transportCapsuleBounds; // For drawing transport capsule background
+    juce::Rectangle<int> leftPanelCapsuleBounds; // For drawing the left-panel group background
     juce::Rectangle<int> timeCapsuleBounds;      // For drawing centered time capsule
 
     juce::Label timeLabel;

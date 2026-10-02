@@ -321,6 +321,15 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
               : getNoteGradientColours(note.getAdjustedMidiNote(),
                                        pitchReferenceHz);
       juce::Rectangle<float> noteVisualBounds(x, y, renderedWidth, h);
+      // The shape that was filled, for the pinned-track outline.
+      juce::Path bodyShape;
+      // Outline-only pass: fill nothing, but build the same shapes.
+      std::optional<juce::Graphics::ScopedSaveState> noFill;
+      if (!fillBodies)
+      {
+        noFill.emplace(g);
+        g.reduceClipRegion(juce::Rectangle<int>());
+      }
 
       const float *samples = globalSamples;
       int totalSamples = globalTotalSamples;
@@ -383,6 +392,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           }
 
           noteVisualBounds = {x, y, renderedWidth, h};
+          bodyShape.addRoundedRectangle(x, y, renderedWidth, h, 2.0f);
         }
         else
         {
@@ -467,6 +477,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
           waveformPath.closeSubPath();
           noteVisualBounds = waveformPath.getBounds();
+          bodyShape = waveformPath;
 
           if (isPreviewPlaybackNote)
           {
@@ -525,6 +536,14 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         }
 
         noteVisualBounds = {x, y, renderedWidth, h};
+        bodyShape.addRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+      }
+
+      noFill.reset();
+      if (outlineColour.has_value() && !bodyShape.isEmpty())
+      {
+        g.setColour(*outlineColour);
+        g.strokePath(bodyShape, juce::PathStrokeType(1.0f));
       }
 
       if (showSelectionStatus && note.isSelected())

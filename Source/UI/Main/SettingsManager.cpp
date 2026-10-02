@@ -210,6 +210,9 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("trackViewMode"))
           trackViewMode =
               static_cast<bool>(configObj->getProperty("trackViewMode"));
+        if (configObj->hasProperty("useDawTrackColour"))
+          useDawTrackColour =
+              static_cast<bool>(configObj->getProperty("useDawTrackColour"));
         if (configObj->hasProperty("liveAuditionEnabled"))
           liveAuditionEnabled =
               static_cast<bool>(configObj->getProperty("liveAuditionEnabled"));
@@ -249,6 +252,7 @@ void SettingsManager::saveConfig()
   config->setProperty("windowHeight", windowHeight);
   config->setProperty("overviewVisible", overviewVisible);
   config->setProperty("trackViewMode", trackViewMode);
+  config->setProperty("useDawTrackColour", useDawTrackColour);
   config->setProperty("showDeltaPitch", showDeltaPitch);
   config->setProperty("showBasePitch", showBasePitch);
   config->setProperty("showSegmentsDebug", showSegmentsDebug);

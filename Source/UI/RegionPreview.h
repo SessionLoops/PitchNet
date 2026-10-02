@@ -27,6 +27,11 @@ struct MainViewRegionPreview {
   double startSeconds = 0.0;
   double endSeconds = 0.0;
   bool active = false;
+  // A region of another track the user pinned in the track list. Drawn as
+  // notes only (no waveform, pitch curve, boundaries or overview), with the
+  // inactive-region body plus an outline in outlineColour; never clickable.
+  bool pinned = false;
+  juce::Colour outlineColour;
   // False when the region has not been analysed yet: only its range is known.
   bool hasContent = false;
 
@@ -55,3 +60,22 @@ struct MainViewRegionPreview {
 
 using MainViewRegionPreviewList =
     std::shared_ptr<const std::vector<MainViewRegionPreview>>;
+
+/** The list without pinned-track regions, for views that show only this
+    track (background waveform, overview). Returns the same list when nothing
+    is pinned, so the common case copies nothing. */
+inline MainViewRegionPreviewList
+withoutPinnedRegions(const MainViewRegionPreviewList &previews) {
+  if (!previews)
+    return previews;
+  bool anyPinned = false;
+  for (const auto &region : *previews)
+    anyPinned = anyPinned || region.pinned;
+  if (!anyPinned)
+    return previews;
+  auto filtered = std::make_shared<std::vector<MainViewRegionPreview>>();
+  for (const auto &region : *previews)
+    if (!region.pinned)
+      filtered->push_back(region);
+  return filtered;
+}

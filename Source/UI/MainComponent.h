@@ -14,6 +14,7 @@
 #include "Main/MenuHandler.h"
 #include "Main/SettingsManager.h"
 #include "ParameterPanel.h"
+#include "TrackListPanel.h"
 #include "PianoRollComponent.h"
 #include "PianoRollWorkspaceView.h"
 #include "SettingsOverlay.h"
@@ -193,6 +194,22 @@ public:
   void setRegionListVisible(bool visible) override;
   void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
                         const juce::String &activeKey) override;
+  void updateTrackList(const std::vector<MainViewTrackEntry> &tracks,
+                       const juce::String &activeKey) override;
+  void setOnTrackSelected(
+      std::function<void(const juce::String &)> callback) override {
+    trackListPanel.onTrackSelected = std::move(callback);
+  }
+  void setOnTrackPinChanged(
+      std::function<void(const juce::String &, bool)> callback) override {
+    trackListPanel.onTrackPinChanged = std::move(callback);
+  }
+  bool getUseDawTrackColour() const override {
+    return trackListPanel.getUseDawTrackColour();
+  }
+  void setOnTrackColourModeChanged(std::function<void()> callback) override {
+    onTrackColourModeChanged = std::move(callback);
+  }
   void setOnRegionSelected(
       std::function<void(const juce::String &)> callback) override {
     parameterPanel.onRegionSelected = std::move(callback);
@@ -376,6 +393,8 @@ private:
   PianoRollComponent pianoRoll;
   PianoRollWorkspaceView pianoRollView;
   ParameterPanel parameterPanel;
+  TrackListPanel trackListPanel; // content of the left side panel
+  std::function<void()> onTrackColourModeChanged;
   std::unique_ptr<UiBrightnessEffect> uiBrightnessEffect;
   AnalysisBackdrop analysisBackdrop;
   AnalysisProgressPopup analysisProgressPopup;

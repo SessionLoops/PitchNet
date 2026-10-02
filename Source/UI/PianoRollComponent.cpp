@@ -542,6 +542,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     drawGrid(g, false, true);
     drawRegionPreviews(g);
     drawInactiveRegionEdits(g, mainArea);
+    drawPinnedTrackNotes(g, mainArea);
     drawAudioSourceRegionOverlay(g);
     drawLoopOverlay(g);
 
@@ -733,7 +734,8 @@ void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
 void PianoRollComponent::setRegionPreviews(MainViewRegionPreviewList previews)
 {
   regionPreviews = std::move(previews);
-  waveformBackgroundRenderer->setRegionPreviews(regionPreviews);
+  waveformBackgroundRenderer->setRegionPreviews(
+      withoutPinnedRegions(regionPreviews));
   regionPreviewsEndSeconds = 0.0;
   if (regionPreviews)
     for (const auto &region : *regionPreviews)
@@ -791,8 +793,10 @@ PianoRollComponent::findInactiveRegionAt(double timeSeconds) const
   // Where regions overlap, the active one keeps the click.
   if (isInsideActiveRegion(timeSeconds))
     return nullptr;
+  // Pinned tracks are for reference only and never take a click.
   for (const auto &region : *regionPreviews)
-    if (!region.active && previewContains(region, timeSeconds))
+    if (!region.active && !region.pinned &&
+        previewContains(region, timeSeconds))
       return &region;
   return nullptr;
 }
@@ -835,7 +839,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
 
     for (const auto &region : *regionPreviews)
     {
-      if (region.active || region.project == nullptr ||
+      if (region.active || region.pinned || region.project == nullptr ||
           region.endSeconds <= visibleHostStart ||
           region.startSeconds >= visibleHostEnd)
         continue;
@@ -892,6 +896,108 @@ void PianoRollComponent::drawInactiveRegionEdits(
                 static_cast<int>(scrollY));
 }
 
+void PianoRollComponent::drawPinnedTrackNotes(
+    juce::Graphics &g, const juce::Rectangle<int> &mainArea)
+{
+  if (!trackViewMode || !regionPreviews || regionPreviews->empty() ||
+      mainArea.isEmpty() || pixelsPerSecond <= 0.0f)
+    return;
+
+  bool anyPinned = false;
+  for (const auto &region : *regionPreviews)
+    anyPinned = anyPinned || (region.pinned && region.project != nullptr);
+  if (!anyPinned)
+    return;
+
+  InactiveLayerKey key;
+  key.scrollX = scrollX;
+  key.scrollY = scrollY;
+  key.pixelsPerSecond = pixelsPerSecond;
+  key.pixelsPerSemitone = pixelsPerSemitone;
+  key.width = mainArea.getWidth();
+  key.height = mainArea.getHeight();
+  key.previews = regionPreviews.get();
+  key.displayOffset = projectToTimeline(0.0);
+
+  if (!pinnedLayer.isValid() || !(key == pinnedLayerKey))
+  {
+    pinnedLayerKey = key;
+    // Bodies first, into their own image, so they can be dimmed exactly like
+    // inactive regions; the outlines then go on top at full strength.
+    juce::Image bodies(juce::Image::ARGB, key.width, key.height, true);
+    pinnedLayer = juce::Image(juce::Image::ARGB, key.width, key.height, true);
+
+    const double visibleHostStart =
+        projectToTimeline(scrollX / pixelsPerSecond);
+    const double visibleHostEnd = projectToTimeline(
+        (scrollX + key.width) / pixelsPerSecond);
+    const float height =
+        (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+    const double savedScrollX = coordMapper->getScrollX();
+
+    const auto drawPass = [&](juce::Image &target, bool outlines)
+    {
+      juce::Graphics lg(target);
+      for (const auto &region : *regionPreviews)
+      {
+        if (!region.pinned || region.project == nullptr ||
+            region.endSeconds <= visibleHostStart ||
+            region.startSeconds >= visibleHostEnd)
+          continue;
+
+        // Same placement as drawInactiveRegionEdits().
+        const double zero = timelineToProject(region.projectHostOffsetSeconds);
+        const double localScrollX = scrollX - zero * pixelsPerSecond;
+        coordMapper->setScrollX(localScrollX);
+
+        juce::Graphics::ScopedSaveState state(lg);
+        lg.addTransform(juce::AffineTransform::translation(
+            static_cast<float>(-localScrollX), static_cast<float>(-scrollY)));
+        const double windowStart =
+            region.startSeconds - region.projectHostOffsetSeconds;
+        const double windowEnd =
+            region.endSeconds - region.projectHostOffsetSeconds;
+        lg.reduceClipRegion(
+            juce::Rectangle<float>(
+                static_cast<float>(windowStart * pixelsPerSecond) - 2.0f, 0.0f,
+                static_cast<float>((windowEnd - windowStart) * pixelsPerSecond) + 4.0f,
+                height)
+                .getSmallestIntegerContainer());
+
+        previewNoteRenderer->setProject(region.project.get());
+        previewNoteRenderer->setFillBodies(!outlines);
+        previewNoteRenderer->setOutlineColour(
+            outlines ? std::optional<juce::Colour>(region.outlineColour)
+                     : std::nullopt);
+        previewNoteRenderer->draw(lg, NoteRenderer::Pass::Body, false,
+                                  getWidth());
+      }
+    };
+
+    drawPass(bodies, false);
+    bodies.desaturate();
+    {
+      // Darker than inactive regions (0.6), so pinned notes read as
+      // background reference; the outline stays at full strength.
+      constexpr float pinnedBodyOpacity = 0.35f;
+      juce::Graphics lg(pinnedLayer);
+      lg.setOpacity(pinnedBodyOpacity);
+      lg.drawImageAt(bodies, 0, 0);
+    }
+    drawPass(pinnedLayer, true);
+
+    coordMapper->setScrollX(savedScrollX);
+    previewNoteRenderer->setProject(nullptr);
+    previewNoteRenderer->setFillBodies(true);
+    previewNoteRenderer->setOutlineColour(std::nullopt);
+  }
+
+  juce::Graphics::ScopedSaveState opaque(g);
+  g.setOpacity(1.0f);
+  g.drawImageAt(pinnedLayer, static_cast<int>(scrollX),
+                static_cast<int>(scrollY));
+}
+
 void PianoRollComponent::drawRegionPreviews(juce::Graphics &g)
 {
   if (!regionPreviews || regionPreviews->empty())
@@ -919,6 +1025,10 @@ void PianoRollComponent::drawRegionPreviews(juce::Graphics &g)
 
   for (const auto &region : *regionPreviews)
   {
+    // Pinned tracks draw notes only; their region edges would clutter this
+    // track's own boundaries.
+    if (region.pinned)
+      continue;
     if (region.endSeconds <= visibleStart || region.startSeconds >= visibleEnd ||
         region.endSeconds <= region.startSeconds)
       continue;

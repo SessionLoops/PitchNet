@@ -333,6 +333,26 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       [this](const juce::String &regionKey) {
         activateAraRegionByKey(regionKey, false);
       });
+  // Clicking an inactive track in the left side panel switches to it.
+  mainView->setOnTrackSelected([this](const juce::String &trackKey) {
+    activateAraTrackByKey(trackKey);
+  });
+  // Pinning a track draws its notes on the canvas (Track mode).
+  mainView->setOnTrackPinChanged([this](const juce::String &trackKey,
+                                        bool pinned) {
+    if (pinned)
+      pinnedTrackKeys.insert(trackKey);
+    else
+      pinnedTrackKeys.erase(trackKey);
+    lastPublishedTrackSignature.clear();
+    lastPublishedPreviewSignature.clear();
+    refreshAraRegionList();
+  });
+  // Pinned notes are outlined in the track colour, which this switch changes.
+  mainView->setOnTrackColourModeChanged([this] {
+    lastPublishedPreviewSignature.clear();
+    refreshAraRegionList();
+  });
   // Clip / Track toggle. Track mode needs the other regions' previews; Clip
   // mode drops them. Republish right away rather than on the next poll.
   mainView->setOnTrackViewModeChanged([this](bool) {
@@ -734,6 +754,7 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
 
   audioProcessor.updateAraTrackAnalysisQueue(regions);
   publishAraRegionPreviews(regions, entries, activeSelector);
+  publishAraTrackList(regions, entries, activeSelector);
 
   juce::String signature = activeSelector;
   for (const auto &entry : entries)
@@ -772,6 +793,215 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
   LOG(diagnostic);
 }
 
+namespace {
+// Session-local identity of a track (region sequence) for the track list.
+// Never stored; resolved by re-walking the document's live sequences.
+juce::String araTrackKey(juce::ARARegionSequence *sequence) {
+  return juce::String::toHexString(static_cast<juce::int64>(
+      reinterpret_cast<std::uintptr_t>(sequence)));
+}
+
+// The track colour the DAW sends through ARA. Hosts set it on the region
+// sequence (the track) itself; some only colour the clips, so fall back to the
+// first clip's colour on that track. hasHostColour is false when the DAW sent
+// neither; the UI then uses its default colour.
+juce::Colour araTrackColour(juce::ARARegionSequence &sequence,
+                            bool &hasHostColour,
+                            const char **source = nullptr) {
+  const auto toColour = [](const ARA::ARAColor *araColour) {
+    return juce::Colour::fromFloatRGBA(araColour->r, araColour->g,
+                                       araColour->b, 1.0f);
+  };
+  hasHostColour = true;
+  if (const ARA::ARAColor *araColour = sequence.getColor()) {
+    if (source != nullptr)
+      *source = "track";
+    return toColour(araColour);
+  }
+  for (auto *region : sequence.getPlaybackRegions<juce::ARAPlaybackRegion>())
+    if (region != nullptr)
+      if (const ARA::ARAColor *regionColour = region->getColor()) {
+        if (source != nullptr)
+          *source = "clip";
+        return toColour(regionColour);
+      }
+  hasHostColour = false;
+  if (source != nullptr)
+    *source = "none";
+  return {};
+}
+} // namespace
+
+void PitchNetAudioProcessorEditor::activateAraTrackByKey(
+    const juce::String &trackKey) {
+  if (trackKey.isEmpty())
+    return;
+
+  auto *editorView = getARAEditorView();
+  auto *docController =
+      editorView != nullptr ? editorView->getDocumentController() : nullptr;
+  auto *document =
+      docController != nullptr
+          ? static_cast<juce::ARADocument *>(docController->getDocument())
+          : nullptr;
+  if (document == nullptr)
+    return;
+
+  // Resolve against live sequences: the track may have been removed since the
+  // list was published.
+  juce::ARARegionSequence *sequence = nullptr;
+  for (auto *candidate :
+       document->getRegionSequences<juce::ARARegionSequence>())
+    if (candidate != nullptr && araTrackKey(candidate) == trackKey) {
+      sequence = candidate;
+      break;
+    }
+
+  if (sequence == nullptr) {
+    lastPublishedTrackSignature.clear();
+    return;
+  }
+
+  std::vector<juce::ARAPlaybackRegion *> candidates;
+  for (auto *region : sequence->getPlaybackRegions<juce::ARAPlaybackRegion>())
+    if (region != nullptr && region->getAudioModification() != nullptr &&
+        region->getAudioModification()->getAudioSource() != nullptr)
+      candidates.push_back(region);
+
+  // A track with no usable clip has nothing to put on the canvas.
+  if (candidates.empty())
+    return;
+
+  juce::ARAPlaybackRegion *target = nullptr;
+  if (const auto remembered = lastActiveRegionByTrack.find(trackKey);
+      remembered != lastActiveRegionByTrack.end())
+    for (auto *region : candidates)
+      if (pitchnetRegionSelector(*region) == remembered->second) {
+        target = region;
+        break;
+      }
+
+  if (target == nullptr)
+    target = *std::min_element(
+        candidates.begin(), candidates.end(),
+        [](juce::ARAPlaybackRegion *a, juce::ARAPlaybackRegion *b) {
+          return a->getStartInPlaybackTime() < b->getStartInPlaybackTime();
+        });
+
+  activateAraRegion(target, true);
+}
+
+void PitchNetAudioProcessorEditor::publishAraTrackList(
+    const std::vector<juce::ARAPlaybackRegion *> &regions,
+    const std::vector<MainViewRegionEntry> &entries,
+    const juce::String &activeSelector) {
+  if (mainView == nullptr)
+    return;
+
+  auto *editorView = getARAEditorView();
+  auto *docController =
+      editorView != nullptr ? editorView->getDocumentController() : nullptr;
+  auto *document =
+      docController != nullptr
+          ? static_cast<juce::ARADocument *>(docController->getDocument())
+          : nullptr;
+  if (document == nullptr)
+    return;
+
+  // The active track is the one holding the region the canvas shows. Before a
+  // region is active, fall back to the track this instance renders.
+  juce::ARARegionSequence *activeSequence = nullptr;
+  for (size_t i = 0; i < regions.size() && i < entries.size(); ++i)
+    if (entries[i].key == activeSelector) {
+      activeSequence = regions[i]->getRegionSequence();
+      break;
+    }
+  if (activeSequence == nullptr)
+    if (auto *renderer = audioProcessor.getPlaybackRenderer())
+      for (auto *region :
+           renderer->getPlaybackRegions<juce::ARAPlaybackRegion>())
+        if (region != nullptr && region->getRegionSequence() != nullptr) {
+          activeSequence = region->getRegionSequence();
+          break;
+        }
+
+  // The ARA document only holds region sequences for tracks PitchNet is on.
+  auto sequences = document->getRegionSequences<juce::ARARegionSequence>();
+  sequences.erase(std::remove(sequences.begin(), sequences.end(), nullptr),
+                  sequences.end());
+  // Host track order.
+  std::stable_sort(sequences.begin(), sequences.end(),
+                   [](juce::ARARegionSequence *a, juce::ARARegionSequence *b) {
+                     return a->getOrderIndex() < b->getOrderIndex();
+                   });
+
+  const auto keyFor = araTrackKey;
+
+  std::vector<MainViewTrackEntry> tracks;
+  tracks.reserve(sequences.size());
+  int index = 0;
+  juce::String colourDiagnostic;
+  for (auto *sequence : sequences) {
+    ++index;
+
+    juce::String name;
+    if (const char *sequenceName = sequence->getName())
+      name = juce::String::fromUTF8(sequenceName).trim();
+    if (name.isEmpty())
+      name = "Track " + juce::String(index);
+
+    const char *colourSource = "none";
+    bool hasHostColour = false;
+    const juce::Colour colour =
+        araTrackColour(*sequence, hasHostColour, &colourSource);
+
+    const auto key = keyFor(sequence);
+    tracks.push_back({key, name, colour, hasHostColour,
+                      pinnedTrackKeys.count(key) > 0});
+    colourDiagnostic << "\n    '" << name << "' colour=";
+    if (hasHostColour)
+      colourDiagnostic << "#" << colour.toDisplayString(false) << " ("
+                       << colourSource << ")";
+    else
+      colourDiagnostic << "none (DAW sent no colour)";
+  }
+
+  const juce::String activeKey =
+      activeSequence != nullptr ? keyFor(activeSequence) : juce::String();
+
+  // The active track's pin is always off; a track that became active loses
+  // its pin. Forget pins of tracks that no longer exist.
+  for (auto it = pinnedTrackKeys.begin(); it != pinnedTrackKeys.end();) {
+    const bool exists =
+        std::any_of(tracks.begin(), tracks.end(),
+                    [&](const MainViewTrackEntry &t) { return t.key == *it; });
+    if (!exists || *it == activeKey)
+      it = pinnedTrackKeys.erase(it);
+    else
+      ++it;
+  }
+  for (auto &track : tracks)
+    track.pinned = pinnedTrackKeys.count(track.key) > 0;
+  if (activeKey.isNotEmpty() && activeSelector.isNotEmpty())
+    lastActiveRegionByTrack[activeKey] = activeSelector;
+
+  juce::String signature = activeKey;
+  for (const auto &track : tracks)
+    signature << "\n" << track.key << "\t" << track.name << "\t"
+              << (track.hasHostColour ? track.colour.toString() : "-") << "\t"
+              << (track.pinned ? "P" : "-");
+
+  if (signature == lastPublishedTrackSignature)
+    return;
+  lastPublishedTrackSignature = signature;
+  mainView->updateTrackList(tracks, activeKey);
+
+  // One line per change: where each track's colour came from, so a host that
+  // sends no ARA colour is easy to spot.
+  LOG("ARA track list: " + juce::String(static_cast<int>(tracks.size())) +
+      " track(s)" + colourDiagnostic);
+}
+
 void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
     const std::vector<juce::ARAPlaybackRegion *> &regions,
     const std::vector<MainViewRegionEntry> &entries,
@@ -803,16 +1033,13 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
   juce::String signature = "track\n" + activeSelector;
   std::map<juce::String, RegionPreviewCacheEntry> nextCache;
 
-  for (size_t i = 0; i < regions.size() && i < entries.size(); ++i) {
-    auto *region = regions[i];
-    if (activeSequence != nullptr &&
-        region->getRegionSequence() != activeSequence)
-      continue;
-
-    const auto &entry = entries[i];
-    // entry.key is the region selector (which window); edits are owned by
+  // Builds (or reuses) one region's preview and appends it.
+  const auto addPreview = [&](juce::ARAPlaybackRegion *region,
+                              const juce::String &regionKey,
+                              const juce::String &regionName, bool isActive,
+                              bool pinned, juce::Colour outlineColour) {
+    // regionKey is the region selector (which window); edits are owned by
     // the modification, so the Project is looked up by the modification key.
-    const bool isActive = entry.key == activeSelector;
     const double start = std::max(0.0, region->getStartInPlaybackTime());
     const double end = std::max(start, region->getEndInPlaybackTime());
     double startInModification = 0.0;
@@ -836,7 +1063,7 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
                        revision, fromCanvas);
 
     RegionPreviewCacheEntry cacheEntry;
-    const auto cached = regionPreviewCache.find(entry.key);
+    const auto cached = regionPreviewCache.find(regionKey);
     const bool reusable =
         cached != regionPreviewCache.end() && !isActive &&
         cached->second.project == project &&
@@ -862,14 +1089,16 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
     }
 
     auto &preview = cacheEntry.preview;
-    preview.key = entry.key;
-    preview.name = entry.name;
+    preview.key = regionKey;
+    preview.name = regionName;
     preview.startSeconds = start;
     preview.endSeconds = end;
     preview.active = isActive;
+    preview.pinned = pinned;
+    preview.outlineColour = outlineColour;
     previews->push_back(preview);
 
-    signature << "\n" << entry.key << "\t" << entry.name << "\t"
+    signature << "\n" << regionKey << "\t" << regionName << "\t"
               << juce::String(start, 6) << "\t" << juce::String(end, 6)
               << "\t" << juce::String(startInModification, 6) << "\t"
               << (isActive ? "A" : "-") << (fromCanvas ? "C" : "S") << "\t"
@@ -877,7 +1106,46 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
                      static_cast<juce::int64>(
                          reinterpret_cast<std::uintptr_t>(project)))
               << "\t" << juce::String(static_cast<juce::int64>(revision));
-    nextCache[entry.key] = std::move(cacheEntry);
+    if (pinned)
+      signature << "\tP" << outlineColour.toString();
+    nextCache[regionKey] = std::move(cacheEntry);
+  };
+
+  for (size_t i = 0; i < regions.size() && i < entries.size(); ++i) {
+    auto *region = regions[i];
+    if (activeSequence != nullptr &&
+        region->getRegionSequence() != activeSequence)
+      continue;
+    addPreview(region, entries[i].key, entries[i].name,
+               entries[i].key == activeSelector, false, {});
+  }
+
+  // Pinned tracks: every clip, drawn as notes outlined in the track colour.
+  // Never the active track - its own clips are already here.
+  if (!pinnedTrackKeys.empty()) {
+    auto *editorView = getARAEditorView();
+    auto *docController =
+        editorView != nullptr ? editorView->getDocumentController() : nullptr;
+    auto *document =
+        docController != nullptr
+            ? static_cast<juce::ARADocument *>(docController->getDocument())
+            : nullptr;
+    const bool useDawColour = mainView->getUseDawTrackColour();
+    if (document != nullptr)
+      for (auto *sequence :
+           document->getRegionSequences<juce::ARARegionSequence>()) {
+        if (sequence == nullptr || sequence == activeSequence ||
+            pinnedTrackKeys.count(araTrackKey(sequence)) == 0)
+          continue;
+        MainViewTrackEntry track;
+        track.colour = araTrackColour(*sequence, track.hasHostColour);
+        const auto outline = resolveTrackColour(track, useDawColour);
+        for (auto *region :
+             sequence->getPlaybackRegions<juce::ARAPlaybackRegion>())
+          if (region != nullptr && region->getAudioModification() != nullptr)
+            addPreview(region, pitchnetRegionSelector(*region), {}, false, true,
+                       outline);
+      }
   }
 
   regionPreviewCache = std::move(nextCache);
@@ -908,6 +1176,14 @@ void PitchNetAudioProcessorEditor::activateAraRegionByKey(
     lastPublishedRegionSignature.clear();
     return;
   }
+
+  activateAraRegion(target, focusView);
+}
+
+void PitchNetAudioProcessorEditor::activateAraRegion(
+    juce::ARAPlaybackRegion *target, bool focusView) {
+  if (target == nullptr)
+    return;
 
   if (auto *araEditorView = getARAEditorView()) {
     if (auto *araDocController = araEditorView->getDocumentController()) {

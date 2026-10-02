@@ -506,7 +506,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   setSize(WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight);
   setOpaque(true); // Required for native title bar
 
-  tooltipWindow = std::make_unique<juce::TooltipWindow>();
+  // Parented to this view, not the desktop. A desktop-level TooltipWindow
+  // watches the mouse everywhere, so with several plugin instances in one host
+  // process every instance's window showed the same tip (and JUCE asserts in
+  // TooltipWindow::displayTipInternal). A parented one only reacts to
+  // components in its own window.
+  tooltipWindow = std::make_unique<juce::TooltipWindow>(this);
   tooltipWindow->setLookAndFeel(&DarkLookAndFeel::getInstance());
 
   LOG("MainComponent: creating core components...");
@@ -687,6 +692,22 @@ MainComponent::MainComponent(bool enableAudioDevice)
   workspace.addPanel("parameters", TR("panel.parameters"), &parameterPanel,
                      false);
 
+  // Left side panel (slides in from the left, same width as the right panel).
+  workspace.setLeftPanelContent("tracks", TR("panel.tracks"), &trackListPanel);
+  trackListPanel.onPreferredHeightChanged = [this]()
+  {
+    workspace.refreshLeftPanelContentHeight();
+  };
+  trackListPanel.setUseDawTrackColour(settingsManager->getUseDawTrackColour());
+  trackListPanel.onUseDawTrackColourChanged = [this](bool use)
+  {
+    settingsManager->setUseDawTrackColour(use);
+    settingsManager->saveConfig();
+    // Pinned notes are outlined in the track colour; redraw them.
+    if (onTrackColourModeChanged)
+      onTrackColourModeChanged();
+  };
+
   // Configure toolbar for plugin mode
   if (isPluginMode())
     toolbar.setPluginMode(true);
@@ -830,6 +851,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   toolbar.onToggleParameters = [this](bool visible)
   {
     workspace.showPanel("parameters", visible);
+  };
+  toolbar.onToggleLeftPanel = [this](bool visible)
+  {
+    workspace.showLeftPanel(visible);
   };
   pianoRoll.onUndoRequested = [this]() { undo(); };
   pianoRoll.onRedoRequested = [this]() { redo(); };
@@ -1027,6 +1052,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     if (id == "parameters")
       toolbar.setParametersVisible(visible);
+  };
+  toolbar.setLeftPanelVisible(workspace.isLeftPanelVisible());
+  workspace.onLeftPanelVisibilityChanged = [this](bool visible)
+  {
+    toolbar.setLeftPanelVisible(visible);
   };
   workspace.onLayoutAnimationUpdated = [this]()
   {
@@ -1392,9 +1422,10 @@ void MainComponent::paintOverChildren(juce::Graphics &g)
   if (y >= getHeight())
     return;
 
+  const int viewLeft = workspace.getX() + workspace.getMainViewX();
   const int viewRight = workspace.getX() + workspace.getMainViewRight();
   g.setColour(juce::Colour(0xFF3C3C3Cu));
-  g.fillRect(0, y, juce::jmax(0, viewRight - scrollBarWidth), 1);
+  g.fillRect(viewLeft, y, juce::jmax(0, viewRight - scrollBarWidth - viewLeft), 1);
 }
 
 void MainComponent::applyUiBrightness(double brightnessPercent)
@@ -3577,6 +3608,10 @@ void MainComponent::triggerResynthesis()
 
 void MainComponent::setTrackViewModeAvailable(bool available) {
   toolbar.setTrackViewAvailable(available);
+  // The left side panel is ARA only, like the Clip / Track toggle.
+  toolbar.setLeftPanelAvailable(available);
+  if (!available)
+    workspace.showLeftPanel(false);
   pianoRollView.setTrackViewModeAvailable(available);
   const bool track = available && settingsManager != nullptr &&
                      settingsManager->getTrackViewMode();
@@ -3597,6 +3632,12 @@ void MainComponent::updateRegionList(
     const std::vector<MainViewRegionEntry> &regions,
     const juce::String &activeKey) {
   parameterPanel.setRegionList(regions, activeKey);
+}
+
+void MainComponent::updateTrackList(
+    const std::vector<MainViewTrackEntry> &tracks,
+    const juce::String &activeKey) {
+  trackListPanel.setTracks(tracks, activeKey);
 }
 
 void MainComponent::setHostTransportControlAvailable(bool available)

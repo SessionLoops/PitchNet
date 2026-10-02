@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
@@ -44,6 +46,10 @@ public:
   // Inactive regions in Track mode: note bodies use a grey ramp (light along
   // the centre line, dark at the edges) instead of the pitch-accuracy colours.
   void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
+  // Pinned tracks: stroke each note body in this colour. Combine with
+  // setFillBodies(false) to draw the outline on its own.
+  void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
+  void setFillBodies(bool shouldFill) { fillBodies = shouldFill; }
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
                                double currentTime)
   {
@@ -67,6 +73,8 @@ private:
   Note *hoveredNote = nullptr;
   bool showNoteFramesDebug = false;
   bool greyscale = false;
+  std::optional<juce::Colour> outlineColour;
+  bool fillBodies = true;
   bool previewPlaybackActive = false;
   int previewStartFrame = 0;
   int previewEndFrame = 0;

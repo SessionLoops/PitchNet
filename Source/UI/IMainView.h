@@ -33,6 +33,31 @@ struct MainViewRegionEntry {
   juce::String name;
 };
 
+/**
+ * One track (ARA region sequence) that has PitchNet on it, as the left side
+ * panel sees it. The key is session-local and only used to mark the active
+ * track; the colour is the DAW's track colour sent through ARA, when it sent
+ * one. The panel decides whether to use it or its neutral default.
+ */
+struct MainViewTrackEntry {
+  juce::String key;
+  juce::String name;
+  juce::Colour colour;        // the DAW's colour; only valid if hasHostColour
+  bool hasHostColour = false; // false when the DAW sent no colour via ARA
+  bool pinned = false;        // notes drawn on the canvas; never the active track
+};
+
+/** Track colour when the DAW sends none, or "Use DAW Track Color" is off. */
+constexpr juce::uint32 kDefaultTrackColour = 0xFFE6E6E6u;
+
+/** The colour a track is shown in, given the "Use DAW Track Color" switch. */
+inline juce::Colour resolveTrackColour(const MainViewTrackEntry &track,
+                                       bool useDawTrackColour) {
+  return useDawTrackColour && track.hasHostColour
+             ? track.colour
+             : juce::Colour(kDefaultTrackColour);
+}
+
 class IMainView {
 public:
   virtual ~IMainView() = default;
@@ -85,6 +110,22 @@ public:
    */
   virtual void updateRegionList(const std::vector<MainViewRegionEntry> &regions,
                                 const juce::String &activeKey) = 0;
+  /**
+   * Replace the tracks the left side panel lists and mark the active one (an
+   * empty key means none of them).
+   */
+  virtual void updateTrackList(const std::vector<MainViewTrackEntry> &tracks,
+                               const juce::String &activeKey) = 0;
+  /** Called with a track key when the user clicks an inactive track. */
+  virtual void setOnTrackSelected(
+      std::function<void(const juce::String &)> callback) = 0;
+  /** Called with a track key and the new state when a track's pin is toggled. */
+  virtual void setOnTrackPinChanged(
+      std::function<void(const juce::String &, bool)> callback) = 0;
+  /** State of the "Use DAW Track Color" switch. */
+  virtual bool getUseDawTrackColour() const = 0;
+  /** Called after the "Use DAW Track Color" switch changes. */
+  virtual void setOnTrackColourModeChanged(std::function<void()> callback) = 0;
   /** Called with a region key when the user picks one in the Regions card. */
   virtual void setOnRegionSelected(
       std::function<void(const juce::String &)> callback) = 0;

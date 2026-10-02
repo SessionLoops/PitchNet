@@ -96,6 +96,9 @@ public:
   // ARA editor: Track mode (whole track) vs Clip mode (selected clip's source).
   bool getTrackViewMode() const { return trackViewMode; }
   void setTrackViewMode(bool track) { trackViewMode = track; }
+  // Track list: colour rows with the DAW's track colour, or the default.
+  bool getUseDawTrackColour() const { return useDawTrackColour; }
+  void setUseDawTrackColour(bool use) { useDawTrackColour = use; }
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
   void setShowBasePitch(bool show) { showBasePitch = show; }
   void setShowSegmentsDebug(bool show) { showSegmentsDebug = show; }
@@ -143,6 +146,7 @@ private:
   bool overviewVisible = false;
   // ARA starts in Track mode unless the user saved a different preference.
   bool trackViewMode = true;
+  bool useDawTrackColour = true;
   bool showDeltaPitch = true;
   bool showBasePitch = false;
   bool showSegmentsDebug = false;

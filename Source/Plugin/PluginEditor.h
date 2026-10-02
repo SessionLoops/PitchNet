@@ -1,5 +1,7 @@
 #pragma once
 
+#include <set>
+
 #include "../JuceHeader.h"
 #include "../UI/IMainView.h"
 #include "../UI/MainViewFactory.h"
@@ -60,9 +62,21 @@ private:
     // (focusView = false): the region is already on screen.
     void activateAraRegionByKey(const juce::String& regionKey,
                                 bool focusView = true);
+    // Make a live region the canvas region and republish the lists.
+    void activateAraRegion(juce::ARAPlaybackRegion* target, bool focusView);
+    // Switch the canvas to a track the user clicked in the left side panel:
+    // the region last edited on that track, else its first region in time.
+    void activateAraTrackByKey(const juce::String& trackKey);
     // Push a preview of every region on the active region's track to the
     // canvas and thumbnail, rebuilding only regions whose content changed.
     void publishAraRegionPreviews(
+        const std::vector<juce::ARAPlaybackRegion*>& regions,
+        const std::vector<MainViewRegionEntry>& entries,
+        const juce::String& activeKey);
+    // Push every track (region sequence) in the ARA document - i.e. every
+    // track that has PitchNet on it - to the left side panel, marking the
+    // track of the active region. Only republishes when something changed.
+    void publishAraTrackList(
         const std::vector<juce::ARAPlaybackRegion*>& regions,
         const std::vector<MainViewRegionEntry>& entries,
         const juce::String& activeKey);
@@ -95,6 +109,13 @@ private:
     };
     std::map<juce::String, RegionPreviewCacheEntry> regionPreviewCache;
     juce::String lastPublishedPreviewSignature;
+    juce::String lastPublishedTrackSignature;
+    // Track key -> selector of the region last active on that track, so
+    // switching back to a track returns to the clip you were editing.
+    std::map<juce::String, juce::String> lastActiveRegionByTrack;
+    // Tracks pinned in the track list (session-local keys). Their notes are
+    // drawn on the canvas. Never contains the active track.
+    std::set<juce::String> pinnedTrackKeys;
     int regionListRefreshCountdown = 0;
 #endif
     bool lunaSoftwareRendererApplied = false;

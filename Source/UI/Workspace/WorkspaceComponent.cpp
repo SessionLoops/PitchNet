@@ -9,9 +9,39 @@ WorkspaceComponent::WorkspaceComponent()
     mainCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
     addAndMakeVisible(mainCard);
     addAndMakeVisible(panelContainer);
+    addChildComponent(leftPanelContainer);
 
     // Initially hide panel container (no panels visible)
     panelContainer.setVisible(false);
+}
+
+void WorkspaceComponent::SlideAnimation::start(bool visible)
+{
+    startProgress = progress;
+    startMs = juce::Time::getMillisecondCounter();
+    targetVisible = visible;
+    active = true;
+}
+
+bool WorkspaceComponent::SlideAnimation::advance(juce::uint32 nowMs, int durationMs)
+{
+    if (!active)
+        return false;
+
+    const float target = targetVisible ? 1.0f : 0.0f;
+    const float elapsed = static_cast<float>(nowMs - startMs) /
+                          static_cast<float>(durationMs);
+    const float t = juce::jlimit(0.0f, 1.0f, elapsed);
+    const float eased = 1.0f - std::pow(1.0f - t, 3.0f);
+
+    progress = startProgress + (target - startProgress) * eased;
+
+    if (t < 1.0f)
+        return false;
+
+    progress = target;
+    active = false;
+    return true;
 }
 
 void WorkspaceComponent::paint(juce::Graphics& g)
@@ -35,9 +65,28 @@ void WorkspaceComponent::resized()
     bounds.removeFromLeft(margin);
     bounds.removeFromBottom(margin);
 
-    // No sidebar; main content starts after outer margin
+    // Left panel: slides in from the left edge and pushes the main view. The
+    // container keeps its full width and is positioned partly off-screen while
+    // animating, so its content never reflows mid-slide.
+    const float leftProgress = juce::jlimit(0.0f, 1.0f, leftPanelSlide.progress);
+    if (leftProgress > 0.001f)
+    {
+        const int animatedLeftWidth = static_cast<int>(
+            std::round(static_cast<float>(leftPanelWidth) * leftProgress));
+        const auto fullBounds = bounds;
 
-    const float progress = juce::jlimit(0.0f, 1.0f, panelAnimationProgress);
+        bounds.removeFromLeft(animatedLeftWidth);
+        leftPanelContainer.setBounds(fullBounds.getX() + animatedLeftWidth - leftPanelWidth,
+                                     fullBounds.getY(),
+                                     leftPanelWidth,
+                                     fullBounds.getHeight());
+    }
+    else
+    {
+        leftPanelContainer.setBounds({});
+    }
+
+    const float progress = juce::jlimit(0.0f, 1.0f, rightPanelSlide.progress);
     if (progress > 0.001f)
     {
         const int animatedPanelWidth = static_cast<int>(
@@ -87,8 +136,8 @@ void WorkspaceComponent::addPanel(const juce::String& id, const juce::String& ti
     if (initiallyVisible)
     {
         panelContainer.showPanel(id, true);
-        panelAnimationProgress = 1.0f;
-        panelAnimationTargetVisible = true;
+        rightPanelSlide.progress = 1.0f;
+        rightPanelSlide.targetVisible = true;
         updatePanelContainerVisibility();
 
         if (onPanelVisibilityChanged)
@@ -144,17 +193,57 @@ void WorkspaceComponent::updatePanelContainerVisibility()
     resized();
 }
 
+void WorkspaceComponent::setLeftPanelContent(const juce::String& id,
+                                             const juce::String& title,
+                                             juce::Component* content)
+{
+    if (leftPanelId.isNotEmpty())
+        leftPanelContainer.removePanel(leftPanelId);
+
+    if (content != nullptr)
+        content->setSize(leftPanelWidth - 40, 520);
+
+    auto panel = std::make_unique<DraggablePanel>(id, title);
+    panel->setContentComponent(content);
+    leftPanelContainer.addPanel(std::move(panel));
+    leftPanelContainer.showPanel(id, true);
+    leftPanelId = id;
+}
+
+void WorkspaceComponent::refreshLeftPanelContentHeight()
+{
+    if (auto* panel = leftPanelContainer.getPanel(leftPanelId))
+        panel->refreshContentPreferredHeight();
+}
+
+void WorkspaceComponent::showLeftPanel(bool show)
+{
+    if (show == leftPanelSlide.targetVisible && !leftPanelSlide.active)
+        return;
+
+    leftPanelSlide.start(show);
+    if (show)
+        leftPanelContainer.setVisible(true);
+
+    startAnimationTimerIfNeeded();
+    resized();
+    repaint();
+
+    if (onLayoutAnimationUpdated)
+        onLayoutAnimationUpdated();
+
+    if (onLeftPanelVisibilityChanged)
+        onLeftPanelVisibilityChanged(show);
+}
+
 void WorkspaceComponent::startPanelAnimation(bool visible)
 {
-    panelAnimationStartProgress = panelAnimationProgress;
-    panelAnimationStartMs = juce::Time::getMillisecondCounter();
-    panelAnimationTargetVisible = visible;
-    panelAnimationActive = true;
+    rightPanelSlide.start(visible);
 
     if (visible)
         panelContainer.setVisible(true);
 
-    startTimerHz(30);
+    startAnimationTimerIfNeeded();
     resized();
     repaint();
 
@@ -162,36 +251,36 @@ void WorkspaceComponent::startPanelAnimation(bool visible)
         onLayoutAnimationUpdated();
 }
 
+void WorkspaceComponent::startAnimationTimerIfNeeded()
+{
+    if (!isTimerRunning())
+        startTimerHz(30);
+}
+
 void WorkspaceComponent::timerCallback()
 {
-    if (!panelAnimationActive)
-        return;
-
-    const float target = panelAnimationTargetVisible ? 1.0f : 0.0f;
-    const auto now = juce::Time::getMillisecondCounter();
-    const float elapsed = static_cast<float>(now - panelAnimationStartMs) /
-                          static_cast<float>(panelAnimationMs);
-    const float t = juce::jlimit(0.0f, 1.0f, elapsed);
-    const float eased = 1.0f - std::pow(1.0f - t, 3.0f);
-
-    panelAnimationProgress = panelAnimationStartProgress +
-                             (target - panelAnimationStartProgress) * eased;
-
-    if (t >= 1.0f)
+    if (!rightPanelSlide.active && !leftPanelSlide.active)
     {
-        panelAnimationProgress = target;
-        panelAnimationActive = false;
         stopTimer();
-
-        if (!panelAnimationTargetVisible)
-        {
-            for (const auto& [id, requestedVisible] : requestedPanelVisibility)
-                if (!requestedVisible)
-                    panelContainer.showPanel(id, false);
-
-            panelContainer.setVisible(false);
-        }
+        return;
     }
+
+    const auto now = juce::Time::getMillisecondCounter();
+
+    if (rightPanelSlide.advance(now, panelAnimationMs) && !rightPanelSlide.targetVisible)
+    {
+        for (const auto& [id, requestedVisible] : requestedPanelVisibility)
+            if (!requestedVisible)
+                panelContainer.showPanel(id, false);
+
+        panelContainer.setVisible(false);
+    }
+
+    if (leftPanelSlide.advance(now, panelAnimationMs) && !leftPanelSlide.targetVisible)
+        leftPanelContainer.setVisible(false);
+
+    if (!rightPanelSlide.active && !leftPanelSlide.active)
+        stopTimer();
 
     resized();
     repaint();
