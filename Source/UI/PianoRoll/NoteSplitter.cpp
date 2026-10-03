@@ -1,4 +1,5 @@
 #include "NoteSplitter.h"
+#include "../../Utils/NoteAmplitude.h"
 #include "../../Utils/Constants.h"
 #include <algorithm>
 #include <cmath>
@@ -222,6 +223,9 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     note->setEndFrame(splitFrame);
     note->setSrcEndFrame(srcSplitFrame);
 
+    NoteAmplitude::update(*note, audioData);
+    NoteAmplitude::update(secondNote, audioData);
+
     // Splitting is a structural edit, so both segments inherit the source
     // note's processing state rather than treating the new tail as clean.
     const bool sourceIsDirty = originalNote.isDirty();
@@ -341,6 +345,8 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
     Note mergedNote = firstNote;
     mergedNote.setEndFrame(secondNote.getEndFrame());
     mergedNote.setSrcEndFrame(secondNote.getSrcEndFrame());
+
+    NoteAmplitude::update(mergedNote, project->getAudioData());
 
     auto append = [](auto left, const auto &right)
     {

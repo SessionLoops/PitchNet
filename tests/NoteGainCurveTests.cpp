@@ -1,10 +1,33 @@
 #include "../Source/Utils/NoteGainCurve.h"
+#include "../Source/Utils/NoteAmplitude.h"
+#include "TestAssert.h"
 #include <cassert>
 #include <cmath>
 #include <iostream>
 
 int main()
 {
+    AudioData audio;
+    audio.originalWaveform.setSize(2, 2 * HOP_SIZE);
+    audio.waveform.setSize(2, 2 * HOP_SIZE);
+    audio.waveform.clear();
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < 2 * HOP_SIZE; ++sample)
+            audio.originalWaveform.setSample(channel, sample, sample < HOP_SIZE ? 0.25f : 0.5f);
+    Note left(0, 1, 60.0f), right(1, 2, 60.0f), merged(0, 2, 60.0f);
+    NoteAmplitude::update(left, audio);
+    NoteAmplitude::update(right, audio);
+    NoteAmplitude::update(merged, audio);
+    CHECK(std::abs(left.getSourceAmplitude() - 0.25f) < 1e-6f);
+    CHECK(std::abs(right.getSourceAmplitude() - 0.5f) < 1e-6f);
+    CHECK(std::abs(merged.getSourceAmplitude() - std::sqrt(0.15625f)) < 1e-6f);
+    merged.setVolumeDb(6.0f);
+    NoteAmplitude::update(merged, audio);
+    CHECK(std::abs(merged.getSourceAmplitude() - std::sqrt(0.15625f)) < 1e-6f);
+    Note empty(2, 3, 60.0f);
+    NoteAmplitude::update(empty, audio);
+    CHECK(empty.getSourceAmplitude() == 0.0f);
+
     using namespace NoteGainCurve;
     constexpr int count = 4096, hop = 256;
     const std::vector<Region> before{{512, 2048, -60.0f}, {2048, 3072, -3.0f}};

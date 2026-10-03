@@ -103,6 +103,10 @@ public:
     float getVolumeDb() const { return volumeDb; }
     void setVolumeDb(float db) { volumeDb = db; }
 
+    // RMS of pristine source audio; gain edits are applied separately.
+    float getSourceAmplitude() const { return sourceAmplitude; }
+    void setSourceAmplitude(float rms) { sourceAmplitude = rms; }
+
     // Delta pitch (per-frame deviation from base pitch in semitones)
     const std::vector<float>& getDeltaPitch() const { return deltaPitch; }
     void setDeltaPitch(std::vector<float> delta) { deltaPitch = std::move(delta); }
@@ -225,6 +229,7 @@ private:
     float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
     float formantShift = 0.0f; // Semitones, independent of F0
+    float sourceAmplitude = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones

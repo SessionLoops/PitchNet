@@ -583,7 +583,12 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       if (isAmplitudeDragged)
       {
         const juce::String prefix = note.getVolumeDb() > 0.0f ? "+" : "";
-        label = prefix + juce::String(note.getVolumeDb(), 1) + " dB";
+        const float rms = note.getSourceAmplitude();
+        const juce::String level = rms > 0.0f
+            ? juce::String(20.0f * std::log10(rms) + note.getVolumeDb(), 1)
+            : juce::String::fromUTF8("−∞");
+        label = level + " dB (" + prefix +
+                juce::String(note.getVolumeDb(), 1) + " dB)";
       }
       else if (isDriftDragged)
       {
@@ -615,7 +620,11 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         label = prefix + juce::String(deltaSemitones, 1) + " st";
       }
 
-      constexpr float labelWidth = 60.0f;
+      const auto labelFont =
+          juce::Font("Montserrat", "Regular", 11.0f).withPointHeight(11.0f);
+      const float labelWidth = std::max(
+          60.0f, static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
+                     labelFont, label)) + 16.0f);
       constexpr float labelHeight = 20.0f;
       const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
       const auto shadowBounds =
@@ -626,7 +635,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       g.setColour(juce::Colour(0xFF2E2E2Du));
       g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
       g.setColour(juce::Colour(0xFFEFEFEFu));
-      g.setFont(juce::Font("Montserrat", "Regular", 11.0f).withPointHeight(11.0f));
+      g.setFont(labelFont);
       g.drawFittedText(label, static_cast<int>(labelX),
                        static_cast<int>(labelY),
                        static_cast<int>(labelWidth),

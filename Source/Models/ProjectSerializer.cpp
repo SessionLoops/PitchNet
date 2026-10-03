@@ -1,3 +1,4 @@
+#include "../Utils/NoteAmplitude.h"
 #include "ProjectSerializer.h"
 #include "../Utils/Constants.h"
 #include "../Utils/MelSpectrogram.h"
@@ -447,6 +448,10 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         }
     }
 
+    if (audioData.originalWaveform.getNumSamples() > 0)
+        for (auto& note : project.getNotes())
+            NoteAmplitude::update(note, audioData);
+
     // Rebuild curves if needed
     if (!audioData.f0.empty() && (audioData.basePitch.empty() || audioData.deltaPitch.empty())) {
         PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
@@ -797,6 +802,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
+    obj->setProperty("sourceAmplitude", note.getSourceAmplitude());
     obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
 
@@ -863,6 +869,7 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
         json.getProperty("lastNonMacroMidiNote", legacySourceMidi)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
+    note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));
     note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));
 

@@ -1,4 +1,5 @@
 #include "EditorController.h"
+#include "../Utils/NoteAmplitude.h"
 #include "../Utils/AudioResampler.h"
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/ScaleUtils.h"
@@ -1341,6 +1342,9 @@ void EditorController::segmentIntoNotes(Project &targetProject,
       }
     }
 
+    for (auto& note : notes)
+      NoteAmplitude::update(note, audioData);
+
     juce::Thread::sleep(100);
 
     if (!audioData.f0.empty())
@@ -1446,6 +1450,9 @@ void EditorController::segmentIntoNotes(Project &targetProject,
   {
     finalizeNote(noteStart, static_cast<int>(audioData.f0.size()));
   }
+
+  for (auto& note : notes)
+    NoteAmplitude::update(note, audioData);
 
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
