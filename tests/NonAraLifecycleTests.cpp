@@ -43,6 +43,84 @@ void captureStorageIsAllocatedOnlyWhenArmed() {
   CHECK(recorded.getMagnitude(0, 64) == 0.0f);
 }
 
+void capturePreservesTimelineAndWaitsForStop() {
+  NonAraCaptureController capture;
+  capture.prepare(1000.0, 1, 1);
+  capture.setMinCaptureSeconds(0.0);
+  juce::AudioBuffer<float> input(1, 100);
+  for (int i = 0; i < 100; ++i)
+    input.setSample(0, i, 0.5f);
+  capture.resetToWaiting();
+  capture.processBlock(input, true, 2000);
+  capture.processBlock(input, true, 2300); // two missing blocks
+  CHECK(capture.getCapturedSampleCount() == 400);
+  auto recorded = capture.copyCapturedAudio(400);
+  CHECK(recorded.getSample(0, 99) == 0.5f);
+  CHECK(recorded.getMagnitude(0, 100, 200) == 0.0f);
+  CHECK(recorded.getSample(0, 300) == 0.5f);
+  capture.processBlock(input, true, 2000); // loop back
+  CHECK(capture.getHoldReason() == NonAraCaptureController::HoldReason::TimelineJump);
+  CHECK(capture.getCapturedSampleCount() == 400);
+  CHECK(!capture.shouldFinalize());
+  capture.processBlock(input, false);
+  NonAraCaptureController::FinalizeResult result;
+  CHECK(capture.shouldFinalize());
+  CHECK(capture.finalizeCapture(1000.0, result));
+  CHECK(result.numSamples == 400);
+  capture.onAnalysisDispatched();
+
+  capture.resetToWaiting();
+  CHECK(capture.getHoldReason() == NonAraCaptureController::HoldReason::None);
+  for (int i = 0; i < 12; ++i)
+    capture.processBlock(input, true, i * 100);
+  CHECK(capture.getCapturedSampleCount() == 1000);
+  CHECK(capture.getHoldReason() == NonAraCaptureController::HoldReason::Capacity);
+  CHECK(!capture.shouldFinalize());
+  capture.processBlock(input, false);
+  CHECK(capture.shouldFinalize());
+  CHECK(capture.finalizeCapture(1000.0, result));
+  CHECK(result.numSamples == 1000);
+  capture.onAnalysisDispatched();
+
+  capture.resetToWaiting();
+  capture.processBlock(input, true, 10000);
+  capture.processBlock(input, true, 20000); // gap exceeds storage
+  CHECK(capture.getCapturedSampleCount() == 1000);
+  CHECK(capture.getHoldReason() == NonAraCaptureController::HoldReason::Capacity);
+  CHECK(!capture.shouldFinalize());
+
+  capture.resetToWaiting();
+  capture.processBlock(input, true); // hosts without sample positions
+  capture.processBlock(input, true);
+  CHECK(capture.getCapturedSampleCount() == 200);
+  CHECK(capture.getHoldReason() == NonAraCaptureController::HoldReason::None);
+}
+
+void playbackHonorsSmallHostSeeks() {
+  Project project;
+  auto &audio = project.getAudioData();
+  audio.sampleRate = 44100;
+  audio.waveform.setSize(1, 1000);
+  for (int i = 0; i < 1000; ++i)
+    audio.waveform.setSample(0, i, static_cast<float>(i) / 1000.0f);
+  RealtimePitchProcessor processor;
+  processor.prepareToPlay(44100.0, 64);
+  processor.setProject(&project);
+  processor.waitForPendingUpdate();
+  juce::AudioBuffer<float> input(1, 64), output(1, 64);
+  input.clear();
+  juce::AudioPlayHead::PositionInfo position;
+  position.setIsPlaying(true);
+  position.setTimeInSamples(100);
+  CHECK(processor.processBlock(input, output, &position));
+  position.setTimeInSamples(132); // backwards seek smaller than a block
+  CHECK(processor.processBlock(input, output, &position));
+  CHECK(std::abs(output.getSample(0, 0) - 0.132f) < 0.00001f);
+  position.setTimeInSamples(228); // forward seek smaller than a block
+  CHECK(processor.processBlock(input, output, &position));
+  CHECK(std::abs(output.getSample(0, 0) - 0.228f) < 0.00001f);
+}
+
 Project makeConstantProject(float value) {
   Project project;
   auto &audio = project.getAudioData();
@@ -107,6 +185,8 @@ void lifecycleCompletesPendingCacheAndDropsDetachedAudio() {
 
 int main() {
   captureStorageIsAllocatedOnlyWhenArmed();
+  capturePreservesTimelineAndWaitsForStop();
+  playbackHonorsSmallHostSeeks();
   lifecycleCompletesPendingCacheAndDropsDetachedAudio();
   std::cout << "Non-ARA lifecycle tests passed\n";
 }

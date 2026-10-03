@@ -17,7 +17,8 @@ void NonAraCaptureController::prepare(double sampleRate, int numChannels,
     capturePosition = 0;
     publishedCapturePosition.store(0);
     finalLength = 0;
-    stopDebounceBlocks = 0;
+    holdReason.store(HoldReason::None);
+    expectedHostPosition.reset();
   }
 
   analysisPending.store(false);
@@ -32,14 +33,16 @@ void NonAraCaptureController::resetToWaiting() {
   capturePosition = 0;
   publishedCapturePosition.store(0);
   finalLength = 0;
-  stopDebounceBlocks = 0;
+  holdReason.store(HoldReason::None);
+  expectedHostPosition.reset();
   analysisPending.store(false);
   shouldFinalizeFlag.store(false);
   state.store(State::WaitingForAudio);
 }
 
 void NonAraCaptureController::processBlock(
-    const juce::AudioBuffer<float> &input, bool hostIsPlaying) {
+    const juce::AudioBuffer<float> &input, bool hostIsPlaying,
+    std::optional<juce::int64> hostSamplePosition) {
   if (analysisPending.load())
     return;
 
@@ -50,7 +53,8 @@ void NonAraCaptureController::processBlock(
   if (currentState == State::WaitingForAudio && hostIsPlaying) {
     const juce::SpinLock::ScopedLockType lock(bufferLock);
     capturePosition = 0;
-    stopDebounceBlocks = 0;
+    holdReason.store(HoldReason::None);
+    expectedHostPosition.reset();
     state.store(State::Capturing);
     shouldFinalizeFlag.store(false);
   }
@@ -61,9 +65,30 @@ void NonAraCaptureController::processBlock(
     return;
 
   if (hostIsPlaying) {
-    stopDebounceBlocks = 0;
-
     const juce::SpinLock::ScopedLockType lock(bufferLock);
+    // A bounded take remains armed and passes audio through until transport
+    // stops. Never launch analysis or switch to cached playback mid-song.
+    if (holdReason.load() != HoldReason::None)
+      return;
+
+    if (hostSamplePosition && expectedHostPosition) {
+      const auto gap = *hostSamplePosition - *expectedHostPosition;
+      if (gap < -1) {
+        holdReason.store(HoldReason::TimelineJump);
+        return;
+      }
+      if (gap > 1) {
+        // Storage is cleared when armed, so skipped timeline samples remain
+        // silent rather than shifting every subsequent block earlier.
+        const auto space = captureBuffer.getNumSamples() - capturePosition;
+        capturePosition += static_cast<int>(std::min<juce::int64>(gap, space));
+        publishedCapturePosition.store(capturePosition);
+      }
+    }
+    expectedHostPosition = hostSamplePosition
+        ? std::optional<juce::int64>(*hostSamplePosition + input.getNumSamples())
+        : std::nullopt;
+
     int spaceLeft = captureBuffer.getNumSamples() - capturePosition;
     int toCopy = std::min(input.getNumSamples(), spaceLeft);
 
@@ -76,9 +101,8 @@ void NonAraCaptureController::processBlock(
       publishedCapturePosition.store(capturePosition);
     }
 
-    if (capturePosition >= captureBuffer.getNumSamples()) {
-      shouldFinalizeFlag.store(true);
-    }
+    if (capturePosition >= captureBuffer.getNumSamples())
+      holdReason.store(HoldReason::Capacity);
   } else {
     shouldFinalizeFlag.store(true);
   }
@@ -147,7 +171,7 @@ juce::AudioBuffer<float> NonAraCaptureController::copyCapturedAudioRange(
 void NonAraCaptureController::onAnalysisDispatched() {
   analysisPending.store(false);
   shouldFinalizeFlag.store(false);
-  stopDebounceBlocks = 0;
+  holdReason.store(HoldReason::None);
   state.store(State::Idle);
 }
 
@@ -158,7 +182,8 @@ void NonAraCaptureController::stop() {
     capturePosition = 0;
     publishedCapturePosition.store(0);
     finalLength = 0;
-    stopDebounceBlocks = 0;
+    holdReason.store(HoldReason::None);
+    expectedHostPosition.reset();
   }
   analysisPending.store(false);
   shouldFinalizeFlag.store(false);

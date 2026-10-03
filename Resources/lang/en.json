@@ -180,6 +180,8 @@
   "progress.reading_audio": "Reading audio...",
   "progress.ready": "Ready",
   "progress.recording": "Recording...",
+  "progress.capture_limit": "5-minute capture limit reached. Stop playback to analyze; record the remainder in a new take.",
+  "progress.capture_timeline_jump": "Capture paused after a timeline jump. Stop playback to analyze this take.",
   "progress.rendering": "Rendering...",
   "progress.resampling": "Resampling...",
   "progress.saving": "Saving...",

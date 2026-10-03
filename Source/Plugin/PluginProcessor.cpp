@@ -576,6 +576,10 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   if (auto *playHead = getPlayHead()) {
     if (auto info = playHead->getPosition())
       posInfo = *info;
+    else
+      return; // Unknown transport is not evidence that recording stopped.
+  } else {
+    return;
   }
 
   processNonARAMode(buffer, posInfo,
@@ -722,7 +726,25 @@ void PitchNetAudioProcessor::processNonARAMode(
         captureTimelineOffsetSeconds);
   }
 
-  captureController->processBlock(buffer, hostIsPlaying);
+  std::optional<juce::int64> captureHostPosition;
+  if (auto samples = posInfo.getTimeInSamples())
+    captureHostPosition = *samples;
+  else if (auto seconds = posInfo.getTimeInSeconds())
+    captureHostPosition = static_cast<juce::int64>(
+        std::llround(*seconds * hostSampleRate));
+  const auto previousHold = captureController->getHoldReason();
+  captureController->processBlock(buffer, hostIsPlaying, captureHostPosition);
+  const auto hold = captureController->getHoldReason();
+  if (hold != previousHold && mainComponent) {
+    juce::Component::SafePointer<juce::Component> safeMain(
+        mainComponent->getComponent());
+    juce::MessageManager::callAsync([safeMain, hold]() {
+      if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+        view->setStatusMessage(TR(
+            hold == NonAraCaptureController::HoldReason::Capacity
+                ? "progress.capture_limit" : "progress.capture_timeline_jump"));
+    });
+  }
   dispatchLiveCaptureUpdate();
 
   // UI: transition into recording

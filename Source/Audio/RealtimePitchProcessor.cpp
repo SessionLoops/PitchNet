@@ -103,8 +103,7 @@ bool RealtimePitchProcessor::processBlock(
     // cursor and only resync to the host on a genuine jump (seek/loop). This
     // keeps the read pointer sample-accurate and free of boundary clicks even
     // if the host's reported time has sub-sample jitter.
-    const juce::int64 resyncTolerance =
-        std::max<juce::int64>(64, static_cast<juce::int64>(numSamples));
+    const juce::int64 resyncTolerance = 1;
     if (!haveHostPos) {
       posSamples = readPositionValid ? readPosition : 0;
     } else if (!readPositionValid ||

@@ -2,10 +2,14 @@
 
 #include "../JuceHeader.h"
 #include <atomic>
+#include <optional>
 
 class NonAraCaptureController {
 public:
   enum class State { Idle, WaitingForAudio, Capturing, Complete };
+
+  enum class HoldReason { None, Capacity, TimelineJump };
+  HoldReason getHoldReason() const { return holdReason.load(); }
 
   struct FinalizeResult {
     int numChannels = 0;
@@ -20,7 +24,8 @@ public:
   void resetToWaiting();
 
   // Called from audio thread
-  void processBlock(const juce::AudioBuffer<float> &input, bool hostIsPlaying);
+  void processBlock(const juce::AudioBuffer<float> &input, bool hostIsPlaying,
+                    std::optional<juce::int64> hostSamplePosition = std::nullopt);
 
   // Called from audio thread
   bool shouldFinalize() const { return shouldFinalizeFlag.load(); }
@@ -57,7 +62,8 @@ private:
   int preparedMaxSamples = 0;
   int capturePosition = 0;
   std::atomic<int> publishedCapturePosition{0};
-  int stopDebounceBlocks = 0;
+  std::atomic<HoldReason> holdReason{HoldReason::None};
+  std::optional<juce::int64> expectedHostPosition;
   int finalLength = 0;
 
   std::atomic<bool> analysisPending{false};
@@ -66,5 +72,4 @@ private:
   float audioThreshold = 0.001f;
   double minCaptureSeconds = 0.5;
 
-  static constexpr int kStopDebounceBlocks = 3;
 };
