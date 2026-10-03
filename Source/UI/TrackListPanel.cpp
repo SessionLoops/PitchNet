@@ -34,6 +34,8 @@ TrackListPanel::TrackListPanel()
 void TrackListPanel::refreshLocalisedText()
 {
     useDawColourToggle.setTitle(TR("panel.use_daw_track_color"));
+    for (auto& button : pinButtons)
+        button->setTooltip(TR("tooltip.reference_track"));
     repaint();
 }
 
@@ -70,6 +72,7 @@ void TrackListPanel::rebuildPinButtons()
     {
         auto button = std::make_unique<ToggleButton>();
         button->setImage(pinImage);
+        button->setTooltip(TR("tooltip.reference_track"));
         button->setClickingTogglesState(true);
         button->onClick = [this, i]
         {

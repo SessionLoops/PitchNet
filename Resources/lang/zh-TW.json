@@ -263,6 +263,7 @@
   "tooltip.split_tool": "音符分割工具（快速鍵：2）",
   "tooltip.timing_tool": "時值工具（快速鍵：4）",
   "tooltip.vertical_auto_zoom": "垂直自動縮放",
+  "tooltip.reference_track": "設為參考軌道",
   "tooltip.region_view_clip": "片段模式：顯示所選片段的來源。點擊以顯示軌道上的所有片段。",
   "tooltip.region_view_track": "軌道模式：顯示軌道上的所有片段。點擊以只顯示所選片段的來源。",
   "update.ask_later": "稍後再說",

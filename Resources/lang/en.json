@@ -265,6 +265,7 @@
   "tooltip.split_tool": "Note Separation Tool (Shortcut: 2)",
   "tooltip.timing_tool": "Timing Tool (Shortcut: 4)",
   "tooltip.vertical_auto_zoom": "Vertical Auto-Zoom",
+  "tooltip.reference_track": "Set as reference track",
   "tooltip.region_view_clip": "Clip mode: showing the selected clip's source. Click to show every clip on the track.",
   "tooltip.region_view_track": "Track mode: showing every clip on the track. Click to show only the selected clip's source.",
   "update.ask_later": "Ask Me Later",

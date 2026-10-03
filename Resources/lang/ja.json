@@ -263,6 +263,7 @@
   "tooltip.split_tool": "ノート分割ツール（ショートカット: 2）",
   "tooltip.timing_tool": "タイミングツール（ショートカット: 4）",
   "tooltip.vertical_auto_zoom": "垂直オートズーム",
+  "tooltip.reference_track": "リファレンストラックに設定",
   "tooltip.region_view_clip": "クリップモード：選択したクリップのソースを表示中。クリックするとトラック上のすべてのクリップを表示します。",
   "tooltip.region_view_track": "トラックモード：トラック上のすべてのクリップを表示中。クリックすると選択したクリップのソースのみを表示します。",
   "update.ask_later": "後で確認",

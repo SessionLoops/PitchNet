@@ -263,6 +263,7 @@
   "tooltip.split_tool": "Herramienta de separación de notas (atajo: 2)",
   "tooltip.timing_tool": "Herramienta de tiempo (atajo: 4)",
   "tooltip.vertical_auto_zoom": "Zoom vertical automático",
+  "tooltip.reference_track": "Usar como pista de referencia",
   "tooltip.region_view_clip": "Modo clip: se muestra la fuente del clip seleccionado. Haz clic para ver todos los clips de la pista.",
   "tooltip.region_view_track": "Modo pista: se muestran todos los clips de la pista. Haz clic para ver solo la fuente del clip seleccionado.",
   "update.ask_later": "Preguntar más tarde",
