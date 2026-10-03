@@ -37,6 +37,7 @@ juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
 
 void showExportSettingsDialogAsync(
     juce::Component *parent, int inputSampleRate,
+    const std::optional<ExportSettings> &savedSettings,
     std::function<void(std::optional<ExportSettings>)> onDone);
 
 } // namespace ExportHelper

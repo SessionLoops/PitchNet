@@ -133,6 +133,30 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("language"))
           language = configObj->getProperty("language").toString();
 
+        if (auto *savedExport = configObj->getProperty("exportSettings").getDynamicObject())
+        {
+          ExportHelper::ExportSettings settings;
+          const auto format = savedExport->getProperty("format").toString();
+          if (format == "flac")
+            settings.format = ExportHelper::ExportFormat::flac;
+          else if (format == "aiff")
+            settings.format = ExportHelper::ExportFormat::aiff;
+          else if (format == "ogg")
+            settings.format = ExportHelper::ExportFormat::ogg;
+
+          const int sampleRate = static_cast<int>(savedExport->getProperty("sampleRate"));
+          if (sampleRate == 22050 || sampleRate == 32000 ||
+              sampleRate == 44100 || sampleRate == 48000)
+            settings.sampleRate = sampleRate;
+          const int bitDepth = static_cast<int>(savedExport->getProperty("bitDepth"));
+          if (bitDepth == 16 || bitDepth == 24 || bitDepth == 32)
+            settings.bitsPerSample = bitDepth;
+          const int channels = static_cast<int>(savedExport->getProperty("channels"));
+          if (channels == 1 || channels == 2)
+            settings.channels = channels;
+          exportSettings = settings;
+        }
+
         auto lastFile = configObj->getProperty("lastFile").toString();
         if (lastFile.isNotEmpty())
           lastFilePath = juce::File(lastFile);
@@ -268,6 +292,16 @@ void SettingsManager::saveConfig()
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
+
+  if (exportSettings)
+  {
+    juce::DynamicObject::Ptr savedExport = new juce::DynamicObject();
+    savedExport->setProperty("format", ExportHelper::getFormatExtension(exportSettings->format));
+    savedExport->setProperty("sampleRate", exportSettings->sampleRate);
+    savedExport->setProperty("bitDepth", exportSettings->bitsPerSample);
+    savedExport->setProperty("channels", exportSettings->channels);
+    config->setProperty("exportSettings", juce::var(savedExport.get()));
+  }
 
   juce::String jsonText = juce::JSON::toString(juce::var(config.get()));
   configFile.replaceWithText(jsonText);

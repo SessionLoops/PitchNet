@@ -1963,11 +1963,14 @@ void MainComponent::exportFile()
   const int inputSampleRate = project->getAudioData().sampleRate;
   juce::Component::SafePointer<MainComponent> safeThis(this);
   ExportHelper::showExportSettingsDialogAsync(
-      this, inputSampleRate,
+      this, inputSampleRate, settingsManager->getExportSettings(),
       [safeThis](std::optional<ExportHelper::ExportSettings> exportSettings)
       {
         if (safeThis == nullptr || !exportSettings.has_value())
           return;
+
+        safeThis->settingsManager->setExportSettings(*exportSettings);
+        safeThis->settingsManager->saveConfig();
 
         auto performExport = [safeThis, exportSettings](const juce::File &targetFile)
         {

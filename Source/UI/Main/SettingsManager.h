@@ -4,6 +4,7 @@
 #include "../../Audio/SynthesisEngineType.h"
 #include "../../Audio/Vocoder.h"
 #include "../../JuceHeader.h"
+#include "ExportHelper.h"
 #include "../../Utils/PlatformPaths.h"
 #include <functional>
 
@@ -90,6 +91,15 @@ public:
   bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
 
+  const std::optional<ExportHelper::ExportSettings> &getExportSettings() const
+  {
+    return exportSettings;
+  }
+  void setExportSettings(const ExportHelper::ExportSettings &settings)
+  {
+    exportSettings = settings;
+  }
+
   // View settings
   bool getOverviewVisible() const { return overviewVisible; }
   void setOverviewVisible(bool visible) { overviewVisible = visible; }
@@ -139,6 +149,7 @@ private:
   juce::String language = "auto";
 
   // Config
+  std::optional<ExportHelper::ExportSettings> exportSettings;
   juce::File lastFilePath;
   juce::StringArray recentFiles;
   int windowWidth = 1000;

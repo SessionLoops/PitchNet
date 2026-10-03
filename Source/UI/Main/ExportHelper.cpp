@@ -97,6 +97,7 @@ juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
 class ExportSettingsContent final : public juce::Component, private juce::Button::Listener {
 public:
   ExportSettingsContent(int inputSampleRate,
+                        const std::optional<ExportSettings> &savedSettings,
                         std::function<void(std::optional<ExportSettings>)> done)
       : onDone(std::move(done)) {
     setOpaque(false);
@@ -127,6 +128,19 @@ public:
                                         TR("settings.stereo")};
     setupCombo(channelsBox, channelsLabel, TR("settings.output_channels"),
                channelItems, 1);
+
+    if (savedSettings)
+    {
+      formatBox.setSelectedId(static_cast<int>(savedSettings->format) + 1,
+                              juce::dontSendNotification);
+      const juce::StringArray sampleRates{"22050", "32000", "44100", "48000"};
+      sampleRateBox.setSelectedId(sampleRates.indexOf(juce::String(savedSettings->sampleRate)) + 1,
+                                  juce::dontSendNotification);
+      const juce::StringArray bitDepths{"16", "24", "32"};
+      bitDepthBox.setSelectedId(bitDepths.indexOf(juce::String(savedSettings->bitsPerSample)) + 1,
+                                juce::dontSendNotification);
+      channelsBox.setSelectedId(savedSettings->channels, juce::dontSendNotification);
+    }
 
     addAndMakeVisible(cancelButton);
     addAndMakeVisible(exportButton);
@@ -262,10 +276,11 @@ private:
 
 void showExportSettingsDialogAsync(
     juce::Component *parent, int inputSampleRate,
+    const std::optional<ExportSettings> &savedSettings,
     std::function<void(std::optional<ExportSettings>)> onDone) {
   constexpr int dialogWidth = 420;
   constexpr int dialogHeight = 284;
-  auto *content = new ExportSettingsContent(inputSampleRate, std::move(onDone));
+  auto *content = new ExportSettingsContent(inputSampleRate, savedSettings, std::move(onDone));
   content->setSize(dialogWidth, dialogHeight);
 
   juce::DialogWindow::LaunchOptions opts;
