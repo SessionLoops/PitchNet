@@ -100,7 +100,4 @@ public:
         return instance;
     }
 
-private:
-    // Logic and GarageBand require JUCE's legacy tooltip renderer.
-    const bool oldTooltip;
 };

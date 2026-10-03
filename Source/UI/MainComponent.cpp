@@ -27,6 +27,34 @@
 
 namespace
 {
+class EditorTooltipWindow final : public juce::TooltipWindow
+{
+public:
+  juce::String getTipFor(juce::Component &component) override
+  {
+    for (auto *ancestor = &component; ancestor != nullptr;
+         ancestor = ancestor->getParentComponent())
+      if (dynamic_cast<MainComponent *>(ancestor) != nullptr)
+        return juce::TooltipWindow::getTipFor(component);
+
+    return {};
+  }
+};
+
+std::shared_ptr<juce::TooltipWindow> getEditorTooltipWindow()
+{
+  // Share one native window across plugin instances in the host process.
+  static std::weak_ptr<juce::TooltipWindow> sharedWindow;
+  auto window = sharedWindow.lock();
+  if (window == nullptr)
+  {
+    window = std::make_shared<EditorTooltipWindow>();
+    window->setLookAndFeel(&DarkLookAndFeel::getInstance());
+    sharedWindow = window;
+  }
+  return window;
+}
+
 constexpr float updateSubtitleFontSize = 14.0f;
 constexpr float aboutNoticesFontSize = 12.0f;
 const juce::Colour updateLogScrollbarTrack(0xFF0D0B0Bu);
@@ -506,13 +534,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   setSize(WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight);
   setOpaque(true); // Required for native title bar
 
-  // Parented to this view, not the desktop. A desktop-level TooltipWindow
-  // watches the mouse everywhere, so with several plugin instances in one host
-  // process every instance's window showed the same tip (and JUCE asserts in
-  // TooltipWindow::displayTipInternal). A parented one only reacts to
-  // components in its own window.
-  tooltipWindow = std::make_unique<juce::TooltipWindow>(this);
-  tooltipWindow->setLookAndFeel(&DarkLookAndFeel::getInstance());
+  tooltipWindow = getEditorTooltipWindow();
 
   LOG("MainComponent: creating core components...");
   // Initialize components

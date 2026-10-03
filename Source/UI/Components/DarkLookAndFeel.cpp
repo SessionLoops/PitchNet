@@ -1,11 +1,6 @@
 #include "DarkLookAndFeel.h"
 
 DarkLookAndFeel::DarkLookAndFeel()
-    : oldTooltip([]
-      {
-          const juce::PluginHostType hostType;
-          return hostType.isLogic() || hostType.isGarageBand();
-      }())
 {
     // ── PopupMenu ─────────────────────────────────────────────────
     setColour(juce::PopupMenu::backgroundColourId, juce::Colours::transparentBlack);
@@ -72,16 +67,14 @@ juce::Rectangle<int> DarkLookAndFeel::getTooltipBounds(const juce::String& tipTe
 {
     auto bounds = juce::LookAndFeel_V2::getTooltipBounds(tipText, screenPos, parentArea);
     return bounds.withPosition(screenPos.x - bounds.getWidth() / 2,
-                               screenPos.y - bounds.getHeight() - 16);
+                               screenPos.y - bounds.getHeight() - 16)
+                 .constrainedWithin(parentArea);
 }
 
 void DarkLookAndFeel::drawTooltip(juce::Graphics& g, const juce::String& text,
                                   int width, int height)
 {
-    if (oldTooltip)
-        juce::LookAndFeel_V2::drawTooltip(g, text, width, height);
-    else
-        juce::LookAndFeel_V4::drawTooltip(g, text, width, height);
+    juce::LookAndFeel_V2::drawTooltip(g, text, width, height);
 }
 
 // =====================================================================

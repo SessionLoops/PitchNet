@@ -392,9 +392,8 @@ private:
   AnalysisBackdrop analysisBackdrop;
   AnalysisProgressPopup analysisProgressPopup;
 
-  // A desktop tooltip window lets tooltip clients work in both standalone and
-  // plug-in hosts, whose editor component is owned externally.
-  std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+  // Shared across editors so tooltips can extend beyond their native windows.
+  std::shared_ptr<juce::TooltipWindow> tooltipWindow;
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;
 
