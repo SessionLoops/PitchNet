@@ -37,6 +37,10 @@ public:
      */
     void invalidate();
 
+    // Lifecycle/message thread only; never call from processBlock().
+    // Complete pending SRC before the host can start an offline render.
+    void waitForPendingUpdate();
+
     bool isReady() const { return ready.load(); }
     double getPosition() const { return position.load(); }
     void setPosition(double positionSeconds) { position.store(positionSeconds); }
@@ -70,5 +74,8 @@ private:
     bool readPositionValid = false;
 
     juce::CriticalSection bufferLock;
+    // Protect worker ownership when a host lifecycle call overlaps an editor
+    // cache update. Workers never acquire this lock, including while joining.
+    juce::CriticalSection computeThreadLock;
     std::unique_ptr<std::thread> computeThread;
 };

@@ -351,6 +351,14 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   if (!mainComponent && araAnalysisProjectSnapshot)
     bindRealtimeProcessorHeadless();
 #endif
+
+  // Non-ARA offline rendering may start immediately after preparation. The
+  // cache worker only resamples a private waveform snapshot and never waits
+  // for host/message-thread work, so it is safe to finish here, not in DSP.
+#if JucePlugin_Enable_ARA
+  if (!isPlaybackRenderer())
+#endif
+    realtimeProcessor.waitForPendingUpdate();
 }
 
 void PitchNetAudioProcessor::releaseResources() {
@@ -1853,6 +1861,10 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
       // document-controller pointer is established in didBindToARA().
       bindRealtimeProcessorHeadless();
     }
+#if JucePlugin_Enable_ARA
+    if (!isPlaybackRenderer())
+#endif
+      realtimeProcessor.waitForPendingUpdate();
     return true;
   }
 
@@ -1877,6 +1889,11 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
     // JSON state can also be restored before an editor is ever opened.
     bindRealtimeProcessorHeadless();
   }
+
+#if JucePlugin_Enable_ARA
+  if (!isPlaybackRenderer())
+#endif
+    realtimeProcessor.waitForPendingUpdate();
 
   return true;
 }

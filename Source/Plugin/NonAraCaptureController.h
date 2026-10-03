@@ -15,7 +15,8 @@ public:
 
   void prepare(double sampleRate, int numChannels, int maxCaptureSeconds);
 
-  // Called from audio thread
+  // Called when arming on the message thread, or during host preparation.
+  // Allocates capture storage; never call from processBlock().
   void resetToWaiting();
 
   // Called from audio thread
@@ -52,6 +53,8 @@ private:
   mutable juce::SpinLock bufferLock;
 
   juce::AudioBuffer<float> captureBuffer;
+  int preparedChannels = 0;
+  int preparedMaxSamples = 0;
   int capturePosition = 0;
   std::atomic<int> publishedCapturePosition{0};
   int stopDebounceBlocks = 0;

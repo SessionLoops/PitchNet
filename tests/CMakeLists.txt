@@ -18,6 +18,7 @@ set(PITCHNET_TEST_SOURCES
     FormantShiftTests.cpp
     HostSyncTempoTests.cpp
     NoteGainCurveTests.cpp
+    NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
@@ -44,3 +45,7 @@ foreach(test_source IN LISTS PITCHNET_TEST_SOURCES)
     # forcing a full rebuild of JUCE per test. Tests should use a check macro
     # that does not depend on NDEBUG instead; see TestAssert.h.
 endforeach()
+
+# The capture state machine belongs to the plug-in rather than pitchnet_core.
+target_sources(NonAraLifecycleTests PRIVATE
+    ../Source/Plugin/NonAraCaptureController.cpp)

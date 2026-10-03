@@ -8,8 +8,14 @@ RealtimePitchProcessor::RealtimePitchProcessor() = default;
 
 RealtimePitchProcessor::~RealtimePitchProcessor() {
   invalidateGeneration.fetch_add(1);
+  waitForPendingUpdate();
+}
+
+void RealtimePitchProcessor::waitForPendingUpdate() {
+  const juce::ScopedLock sl(computeThreadLock);
   if (computeThread && computeThread->joinable())
     computeThread->join();
+  computeThread.reset();
 }
 
 void RealtimePitchProcessor::setProject(Project *proj) {
@@ -26,6 +32,14 @@ void RealtimePitchProcessor::prepareToPlay(double sr, int) {
   {
     const juce::ScopedLock sl(bufferLock);
     hasProject = project != nullptr;
+    if (sampleRateChanged) {
+      // A cache at the previous host rate cannot be played or crossfaded with
+      // its replacement: their sample indices describe different times.
+      ready.store(false);
+      processedBuffer.setSize(0, 0);
+      previousProcessedBuffer.setSize(0, 0);
+      swapFadeRemaining = 0;
+    }
   }
   sampleRate = sr;
   position.store(0.0);
@@ -191,6 +205,7 @@ void RealtimePitchProcessor::publishProcessedBuffer(
 }
 
 void RealtimePitchProcessor::invalidate() {
+  const juce::ScopedLock workerLock(computeThreadLock);
   // Deliberately does NOT clear `ready`. Keep serving the existing cache until
   // its replacement is built, then hand over with a ramp in processBlock().
   // Dropping to passthrough here means every resynthesis commit that lands
@@ -211,15 +226,16 @@ void RealtimePitchProcessor::invalidate() {
     }
   }
 
-  if (!proj) {
-    return;
-  }
-
   // Safety check: verify waveform has valid dimensions before accessing
   const int numSamples = waveformSnapshot.getNumSamples();
   const int numChannels = waveformSnapshot.getNumChannels();
 
-  if (numSamples <= 0 || numChannels <= 0) {
+  if (!proj || numSamples <= 0 || numChannels <= 0) {
+    const juce::ScopedLock sl(bufferLock);
+    ready.store(false);
+    processedBuffer.setSize(0, 0);
+    previousProcessedBuffer.setSize(0, 0);
+    swapFadeRemaining = 0;
     return;
   }
 

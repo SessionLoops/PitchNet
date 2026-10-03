@@ -5,14 +5,15 @@
 
 void NonAraCaptureController::prepare(double sampleRate, int numChannels,
                                       int maxCaptureSeconds) {
-  juce::ignoreUnused(sampleRate);
-
   const int maxSamples = static_cast<int>(sampleRate * maxCaptureSeconds);
 
   {
     const juce::SpinLock::ScopedLockType lock(bufferLock);
-    captureBuffer.setSize(numChannels, maxSamples);
-    captureBuffer.clear();
+    preparedChannels = numChannels;
+    preparedMaxSamples = maxSamples;
+    // Playback-only instances (including duplicated/bounced tracks) need no
+    // five-minute recording buffer. Allocate it only when capture is armed.
+    captureBuffer.setSize(0, 0);
     capturePosition = 0;
     publishedCapturePosition.store(0);
     finalLength = 0;
@@ -26,6 +27,7 @@ void NonAraCaptureController::prepare(double sampleRate, int numChannels,
 
 void NonAraCaptureController::resetToWaiting() {
   const juce::SpinLock::ScopedLockType lock(bufferLock);
+  captureBuffer.setSize(preparedChannels, preparedMaxSamples);
   captureBuffer.clear();
   capturePosition = 0;
   publishedCapturePosition.store(0);
