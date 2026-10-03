@@ -56,7 +56,8 @@ void DraggablePanel::paintOverChildren(juce::Graphics& g)
 void DraggablePanel::resized()
 {
     const auto contentBounds =
-        getLocalBounds().withTrimmedTop(headerHeight).reduced(contentMargin);
+        getLocalBounds().withTrimmedTop(headerHeight + extraTopPadding)
+            .reduced(contentMargin);
 
     // The viewport reaches past the content into the right margin, which is
     // where the scrollbar lands. The content itself is only ever as wide as
@@ -176,7 +177,8 @@ int DraggablePanel::getPreferredHeight() const
     if (collapsed)
         return headerHeight;
 
-    return headerHeight + getPreferredContentHeight() + contentMargin * 2;
+    return headerHeight + extraTopPadding + getPreferredContentHeight()
+           + contentMargin * 2;
 }
 
 void DraggablePanel::paintContent(juce::Graphics&, juce::Rectangle<int>)

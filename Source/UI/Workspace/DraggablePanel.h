@@ -34,6 +34,9 @@ public:
 
     void setPanelContainer(PanelContainer* container) { panelContainer = container; }
 
+    /** Extra space above the content, on top of contentMargin. */
+    void setExtraTopPadding(int padding) { extraTopPadding = padding; resized(); }
+
     int getPreferredHeight() const;
     /**
      * Re-read the content's natural height. The height is cached at attach
@@ -67,6 +70,7 @@ private:
     int contentPreferredHeight = 400;
     PanelContainer* panelContainer = nullptr;
     bool collapsed = false;
+    int extraTopPadding = 0;
     bool isDragging = false;
     juce::Point<int> dragStartPos;
 

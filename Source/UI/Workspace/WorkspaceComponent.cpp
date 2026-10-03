@@ -205,6 +205,7 @@ void WorkspaceComponent::setLeftPanelContent(const juce::String& id,
 
     auto panel = std::make_unique<DraggablePanel>(id, title);
     panel->setContentComponent(content);
+    panel->setExtraTopPadding(5); // left panel sits 5px lower than the right
     leftPanelContainer.addPanel(std::move(panel));
     leftPanelContainer.showPanel(id, true);
     leftPanelId = id;
