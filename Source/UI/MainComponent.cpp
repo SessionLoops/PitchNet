@@ -2071,8 +2071,20 @@ void MainComponent::exportFile()
         if (safeThis->fileChooser != nullptr)
           return;
 
+        juce::File defaultDirectory;
+        if (!safeThis->isPluginMode())
+        {
+          if (auto *activeProject = safeThis->getProject())
+          {
+            if (activeProject->getFilePath().existsAsFile())
+              defaultDirectory = activeProject->getFilePath().getParentDirectory();
+            else if (activeProject->getProjectFilePath().existsAsFile())
+              defaultDirectory = activeProject->getProjectFilePath().getParentDirectory();
+          }
+        }
+
         safeThis->fileChooser = std::make_unique<juce::FileChooser>(
-            TR("dialog.save_audio"), juce::File{},
+            TR("dialog.save_audio"), defaultDirectory,
             ExportHelper::getFormatWildcard(exportSettings->format));
 
         auto chooserFlags = juce::FileBrowserComponent::saveMode |
