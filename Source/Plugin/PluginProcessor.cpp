@@ -1212,6 +1212,8 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
             note.setEndFrame(note.getEndFrame() + frameOffset);
             note.setSrcStartFrame(note.getSrcStartFrame() + frameOffset);
             note.setSrcEndFrame(note.getSrcEndFrame() + frameOffset);
+            note.setRenderedFrames(note.getRenderedStartFrame() + frameOffset,
+                                   note.getRenderedEndFrame() + frameOffset);
             completedProject->addNote(std::move(note));
           }
 

@@ -1009,21 +1009,31 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       // that part of the composite. Compare against the rendered edge rather
       // than only the immutable source edge so extend-then-shorten sequences
       // clear the previous extension as well.
+      //
+      // The rendered bounds only describe the composite once the note has
+      // actually been rendered (see hasPendingTimingPositionChange). Before
+      // that they are a stale snapshot from note creation, and the note's
+      // audio still sits at its source position. Trusting the snapshot made a
+      // pitch-only edit on a region's first note clear the audio in front of
+      // the region (e.g. a breath) whenever the snapshot lagged the note.
+      const bool rendered = note.hasRenderedEdit();
+      const int occupiedStart =
+          rendered ? note.getRenderedStartFrame() : note.getSrcStartFrame();
+      const int occupiedEnd =
+          rendered ? note.getRenderedEndFrame() : note.getSrcEndFrame();
       if (note.isDirty() && timingRegions::isFirstNote(*project, note) &&
-          note.getStartFrame() > note.getRenderedStartFrame()) {
-        const int renderedOffset =
-            note.getRenderedStartFrame() - note.getSrcStartFrame();
+          note.getStartFrame() > occupiedStart) {
+        const int renderedOffset = occupiedStart - note.getSrcStartFrame();
         const int destinationOffset =
             note.getStartFrame() - note.getSrcStartFrame();
         addClearFrameRange(region.start + renderedOffset,
                            region.start + destinationOffset);
       }
       if (note.isDirty() && timingRegions::isLastNote(*project, note) &&
-          note.getEndFrame() < note.getRenderedEndFrame()) {
+          note.getEndFrame() < occupiedEnd) {
         const int destinationOffset =
             note.getEndFrame() - note.getSrcEndFrame();
-        const int renderedOffset =
-            note.getRenderedEndFrame() - note.getSrcEndFrame();
+        const int renderedOffset = occupiedEnd - note.getSrcEndFrame();
         addClearFrameRange(region.end + destinationOffset,
                            region.end + renderedOffset);
       }

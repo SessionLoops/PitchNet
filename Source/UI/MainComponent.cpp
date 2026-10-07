@@ -3352,6 +3352,8 @@ void MainComponent::updateHostAudioTimelineOffset(double timelineOffsetSeconds)
     note.setEndFrame(shiftFrame(note.getEndFrame()));
     note.setSrcStartFrame(shiftFrame(note.getSrcStartFrame()));
     note.setSrcEndFrame(shiftFrame(note.getSrcEndFrame()));
+    note.setRenderedFrames(shiftFrame(note.getRenderedStartFrame()),
+                           shiftFrame(note.getRenderedEndFrame()));
   }
 
   for (auto &range : audioData.segmentChunkRanges)

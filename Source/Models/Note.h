@@ -177,6 +177,15 @@ public:
     }
     int getRenderedStartFrame() const { return renderedStartFrame; }
     int getRenderedEndFrame() const { return renderedEndFrame; }
+    // Relocate the rendered bounds together with the note. Anything that moves
+    // a note's timeline coordinates wholesale (non-ARA capture padding/merge)
+    // must move these too, or the synthesizer mistakes the relocation for a
+    // pending timing edit and clears audio before the region's first note.
+    void setRenderedFrames(int start, int end)
+    {
+        renderedStartFrame = start;
+        renderedEndFrame = end;
+    }
 
     // Synth dirty flag (needs re-synthesis; separate from display dirty flag)
     bool isSynthDirty() const { return synthDirty; }
