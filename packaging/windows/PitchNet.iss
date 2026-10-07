@@ -1,7 +1,7 @@
 ﻿; PitchNet Windows installer.
 
 #define MyAppName "PitchNet"
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.7.1"
 #define MyAppPublisher "Session Loops"
 #define MyAppURL "https://www.sessionloops.com/"
 #define MyAppExeName "PitchNet.exe"
