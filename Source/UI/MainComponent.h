@@ -407,6 +407,10 @@ private:
   juce::StringArray recentFiles;
 
   bool isPlaying = false;
+  // REAPER-style edit cursor: where playback started or was last clicked.
+  // Stop returns here; pause leaves the play position where it is.
+  double editCursorTime = 0.0;
+  bool transportPaused = false;
   bool hostTransportControlAvailable = true;
   std::function<void(const juce::String &)> onRegionActivationRequested;
   std::function<void(bool)> onTrackViewModeChanged;

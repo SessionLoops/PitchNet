@@ -332,6 +332,7 @@ private:
   void applyModifierZoomDrag(const juce::MouseEvent &e);
   bool isModifierPanDrag(const juce::MouseEvent &e) const;
   void applyModifierPanDrag(const juce::MouseEvent &e);
+  void showCanvasPopupMenu(juce::Point<int> screenPosition);
   void updateMouseCursorForEditMode();
 
   Note *findNoteAt(float x, float y);
@@ -517,6 +518,10 @@ private:
   juce::Point<float> modifierZoomLastPosition;
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;
+  // Right button: pans when dragged, opens the canvas menu when clicked.
+  bool rightButtonGestureActive = false;
+  // Left press on empty canvas that seeks on release if it never drags.
+  bool emptyCanvasClickPending = false;
   bool pianoKeyAuditionMouseDown = false;
   bool middleButtonScrubActive = false;
   MainViewRegionPreviewList regionPreviews;

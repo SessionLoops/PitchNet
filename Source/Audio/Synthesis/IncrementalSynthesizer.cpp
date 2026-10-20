@@ -1980,7 +1980,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     psola.renderAsync(std::move(dspRequest), std::move(onRendered),
                       capturedCancelFlag);
   } else {
+    // Pass the cancel flag so the worker skips stale queued jobs instead of
+    // running full inference on renders a newer edit already superseded.
     vocoder->inferAsync(std::move(melRange), std::move(adjustedF0Range),
-                        std::move(onRendered));
+                        std::move(onRendered), capturedCancelFlag);
   }
 }

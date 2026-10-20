@@ -90,6 +90,8 @@ private:
   std::vector<Note*> affectedNotes;
   std::vector<TransformParams> originalParams;
   juce::Point<float> dragStartPos;
+  // Shift held: dB and semitone handles move in 0.5 steps, percentages in 5%.
+  bool coarseSteps = false;
 
   void applyOperation(std::vector<Note*>& notes,
                       PitchToolHandles::HandleType type,

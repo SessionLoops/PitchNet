@@ -19,6 +19,8 @@
 #include <memory>
 #include <thread>
 
+struct SharedInferenceModels;
+
 class EditorController
 {
 public:
@@ -115,9 +117,12 @@ private:
   GPUProvider getProviderFromDevice(const juce::String &device) const;
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;
-  std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;
-  std::unique_ptr<RMVPEPitchDetector> rmvpePitchDetector;
-  std::unique_ptr<GAMEDetector> gameDetector;
+  // Analysis models are shared by every controller using the same device (see
+  // SharedInferenceModels in the .cpp); sharedModels->mutex guards their use.
+  std::shared_ptr<SharedInferenceModels> sharedModels;
+  std::shared_ptr<FCPEPitchDetector> fcpePitchDetector;
+  std::shared_ptr<RMVPEPitchDetector> rmvpePitchDetector;
+  std::shared_ptr<GAMEDetector> gameDetector;
   std::unique_ptr<Vocoder> vocoder;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
   std::unique_ptr<PlaybackController> playbackController;

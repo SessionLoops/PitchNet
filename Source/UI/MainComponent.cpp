@@ -604,8 +604,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   fileManager = std::make_unique<AudioFileManager>();
   settingsManager = std::make_unique<SettingsManager>();
   uiBrightnessEffect = std::make_unique<UiBrightnessEffect>();
-  if (!isPluginMode())
-    menuHandler = std::make_unique<MenuHandler>();
+  // Plugins get a menu too (Edit + Settings) so the inference device can be
+  // changed without the standalone app; MenuHandler trims it for plugin mode.
+  menuHandler = std::make_unique<MenuHandler>();
 
   LOG("MainComponent: loading ONNX models...");
   if (editorController)
@@ -625,7 +626,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     menuHandler->setUndoManager(undoManager);
     menuHandler->setCommandManager(commandManager.get());
-    menuHandler->setPluginMode(false);
+    menuHandler->setPluginMode(isPluginMode());
     refreshRecentFilesMenu();
     menuHandler->setOnRecentFileSelected(
         [this](const juce::File &file)
@@ -693,15 +694,18 @@ MainComponent::MainComponent(bool enableAudioDevice)
       fitAnalyzedPitchRangeToView(*project);
   };
 
-  // Add child components - standalone uses menus; plugin instances do not.
+  // Add child components - on macOS plugin instances get no menu bar.
 #if JUCE_MAC
 #else
-  if (!isPluginMode() && menuHandler)
+  if (menuHandler)
   {
     menuBar.setModel(menuHandler.get());
     menuBar.setLookAndFeel(&menuBarLookAndFeel);
     addAndMakeVisible(menuBar);
   }
+  // setSize() above laid out before the menu existed; a host that restores the
+  // same size never resizes again, so lay out once more now.
+  resized();
 #endif
   addAndMakeVisible(toolbar);
   addAndMakeVisible(workspace);
@@ -1244,8 +1248,11 @@ void MainComponent::bindBackendController(EditorController *controller)
           settingsManager->getSynthesisEngineType());
       editorController->setDeviceConfig(settingsManager->getDevice(),
                                         settingsManager->getGPUDeviceId());
+      // Async: this runs on the message thread while the host opens the
+      // editor, and a synchronous load froze the host for seconds. Analysis
+      // waits for the shared models itself if it starts before they land.
       if (!editorController->isSelectedPitchDetectorLoaded())
-        editorController->reloadInferenceModels(false);
+        editorController->reloadInferenceModels(true);
       settingsManager->applySettings();
       refreshRenderDeviceOptions();
     }
@@ -1397,7 +1404,7 @@ MainComponent::~MainComponent()
   if (!isPluginMode() && menuHandler)
     juce::MenuBarModel::setMacMainMenu(nullptr);
 #else
-  if (!isPluginMode() && menuHandler)
+  if (menuHandler)
   {
     menuBar.setModel(nullptr);
     menuBar.setLookAndFeel(nullptr);
@@ -1468,7 +1475,7 @@ void MainComponent::resized()
 
 #if !JUCE_MAC
   // Menu bar at top for non-mac platforms
-  if (!isPluginMode() && menuHandler)
+  if (menuHandler)
     menuBar.setBounds(bounds.removeFromTop(24));
 #endif
 
@@ -2258,6 +2265,11 @@ void MainComponent::play()
 {
   auto *project = getProject();
 
+  // Resuming from pause keeps the edit cursor where playback first started.
+  if (!isPlaying && !transportPaused)
+    editCursorTime = pianoRoll.getCursorTime();
+  transportPaused = false;
+
   // In plugin mode, playback is controlled by the host. Update immediately for
   // responsiveness; host/ARA callbacks will keep the state in sync.
   if (isPluginMode())
@@ -2309,14 +2321,25 @@ void MainComponent::pause()
     return;
   }
 
+  if (isPlaying)
+    transportPaused = true;
+
   // In plugin mode, playback is controlled by the host
   if (isPluginMode())
   {
+    // A host stop rewinds to its own edit cursor, so pin the position back to
+    // where playback is paused.
+    const double pausedAt = pianoRoll.getCursorTime();
     if (onRequestHostPlayState)
       onRequestHostPlayState(false);
+    if (onRequestHostSeek)
+      onRequestHostSeek(pianoRoll.projectToTimeline(pausedAt));
     isPlaying = false;
     toolbar.setPlaying(false);
     pianoRoll.setPlaybackActive(false);
+    pendingCursorTime.store(pausedAt);
+    pianoRoll.setCursorTime(pausedAt);
+    toolbar.setCurrentTime(pausedAt);
     return;
   }
 
@@ -2337,6 +2360,10 @@ void MainComponent::stop()
     finishPreviewRegion(false);
   }
 
+  // Stop returns to the edit cursor; stopped and not paused, it stays put.
+  const bool returnToEditCursor = isPlaying || transportPaused;
+  transportPaused = false;
+
   // In plugin mode, playback is controlled by the host
   if (isPluginMode())
   {
@@ -2345,7 +2372,7 @@ void MainComponent::stop()
     isPlaying = false;
     toolbar.setPlaying(false);
     pianoRoll.setPlaybackActive(false);
-    seek(0.0);
+    seek(returnToEditCursor ? editCursorTime : pianoRoll.getCursorTime());
     return;
   }
 
@@ -2357,8 +2384,9 @@ void MainComponent::stop()
   toolbar.setPlaying(false);
   pianoRoll.setPlaybackActive(false);
   audioEngine->stop();
-  // With Auto Scroll off, don't jump the view back to the start.
-  seek(0.0, toolbar.isFollowPlayback());
+  // With Auto Scroll off, don't jump the view back to the edit cursor.
+  seek(returnToEditCursor ? editCursorTime : pianoRoll.getCursorTime(),
+       toolbar.isFollowPlayback());
 }
 
 void MainComponent::seek(double time, bool scrollToCursor)
@@ -2367,9 +2395,17 @@ void MainComponent::seek(double time, bool scrollToCursor)
   // the UI cursor immediately for responsiveness.
   if (isPluginMode())
   {
-    // 'time' is project time; the host expects its own timeline.
+    // A user seek moves the edit cursor, so Stop returns here afterwards.
+    editCursorTime = time;
+    transportPaused = false;
+    // 'time' is project time; the host expects its own timeline. Hosts may
+    // ignore a position request while playing, so restart around it.
+    if (isPlaying && onRequestHostPlayState)
+      onRequestHostPlayState(false);
     if (onRequestHostSeek)
       onRequestHostSeek(pianoRoll.projectToTimeline(time));
+    if (isPlaying && onRequestHostPlayState)
+      onRequestHostPlayState(true);
     pendingCursorTime.store(time);
     pianoRoll.setCursorTime(time);
     toolbar.setCurrentTime(time);
@@ -2380,6 +2416,8 @@ void MainComponent::seek(double time, bool scrollToCursor)
   auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr;
   if (!audioEngine)
     return;
+  editCursorTime = time;
+  transportPaused = false;
   audioEngine->seek(time);
   pendingCursorTime.store(time);
   pianoRoll.setCursorTime(time);
@@ -3472,6 +3510,12 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 {
   if (!isPluginMode())
     return;
+
+  // Playback started from the host's own transport: remember the edit cursor.
+  if (hostIsPlaying && !isPlaying && !transportPaused)
+    editCursorTime = pianoRoll.getCursorTime();
+  if (hostIsPlaying)
+    transportPaused = false;
 
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);

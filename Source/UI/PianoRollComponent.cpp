@@ -1,5 +1,6 @@
 #include "PianoRollComponent.h"
 #include <map>
+#include <utility>
 #include "../Utils/PitchMacroScope.h"
 #include "../Utils/AppLogger.h"
 #include "../Undo/AmplitudeAction.h"
@@ -590,9 +591,8 @@ void PianoRollComponent::paint(juce::Graphics &g)
   drawTimeline(g);
   drawLoopTimeline(g);
 
-  // Timing boundaries use the full canvas height. Hide the stationary
-  // playhead in Timing mode so it cannot be mistaken for an editable edge.
-  if (editMode != EditMode::Timing || playbackActive)
+  // Timing boundaries use the full canvas height, so in Timing mode the
+  // playhead is drawn yellow to keep it distinct from an editable edge.
   {
     float x = static_cast<float>(pianoKeysWidth) + timeToX(cursorTime) -
               static_cast<float>(scrollX);
@@ -604,7 +604,8 @@ void PianoRollComponent::paint(juce::Graphics &g)
     // Only draw if cursor is in visible area
     if (x >= pianoKeysWidth && x < getWidth() - verticalScrollBarSize)
     {
-      g.setColour(APP_COLOR_PITCH_CURVE);
+      g.setColour(editMode == EditMode::Timing ? juce::Colour(0xFFFFD54Au)
+                                               : APP_COLOR_PITCH_CURVE);
       g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom - cursorTop);
     }
   }
@@ -1803,7 +1804,8 @@ void PianoRollComponent::updateTrackGesture(const juce::MouseEvent& e)
     syncTrackPreviewSelection();
   } else {
     float delta = (trackGestureStart.y - e.position.y) / pixelsPerSemitone;
-    if (snapToSemitoneDrag != e.mods.isAltDown()) delta = std::round(delta);
+    if (e.mods.isShiftDown()) delta = std::round(delta * 2.0f) / 2.0f;
+    else if (snapToSemitoneDrag != e.mods.isAltDown()) delta = std::round(delta);
     for (auto& item : trackGestureNotes) {
       auto target = std::find_if(trackGestureTargets.begin(), trackGestureTargets.end(),
           [&](const auto& target) { return target.project == item.owner; });
@@ -1891,45 +1893,12 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  // Right button: drag pans like Alt+drag; a click without movement opens the
+  // canvas menu on release.
   if (e.mods.isPopupMenu() && isCanvasPoint(e))
   {
-    juce::PopupMenu menu;
-    menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
-    auto choice = std::make_shared<int>(0);
-    menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
-        choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
-        undoManager && undoManager->canRedo() && bool(onRedoRequested)));
-    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
-    menu.showMenuAsync(juce::PopupMenu::Options()
-                          .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
-                              e.getScreenPosition()))
-                          .withDeletionCheck(*this),
-                      [safeThis, choice](int result)
-    {
-      if (safeThis == nullptr || !safeThis->project || result == 0)
-        return;
-      if (*choice == 1)
-      {
-        safeThis->project->selectAllNotes();
-        safeThis->updatePitchToolHandlesFromSelection();
-        safeThis->updatePreviewButtonBounds();
-        safeThis->repaint();
-      }
-      else if (*choice == 6 && safeThis->onUndoRequested)
-        safeThis->onUndoRequested();
-      else if (*choice == 7 && safeThis->onRedoRequested)
-        safeThis->onRedoRequested();
-      else if (*choice >= 2 && *choice <= 5)
-      {
-        const EditMode modes[] = { EditMode::Select, EditMode::Split,
-                                   EditMode::PitchDrawing, EditMode::Timing };
-        const auto mode = modes[*choice - 2];
-        if (safeThis->onEditModeRequested)
-          safeThis->onEditModeRequested(mode);
-        else
-          safeThis->setEditMode(mode);
-      }
-    });
+    rightButtonGestureActive = true;
+    modifierPanLastPosition = e.position;
     return;
   }
 
@@ -2020,7 +1989,23 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
 
-  if (beginTrackGesture(e)) return;
+  // Left click on empty canvas in Select mode moves the playback cursor on
+  // release, unless the press turns into a box selection (see mouseUp).
+  emptyCanvasClickPending =
+      editMode == EditMode::Select && e.mods.isLeftButtonDown() &&
+      !e.mods.isAnyModifierKeyDown() && isCanvasPoint(e) &&
+      !(hoveredNote && pitchToolHandles &&
+        pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY)) &&
+      findPreviewButtonNoteAt(adjustedX, adjustedY) == nullptr &&
+      (trackViewMode || findNoteAt(adjustedX, adjustedY) == nullptr);
+
+  if (beginTrackGesture(e))
+  {
+    emptyCanvasClickPending = emptyCanvasClickPending && trackBoxSelecting;
+    return;
+  }
+  if (trackViewMode)
+    emptyCanvasClickPending = false;
 
   // Bind the project owning this pointer hit internally, then deliver the
   // same event to its tool. Routing does not privilege the bound region.
@@ -2091,6 +2076,17 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
+  if (rightButtonGestureActive)
+  {
+    if (!modifierPanDragActive && e.mouseWasDraggedSinceMouseDown())
+    {
+      modifierPanDragActive = true;
+      setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    }
+    if (modifierPanDragActive)
+      applyModifierPanDrag(e);
+    return;
+  }
   if (trackGestureActive) { updateTrackGesture(e); return; }
   if (e.mods.isPopupMenu())
     return;
@@ -2151,7 +2147,40 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
-  if (trackGestureActive) { finishTrackGesture(); return; }
+  if (rightButtonGestureActive)
+  {
+    rightButtonGestureActive = false;
+    if (modifierPanDragActive)
+    {
+      modifierPanDragActive = false;
+      updateMouseCursorForEditMode();
+    }
+    else
+    {
+      showCanvasPopupMenu(e.getScreenPosition());
+    }
+    return;
+  }
+
+  const bool seekOnRelease =
+      std::exchange(emptyCanvasClickPending, false) &&
+      !e.mouseWasDraggedSinceMouseDown();
+  auto seekToClick = [this, &e]()
+  {
+    const float x = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+    const double time = std::max(getTimelineStart(), xToTime(x));
+    setCursorTime(time);
+    if (onSeek)
+      onSeek(time);
+  };
+
+  if (trackGestureActive)
+  {
+    finishTrackGesture();
+    if (seekOnRelease)
+      seekToClick();
+    return;
+  }
   if (e.mods.isPopupMenu())
     return;
   if (swallowGestureUntilMouseUp)
@@ -2200,6 +2229,9 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
     currentHandler_->mouseUp(e, adjustedX, adjustedY);
     updatePreviewButtonBounds();
   }
+
+  if (seekOnRelease)
+    seekToClick();
 }
 
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
@@ -2572,77 +2604,69 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
       return;
     }
 
-    // Normal scrolling in grid area
-    float deltaX = wheel.deltaX;
-    float deltaY = wheel.deltaY;
+    // Grid area falls through to the REAPER-style mapping below.
+  }
 
-    if (e.mods.isShiftDown() && std::abs(deltaX) < 0.001f)
-    {
-      deltaX = deltaY;
-      deltaY = 0.0f;
-    }
+  // Grid area, REAPER-style: wheel zooms horizontally, Ctrl+wheel zooms
+  // vertically, Alt+wheel pans horizontally (wheel down = later in time).
+  // Alt+Shift, Shift or Ctrl+Alt+wheel scrolls vertically, and a horizontal
+  // wheel/trackpad swipe always pans.
+  const bool ctrl = e.mods.isCommandDown() || e.mods.isCtrlDown();
+  const bool alt = e.mods.isAltDown();
+  // Some devices report a modified vertical wheel on the X axis.
+  const float wheelDelta =
+      std::abs(wheel.deltaY) > 0.001f ? wheel.deltaY : wheel.deltaX;
 
-    if (std::abs(deltaX) > 0.001f)
-    {
-      double newScrollX = scrollX - deltaX * scrollMultiplier;
-      newScrollX = clampScrollX(newScrollX);
-      horizontalScrollBar.setCurrentRangeStart(newScrollX);
-    }
-
-    if (std::abs(deltaY) > 0.001f)
-    {
-      double newScrollY = scrollY - deltaY * scrollMultiplier;
-      verticalScrollBar.setCurrentRangeStart(newScrollY);
-    }
+  if (std::abs(wheel.deltaX) > 0.001f && !alt && !ctrl && !e.mods.isShiftDown())
+  {
+    horizontalScrollBar.setCurrentRangeStart(
+        clampScrollX(scrollX - wheel.deltaX * scrollMultiplier));
     return;
   }
 
-  // Key-based zoom in grid area
-  if (e.mods.isCommandDown() || e.mods.isCtrlDown())
+  if ((ctrl && alt) || e.mods.isShiftDown())
   {
-    float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
-
-    if (e.mods.isShiftDown())
-    {
-      // Vertical zoom - center on mouse position
-      float mouseY = static_cast<float>(e.y - headerHeight);
-      float midiAtMouse = yToMidi(mouseY + static_cast<float>(scrollY));
-
-      float newPps = pixelsPerSemitone * zoomFactor;
-      if (zoomFactor < 1.0f)
-      {
-        const float range = minPps * 0.35f;
-        const float t = range > 0.0f ? juce::jlimit(0.0f, 1.0f, (pixelsPerSemitone - minPps) / range) : 0.0f;
-        newPps = pixelsPerSemitone * (1.0f + (zoomFactor - 1.0f) * t);
-      }
-      juce::ignoreUnused(midiAtMouse);
-      setPixelsPerSemitone(newPps, mouseY);
-    }
-    else
-    {
-      // Horizontal zoom - center on mouse position
-      float mouseX = static_cast<float>(e.x - pianoKeysWidth);
-      double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
-
-      float newPps = pixelsPerSecond * zoomFactor;
-      newPps =
-          juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, newPps);
-
-      // Adjust scroll to keep mouse position stable
-      pixelsPerSecond = newPps;
-      coordMapper->setPixelsPerSecond(newPps);
-      float newMouseX = static_cast<float>(timeAtMouse * newPps);
-      scrollX = clampScrollX(static_cast<double>(newMouseX - mouseX));
-      coordMapper->setScrollX(scrollX);
-
-      coordMapper->setPixelsPerSecond(newPps);
-      updateScrollBars();
-      repaint();
-
-      if (onZoomChanged)
-        onZoomChanged(pixelsPerSecond);
-    }
+    verticalScrollBar.setCurrentRangeStart(scrollY - wheelDelta * scrollMultiplier);
+    return;
   }
+
+  if (alt)
+  {
+    horizontalScrollBar.setCurrentRangeStart(
+        clampScrollX(scrollX + wheelDelta * scrollMultiplier));
+    return;
+  }
+
+  const float zoomFactor = 1.0f + wheelDelta * 0.3f;
+
+  if (ctrl)
+  {
+    // Vertical zoom - center on mouse position
+    const float mouseY = static_cast<float>(e.y - headerHeight);
+    float newPps = pixelsPerSemitone * zoomFactor;
+    if (zoomFactor < 1.0f)
+    {
+      const float range = minPps * 0.35f;
+      const float t = range > 0.0f ? juce::jlimit(0.0f, 1.0f, (pixelsPerSemitone - minPps) / range) : 0.0f;
+      newPps = pixelsPerSemitone * (1.0f + (zoomFactor - 1.0f) * t);
+    }
+    setPixelsPerSemitone(newPps, mouseY);
+    return;
+  }
+
+  // Horizontal zoom - center on mouse position
+  const float mouseX = static_cast<float>(e.x - pianoKeysWidth);
+  const double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
+  const float newPps =
+      juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, pixelsPerSecond * zoomFactor);
+  pixelsPerSecond = newPps;
+  coordMapper->setPixelsPerSecond(newPps);
+  scrollX = clampScrollX(timeAtMouse * newPps - mouseX);
+  coordMapper->setScrollX(scrollX);
+  updateScrollBars();
+  repaint();
+  if (onZoomChanged)
+    onZoomChanged(pixelsPerSecond);
 }
 
 void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
@@ -4234,4 +4258,45 @@ void PianoRollComponent::drawSelectionRect(juce::Graphics &g)
   // Draw border
   g.setColour(juce::Colours::white.withAlpha(0.25f));
   g.drawRect(rect, 1.0f);
+}
+
+void PianoRollComponent::showCanvasPopupMenu(juce::Point<int> screenPosition)
+{
+  juce::PopupMenu menu;
+  menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+  auto choice = std::make_shared<int>(0);
+  menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
+      choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
+      undoManager && undoManager->canRedo() && bool(onRedoRequested)));
+  juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+  menu.showMenuAsync(juce::PopupMenu::Options()
+                        .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
+                            screenPosition))
+                        .withDeletionCheck(*this),
+                    [safeThis, choice](int result)
+  {
+    if (safeThis == nullptr || !safeThis->project || result == 0)
+      return;
+    if (*choice == 1)
+    {
+      safeThis->project->selectAllNotes();
+      safeThis->updatePitchToolHandlesFromSelection();
+      safeThis->updatePreviewButtonBounds();
+      safeThis->repaint();
+    }
+    else if (*choice == 6 && safeThis->onUndoRequested)
+      safeThis->onUndoRequested();
+    else if (*choice == 7 && safeThis->onRedoRequested)
+      safeThis->onRedoRequested();
+    else if (*choice >= 2 && *choice <= 5)
+    {
+      const EditMode modes[] = { EditMode::Select, EditMode::Split,
+                                 EditMode::PitchDrawing, EditMode::Timing };
+      const auto mode = modes[*choice - 2];
+      if (safeThis->onEditModeRequested)
+        safeThis->onEditModeRequested(mode);
+      else
+        safeThis->setEditMode(mode);
+    }
+  });
 }

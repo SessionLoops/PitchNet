@@ -13,7 +13,20 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <map>
 #include <mutex>
+
+// One set of analysis models per device, shared by every EditorController in
+// the process. A plugin instance runs several controllers (canvas, ARA
+// analysis, per-modification renders) and each used to load its own copy.
+// The detectors keep scratch buffers, so mutex serializes loading and use.
+struct SharedInferenceModels
+{
+  std::mutex mutex;
+  std::shared_ptr<FCPEPitchDetector> fcpe = std::make_shared<FCPEPitchDetector>();
+  std::shared_ptr<RMVPEPitchDetector> rmvpe = std::make_shared<RMVPEPitchDetector>();
+  std::shared_ptr<GAMEDetector> game = std::make_shared<GAMEDetector>();
+};
 
 namespace
 {
@@ -21,6 +34,30 @@ std::mutex &getDirectMLModelLoadMutex()
 {
   static std::mutex mutex;
   return mutex;
+}
+
+// Held weakly so the ORT sessions die with the last controller, never during
+// static destruction at DLL unload.
+std::shared_ptr<SharedInferenceModels> acquireSharedModels(
+    const juce::String &device, int deviceId)
+{
+  static std::mutex cacheMutex;
+  static std::map<juce::String, std::weak_ptr<SharedInferenceModels>> cache;
+
+  const std::lock_guard<std::mutex> lock(cacheMutex);
+  auto &slot = cache[device + ":" + juce::String(deviceId)];
+  if (auto existing = slot.lock())
+    return existing;
+  auto created = std::make_shared<SharedInferenceModels>();
+  slot = created;
+  return created;
+}
+
+std::unique_lock<std::mutex> lockModels(
+    const std::shared_ptr<SharedInferenceModels> &models)
+{
+  return models ? std::unique_lock<std::mutex>(models->mutex)
+                : std::unique_lock<std::mutex>();
 }
 } // namespace
 
@@ -30,9 +67,9 @@ EditorController::EditorController(bool enableAudioDevice)
   if (enableAudioDevice)
     audioEngine = std::make_unique<AudioEngine>();
 
-  fcpePitchDetector = std::make_unique<FCPEPitchDetector>();
-  rmvpePitchDetector = std::make_unique<RMVPEPitchDetector>();
-  gameDetector = std::make_unique<GAMEDetector>();
+  fcpePitchDetector = std::make_shared<FCPEPitchDetector>();
+  rmvpePitchDetector = std::make_shared<RMVPEPitchDetector>();
+  gameDetector = std::make_shared<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
   playbackController = std::make_unique<PlaybackController>();
@@ -97,6 +134,11 @@ void EditorController::reloadInferenceModels(bool async)
   auto provider = getProviderFromDevice(device);
   int resolvedDeviceId = deviceId < 0 ? 0 : deviceId;
 
+  sharedModels = acquireSharedModels(device, resolvedDeviceId);
+  fcpePitchDetector = sharedModels->fcpe;
+  rmvpePitchDetector = sharedModels->rmvpe;
+  gameDetector = sharedModels->game;
+
   auto fcpePath = fcpeModelPath;
   auto melPath = melFilterbankPath;
   auto centPath = centTablePath;
@@ -109,9 +151,28 @@ void EditorController::reloadInferenceModels(bool async)
                      melPath,
                      centPath,
                      rmvpePath,
-                     gamePath](EditorController *self)
+                     gamePath,
+                     models = sharedModels](EditorController *self)
   {
     if (!self || self->shuttingDown.load())
+      return;
+
+    auto modelsReady = [&]()
+    {
+      return (models->fcpe->isLoaded() || !fcpePath.existsAsFile()) &&
+             (models->rmvpe->isLoaded() || !rmvpePath.existsAsFile()) &&
+             (models->game->isLoaded() || !gamePath.isDirectory());
+    };
+    // Checked once before locking so a synchronous reload on the message
+    // thread never waits behind another controller's running analysis.
+    if (modelsReady())
+    {
+      LOG("EditorController: reusing shared models (device " + device +
+          ", id " + juce::String(resolvedDeviceId) + ")");
+      return;
+    }
+    const std::lock_guard<std::mutex> modelLock(models->mutex);
+    if (modelsReady())
       return;
 
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
@@ -754,17 +815,20 @@ void EditorController::analyzeAudio(
 
   std::vector<float> extractedF0;
   juce::String pitchInferenceError;
-  if (pitchDetectorType == PitchDetectorType::RMVPE)
   {
-    extractedF0 = rmvpePitchDetector->extractF0(samples, numSamples,
-                                                audioData.sampleRate);
-    pitchInferenceError = rmvpePitchDetector->getLastError();
-  }
-  else if (pitchDetectorType == PitchDetectorType::FCPE)
-  {
-    extractedF0 =
-        fcpePitchDetector->extractF0(samples, numSamples, audioData.sampleRate);
-    pitchInferenceError = fcpePitchDetector->getLastError();
+    const auto modelLock = lockModels(sharedModels);
+    if (pitchDetectorType == PitchDetectorType::RMVPE)
+    {
+      extractedF0 = rmvpePitchDetector->extractF0(samples, numSamples,
+                                                  audioData.sampleRate);
+      pitchInferenceError = rmvpePitchDetector->getLastError();
+    }
+    else if (pitchDetectorType == PitchDetectorType::FCPE)
+    {
+      extractedF0 =
+          fcpePitchDetector->extractF0(samples, numSamples, audioData.sampleRate);
+      pitchInferenceError = fcpePitchDetector->getLastError();
+    }
   }
 
   if (shuttingDown.load())
@@ -1141,6 +1205,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     int numSamples = audioData.waveform.getNumSamples();
     const int f0Size = static_cast<int>(audioData.f0.size());
 
+    // Held through getLastChunkRanges(), which reads this call's scratch state.
+    const auto modelLock = lockModels(sharedModels);
     auto gameNotes = gameDetector->detectNotesWithProgress(
         samples, numSamples, GAMEDetector::SAMPLE_RATE, std::move(onProgress));
 
