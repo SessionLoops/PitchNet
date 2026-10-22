@@ -51,7 +51,8 @@ juce::StringArray getDisplayAdapterNames();
 
 /**
  * True when AI Resynthesis can run off the CPU: always on macOS (Core ML), and
- * on Windows when the DirectML provider has a hardware adapter to run on.
+ * on Windows when the DirectML provider has a hardware adapter to run on,
+ * and on Linux CUDA builds when a CUDA device and provider are available.
  */
 bool hasGpuInference();
 } // namespace GpuDeviceList

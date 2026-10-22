@@ -51,7 +51,12 @@ option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
 option(PITCHNET_BUILD_TESTS "Build the unit tests in tests/ and register them with CTest" OFF)
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
-set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND USE_CUDA)
+    # The CUDA 13 archive requested below is not published for 1.19.2.
+    set(ONNXRUNTIME_VERSION "1.31.0" CACHE STRING "ONNX Runtime version" FORCE)
+else()
+    set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
+endif()
 set(GAME_MODELS_VERSION "v1.0.3" CACHE STRING "GAME release tag used to download model assets")
 set(GAME_MODELS_URL "" CACHE STRING "Optional URL to download GAME model zip")
 

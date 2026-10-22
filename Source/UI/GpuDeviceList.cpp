@@ -230,6 +230,47 @@ bool hasGpuInference()
 {
 #if JUCE_MAC
   return true;
+#elif JUCE_LINUX && defined(USE_CUDA) && defined(HAVE_ONNXRUNTIME)
+  // A provider in the ORT package alone does not imply a usable CUDA device.
+  // Probe once: CUDA initialization and provider loading can be expensive.
+  static const bool available = [] {
+    try
+    {
+      bool hasCudaProvider = false;
+      for (const auto &provider : Ort::GetAvailableProviders())
+        hasCudaProvider |= provider == "CUDAExecutionProvider";
+      if (!hasCudaProvider)
+        return false;
+
+      // Use the stable driver API without requiring CUDA headers at build time.
+      juce::DynamicLibrary driver;
+      if (!driver.open("libcuda.so.1"))
+        return false;
+      using Init = int (*)(unsigned int);
+      using GetDeviceCount = int (*)(int *);
+      const auto init = reinterpret_cast<Init>(driver.getFunction("cuInit"));
+      const auto getDeviceCount = reinterpret_cast<GetDeviceCount>(
+          driver.getFunction("cuDeviceGetCount"));
+      int deviceCount = 0;
+      if (!init || !getDeviceCount || init(0) != 0 ||
+          getDeviceCount(&deviceCount) != 0 || deviceCount < 1)
+        return false;
+
+      // Loading the provider also checks its CUDA/cuDNN shared dependencies.
+      Ort::SessionOptions options;
+      OrtCUDAProviderOptions cudaOptions{};
+      cudaOptions.device_id = 0;
+      options.AppendExecutionProvider_CUDA(cudaOptions);
+      return true;
+    }
+    catch (const std::exception &e)
+    {
+      juce::Logger::writeToLog(juce::String("CUDA availability check failed: ") +
+                               e.what());
+      return false;
+    }
+  }();
+  return available;
 #elif defined(_WIN32) && defined(USE_DIRECTML) && defined(HAVE_ONNXRUNTIME)
   try
   {
