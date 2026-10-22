@@ -18,7 +18,8 @@ public:
         Nuendo,       // ARA
         FLStudio,     // No ARA
         AbletonLive,  // No ARA
-        Bitwig        // No ARA
+        Bitwig,       // No ARA
+        AdobeAudition // No ARA
     };
 
     struct HostInfo {

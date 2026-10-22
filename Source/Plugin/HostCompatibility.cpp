@@ -60,6 +60,12 @@ HostCompatibility::HostInfo HostCompatibility::createHostInfo(HostType type) {
             info.notes = "No ARA support. Uses auto-capture mode.";
             break;
 
+        case HostType::AdobeAudition:
+            info.name = "Adobe Audition";
+            info.supportsARA = false;
+            info.notes = "No ARA support. Uses auto-capture mode.";
+            break;
+
         case HostType::Unknown:
         default:
             info.name = "";
@@ -75,31 +81,37 @@ HostCompatibility::HostType HostCompatibility::detectHostType(juce::AudioProcess
     if (!processor)
         return HostType::Unknown;
 
-    // AAX is Pro Tools
-#if JucePlugin_Build_AAX
-    return HostType::ProTools;
-#endif
+    // Only the AAX wrapper implies Pro Tools. JucePlugin_Build_AAX is set for
+    // the code shared by every format, so it cannot be used to tell hosts apart.
+    if (processor->wrapperType == juce::AudioProcessor::wrapperType_AAX)
+        return HostType::ProTools;
 
-    // For VST3/AU, we can't reliably detect the host from wrapper type alone
-    // Return Unknown and let ARA detection handle it
+    const juce::PluginHostType host;
+    if (host.isProTools())       return HostType::ProTools;
+    if (host.isStudioOne())      return HostType::StudioOne;
+    if (host.isNuendo())         return HostType::Nuendo;
+    if (host.isCubase())         return HostType::Cubase;
+    if (host.isLogic())          return HostType::LogicPro;
+    if (host.isReaper())         return HostType::Reaper;
+    if (host.isFruityLoops())    return HostType::FLStudio;
+    if (host.isAbletonLive())    return HostType::AbletonLive;
+    if (host.isBitwigStudio())   return HostType::Bitwig;
+    if (host.isAdobeAudition())  return HostType::AdobeAudition;
     return HostType::Unknown;
 }
 
 HostCompatibility::HostInfo HostCompatibility::detectHost(juce::AudioProcessor* processor) {
-    auto type = detectHostType(processor);
+    auto info = createHostInfo(detectHostType(processor));
 
 #if JucePlugin_Enable_ARA
-    // If ARA is active but host is unknown, just mark as ARA-capable
-    if (type == HostType::Unknown && processor) {
+    // An active ARA editor proves ARA support even for a host not listed above.
+    if (processor) {
         if (auto* editor = processor->getActiveEditor()) {
             if (auto* araEditor = dynamic_cast<juce::AudioProcessorEditorARAExtension*>(editor)) {
                 if (auto* editorView = araEditor->getARAEditorView()) {
                     if (editorView->getDocumentController()) {
-                        HostInfo info;
-                        info.type = HostType::Unknown;
                         info.supportsARA = true;
                         info.notes = "ARA mode active.";
-                        return info;
                     }
                 }
             }
@@ -107,7 +119,7 @@ HostCompatibility::HostInfo HostCompatibility::detectHost(juce::AudioProcessor* 
     }
 #endif
 
-    return createHostInfo(type);
+    return info;
 }
 
 juce::String HostCompatibility::getRecommendedMode(const HostInfo& info) {
