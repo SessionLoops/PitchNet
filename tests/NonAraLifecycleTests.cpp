@@ -96,6 +96,28 @@ void capturePreservesTimelineAndWaitsForStop() {
   CHECK(capture.getHoldReason() == NonAraCaptureController::HoldReason::None);
 }
 
+void captureFinalizesWhenHostNeverSendsStoppedBlock() {
+  // Adobe Audition deactivates the plug-in when the transport stops, so no
+  // hostIsPlaying=false block ever arrives; releaseResources() finalizes.
+  NonAraCaptureController capture;
+  capture.prepare(1000.0, 1, 1);
+  capture.setMinCaptureSeconds(0.0);
+  juce::AudioBuffer<float> input(1, 100);
+  input.clear();
+  capture.resetToWaiting();
+  capture.processBlock(input, true, 0);
+  capture.processBlock(input, true, 100);
+  CHECK(!capture.shouldFinalize());
+  NonAraCaptureController::FinalizeResult result;
+  CHECK(capture.finalizeCapture(1000.0, result));
+  CHECK(result.numSamples == 200);
+  // A second finalize (audio thread vs releaseResources) must not win too.
+  NonAraCaptureController::FinalizeResult second;
+  CHECK(!capture.finalizeCapture(1000.0, second));
+  capture.onAnalysisDispatched();
+  CHECK(capture.getState() == NonAraCaptureController::State::Idle);
+}
+
 void playbackHonorsSmallHostSeeks() {
   Project project;
   auto &audio = project.getAudioData();
@@ -186,6 +208,7 @@ void lifecycleCompletesPendingCacheAndDropsDetachedAudio() {
 int main() {
   captureStorageIsAllocatedOnlyWhenArmed();
   capturePreservesTimelineAndWaitsForStop();
+  captureFinalizesWhenHostNeverSendsStoppedBlock();
   playbackHonorsSmallHostSeeks();
   lifecycleCompletesPendingCacheAndDropsDetachedAudio();
   std::cout << "Non-ARA lifecycle tests passed\n";

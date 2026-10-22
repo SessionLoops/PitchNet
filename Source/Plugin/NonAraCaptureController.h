@@ -30,7 +30,8 @@ public:
   // Called from audio thread
   bool shouldFinalize() const { return shouldFinalizeFlag.load(); }
 
-  // Called from audio thread
+  // Called from the audio thread, or from a non-audio thread when the host has
+  // stopped processing. Safe to race: exactly one caller wins the take.
   bool finalizeCapture(double hostSampleRate, FinalizeResult &out);
 
   // Called from message thread

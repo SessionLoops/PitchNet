@@ -303,6 +303,11 @@ PitchNetAudioProcessor::getARAClientExtensions() {
 
 void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock) {
+  // Re-activation in the middle of a take means the host stopped. Finish the
+  // take at the rate it was recorded at instead of letting prepare() below
+  // discard it and silently re-arm.
+  finalizeCaptureForHostStop();
+
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
 
@@ -362,6 +367,9 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
 }
 
 void PitchNetAudioProcessor::releaseResources() {
+  // Adobe Audition deactivates the plug-in when the transport stops and never
+  // delivers a stopped block, so the take must be finished here.
+  finalizeCaptureForHostStop();
 #if JucePlugin_Enable_ARA
   releaseResourcesForARA();
 #endif
@@ -1031,6 +1039,26 @@ void PitchNetAudioProcessor::disarmCaptureUi() {
     if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
       view->updateRecordArmState(false);
   });
+}
+
+void PitchNetAudioProcessor::finalizeCaptureForHostStop() {
+  if (captureController->getState() !=
+      NonAraCaptureController::State::Capturing)
+    return;
+
+  NonAraCaptureController::FinalizeResult result;
+  if (captureController->finalizeCapture(hostSampleRate, result)) {
+    // Copy now: prepareToPlay() may resize the capture buffer right after us.
+    auto trimmed = std::make_shared<juce::AudioBuffer<float>>(
+        captureController->copyCapturedAudio(result.numSamples));
+    captureController->onAnalysisDispatched();
+    juce::MessageManager::callAsync(
+        [this, trimmed, sr = result.sampleRate,
+         offset = liveCaptureUiState->timelineOffsetSeconds.load()]() {
+          requestCapturedAudioAnalysis(*trimmed, sr, offset);
+        });
+  }
+  disarmCaptureUi();
 }
 
 void PitchNetAudioProcessor::dispatchLiveCaptureUpdate() {

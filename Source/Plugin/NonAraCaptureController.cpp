@@ -110,7 +110,11 @@ void NonAraCaptureController::processBlock(
 
 bool NonAraCaptureController::finalizeCapture(double hostSampleRate,
                                               FinalizeResult &out) {
-  if (state.load() != State::Capturing)
+  // Claim the take atomically. The audio thread (transport-stop block) and the
+  // message thread (capture watchdog / releaseResources) can both try to finish
+  // the same capture; only one may dispatch it for analysis.
+  auto expected = State::Capturing;
+  if (!state.compare_exchange_strong(expected, State::Complete))
     return false;
 
   const int minSamples = static_cast<int>(hostSampleRate * minCaptureSeconds);
@@ -135,7 +139,6 @@ bool NonAraCaptureController::finalizeCapture(double hostSampleRate,
 
   analysisPending.store(true);
   shouldFinalizeFlag.store(false);
-  state.store(State::Complete);
 
   out.numChannels = channels;
   out.numSamples = finalLength;

@@ -307,6 +307,9 @@ private:
                          bool isRealtime);
   void disarmCaptureUi();
   void dispatchLiveCaptureUpdate();
+  /** Not the audio thread: finish an in-progress take because the host
+   *  deactivated the plug-in instead of sending a transport-stopped block. */
+  void finalizeCaptureForHostStop();
 
   /** Render the non-ARA edit preview into the buffer. Returns true if preview
    *  is active (and produced output or intentional silence), false to let the
