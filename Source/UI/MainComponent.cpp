@@ -347,6 +347,32 @@ private:
   std::function<void()> downloadCallback;
 };
 
+// Keep the editor's dark styling while drawing its scrollbar like the side panel.
+class AboutLookAndFeel : public DarkLookAndFeel
+{
+public:
+  void drawScrollbar(juce::Graphics &g, juce::ScrollBar &scrollBar,
+                     int x, int y, int width, int height, bool isVertical,
+                     int thumbStart, int thumbSize, bool isMouseOver,
+                     bool isMouseDown) override
+  {
+    g.fillAll(APP_COLOR_SCROLLBAR_TRACK);
+    juce::LookAndFeel_V4::drawScrollbar(g, scrollBar, x, y, width, height,
+                                      isVertical, thumbStart, thumbSize,
+                                      isMouseOver, isMouseDown);
+  }
+};
+
+void styleAboutScrollBars(juce::Component &component)
+{
+  if (auto *scrollBar = dynamic_cast<juce::ScrollBar *>(&component))
+    styleCanvasScrollBar(*scrollBar);
+
+  for (int i = 0; i < component.getNumChildComponents(); ++i)
+    if (auto *child = component.getChildComponent(i))
+      styleAboutScrollBars(*child);
+}
+
 class AboutContent : public juce::Component
 {
 public:
@@ -356,7 +382,7 @@ public:
     noticesEditor.setMultiLine(true);
     noticesEditor.setReadOnly(true);
     noticesEditor.setScrollbarsShown(true);
-    noticesEditor.setScrollBarThickness(8);
+    noticesEditor.setScrollBarThickness(APP_SCROLLBAR_THICKNESS);
     noticesEditor.setCaretVisible(false);
     noticesEditor.setPopupMenuEnabled(false);
     noticesEditor.setText(
@@ -375,13 +401,13 @@ public:
     noticesEditor.setColour(juce::TextEditor::shadowColourId,
                             juce::Colours::transparentBlack);
     noticesEditor.setColour(juce::ScrollBar::backgroundColourId,
-                            updateLogScrollbarTrack);
+                            APP_COLOR_SCROLLBAR_TRACK);
     noticesEditor.setColour(juce::ScrollBar::trackColourId,
-                            updateLogScrollbarTrack);
+                            APP_COLOR_SCROLLBAR_TRACK);
     noticesEditor.setColour(juce::ScrollBar::thumbColourId,
-                            updateLogScrollbarThumb);
-    noticesEditor.setLookAndFeel(&DarkLookAndFeel::getInstance());
-    styleUpdateLogScrollBars(noticesEditor);
+                            APP_COLOR_SCROLLBAR_THUMB);
+    noticesEditor.setLookAndFeel(&lookAndFeel);
+    styleAboutScrollBars(noticesEditor);
     addAndMakeVisible(noticesEditor);
 
     styleUpdateButton(closeButton);
@@ -400,7 +426,7 @@ public:
   {
     auto bounds = getLocalBounds().reduced(24, 20);
     noticesEditor.setBounds(bounds.removeFromTop(311));
-    styleUpdateLogScrollBars(noticesEditor);
+    styleAboutScrollBars(noticesEditor);
 
     auto buttonRow = getLocalBounds().removeFromBottom(46);
     const int buttonW = 150;
@@ -420,6 +446,7 @@ public:
   juce::TextButton closeButton;
 
 private:
+  AboutLookAndFeel lookAndFeel;
   juce::TextEditor noticesEditor;
 };
 
