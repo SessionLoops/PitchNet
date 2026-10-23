@@ -710,6 +710,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       settingsManager->getShowCleanedF0Debug());
   pianoRoll.setShowVocoderF0Debug(
       settingsManager->getShowVocoderF0Debug());
+  reaperNavigation = settingsManager->getReaperNavigation();
+  pianoRoll.setReaperNavigation(reaperNavigation);
   pianoRollView.setShowSegmentsDebug(
       settingsManager->getShowSegmentsDebug());
   dragAuditionEnabled = settingsManager->getLiveAuditionEnabled();
@@ -2285,6 +2287,11 @@ void MainComponent::play()
 {
   auto *project = getProject();
 
+  // Resuming from pause keeps the edit cursor where playback first started.
+  if (!isPlaying && !transportPaused)
+    editCursorTime = pianoRoll.getCursorTime();
+  transportPaused = false;
+
   // In plugin mode, playback is controlled by the host. Update immediately for
   // responsiveness; host/ARA callbacks will keep the state in sync.
   if (isPluginMode())
@@ -2336,14 +2343,28 @@ void MainComponent::pause()
     return;
   }
 
+  if (isPlaying)
+    transportPaused = true;
+
   // In plugin mode, playback is controlled by the host
   if (isPluginMode())
   {
+    // A host stop rewinds to its own edit cursor, so pin the position back to
+    // where playback is paused.
+    const double pausedAt = pianoRoll.getCursorTime();
     if (onRequestHostPlayState)
       onRequestHostPlayState(false);
+    if (reaperNavigation && onRequestHostSeek)
+      onRequestHostSeek(pianoRoll.projectToTimeline(pausedAt));
     isPlaying = false;
     toolbar.setPlaying(false);
     pianoRoll.setPlaybackActive(false);
+    if (reaperNavigation)
+    {
+      pendingCursorTime.store(pausedAt);
+      pianoRoll.setCursorTime(pausedAt);
+      toolbar.setCurrentTime(pausedAt);
+    }
     return;
   }
 
@@ -2364,6 +2385,14 @@ void MainComponent::stop()
     finishPreviewRegion(false);
   }
 
+  // REAPER mode: Stop returns to the edit cursor, and when already stopped
+  // it stays put. Otherwise Stop rewinds to the start.
+  const double stopTime =
+      !reaperNavigation ? 0.0
+      : (isPlaying || transportPaused) ? editCursorTime
+                                       : pianoRoll.getCursorTime();
+  transportPaused = false;
+
   // In plugin mode, playback is controlled by the host
   if (isPluginMode())
   {
@@ -2372,7 +2401,7 @@ void MainComponent::stop()
     isPlaying = false;
     toolbar.setPlaying(false);
     pianoRoll.setPlaybackActive(false);
-    seek(0.0);
+    seek(stopTime);
     return;
   }
 
@@ -2384,8 +2413,8 @@ void MainComponent::stop()
   toolbar.setPlaying(false);
   pianoRoll.setPlaybackActive(false);
   audioEngine->stop();
-  // With Auto Scroll off, don't jump the view back to the start.
-  seek(0.0, toolbar.isFollowPlayback());
+  // With Auto Scroll off, don't jump the view back.
+  seek(stopTime, toolbar.isFollowPlayback());
 }
 
 void MainComponent::seek(double time, bool scrollToCursor)
@@ -2394,9 +2423,21 @@ void MainComponent::seek(double time, bool scrollToCursor)
   // the UI cursor immediately for responsiveness.
   if (isPluginMode())
   {
-    // 'time' is project time; the host expects its own timeline.
+    // A user seek moves the edit cursor, so Stop returns here afterwards.
+    editCursorTime = time;
+    transportPaused = false;
+    // 'time' is project time; the host expects its own timeline. Hosts may
+    // ignore a position request while playing, so in REAPER mode a click
+    // restarts around it. Scrub moves don't, to avoid flooding the host;
+    // the scrub's release seeks once more.
+    const bool restartHost = reaperNavigation && isPlaying &&
+                             !pianoRoll.isScrubbing() && onRequestHostPlayState;
+    if (restartHost)
+      onRequestHostPlayState(false);
     if (onRequestHostSeek)
       onRequestHostSeek(pianoRoll.projectToTimeline(time));
+    if (restartHost)
+      onRequestHostPlayState(true);
     pendingCursorTime.store(time);
     pianoRoll.setCursorTime(time);
     toolbar.setCurrentTime(time);
@@ -2407,6 +2448,8 @@ void MainComponent::seek(double time, bool scrollToCursor)
   auto *audioEngine = editorController ? editorController->getAudioEngine() : nullptr;
   if (!audioEngine)
     return;
+  editCursorTime = time;
+  transportPaused = false;
   audioEngine->seek(time);
   pendingCursorTime.store(time);
   pianoRoll.setCursorTime(time);
@@ -3006,6 +3049,12 @@ void MainComponent::showSettings()
       if (editorController)
         editorController->setPitchDetectorType(type);
     };
+    settingsOverlay->getSettingsComponent()->onReaperNavigationChanged =
+        [this](bool enabled)
+    {
+      reaperNavigation = enabled;
+      pianoRoll.setReaperNavigation(enabled);
+    };
     settingsOverlay->getSettingsComponent()->onShowSegmentsDebugChanged =
         [this](bool show)
     {
@@ -3499,6 +3548,12 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 {
   if (!isPluginMode())
     return;
+
+  // Playback started from the host's own transport: remember the edit cursor.
+  if (hostIsPlaying && !isPlaying && !transportPaused)
+    editCursorTime = pianoRoll.getCursorTime();
+  if (hostIsPlaying)
+    transportPaused = false;
 
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);
