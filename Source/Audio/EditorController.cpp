@@ -15,7 +15,84 @@
 #include <chrono>
 #include <climits>
 #include <cmath>
+#include <map>
 #include <mutex>
+#include <utility>
+
+// Analysis models for one device. GPU sets are shared by every controller in
+// the process on that device; each CPU controller gets its own set so CPU
+// analysis of several tracks still runs in parallel. Detectors keep per-call
+// scratch state, so each model has its own mutex for inference.
+struct SharedInferenceModels
+{
+  juce::String key;
+  std::mutex loadMutex;
+  std::mutex fcpeMutex;
+  std::mutex rmvpeMutex;
+  std::mutex gameMutex;
+  std::shared_ptr<FCPEPitchDetector> fcpe = std::make_shared<FCPEPitchDetector>();
+  std::shared_ptr<RMVPEPitchDetector> rmvpe = std::make_shared<RMVPEPitchDetector>();
+  std::shared_ptr<GAMEDetector> game = std::make_shared<GAMEDetector>();
+};
+
+namespace
+{
+// Held weakly so the ORT sessions die with the last controller, never during
+// static destruction at DLL unload.
+std::shared_ptr<SharedInferenceModels> acquireSharedModels(
+    const juce::String &key, bool shareAcrossControllers,
+    std::shared_ptr<SharedInferenceModels> current)
+{
+  if (current && current->key == key)
+    return current;
+
+  auto create = [&key]()
+  {
+    auto created = std::make_shared<SharedInferenceModels>();
+    created->key = key;
+    return created;
+  };
+  if (!shareAcrossControllers)
+    return create();
+
+  static std::mutex cacheMutex;
+  static std::map<juce::String, std::weak_ptr<SharedInferenceModels>> cache;
+  const std::lock_guard<std::mutex> lock(cacheMutex);
+  auto &slot = cache[key];
+  if (auto existing = slot.lock())
+    return existing;
+  auto created = create();
+  slot = created;
+  return created;
+}
+
+// Shared locks can be held by another controller's long pass. Give up once
+// this controller is shutting down so its destructor never waits on them;
+// callers check shuttingDown after locking.
+std::unique_lock<std::mutex> lockShared(std::mutex &mutex,
+                                        const std::atomic<bool> &shuttingDown)
+{
+  std::unique_lock<std::mutex> lock(mutex, std::defer_lock);
+  while (!lock.try_lock() && !shuttingDown.load())
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  return lock;
+}
+
+// Locks the set's mutex only when the detector really belongs to the set; a
+// private DirectML-to-CPU fallback detector needs no cross-controller lock.
+template <typename Detector>
+std::unique_lock<std::mutex> lockModel(
+    const std::shared_ptr<SharedInferenceModels> &models,
+    const std::shared_ptr<Detector> &detector,
+    std::shared_ptr<Detector> SharedInferenceModels::*member,
+    std::mutex SharedInferenceModels::*modelMutex,
+    const std::atomic<bool> &shuttingDown)
+{
+  if (!models || (*models).*member != detector)
+    return {};
+  return lockShared((*models).*modelMutex, shuttingDown);
+}
+} // namespace
 
 EditorController::EditorController(bool enableAudioDevice)
 {
@@ -23,9 +100,9 @@ EditorController::EditorController(bool enableAudioDevice)
   if (enableAudioDevice)
     audioEngine = std::make_unique<AudioEngine>();
 
-  fcpePitchDetector = std::make_unique<FCPEPitchDetector>();
-  rmvpePitchDetector = std::make_unique<RMVPEPitchDetector>();
-  gameDetector = std::make_unique<GAMEDetector>();
+  fcpePitchDetector = std::make_shared<FCPEPitchDetector>();
+  rmvpePitchDetector = std::make_shared<RMVPEPitchDetector>();
+  gameDetector = std::make_shared<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
   playbackController = std::make_unique<PlaybackController>();
@@ -90,27 +167,32 @@ void EditorController::reloadInferenceModels(bool async)
   auto provider = getProviderFromDevice(device);
   int resolvedDeviceId = deviceId < 0 ? 0 : deviceId;
 
+  std::shared_ptr<SharedInferenceModels> currentModels;
+  {
+    const std::lock_guard<std::mutex> lock(modelPtrMutex);
+    currentModels = sharedModels;
+  }
+  const auto generation = reloadGeneration.fetch_add(1) + 1;
+  auto models = acquireSharedModels(
+      device + ":" + juce::String(resolvedDeviceId),
+      provider != GPUProvider::CPU, std::move(currentModels));
+
   auto fcpePath = fcpeModelPath;
   auto melPath = melFilterbankPath;
   auto centPath = centTablePath;
   auto rmvpePath = rmvpeModelPath;
   auto gamePath = gameModelDir;
-  auto reloadTask = [device = device,
+  auto loadTask = [device = device,
                      provider,
                      resolvedDeviceId,
                      fcpePath,
                      melPath,
                      centPath,
                      rmvpePath,
-                     gamePath](EditorController *self)
+                     gamePath,
+                     models](EditorController *self)
   {
     if (!self || self->shuttingDown.load())
-      return;
-
-    // The sync (analysis) and async (editor/settings) paths can both reach
-    // here; never load the same detectors from two threads at once.
-    const std::lock_guard<std::mutex> modelLoadLock(self->modelLoadMutex);
-    if (self->shuttingDown.load())
       return;
 
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
@@ -124,63 +206,66 @@ void EditorController::reloadInferenceModels(bool async)
           OnnxRuntime::getDirectMLSessionMutex());
       LOG("EditorController: serializing DirectML model loading");
 
-      if (!self->shuttingDown.load() && self->fcpePitchDetector && fcpePath.existsAsFile())
+      if (!self->shuttingDown.load() && models->fcpe && !models->fcpe->isLoaded() &&
+          fcpePath.existsAsFile())
       {
         if (self->shuttingDown.load())
           return;
         LOG("EditorController: loading FCPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
-        if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
-                                               provider, resolvedDeviceId))
+        if (models->fcpe->loadModel(fcpePath, melPath, centPath,
+                                     provider, resolvedDeviceId))
           LOG("FCPE pitch detector loaded successfully");
         else
           LOG("Failed to load FCPE model");
       }
-      else if (self->fcpePitchDetector)
+      else if (models->fcpe && !models->fcpe->isLoaded())
       {
         LOG("FCPE model not found at: " + fcpePath.getFullPathName());
       }
 
-      if (!self->shuttingDown.load() && self->rmvpePitchDetector && rmvpePath.existsAsFile())
+      if (!self->shuttingDown.load() && models->rmvpe && !models->rmvpe->isLoaded() &&
+          rmvpePath.existsAsFile())
       {
         if (self->shuttingDown.load())
           return;
         LOG("EditorController: loading RMVPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
-        if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
-                                                resolvedDeviceId))
+        if (models->rmvpe->loadModel(rmvpePath, provider,
+                                      resolvedDeviceId))
           LOG("RMVPE pitch detector loaded successfully");
         else
           LOG("Failed to load RMVPE model");
       }
-      else if (self->rmvpePitchDetector)
+      else if (models->rmvpe && !models->rmvpe->isLoaded())
       {
         LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
       }
 
-      if (!self->shuttingDown.load() && self->gameDetector && gamePath.isDirectory())
+      if (!self->shuttingDown.load() && models->game && !models->game->isLoaded() &&
+          gamePath.isDirectory())
       {
         if (self->shuttingDown.load())
           return;
         LOG("EditorController: loading GAME models from " +
             gamePath.getFullPathName() + " (device " + device + ", id " +
             juce::String(resolvedDeviceId) + ")...");
-        if (self->gameDetector->loadModels(gamePath, provider,
-                                           resolvedDeviceId))
+        if (models->game->loadModels(gamePath, provider,
+                                      resolvedDeviceId))
           LOG("GAME detector loaded successfully, isLoaded=" +
-              juce::String(self->gameDetector->isLoaded() ? "true" :
-                                                               "false"));
+              juce::String(models->game->isLoaded() ? "true" :
+                           "false"));
         else
           LOG("Failed to load GAME models from " +
               gamePath.getFullPathName());
       }
-      else if (self->gameDetector)
+      else if (models->game && !models->game->isLoaded())
       {
         LOG("GAME model directory not found: " + gamePath.getFullPathName() +
             " isDirectory=" +
             juce::String(gamePath.isDirectory() ? "true" : "false"));
       }
-      else
+      else if (!models->game)
       {
         LOG("GAME detector not created (gameDetector is null)");
       }
@@ -194,7 +279,8 @@ void EditorController::reloadInferenceModels(bool async)
     std::thread rmvpeThread;
     std::thread gameThread;
 
-    if (!self->shuttingDown.load() && self->fcpePitchDetector && fcpePath.existsAsFile())
+    if (!self->shuttingDown.load() && models->fcpe && !models->fcpe->isLoaded() &&
+        fcpePath.existsAsFile())
     {
       fcpeThread = std::thread([&]()
                                {
@@ -202,19 +288,20 @@ void EditorController::reloadInferenceModels(bool async)
           return;
         LOG("EditorController: loading FCPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
-        if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
-                                               provider, resolvedDeviceId)) {
+        if (models->fcpe->loadModel(fcpePath, melPath, centPath,
+                                     provider, resolvedDeviceId)) {
           LOG("FCPE pitch detector loaded successfully");
         } else {
           LOG("Failed to load FCPE model");
         } });
     }
-    else if (self->fcpePitchDetector)
+    else if (models->fcpe && !models->fcpe->isLoaded())
     {
       LOG("FCPE model not found at: " + fcpePath.getFullPathName());
     }
 
-    if (!self->shuttingDown.load() && self->rmvpePitchDetector && rmvpePath.existsAsFile())
+    if (!self->shuttingDown.load() && models->rmvpe && !models->rmvpe->isLoaded() &&
+        rmvpePath.existsAsFile())
     {
       rmvpeThread = std::thread([&]()
                                 {
@@ -222,19 +309,20 @@ void EditorController::reloadInferenceModels(bool async)
           return;
         LOG("EditorController: loading RMVPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
-        if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
-                                                resolvedDeviceId)) {
+        if (models->rmvpe->loadModel(rmvpePath, provider,
+                                      resolvedDeviceId)) {
           LOG("RMVPE pitch detector loaded successfully");
         } else {
           LOG("Failed to load RMVPE model");
         } });
     }
-    else if (self->rmvpePitchDetector)
+    else if (models->rmvpe && !models->rmvpe->isLoaded())
     {
       LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
     }
 
-    if (!self->shuttingDown.load() && self->gameDetector && gamePath.isDirectory())
+    if (!self->shuttingDown.load() && models->game && !models->game->isLoaded() &&
+        gamePath.isDirectory())
     {
       gameThread = std::thread([&]()
                                {
@@ -242,20 +330,20 @@ void EditorController::reloadInferenceModels(bool async)
           return;
         LOG("EditorController: loading GAME models from " + gamePath.getFullPathName() +
             " (device " + device + ", id " + juce::String(resolvedDeviceId) + ")...");
-        if (self->gameDetector->loadModels(gamePath, provider,
-                                           resolvedDeviceId)) {
+        if (models->game->loadModels(gamePath, provider,
+                                      resolvedDeviceId)) {
           LOG("GAME detector loaded successfully, isLoaded=" +
-              juce::String(self->gameDetector->isLoaded() ? "true" : "false"));
+              juce::String(models->game->isLoaded() ? "true" : "false"));
         } else {
           LOG("Failed to load GAME models from " + gamePath.getFullPathName());
         } });
     }
-    else if (self->gameDetector)
+    else if (models->game && !models->game->isLoaded())
     {
       LOG("GAME model directory not found: " + gamePath.getFullPathName() +
           " isDirectory=" + juce::String(gamePath.isDirectory() ? "true" : "false"));
     }
-    else
+    else if (!models->game)
     {
       LOG("GAME detector not created (gameDetector is null)");
     }
@@ -269,22 +357,68 @@ void EditorController::reloadInferenceModels(bool async)
       gameThread.join();
   };
 
+  auto reloadTask = [loadTask, models, generation](EditorController *self)
+  {
+    {
+      // One loader per set; models another controller already loaded are
+      // skipped by loadTask.
+      // Per controller: the sync (analysis) and async (editor/settings) paths
+      // must not load at once, even into two private CPU sets.
+      const std::lock_guard<std::mutex> modelLoadLock(self->modelLoadMutex);
+      const auto loadLock = lockShared(models->loadMutex, self->shuttingDown);
+      if (self->shuttingDown.load())
+        return;
+      loadTask(self);
+    }
+    if (self->shuttingDown.load())
+      return;
+    const std::lock_guard<std::mutex> lock(self->modelPtrMutex);
+    // Sync (analysis) and async (device change) loads for different devices
+    // can finish in either order; keep the newest request's models.
+    if (generation < self->installedGeneration)
+      return;
+    self->installedGeneration = generation;
+    self->sharedModels = models;
+    self->fcpePitchDetector = models->fcpe;
+    self->rmvpePitchDetector = models->rmvpe;
+    self->gameDetector = models->game;
+  };
+
   if (!async)
   {
     reloadTask(this);
     return;
   }
 
-  if (isReloadingModels.exchange(true))
-    return;
+  // A worker that is already running takes the newest request when its
+  // current load finishes, so a device change mid-load is never dropped.
+  {
+    const std::lock_guard<std::mutex> lock(reloadRequestMutex);
+    pendingReload = [this, reloadTask]() { reloadTask(this); };
+    if (isReloadingModels.exchange(true))
+      return;
+  }
 
   if (modelReloadThread.joinable())
     modelReloadThread.join();
 
-  modelReloadThread = std::thread([this, reloadTask]() mutable
+  modelReloadThread = std::thread([this]()
                                   {
-    reloadTask(this);
-    isReloadingModels = false; });
+    for (;;)
+    {
+      std::function<void()> task;
+      {
+        const std::lock_guard<std::mutex> lock(reloadRequestMutex);
+        task = std::exchange(pendingReload, nullptr);
+        if (!task)
+        {
+          isReloadingModels = false;
+          reloadFinished.notify_all();
+          return;
+        }
+      }
+      task();
+    } });
 }
 
 bool EditorController::isInferenceBusy() const
@@ -298,6 +432,7 @@ bool EditorController::isInferenceBusy() const
 
 bool EditorController::isSelectedPitchDetectorLoaded() const
 {
+  const std::lock_guard<std::mutex> lock(modelPtrMutex);
   if (pitchDetectorType == PitchDetectorType::FCPE)
     return fcpePitchDetector && fcpePitchDetector->isLoaded();
   if (pitchDetectorType == PitchDetectorType::RMVPE)
@@ -472,9 +607,13 @@ void EditorController::setHostAudioAsync(
 
     // Let an async load from editor open finish rather than loading the same
     // detectors concurrently from this thread.
-    while (isReloadingModels.load() && !cancelLoadingFlag.load() &&
-           hostAnalysisJobId.load() == jobId)
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    {
+      // Timed so cancel, shutdown or a newer job (plain atomics) still end it.
+      std::unique_lock<std::mutex> lock(reloadRequestMutex);
+      while (isReloadingModels.load() && !shuttingDown.load() &&
+             !cancelLoadingFlag.load() && hostAnalysisJobId.load() == jobId)
+        reloadFinished.wait_for(lock, std::chrono::milliseconds(50));
+    }
 
     if (!isSelectedPitchDetectorLoaded())
     {
@@ -743,6 +882,18 @@ void EditorController::analyzeAudioImpl(
 
   onProgress(0.275, "Extracting pitch (F0)...");
 
+  // Hold this analysis' models so a device switch on another thread cannot
+  // free them mid-inference.
+  std::shared_ptr<SharedInferenceModels> models;
+  std::shared_ptr<FCPEPitchDetector> fcpeModel;
+  std::shared_ptr<RMVPEPitchDetector> rmvpeModel;
+  {
+    const std::lock_guard<std::mutex> lock(modelPtrMutex);
+    models = sharedModels;
+    fcpeModel = fcpePitchDetector;
+    rmvpeModel = rmvpePitchDetector;
+  }
+
   if (pitchDetectorType == PitchDetectorType::RMVPE)
   {
     if (!rmvpeModelPath.existsAsFile())
@@ -750,7 +901,7 @@ void EditorController::analyzeAudioImpl(
       showMissingModelAndAbort("rmvpe.onnx", rmvpeModelPath);
       return;
     }
-    if (!rmvpePitchDetector || !rmvpePitchDetector->isLoaded())
+    if (!rmvpeModel || !rmvpeModel->isLoaded())
     {
       showModelLoadFailedAndAbort("rmvpe.onnx", rmvpeModelPath);
       return;
@@ -763,7 +914,7 @@ void EditorController::analyzeAudioImpl(
       showMissingModelAndAbort("fcpe.onnx", fcpeModelPath);
       return;
     }
-    if (!fcpePitchDetector || !fcpePitchDetector->isLoaded())
+    if (!fcpeModel || !fcpeModel->isLoaded())
     {
       showModelLoadFailedAndAbort("fcpe.onnx", fcpeModelPath);
       return;
@@ -785,24 +936,34 @@ void EditorController::analyzeAudioImpl(
       juce::String(pitchDetectorTypeToString(pitchDetectorType)));
   LOG("RMVPE loaded: " +
       juce::String(
-          rmvpePitchDetector && rmvpePitchDetector->isLoaded() ? "YES" : "NO"));
+          rmvpeModel && rmvpeModel->isLoaded() ? "YES" : "NO"));
   LOG("FCPE loaded: " +
-      juce::String(fcpePitchDetector && fcpePitchDetector->isLoaded() ? "YES"
+      juce::String(fcpeModel && fcpeModel->isLoaded() ? "YES"
                                                                       : "NO"));
 
   std::vector<float> extractedF0;
   juce::String pitchInferenceError;
   if (pitchDetectorType == PitchDetectorType::RMVPE)
   {
-    extractedF0 = rmvpePitchDetector->extractF0(samples, numSamples,
-                                                audioData.sampleRate);
-    pitchInferenceError = rmvpePitchDetector->getLastError();
+    const auto modelLock =
+        lockModel(models, rmvpeModel, &SharedInferenceModels::rmvpe,
+                  &SharedInferenceModels::rmvpeMutex, shuttingDown);
+    if (shuttingDown.load())
+      return;
+    extractedF0 = rmvpeModel->extractF0(samples, numSamples,
+                                        audioData.sampleRate);
+    pitchInferenceError = rmvpeModel->getLastError();
   }
   else if (pitchDetectorType == PitchDetectorType::FCPE)
   {
+    const auto modelLock =
+        lockModel(models, fcpeModel, &SharedInferenceModels::fcpe,
+                  &SharedInferenceModels::fcpeMutex, shuttingDown);
+    if (shuttingDown.load())
+      return;
     extractedF0 =
-        fcpePitchDetector->extractF0(samples, numSamples, audioData.sampleRate);
-    pitchInferenceError = fcpePitchDetector->getLastError();
+        fcpeModel->extractF0(samples, numSamples, audioData.sampleRate);
+    pitchInferenceError = fcpeModel->getLastError();
   }
 
   if (shuttingDown.load())
@@ -834,7 +995,9 @@ void EditorController::analyzeAudioImpl(
         if (!cpuF0.empty())
         {
           extractedF0 = std::move(cpuF0);
-          rmvpePitchDetector = std::move(cpuDetector);
+          rmvpeModel = std::move(cpuDetector);
+          const std::lock_guard<std::mutex> lock(modelPtrMutex);
+          rmvpePitchDetector = rmvpeModel;
         }
       }
       else
@@ -854,7 +1017,9 @@ void EditorController::analyzeAudioImpl(
         if (!cpuF0.empty())
         {
           extractedF0 = std::move(cpuF0);
-          fcpePitchDetector = std::move(cpuDetector);
+          fcpeModel = std::move(cpuDetector);
+          const std::lock_guard<std::mutex> lock(modelPtrMutex);
+          fcpePitchDetector = fcpeModel;
         }
       }
       else
@@ -895,7 +1060,10 @@ void EditorController::analyzeAudioImpl(
       {
         auto cpuGameDetector = std::make_unique<GAMEDetector>();
         if (cpuGameDetector->loadModels(gameModelDir, GPUProvider::CPU, 0))
+        {
+          const std::lock_guard<std::mutex> lock(modelPtrMutex);
           gameDetector = std::move(cpuGameDetector);
+        }
         else
           LOG("GAME failed to reload after DirectML-to-CPU fallback");
       }
@@ -1159,7 +1327,15 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
   if (audioData.f0.empty())
     return;
 
-  if (!gameDetector || !gameDetector->isLoaded())
+  std::shared_ptr<SharedInferenceModels> models;
+  std::shared_ptr<GAMEDetector> game;
+  {
+    const std::lock_guard<std::mutex> lock(modelPtrMutex);
+    models = sharedModels;
+    game = gameDetector;
+  }
+
+  if (!game || !game->isLoaded())
   {
     auto searchedPath = gameModelDir.getFullPathName();
     auto bundlePath = PlatformPaths::getModelsDirectory().getChildFile("GAME").getFullPathName();
@@ -1170,9 +1346,9 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
                                          "Bundle path: " +
                           bundlePath + "\n"
                                        "gameDetector: " +
-                          juce::String(gameDetector ? "created" : "null") + "\n"
+                          juce::String(game ? "created" : "null") + "\n"
                                                                             "isLoaded: " +
-                          juce::String(gameDetector ? (gameDetector->isLoaded() ? "true" : "false") : "N/A") + "\n"
+                          juce::String(game ? (game->isLoaded() ? "true" : "false") : "N/A") + "\n"
                                                                                                                "isDirectory: " +
                           juce::String(gameModelDir.isDirectory() ? "true" : "false") + "\n\n"
                                                                                         "Required files: encoder.onnx, segmenter.onnx, estimator.onnx, bd2dur.onnx, config.json\n\n";
@@ -1190,7 +1366,7 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
     return;
   }
 
-  if (gameDetector && gameDetector->isLoaded() &&
+  if (game && game->isLoaded() &&
       audioData.waveform.getNumSamples() > 0)
   {
 
@@ -1198,22 +1374,31 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
     int numSamples = audioData.waveform.getNumSamples();
     const int f0Size = static_cast<int>(audioData.f0.size());
 
-    auto gameNotes = gameDetector->detectNotesWithProgress(
+    auto gameLock = lockModel(models, game, &SharedInferenceModels::game,
+                              &SharedInferenceModels::gameMutex, shuttingDown);
+    if (shuttingDown.load())
+      return;
+    auto gameNotes = game->detectNotesWithProgress(
         samples, numSamples, GAMEDetector::SAMPLE_RATE, onProgress);
+    // Copied under the lock: the ranges are this call's detector scratch state.
+    auto slicerChunks = game->getLastChunkRanges();
+    juce::String gameError = gameNotes.empty() ? game->getLastError() : juce::String();
+    if (gameLock.owns_lock())
+      gameLock.unlock();
 
     // Like the pitch detectors, GAME can create GPU sessions successfully and
     // then fail inside Run() on some adapters/drivers (seen with DirectML).
     // Retry once on a fresh CPU session and keep it for later analyses.
-    if (gameNotes.empty() && gameDetector->getLastError().isNotEmpty())
+    if (gameError.isNotEmpty())
     {
-      juce::String gameError = gameDetector->getLastError();
-
       if (getProviderFromDevice(device) != GPUProvider::CPU &&
           gameModelDir.isDirectory() && !shuttingDown.load())
       {
         LOG("GAME " + device + " inference failed: " + gameError +
             "; retrying with CPU");
-        auto cpuGameDetector = std::make_unique<GAMEDetector>();
+        // Private detector: no shared lock, so other tracks are not blocked
+        // for the whole CPU pass.
+        auto cpuGameDetector = std::make_shared<GAMEDetector>();
         if (cpuGameDetector->loadModels(gameModelDir, GPUProvider::CPU, 0))
         {
           gameNotes = cpuGameDetector->detectNotesWithProgress(
@@ -1221,7 +1406,12 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
           if (cpuGameDetector->getLastError().isEmpty())
           {
             LOG("GAME CPU retry succeeded; using CPU for note detection");
-            gameDetector = std::move(cpuGameDetector);
+            slicerChunks = cpuGameDetector->getLastChunkRanges();
+            {
+              const std::lock_guard<std::mutex> lock(modelPtrMutex);
+              gameDetector = cpuGameDetector;
+            }
+            game = std::move(cpuGameDetector);
             gameError.clear();
           }
           else
@@ -1249,7 +1439,6 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
 
     // Build debug chunks from actual GAME slicer chunk ranges
     {
-      const auto &slicerChunks = gameDetector->getLastChunkRanges();
       for (int ci = 0; ci < static_cast<int>(slicerChunks.size()); ++ci)
       {
         const auto &sc = slicerChunks[ci];
