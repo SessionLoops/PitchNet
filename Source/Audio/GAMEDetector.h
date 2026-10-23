@@ -74,6 +74,8 @@ public:
         int endSample;
     };
     const std::vector<ChunkRange> &getLastChunkRanges() const { return lastChunkRanges; }
+    /** Error from the most recent detection call; empty on success. */
+    juce::String getLastError() const { return lastError; }
 
 private:
     bool loaded = false;
@@ -103,6 +105,7 @@ private:
     // RMS-based silence detection for chunking
     std::vector<ChunkRange> findSilenceChunks(const std::vector<float> &waveform) const;
     std::vector<ChunkRange> lastChunkRanges;
+    juce::String lastError;
 
     // Run full pipeline on a single chunk, return NoteEvents with frame offsets relative to chunk start
     std::vector<NoteEvent> processChunk(const std::vector<float> &waveform, int chunkStartSample,

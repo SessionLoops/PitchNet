@@ -656,7 +656,40 @@ void EditorController::resynthesizeIncrementalAsync(
       });
 }
 
+void EditorController::reportAnalysisException(const juce::String &where,
+                                                 const juce::String &what)
+{
+  LOG(where + " threw: " + what);
+  const auto detail = "\n\n" + TR("error.details") + "\n" + what.substring(0, 1000);
+  juce::MessageManager::callAsync([detail]()
+                                  { juce::AlertWindow::showMessageBoxAsync(
+                                        juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                                        TR("error.inference_failed") + detail); });
+}
+
 void EditorController::analyzeAudio(
+    Project &targetProject,
+    const std::function<void(double, const juce::String &)> &onProgress,
+    std::function<void()> onComplete)
+{
+  // Called on loader threads. An exception escaping a std::thread calls
+  // std::terminate, which closed the standalone app silently mid-import
+  // (issue #17), so catch everything here and report it.
+  try
+  {
+    analyzeAudioImpl(targetProject, onProgress, std::move(onComplete));
+  }
+  catch (const std::exception &e)
+  {
+    reportAnalysisException("analyzeAudio", e.what());
+  }
+  catch (...)
+  {
+    reportAnalysisException("analyzeAudio", "unknown error");
+  }
+}
+
+void EditorController::analyzeAudioImpl(
     Project &targetProject,
     const std::function<void(double, const juce::String &)> &onProgress,
     std::function<void()> onComplete)
@@ -1093,6 +1126,25 @@ void EditorController::segmentIntoNotes(Project &targetProject,
                                         std::function<void()> onStreamingUpdate,
                                         std::function<void(double)> onProgress)
 {
+  try
+  {
+    segmentIntoNotesImpl(targetProject, std::move(onStreamingUpdate),
+                         std::move(onProgress));
+  }
+  catch (const std::exception &e)
+  {
+    reportAnalysisException("segmentIntoNotes", e.what());
+  }
+  catch (...)
+  {
+    reportAnalysisException("segmentIntoNotes", "unknown error");
+  }
+}
+
+void EditorController::segmentIntoNotesImpl(Project &targetProject,
+                                            std::function<void()> onStreamingUpdate,
+                                            std::function<void(double)> onProgress)
+{
   auto &audioData = targetProject.getAudioData();
   auto &notes = targetProject.getNotes();
   notes.clear();
@@ -1142,7 +1194,53 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     const int f0Size = static_cast<int>(audioData.f0.size());
 
     auto gameNotes = gameDetector->detectNotesWithProgress(
-        samples, numSamples, GAMEDetector::SAMPLE_RATE, std::move(onProgress));
+        samples, numSamples, GAMEDetector::SAMPLE_RATE, onProgress);
+
+    // Like the pitch detectors, GAME can create GPU sessions successfully and
+    // then fail inside Run() on some adapters/drivers (seen with DirectML).
+    // Retry once on a fresh CPU session and keep it for later analyses.
+    if (gameNotes.empty() && gameDetector->getLastError().isNotEmpty())
+    {
+      juce::String gameError = gameDetector->getLastError();
+
+      if (getProviderFromDevice(device) != GPUProvider::CPU &&
+          gameModelDir.isDirectory() && !shuttingDown.load())
+      {
+        LOG("GAME " + device + " inference failed: " + gameError +
+            "; retrying with CPU");
+        auto cpuGameDetector = std::make_unique<GAMEDetector>();
+        if (cpuGameDetector->loadModels(gameModelDir, GPUProvider::CPU, 0))
+        {
+          gameNotes = cpuGameDetector->detectNotesWithProgress(
+              samples, numSamples, GAMEDetector::SAMPLE_RATE, onProgress);
+          if (cpuGameDetector->getLastError().isEmpty())
+          {
+            LOG("GAME CPU retry succeeded; using CPU for note detection");
+            gameDetector = std::move(cpuGameDetector);
+            gameError.clear();
+          }
+          else
+          {
+            gameError += "\n\n" + TR("error.cpu_retry_failed") + "\n" +
+                         cpuGameDetector->getLastError();
+          }
+        }
+        else
+        {
+          LOG("GAME failed to load on CPU for retry");
+        }
+      }
+
+      if (gameError.isNotEmpty())
+      {
+        LOG("GAME note detection failed: " + gameError);
+        const auto detail = TR("error.details") + "\n" + gameError.substring(0, 1000);
+        juce::MessageManager::callAsync([detail]()
+                                        { juce::AlertWindow::showMessageBoxAsync(
+                                              juce::AlertWindow::WarningIcon, TR("error.game_error"), detail); });
+        return;
+      }
+    }
 
     // Build debug chunks from actual GAME slicer chunk ranges
     {

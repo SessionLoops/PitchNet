@@ -112,6 +112,18 @@ public:
       const std::function<void()> &onNotesChanged);
 
 private:
+  // Unguarded bodies of analyzeAudio()/segmentIntoNotes(). The public
+  // wrappers catch exceptions so a failure on a loader thread shows an
+  // error instead of terminating the app.
+  void analyzeAudioImpl(Project &targetProject,
+                        const std::function<void(double, const juce::String &)>
+                            &onProgress,
+                        std::function<void()> onComplete);
+  void segmentIntoNotesImpl(Project &targetProject,
+                            std::function<void()> onStreamingUpdate,
+                            std::function<void(double)> onProgress);
+  static void reportAnalysisException(const juce::String &where,
+                                      const juce::String &what);
   GPUProvider getProviderFromDevice(const juce::String &device) const;
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;

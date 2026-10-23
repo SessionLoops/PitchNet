@@ -331,51 +331,76 @@ std::vector<GAMEDetector::NoteEvent> GAMEDetector::detectNotesWithProgress(
     std::function<void(double)> progressCallback)
 {
 #ifdef HAVE_ONNXRUNTIME
+    lastError.clear();
     if (!loaded)
     {
         return {};
     }
 
-    if (progressCallback)
-        progressCallback(0.02);
-
-    // 1. Resample to model sample rate
-    std::vector<float> waveform = resampleToModelRate(audio, numSamples, sampleRate);
-
-    if (progressCallback)
-        progressCallback(0.05);
-
-    // 2. Find chunk boundaries at silence points
-    auto chunks = findSilenceChunks(waveform);
-    lastChunkRanges = chunks;
-
-    LOG("GAME: split audio into " + juce::String(static_cast<int>(chunks.size())) +
-        " chunks (total " + juce::String(static_cast<int>(waveform.size())) + " samples)");
-
-    // 3. Process each chunk and merge results
-    std::vector<NoteEvent> allNotes;
-    const double progressPerChunk = 0.90 / static_cast<double>(chunks.size());
-
-    for (size_t ci = 0; ci < chunks.size(); ++ci)
+    // ONNX Runtime reports inference failures by throwing - for example a
+    // DirectML adapter/driver that accepted the session but rejects the graph
+    // in Run(). This runs on a worker thread, where an uncaught exception
+    // terminates the whole app with no message (issue #17). Record the error
+    // instead and let the caller decide whether to retry on another provider.
+    try
     {
-        const auto &chunk = chunks[ci];
-        std::vector<float> chunkWaveform(
-            waveform.begin() + chunk.startSample,
-            waveform.begin() + chunk.endSample);
+        if (progressCallback)
+            progressCallback(0.02);
 
-        double base = 0.05 + static_cast<double>(ci) * progressPerChunk;
-        auto chunkNotes = processChunk(chunkWaveform, chunk.startSample,
-                                       progressCallback, base, progressPerChunk);
+        // 1. Resample to model sample rate
+        std::vector<float> waveform = resampleToModelRate(audio, numSamples, sampleRate);
 
-        allNotes.insert(allNotes.end(), chunkNotes.begin(), chunkNotes.end());
+        if (progressCallback)
+            progressCallback(0.05);
+
+        // 2. Find chunk boundaries at silence points
+        auto chunks = findSilenceChunks(waveform);
+        lastChunkRanges = chunks;
+
+        LOG("GAME: split audio into " + juce::String(static_cast<int>(chunks.size())) +
+            " chunks (total " + juce::String(static_cast<int>(waveform.size())) + " samples)");
+
+        // 3. Process each chunk and merge results
+        std::vector<NoteEvent> allNotes;
+        const double progressPerChunk = 0.90 / static_cast<double>(chunks.size());
+
+        for (size_t ci = 0; ci < chunks.size(); ++ci)
+        {
+            const auto &chunk = chunks[ci];
+            std::vector<float> chunkWaveform(
+                waveform.begin() + chunk.startSample,
+                waveform.begin() + chunk.endSample);
+
+            double base = 0.05 + static_cast<double>(ci) * progressPerChunk;
+            auto chunkNotes = processChunk(chunkWaveform, chunk.startSample,
+                                           progressCallback, base, progressPerChunk);
+
+            allNotes.insert(allNotes.end(), chunkNotes.begin(), chunkNotes.end());
+        }
+
+        if (progressCallback)
+            progressCallback(1.0);
+
+        LOG("GAME detection complete: " + juce::String(static_cast<int>(allNotes.size())) + " notes");
+
+        return allNotes;
+    }
+    catch (const Ort::Exception &e)
+    {
+        lastError = juce::String("ONNX Runtime error: ") + e.what();
+    }
+    catch (const std::exception &e)
+    {
+        lastError = e.what();
+    }
+    catch (...)
+    {
+        lastError = "unknown error";
     }
 
-    if (progressCallback)
-        progressCallback(1.0);
-
-    LOG("GAME detection complete: " + juce::String(static_cast<int>(allNotes.size())) + " notes");
-
-    return allNotes;
+    LOG("GAME detection failed: " + lastError);
+    lastChunkRanges.clear();
+    return {};
 #else
     return {};
 #endif
