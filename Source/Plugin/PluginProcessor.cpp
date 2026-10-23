@@ -24,10 +24,16 @@ namespace {
 // Background ARA controllers have no MainComponent to configure them, so they
 // would otherwise keep EditorController's CPU default and ignore the user's
 // device setting.
+// Reads (and on first run may write) the config file: message thread only,
+// never the audio thread.
 std::unique_ptr<EditorController> makeAnalysisController() {
   auto controller = std::make_unique<EditorController>(false);
   SettingsManager settings;
   controller->setDeviceConfig(settings.getDevice(), settings.getGPUDeviceId());
+  if (auto *vocoder = controller->getVocoder()) {
+    vocoder->setExecutionDevice(settings.getDevice());
+    vocoder->setExecutionDeviceId(settings.getGPUDeviceId());
+  }
   return controller;
 }
 

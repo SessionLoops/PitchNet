@@ -9,21 +9,13 @@
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/PlatformPaths.h"
+#include "../Utils/OnnxRuntime.h"
 
 #include <algorithm>
 #include <chrono>
 #include <climits>
 #include <cmath>
 #include <mutex>
-
-namespace
-{
-std::mutex &getDirectMLModelLoadMutex()
-{
-  static std::mutex mutex;
-  return mutex;
-}
-} // namespace
 
 EditorController::EditorController(bool enableAudioDevice)
 {
@@ -115,6 +107,12 @@ void EditorController::reloadInferenceModels(bool async)
     if (!self || self->shuttingDown.load())
       return;
 
+    // The sync (analysis) and async (editor/settings) paths can both reach
+    // here; never load the same detectors from two threads at once.
+    const std::lock_guard<std::mutex> modelLoadLock(self->modelLoadMutex);
+    if (self->shuttingDown.load())
+      return;
+
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
     // multiple sessions for the same device are created concurrently. This is
     // especially easy to trigger in optimized builds, where model setup
@@ -123,7 +121,7 @@ void EditorController::reloadInferenceModels(bool async)
     if (provider == GPUProvider::DirectML)
     {
       const std::lock_guard<std::mutex> directMLLoadLock(
-          getDirectMLModelLoadMutex());
+          OnnxRuntime::getDirectMLSessionMutex());
       LOG("EditorController: serializing DirectML model loading");
 
       if (!self->shuttingDown.load() && self->fcpePitchDetector && fcpePath.existsAsFile())
@@ -474,7 +472,8 @@ void EditorController::setHostAudioAsync(
 
     // Let an async load from editor open finish rather than loading the same
     // detectors concurrently from this thread.
-    while (isReloadingModels.load() && !cancelLoadingFlag.load())
+    while (isReloadingModels.load() && !cancelLoadingFlag.load() &&
+           hostAnalysisJobId.load() == jobId)
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     if (!isSelectedPitchDetectorLoaded())

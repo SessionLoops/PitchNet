@@ -1,6 +1,7 @@
 #include "Vocoder.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
+#include "../Utils/OnnxRuntime.h"
 #include "../Utils/PlatformPaths.h"
 #include <algorithm>
 #include <chrono>
@@ -283,6 +284,12 @@ bool Vocoder::loadModel(const juce::File &modelPath)
       log("ONNX Runtime environment is null");
       return false;
     }
+
+    // Serialize with the pitch detectors' DirectML loads (see OnnxRuntime.h).
+    std::unique_lock<std::mutex> directMLLock(OnnxRuntime::getDirectMLSessionMutex(),
+                                              std::defer_lock);
+    if (executionDevice == "DirectML")
+      directMLLock.lock();
 
     // Create session with current settings
     log("Creating session options...");
