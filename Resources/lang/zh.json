@@ -232,6 +232,7 @@
   "settings.debug_raw_f0": "显示原始检测的 F0（调试）",
   "settings.debug_uv_f0": "显示稠密 UV F0（调试）",
   "settings.debug_vocoder_f0": "显示声码器 F0（调试）",
+  "settings.reaper_navigation": "REAPER 风格导航",
   "settings.default_gpu": "默认 GPU",
   "settings.device": "设备:",
   "settings.device_locked": "正在推理。停止后才能切换设备。",

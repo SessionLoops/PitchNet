@@ -232,6 +232,7 @@
   "settings.debug_raw_f0": "Mostrar F0 detectada sin procesar (depuración)",
   "settings.debug_uv_f0": "Mostrar F0 UV densa (depuración)",
   "settings.debug_vocoder_f0": "Mostrar F0 del vocoder (depuración)",
+  "settings.reaper_navigation": "Navegación estilo REAPER",
   "settings.default_gpu": "GPU predeterminada",
   "settings.device": "Dispositivo:",
   "settings.device_locked": "Inferencia en curso. Deténla para cambiar de dispositivo.",
