@@ -487,63 +487,36 @@ public:
 };
 } // namespace
 
-class UiBrightnessEffect final : public juce::ImageEffectFilter
+namespace
 {
-public:
-  void setBrightnessPercent(double percent)
-  {
-    brightnessFactor = static_cast<float>(
-        juce::jlimit(75.0, 200.0, percent) / 100.0);
-  }
+// UI brightness is drawn as a translucent overlay on top of the window rather
+// than with a per-pixel juce::ImageEffectFilter. A component effect makes JUCE
+// re-render the entire window into an offscreen image on every repaint, no
+// matter how small the dirty area, and with the Direct2D renderer the image
+// also round-trips through the GPU. That cost grew with window size (issue
+// #20). The old filter also had no visible result on Windows, because its
+// edited pixels were only flushed back to the GPU after being drawn.
+//
+// The overlay is painted in paintOverChildren(), clipped to the dirty area, so
+// it costs one fill per repaint.
+//  - Darker: black at alpha (1 - f) gives exactly c * f.
+//  - Brighter: JUCE has no multiply/additive blend, so white at alpha a gives
+//    c + a * (1 - c). a is chosen so the app background brightens by exactly
+//    f; lighter colours lift slightly less than a true multiply would.
+juce::Colour getUiBrightnessOverlayColour(float factor)
+{
+  if (factor < 1.0f)
+    return juce::Colours::black.withAlpha(juce::jlimit(0.0f, 1.0f, 1.0f - factor));
 
-  void applyEffect(juce::Image &sourceImage, juce::Graphics &destContext,
-                   float scaleFactor, float alpha) override
-  {
-    juce::ignoreUnused(scaleFactor);
-    juce::Image::BitmapData pixels(sourceImage,
-                                   juce::Image::BitmapData::readWrite);
+  const float base = APP_COLOR_BACKGROUND.getBrightness();
+  if (base >= 1.0f)
+    return juce::Colours::transparentBlack;
 
-    const auto adjustedChannel = [this](juce::uint8 channel,
-                                        int maximum = 255)
-    {
-      return static_cast<juce::uint8>(juce::jlimit(
-          0, maximum,
-          static_cast<int>(std::round(static_cast<float>(channel) *
-                                      brightnessFactor))));
-    };
-
-    for (int y = 0; y < pixels.height; ++y)
-    {
-      auto *line = pixels.getLinePointer(y);
-      for (int x = 0; x < pixels.width; ++x)
-      {
-        auto *pixelData = line + x * pixels.pixelStride;
-        if (pixels.pixelFormat == juce::Image::RGB)
-        {
-          auto &pixel = *reinterpret_cast<juce::PixelRGB *>(pixelData);
-          pixel.setARGB(255, adjustedChannel(pixel.getRed()),
-                        adjustedChannel(pixel.getGreen()),
-                        adjustedChannel(pixel.getBlue()));
-        }
-        else if (pixels.pixelFormat == juce::Image::ARGB)
-        {
-          auto &pixel = *reinterpret_cast<juce::PixelARGB *>(pixelData);
-          const auto pixelAlpha = pixel.getAlpha();
-          pixel.setARGB(pixelAlpha,
-                        adjustedChannel(pixel.getRed(), pixelAlpha),
-                        adjustedChannel(pixel.getGreen(), pixelAlpha),
-                        adjustedChannel(pixel.getBlue(), pixelAlpha));
-        }
-      }
-    }
-
-    destContext.setOpacity(alpha);
-    destContext.drawImageAt(sourceImage, 0, 0, false);
-  }
-
-private:
-  float brightnessFactor = 1.0f;
-};
+  const float target = juce::jmin(1.0f, base * factor);
+  return juce::Colours::white.withAlpha(
+      juce::jlimit(0.0f, 1.0f, (target - base) / (1.0f - base)));
+}
+} // namespace
 
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
@@ -630,7 +603,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Initialize new modular components
   fileManager = std::make_unique<AudioFileManager>();
   settingsManager = std::make_unique<SettingsManager>();
-  uiBrightnessEffect = std::make_unique<UiBrightnessEffect>();
   if (!isPluginMode())
     menuHandler = std::make_unique<MenuHandler>();
 
@@ -1417,7 +1389,6 @@ MainComponent::~MainComponent()
     updateCheckThread.join();
   updateRequest.reset();
 
-  setComponentEffect(nullptr);
   noteDragAuditionActive = false;
   resampledLoopAudition.reset();
 #if JUCE_MAC
@@ -1460,27 +1431,36 @@ void MainComponent::paint(juce::Graphics &g)
 
 void MainComponent::paintOverChildren(juce::Graphics &g)
 {
-  if (settingsOverlay != nullptr && settingsOverlay->isVisible())
-    return;
+  const bool settingsOverlayVisible =
+      settingsOverlay != nullptr && settingsOverlay->isVisible();
 
   constexpr int scrollBarWidth = 8;
   const int y = toolbar.getBottom();
-  if (y >= getHeight())
-    return;
+  if (!settingsOverlayVisible && y < getHeight())
+  {
+    const int viewLeft = workspace.getX() + workspace.getMainViewX();
+    const int viewRight = workspace.getX() + workspace.getMainViewRight();
+    g.setColour(juce::Colour(0xFF3C3C3Cu));
+    g.fillRect(viewLeft, y,
+               juce::jmax(0, viewRight - scrollBarWidth - viewLeft), 1);
+  }
 
-  const int viewLeft = workspace.getX() + workspace.getMainViewX();
-  const int viewRight = workspace.getX() + workspace.getMainViewRight();
-  g.setColour(juce::Colour(0xFF3C3C3Cu));
-  g.fillRect(viewLeft, y, juce::jmax(0, viewRight - scrollBarWidth - viewLeft), 1);
+  // Last, so it covers everything in the window, the settings overlay included.
+  if (std::abs(uiBrightnessFactor - 1.0f) > 0.0001f)
+  {
+    g.setColour(getUiBrightnessOverlayColour(uiBrightnessFactor));
+    g.fillAll();
+  }
 }
 
 void MainComponent::applyUiBrightness(double brightnessPercent)
 {
-  const double normalized = juce::jlimit(75.0, 200.0, brightnessPercent);
-  uiBrightnessEffect->setBrightnessPercent(normalized);
-  setComponentEffect(std::abs(normalized - 100.0) < 0.01
-                         ? nullptr
-                         : uiBrightnessEffect.get());
+  const auto factor = static_cast<float>(
+      juce::jlimit(75.0, 200.0, brightnessPercent) / 100.0);
+  if (std::abs(factor - uiBrightnessFactor) < 0.0001f)
+    return;
+
+  uiBrightnessFactor = factor;
   repaint();
 }
 

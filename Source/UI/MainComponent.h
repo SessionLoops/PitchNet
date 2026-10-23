@@ -27,8 +27,6 @@
 #include <thread>
 #include <vector>
 
-class UiBrightnessEffect;
-
 class AnalysisBackdrop : public juce::Component {
 public:
   AnalysisBackdrop() {
@@ -394,7 +392,7 @@ private:
   ParameterPanel parameterPanel;
   TrackListPanel trackListPanel; // content of the left side panel
   std::function<void()> onTrackColourModeChanged;
-  std::unique_ptr<UiBrightnessEffect> uiBrightnessEffect;
+  float uiBrightnessFactor = 1.0f; // 1.0 = unchanged, see applyUiBrightness()
   AnalysisBackdrop analysisBackdrop;
   AnalysisProgressPopup analysisProgressPopup;
 
