@@ -11,6 +11,7 @@
 #include "../Utils/PlatformPaths.h"
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <mutex>
@@ -470,6 +471,11 @@ void EditorController::setHostAudioAsync(
       isLoadingAudio = false;
       return;
     }
+
+    // Let an async load from editor open finish rather than loading the same
+    // detectors concurrently from this thread.
+    while (isReloadingModels.load() && !cancelLoadingFlag.load())
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     if (!isSelectedPitchDetectorLoaded())
     {
