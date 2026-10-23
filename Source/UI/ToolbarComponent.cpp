@@ -536,6 +536,9 @@ void ToolbarComponent::setToolGroupEnabled(bool enabled)
 
 void ToolbarComponent::setProject(Project* project)
 {
+    if (!pluginMode && project != nullptr)
+        project->setUseProjectKey(true);
+    scaleSelectionButton.setProjectKeyScope(!pluginMode || trackViewButton.getToggleState());
     scaleSelectionButton.setProject(project);
 }
 
@@ -620,7 +623,7 @@ void ToolbarComponent::setTrackViewAvailable(bool available)
 
 void ToolbarComponent::setTrackViewMode(bool track)
 {
-    scaleSelectionButton.setProjectKeyScope(track);
+    scaleSelectionButton.setProjectKeyScope(!pluginMode || track);
     trackViewButton.setToggleState(track, juce::dontSendNotification);
     refreshTrackViewTooltip();
 }
@@ -733,6 +736,7 @@ void ToolbarComponent::mouseDoubleClick(const juce::MouseEvent &e)
 void ToolbarComponent::setPluginMode(bool isPlugin)
 {
     pluginMode = isPlugin;
+    scaleSelectionButton.setProjectKeyScope(!pluginMode || trackViewButton.getToggleState());
 
     playButton.setVisible(true);
     stopButton.setVisible(true);
