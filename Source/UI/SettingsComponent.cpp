@@ -260,6 +260,26 @@ SettingsComponent::SettingsComponent(
   };
   addAndMakeVisible(vocoderF0DebugToggle);
 
+  reaperNavigationLabel.setText(TR("settings.reaper_navigation"),
+                                juce::dontSendNotification);
+  configureRowLabel(reaperNavigationLabel);
+  addAndMakeVisible(reaperNavigationLabel);
+
+  reaperNavigationToggle.setButtonText("");
+  reaperNavigationToggle.setClickingTogglesState(true);
+  reaperNavigationToggle.onClick = [this]()
+  {
+    reaperNavigation = reaperNavigationToggle.getToggleState();
+    if (settingsManager)
+    {
+      settingsManager->setReaperNavigation(reaperNavigation);
+      settingsManager->saveConfig();
+    }
+    if (onReaperNavigationChanged)
+      onReaperNavigationChanged(reaperNavigation);
+  };
+  addAndMakeVisible(reaperNavigationToggle);
+
   // Info label
   infoLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
   infoLabel.setFont(AppFont::getFont(15.0f));
@@ -361,6 +381,7 @@ SettingsComponent::~SettingsComponent()
   actualF0DebugToggle.setLookAndFeel(nullptr);
   cleanedF0DebugToggle.setLookAndFeel(nullptr);
   vocoderF0DebugToggle.setLookAndFeel(nullptr);
+  reaperNavigationToggle.setLookAndFeel(nullptr);
 }
 
 void SettingsComponent::changeListenerCallback(
@@ -498,6 +519,7 @@ void SettingsComponent::resized()
     layoutRow(cleanedF0DebugLabel, cleanedF0DebugToggle);
     layoutRow(uvInterpolationDebugLabel, uvInterpolationDebugToggle);
     layoutRow(vocoderF0DebugLabel, vocoderF0DebugToggle);
+    layoutRow(reaperNavigationLabel, reaperNavigationToggle);
 
     infoLabel.setBounds(content.removeFromTop(56));
     content.removeFromTop(12);
@@ -723,6 +745,8 @@ void SettingsComponent::updateTabVisibility()
   cleanedF0DebugToggle.setVisible(showGeneral);
   vocoderF0DebugLabel.setVisible(showGeneral);
   vocoderF0DebugToggle.setVisible(showGeneral);
+  reaperNavigationLabel.setVisible(showGeneral);
+  reaperNavigationToggle.setVisible(showGeneral);
   infoLabel.setVisible(showGeneral);
 
   audioDeviceTypeLabel.setVisible(showAudio);
@@ -942,6 +966,7 @@ void SettingsComponent::loadSettings()
     showActualF0Debug = settingsManager->getShowActualF0Debug();
     showCleanedF0Debug = settingsManager->getShowCleanedF0Debug();
     showVocoderF0Debug = settingsManager->getShowVocoderF0Debug();
+    reaperNavigation = settingsManager->getReaperNavigation();
 
   }
 
@@ -985,6 +1010,8 @@ void SettingsComponent::loadSettings()
                                      juce::dontSendNotification);
   cleanedF0DebugToggle.setToggleState(showCleanedF0Debug,
                                       juce::dontSendNotification);
+  reaperNavigationToggle.setToggleState(reaperNavigation,
+                                        juce::dontSendNotification);
   vocoderF0DebugToggle.setToggleState(showVocoderF0Debug,
                                       juce::dontSendNotification);
 
@@ -1406,6 +1433,8 @@ void SettingsComponent::refreshLocalisedText()
                               juce::dontSendNotification);
   vocoderF0DebugLabel.setText(TR("settings.debug_vocoder_f0"),
                               juce::dontSendNotification);
+  reaperNavigationLabel.setText(TR("settings.reaper_navigation"),
+                                juce::dontSendNotification);
 
   if (currentDevice == "CPU")
     infoLabel.setText(TR("settings.cpu_desc"), juce::dontSendNotification);

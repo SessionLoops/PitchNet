@@ -225,6 +225,7 @@
   "settings.debug_raw_f0": "검출된 원본 F0 표시(디버그)",
   "settings.debug_uv_f0": "조밀한 UV F0 표시(디버그)",
   "settings.debug_vocoder_f0": "보코더 F0 표시(디버그)",
+  "settings.reaper_navigation": "REAPER 스타일 탐색",
   "settings.default_gpu": "기본 GPU",
   "settings.device": "장치:",
   "settings.device_locked": "추론이 진행 중입니다. 장치를 바꾸려면 중지하세요.",

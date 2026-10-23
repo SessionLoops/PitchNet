@@ -225,6 +225,7 @@
   "settings.debug_raw_f0": "検出した生の F0 を表示（デバッグ）",
   "settings.debug_uv_f0": "密な UV F0 を表示（デバッグ）",
   "settings.debug_vocoder_f0": "ボコーダーの F0 を表示（デバッグ）",
+  "settings.reaper_navigation": "REAPER 風のナビゲーション",
   "settings.default_gpu": "デフォルトGPU",
   "settings.device": "デバイス:",
   "settings.device_locked": "推論の実行中です。デバイスを変更するには停止してください。",
