@@ -242,6 +242,9 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("liveAuditionEnabled"))
           liveAuditionEnabled =
               static_cast<bool>(configObj->getProperty("liveAuditionEnabled"));
+        if (configObj->hasProperty("followPlayback"))
+          followPlayback =
+              static_cast<bool>(configObj->getProperty("followPlayback"));
       }
     }
   }
@@ -294,6 +297,7 @@ void SettingsManager::saveConfig()
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
+  config->setProperty("followPlayback", followPlayback);
 
   if (exportSettings)
   {

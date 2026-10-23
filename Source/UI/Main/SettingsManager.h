@@ -90,6 +90,8 @@ public:
   }
   bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
+  bool getFollowPlayback() const { return followPlayback; }
+  void setFollowPlayback(bool follow) { followPlayback = follow; }
 
   const std::optional<ExportHelper::ExportSettings> &getExportSettings() const
   {
@@ -173,6 +175,7 @@ private:
   juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
   bool liveAuditionEnabled = false;
+  bool followPlayback = true;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };

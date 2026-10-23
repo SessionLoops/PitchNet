@@ -446,6 +446,8 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     else if (button == &followButton)
     {
         followPlayback = followButton.getToggleState();
+        if (onFollowPlaybackChanged)
+            onFollowPlaybackChanged(followPlayback);
     }
     else if (button == &auditionButton)
     {
@@ -578,6 +580,12 @@ void ToolbarComponent::setLoopEnabled(bool enabled)
 void ToolbarComponent::setAuditionEnabled(bool enabled)
 {
     auditionButton.setToggleState(enabled, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setFollowPlayback(bool follow)
+{
+    followPlayback = follow;
+    followButton.setToggleState(follow, juce::dontSendNotification);
 }
 
 void ToolbarComponent::setParametersVisible(bool visible)

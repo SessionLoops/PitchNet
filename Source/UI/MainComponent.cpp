@@ -686,6 +686,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
       settingsManager->getShowSegmentsDebug());
   dragAuditionEnabled = settingsManager->getLiveAuditionEnabled();
   toolbar.setAuditionEnabled(dragAuditionEnabled);
+  toolbar.setFollowPlayback(settingsManager->getFollowPlayback());
   pianoRollView.onAutoZoomRequested = [this]()
   {
     if (auto *project = getProject())
@@ -892,6 +893,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
     }
     if (!dragAuditionEnabled)
       finishDraggedNoteAudition();
+  };
+  toolbar.onFollowPlaybackChanged = [this](bool follow)
+  {
+    if (settingsManager)
+    {
+      settingsManager->setFollowPlayback(follow);
+      settingsManager->saveConfig();
+    }
   };
   toolbar.onCorrectPitchCenter = [this]
   {

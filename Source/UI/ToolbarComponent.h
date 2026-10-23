@@ -87,6 +87,7 @@ public:
     void setZoom(float pixelsPerSecond); // Update zoom slider without triggering callback
     void setLoopEnabled(bool enabled);
     void setAuditionEnabled(bool enabled);
+    void setFollowPlayback(bool follow);
     void setParametersVisible(bool visible);
     void setLeftPanelVisible(bool visible);
     // Left-panel group is ARA only; hidden (and takes no space) otherwise.
@@ -118,6 +119,7 @@ public:
     std::function<void()> onRedo;
     std::function<void(bool)> onToggleRecord;
     std::function<void(bool)> onToggleAudition;
+    std::function<void(bool)> onFollowPlaybackChanged;
     std::function<void()> onCorrectPitchCenter;
     std::function<void(int)> onScaleRootChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
