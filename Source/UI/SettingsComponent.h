@@ -164,7 +164,7 @@ private:
   juce::Label vocoderF0DebugLabel;
   juce::ToggleButton vocoderF0DebugToggle;
   juce::Label reaperNavigationLabel;
-  juce::ToggleButton reaperNavigationToggle;
+  StyledComboBox navigationStyleComboBox;
 
   juce::Label infoLabel;
 

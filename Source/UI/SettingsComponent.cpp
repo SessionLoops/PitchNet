@@ -260,16 +260,18 @@ SettingsComponent::SettingsComponent(
   };
   addAndMakeVisible(vocoderF0DebugToggle);
 
-  reaperNavigationLabel.setText(TR("settings.reaper_navigation"),
+  reaperNavigationLabel.setText(TR("settings.navigation_style"),
                                 juce::dontSendNotification);
   configureRowLabel(reaperNavigationLabel);
   addAndMakeVisible(reaperNavigationLabel);
 
-  reaperNavigationToggle.setButtonText("");
-  reaperNavigationToggle.setClickingTogglesState(true);
-  reaperNavigationToggle.onClick = [this]()
+  navigationStyleComboBox.addItem(TR("settings.navigation_original"), 1);
+  navigationStyleComboBox.addItem("REAPER", 2);
+  navigationStyleComboBox.setSelectedId(1, juce::dontSendNotification);
+  navigationStyleComboBox.applyStyle();
+  navigationStyleComboBox.onChange = [this]()
   {
-    reaperNavigation = reaperNavigationToggle.getToggleState();
+    reaperNavigation = navigationStyleComboBox.getSelectedId() == 2;
     if (settingsManager)
     {
       settingsManager->setReaperNavigation(reaperNavigation);
@@ -278,7 +280,7 @@ SettingsComponent::SettingsComponent(
     if (onReaperNavigationChanged)
       onReaperNavigationChanged(reaperNavigation);
   };
-  addAndMakeVisible(reaperNavigationToggle);
+  addAndMakeVisible(navigationStyleComboBox);
 
   // Info label
   infoLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
@@ -381,7 +383,7 @@ SettingsComponent::~SettingsComponent()
   actualF0DebugToggle.setLookAndFeel(nullptr);
   cleanedF0DebugToggle.setLookAndFeel(nullptr);
   vocoderF0DebugToggle.setLookAndFeel(nullptr);
-  reaperNavigationToggle.setLookAndFeel(nullptr);
+  navigationStyleComboBox.setLookAndFeel(nullptr);
 }
 
 void SettingsComponent::changeListenerCallback(
@@ -519,7 +521,7 @@ void SettingsComponent::resized()
     layoutRow(cleanedF0DebugLabel, cleanedF0DebugToggle);
     layoutRow(uvInterpolationDebugLabel, uvInterpolationDebugToggle);
     layoutRow(vocoderF0DebugLabel, vocoderF0DebugToggle);
-    layoutRow(reaperNavigationLabel, reaperNavigationToggle);
+    layoutRow(reaperNavigationLabel, navigationStyleComboBox);
 
     infoLabel.setBounds(content.removeFromTop(56));
     content.removeFromTop(12);
@@ -746,7 +748,7 @@ void SettingsComponent::updateTabVisibility()
   vocoderF0DebugLabel.setVisible(showGeneral);
   vocoderF0DebugToggle.setVisible(showGeneral);
   reaperNavigationLabel.setVisible(showGeneral);
-  reaperNavigationToggle.setVisible(showGeneral);
+  navigationStyleComboBox.setVisible(showGeneral);
   infoLabel.setVisible(showGeneral);
 
   audioDeviceTypeLabel.setVisible(showAudio);
@@ -1010,7 +1012,7 @@ void SettingsComponent::loadSettings()
                                      juce::dontSendNotification);
   cleanedF0DebugToggle.setToggleState(showCleanedF0Debug,
                                       juce::dontSendNotification);
-  reaperNavigationToggle.setToggleState(reaperNavigation,
+  navigationStyleComboBox.setSelectedId(reaperNavigation ? 2 : 1,
                                         juce::dontSendNotification);
   vocoderF0DebugToggle.setToggleState(showVocoderF0Debug,
                                       juce::dontSendNotification);
@@ -1433,8 +1435,9 @@ void SettingsComponent::refreshLocalisedText()
                               juce::dontSendNotification);
   vocoderF0DebugLabel.setText(TR("settings.debug_vocoder_f0"),
                               juce::dontSendNotification);
-  reaperNavigationLabel.setText(TR("settings.reaper_navigation"),
+  reaperNavigationLabel.setText(TR("settings.navigation_style"),
                                 juce::dontSendNotification);
+  navigationStyleComboBox.changeItemText(1, TR("settings.navigation_original"));
 
   if (currentDevice == "CPU")
     infoLabel.setText(TR("settings.cpu_desc"), juce::dontSendNotification);
