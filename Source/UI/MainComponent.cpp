@@ -1341,8 +1341,10 @@ void MainComponent::bindBackendController(EditorController *controller)
           settingsManager->getSynthesisEngineType());
       editorController->setDeviceConfig(settingsManager->getDevice(),
                                         settingsManager->getGPUDeviceId());
+      // Async: this runs on the message thread while the host opens the
+      // editor, and a synchronous load froze the host for seconds.
       if (!editorController->isSelectedPitchDetectorLoaded())
-        editorController->reloadInferenceModels(false);
+        editorController->reloadInferenceModels(true);
       settingsManager->applySettings();
       refreshRenderDeviceOptions();
     }

@@ -78,9 +78,14 @@ void SettingsManager::applySettings()
 
   if (vocoder)
   {
+    // Rebuilding the session is slow and blocks the caller, which includes
+    // every plugin editor open; only do it when the device actually changed.
+    const bool deviceChanged =
+        vocoder->getExecutionDevice() != device ||
+        vocoder->getExecutionDeviceId() != getGPUDeviceId();
     vocoder->setExecutionDevice(device);
     vocoder->setExecutionDeviceId(getGPUDeviceId());
-    if (vocoder->isLoaded())
+    if (deviceChanged && vocoder->isLoaded())
       vocoder->reloadModel();
   }
 

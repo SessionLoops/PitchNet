@@ -6,6 +6,7 @@
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
+#include "../UI/Main/SettingsManager.h"
 #include "../Utils/Constants.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/OnnxRuntime.h"
@@ -20,6 +21,22 @@
 #include <limits>
 
 namespace {
+// Background ARA controllers have no MainComponent to configure them, so they
+// would otherwise keep EditorController's CPU default and ignore the user's
+// device setting.
+// Reads (and on first run may write) the config file: message thread only,
+// never the audio thread.
+std::unique_ptr<EditorController> makeAnalysisController() {
+  auto controller = std::make_unique<EditorController>(false);
+  SettingsManager settings;
+  controller->setDeviceConfig(settings.getDevice(), settings.getGPUDeviceId());
+  if (auto *vocoder = controller->getVocoder()) {
+    vocoder->setExecutionDevice(settings.getDevice());
+    vocoder->setExecutionDeviceId(settings.getGPUDeviceId());
+  }
+  return controller;
+}
+
 // The project is stored in modification time and spans the whole modification.
 // A region move must therefore change only which span is highlighted - never
 // timelineOffsetSeconds, which would pad the synthesised waveform with leading
@@ -251,7 +268,7 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
-  araAnalysisController = std::make_unique<EditorController>(false);
+  araAnalysisController = makeAnalysisController();
   undoManager = std::make_unique<PitchUndoManager>(100);
 }
 
@@ -1120,7 +1137,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   undoManager->clear();
 
   if (!araAnalysisController)
-    araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController = makeAnalysisController();
 
   araAnalysisSourceKey = 0;
   araAnalysisLoading = true;
@@ -1346,9 +1363,9 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
 
   if (renderActiveAraRegion) {
     if (!regionCanvasController)
-      regionCanvasController = std::make_unique<EditorController>(false);
+      regionCanvasController = makeAnalysisController();
   } else if (!araAnalysisController) {
-    araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController = makeAnalysisController();
   }
 
   auto *controller = renderActiveAraRegion ? regionCanvasController.get()
@@ -1358,7 +1375,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   if (target != nullptr) {
     targetKey = pitchnetModificationKey(*target);
     auto& state = modificationRenders[targetKey];
-    if (!state.controller) state.controller = std::make_unique<EditorController>(false);
+    if (!state.controller) state.controller = makeAnalysisController();
     controller = state.controller.get();
   }
 #endif
@@ -1909,7 +1926,7 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
       !restoredProject->getAudioData().f0.empty();
 
   if (!araAnalysisController)
-    araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController = makeAnalysisController();
   araAnalysisController->setProject(std::move(restoredProject));
   if (araAnalysisProjectSnapshot)
     publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
@@ -1938,7 +1955,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
     cachedFormantShift = restoredProject->getFormantShift();
 
     if (!araAnalysisController)
-      araAnalysisController = std::make_unique<EditorController>(false);
+      araAnalysisController = makeAnalysisController();
     araAnalysisController->setProject(
         std::make_unique<Project>(*restoredProject));
     publishPersistentProjectSnapshot(*restoredProject);
@@ -2021,7 +2038,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
   mainComponent = mc;
   if (mc) {
     if (!araAnalysisController)
-      araAnalysisController = std::make_unique<EditorController>(false);
+      araAnalysisController = makeAnalysisController();
     mc->bindBackendController(araAnalysisController.get());
     mc->bindUndoManager(undoManager.get());
     mc->bindRealtimeProcessor(realtimeProcessor);
@@ -2749,7 +2766,7 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
   // modification so Cubase can archive it using the same object-level model as
   // JUCE's ARAPluginDemo/VocalNet.
   if (!regionCanvasController)
-    regionCanvasController = std::make_unique<EditorController>(false);
+    regionCanvasController = makeAnalysisController();
 
   const bool backgroundAnalysis = regionKey != activeRegionKey;
   const auto analysisGeneration =

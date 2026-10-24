@@ -57,6 +57,12 @@ namespace
         if (moduleDirectory.empty())
             return nullptr;
 
+        // Preload a bundled DirectML.dll so ORT binds to it by name instead of
+        // System32's copy, which on Windows 10 is too old for the DML provider.
+        const auto dmlPath = moduleDirectory + L"\\DirectML.dll";
+        if (GetFileAttributesW(dmlPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+            LoadLibraryW(dmlPath.c_str());
+
         const auto dllPath = moduleDirectory + L"\\onnxruntime.dll";
         if (GetFileAttributesW(dllPath.c_str()) == INVALID_FILE_ATTRIBUTES)
             return nullptr;

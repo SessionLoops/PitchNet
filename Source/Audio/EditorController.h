@@ -146,6 +146,7 @@ private:
 
   std::atomic<bool> shuttingDown{false};
   std::atomic<bool> isReloadingModels{false};
+  std::mutex modelLoadMutex;
   std::thread modelReloadThread;
 
   // Async load state
