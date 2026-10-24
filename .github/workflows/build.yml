@@ -440,12 +440,14 @@ jobs:
             libxcomposite-dev \
             libxcursor-dev \
             libxext-dev \
+            libxi-dev \
             libxinerama-dev \
             libxrandr-dev \
             libxrender-dev \
             libwebkit2gtk-4.0-dev \
             libcurl4-openssl-dev \
             libglu1-mesa-dev \
+            libegl-dev \
             mesa-common-dev
 
       - name: Download Models
@@ -536,12 +538,14 @@ jobs:
             libxcomposite-dev \
             libxcursor-dev \
             libxext-dev \
+            libxi-dev \
             libxinerama-dev \
             libxrandr-dev \
             libxrender-dev \
             libwebkit2gtk-4.0-dev \
             libcurl4-openssl-dev \
             libglu1-mesa-dev \
+            libegl-dev \
             mesa-common-dev
 
       - name: Download Models

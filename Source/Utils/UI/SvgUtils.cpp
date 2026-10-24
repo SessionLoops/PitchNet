@@ -20,8 +20,8 @@ namespace SvgUtils
         // Handle composite drawables recursively
         if (auto* composite = dynamic_cast<juce::DrawableComposite*>(drawable))
         {
-            for (auto* child : composite->getChildren())
-                tintDrawable(dynamic_cast<juce::Drawable*>(child), colour);
+            for (int i = 0; i < composite->getNumChildren(); ++i)
+                tintDrawable(&composite->getChild(i), colour);
         }
     }
 
@@ -40,10 +40,7 @@ namespace SvgUtils
 
     std::unique_ptr<juce::Drawable> createDrawableFromSvg(const juce::String& svgString)
     {
-        auto xml = juce::XmlDocument::parse(svgString);
-        if (xml != nullptr)
-            return juce::Drawable::createFromSVG(*xml);
-        return nullptr;
+        return juce::Drawable::createFromSVGString(svgString);
     }
 
     std::unique_ptr<juce::Drawable> createDrawableFromSvg(const juce::String& svgString, juce::Colour tintColour)

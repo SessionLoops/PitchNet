@@ -25,10 +25,9 @@ void SidebarButton::paint(juce::Graphics& g)
     if (iconDrawable != nullptr)
     {
         auto iconBounds = bounds.reduced(8);
-        iconDrawable->setTransformToFit(iconBounds, juce::RectanglePlacement::centred);
-
         // Keep icon white in all states
-        iconDrawable->draw(g, active || hovered ? 1.0f : 0.7f);
+        iconDrawable->drawWithin(g, iconBounds, juce::RectanglePlacement::centred,
+                                 active || hovered ? 1.0f : 0.7f);
     }
 }
 
