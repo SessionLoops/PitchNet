@@ -179,75 +179,8 @@ jobs:
           path: package-nomodels/
           retention-days: 30
 
-  # ===========================================
-  # Windows CUDA Build
-  # ===========================================
-  build-windows-cuda:
-    runs-on: windows-latest
-    name: Windows (CUDA)
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          submodules: recursive
-
-      - name: Download Models
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "Resources/models"
-          Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx" -OutFile "Resources/models/rmvpe.onnx"
-
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_CUDA=ON -DUSE_DIRECTML=OFF -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
-
-      - name: Build
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
-
-      - name: Prepare Package
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path package
-
-          # Copy standalone app
-          Copy-Item -Path "build/PitchNet_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
-
-          # Move VST3 binary next to the exe (avoid the VST3 folder packaging)
-          $vst3Binary = "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/PitchNet.vst3/Contents/x86_64-win/PitchNet.vst3"
-          if (Test-Path $vst3Binary) {
-            Copy-Item -Path $vst3Binary -Destination "package/PitchNet.vst3" -Force
-          } else {
-            Write-Warning "VST3 binary not found at $vst3Binary"
-          }
-
-          if (Test-Path "package/VST3") {
-            Remove-Item -Recurse -Force "package/VST3"
-          }
-
-          # Create no-models package (keep models dirs, remove files)
-          New-Item -ItemType Directory -Force -Path package-nomodels
-          Copy-Item -Path "package/*" -Destination "package-nomodels" -Recurse -Force
-          Get-ChildItem -Path "package-nomodels" -Recurse -Directory -Filter models | ForEach-Object {
-            Get-ChildItem -Path $_.FullName -Force | Remove-Item -Recurse -Force
-            New-Item -ItemType Directory -Force -Path $_.FullName | Out-Null
-          }
-          if (-not (Test-Path "package-nomodels/models")) {
-            New-Item -ItemType Directory -Force -Path "package-nomodels/models" | Out-Null
-          }
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PitchNet-Windows-CUDA
-          path: package/
-          retention-days: 30
-
-      - name: Upload Artifact (No Models)
-        uses: actions/upload-artifact@v4
-        with:
-          name: PitchNet-Windows-CUDA-NoModels
-          path: package-nomodels/
-          retention-days: 30
+  # Windows CUDA build is disabled for now: CMakeLists.txt requests an ONNX
+  # Runtime gpu_cuda13 package that does not exist for ONNXRUNTIME_VERSION.
 
   # ===========================================
   # macOS Build (Apple Silicon)
@@ -618,7 +551,6 @@ jobs:
     needs:
       - build-windows-cpu
       - build-windows-directml
-      - build-windows-cuda
       - build-macos
       - build-linux
       - build-linux-gpu
@@ -650,14 +582,6 @@ jobs:
 
           if [ -d "PitchNet-Windows-DirectML-NoModels" ]; then
             cd PitchNet-Windows-DirectML-NoModels && zip -r ../PitchNet-Windows-DirectML-NoModels.zip . && cd ..
-          fi
-
-          if [ -d "PitchNet-Windows-CUDA" ]; then
-            cd PitchNet-Windows-CUDA && zip -r ../PitchNet-Windows-CUDA.zip . && cd ..
-          fi
-
-          if [ -d "PitchNet-Windows-CUDA-NoModels" ]; then
-            cd PitchNet-Windows-CUDA-NoModels && zip -r ../PitchNet-Windows-CUDA-NoModels.zip . && cd ..
           fi
 
           # macOS DMG is already ready
@@ -714,8 +638,6 @@ jobs:
             artifacts/PitchNet-Windows-CPU-NoModels.zip
             artifacts/PitchNet-Windows-DirectML.zip
             artifacts/PitchNet-Windows-DirectML-NoModels.zip
-            artifacts/PitchNet-Windows-CUDA.zip
-            artifacts/PitchNet-Windows-CUDA-NoModels.zip
             artifacts/PitchNet-macOS.dmg
             artifacts/PitchNet-macOS-NoModels.dmg
             artifacts/PitchNet-macOS-App.zip
