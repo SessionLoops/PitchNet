@@ -1,4 +1,4 @@
-name: Build HachiTune
+name: Build PitchNet
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -35,7 +35,7 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx" -OutFile "Resources/models/rmvpe.onnx"
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_DIRECTML=OFF -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -46,12 +46,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path package
 
           # Copy standalone app
-          Copy-Item -Path "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
+          Copy-Item -Path "build/PitchNet_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
 
           # Move VST3 binary next to the exe (avoid the VST3 folder packaging)
-          $vst3Binary = "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3/Contents/x86_64-win/HachiTune.vst3"
+          $vst3Binary = "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/PitchNet.vst3/Contents/x86_64-win/PitchNet.vst3"
           if (Test-Path $vst3Binary) {
-            Copy-Item -Path $vst3Binary -Destination "package/HachiTune.vst3" -Force
+            Copy-Item -Path $vst3Binary -Destination "package/PitchNet.vst3" -Force
           } else {
             Write-Warning "VST3 binary not found at $vst3Binary"
           }
@@ -74,14 +74,14 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Windows-CPU
+          name: PitchNet-Windows-CPU
           path: package/
           retention-days: 30
 
       - name: Upload Artifact (No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Windows-CPU-NoModels
+          name: PitchNet-Windows-CPU-NoModels
           path: package-nomodels/
           retention-days: 30
 
@@ -94,7 +94,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -133,12 +133,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path package
 
           # Copy standalone app
-          Copy-Item -Path "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
+          Copy-Item -Path "build/PitchNet_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
 
           # Move VST3 binary next to the exe (avoid the VST3 folder packaging)
-          $vst3Binary = "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3/Contents/x86_64-win/HachiTune.vst3"
+          $vst3Binary = "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/PitchNet.vst3/Contents/x86_64-win/PitchNet.vst3"
           if (Test-Path $vst3Binary) {
-            Copy-Item -Path $vst3Binary -Destination "package/HachiTune.vst3" -Force
+            Copy-Item -Path $vst3Binary -Destination "package/PitchNet.vst3" -Force
           } else {
             Write-Warning "VST3 binary not found at $vst3Binary"
           }
@@ -168,86 +168,19 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Windows-DirectML
+          name: PitchNet-Windows-DirectML
           path: package/
           retention-days: 30
 
       - name: Upload Artifact (No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Windows-DirectML-NoModels
+          name: PitchNet-Windows-DirectML-NoModels
           path: package-nomodels/
           retention-days: 30
 
-  # ===========================================
-  # Windows CUDA Build
-  # ===========================================
-  build-windows-cuda:
-    runs-on: windows-latest
-    name: Windows (CUDA)
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Download Models
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "Resources/models"
-          Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx" -OutFile "Resources/models/rmvpe.onnx"
-
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_CUDA=ON -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
-
-      - name: Build
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
-
-      - name: Prepare Package
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path package
-
-          # Copy standalone app
-          Copy-Item -Path "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
-
-          # Move VST3 binary next to the exe (avoid the VST3 folder packaging)
-          $vst3Binary = "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3/Contents/x86_64-win/HachiTune.vst3"
-          if (Test-Path $vst3Binary) {
-            Copy-Item -Path $vst3Binary -Destination "package/HachiTune.vst3" -Force
-          } else {
-            Write-Warning "VST3 binary not found at $vst3Binary"
-          }
-
-          if (Test-Path "package/VST3") {
-            Remove-Item -Recurse -Force "package/VST3"
-          }
-
-          # Create no-models package (keep models dirs, remove files)
-          New-Item -ItemType Directory -Force -Path package-nomodels
-          Copy-Item -Path "package/*" -Destination "package-nomodels" -Recurse -Force
-          Get-ChildItem -Path "package-nomodels" -Recurse -Directory -Filter models | ForEach-Object {
-            Get-ChildItem -Path $_.FullName -Force | Remove-Item -Recurse -Force
-            New-Item -ItemType Directory -Force -Path $_.FullName | Out-Null
-          }
-          if (-not (Test-Path "package-nomodels/models")) {
-            New-Item -ItemType Directory -Force -Path "package-nomodels/models" | Out-Null
-          }
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: HachiTune-Windows-CUDA
-          path: package/
-          retention-days: 30
-
-      - name: Upload Artifact (No Models)
-        uses: actions/upload-artifact@v4
-        with:
-          name: HachiTune-Windows-CUDA-NoModels
-          path: package-nomodels/
-          retention-days: 30
+  # Windows CUDA build is disabled for now: CMakeLists.txt requests an ONNX
+  # Runtime gpu_cuda13 package that does not exist for ONNXRUNTIME_VERSION.
 
   # ===========================================
   # macOS Build (Apple Silicon)
@@ -258,7 +191,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -266,6 +199,13 @@ jobs:
         run: |
           mkdir -p Resources/models
           curl -L -o Resources/models/rmvpe.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx"
+
+          # The Core ML vocoder is not in the repo; it is published on the
+          # "models" release of this repository.
+          curl -fL -o pc_nsf_hifigan.mlmodelc.zip "https://github.com/${{ github.repository }}/releases/download/models/pc_nsf_hifigan.mlmodelc.zip"
+          echo "e055fdc18f0da6bfd3b93d120b64248d7f75fb45bd45742c48eab9b60f776a87  pc_nsf_hifigan.mlmodelc.zip" | shasum -a 256 -c -
+          unzip -q pc_nsf_hifigan.mlmodelc.zip -d Resources/models/
+          rm pc_nsf_hifigan.mlmodelc.zip
 
       - name: Configure CMake
         run: |
@@ -283,131 +223,131 @@ jobs:
           mkdir -p package
 
           # Copy standalone app
-          cp -R "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/HachiTune.app" package/
+          cp -R "build/PitchNet_artefacts/${{ env.BUILD_TYPE }}/PitchNet.app" package/
 
           # Copy VST3 plugin
-          if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
-            cp -R "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3" package/
+          if [ -d "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
+            cp -R "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/PitchNet.vst3" package/
           fi
 
           # Copy AU plugin
-          if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/AU" ]; then
-            cp -R "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/AU/HachiTune.component" package/
+          if [ -d "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/AU" ]; then
+            cp -R "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/AU/PitchNet.component" package/
           fi
 
           # Create no-models package (keep models dirs, remove files)
           rm -rf package-nomodels
           cp -R package package-nomodels
           find package-nomodels -type d -name models -exec sh -c 'rm -rf "$1"/*' _ {} \;
-          mkdir -p package-nomodels/HachiTune.app/Contents/Resources/models
-          if [ -d "package-nomodels/HachiTune.vst3" ]; then
-            mkdir -p package-nomodels/HachiTune.vst3/Contents/Resources/models
+          mkdir -p package-nomodels/PitchNet.app/Contents/Resources/models
+          if [ -d "package-nomodels/PitchNet.vst3" ]; then
+            mkdir -p package-nomodels/PitchNet.vst3/Contents/Resources/models
           fi
-          if [ -d "package-nomodels/HachiTune.component" ]; then
-            mkdir -p package-nomodels/HachiTune.component/Contents/Resources/models
+          if [ -d "package-nomodels/PitchNet.component" ]; then
+            mkdir -p package-nomodels/PitchNet.component/Contents/Resources/models
           fi
 
       - name: Ad-hoc Code Sign
         run: |
-          codesign --force --deep -s - package/HachiTune.app || true
-          codesign --force --deep -s - package/HachiTune.vst3 || true
-          codesign --force --deep -s - package/HachiTune.component || true
-          codesign --force --deep -s - package-nomodels/HachiTune.app || true
-          codesign --force --deep -s - package-nomodels/HachiTune.vst3 || true
-          codesign --force --deep -s - package-nomodels/HachiTune.component || true
+          codesign --force --deep -s - package/PitchNet.app || true
+          codesign --force --deep -s - package/PitchNet.vst3 || true
+          codesign --force --deep -s - package/PitchNet.component || true
+          codesign --force --deep -s - package-nomodels/PitchNet.app || true
+          codesign --force --deep -s - package-nomodels/PitchNet.vst3 || true
+          codesign --force --deep -s - package-nomodels/PitchNet.component || true
 
       - name: Create DMG
         run: |
-          for volume in "HachiTune" "HachiTune-NoModels"; do
+          for volume in "PitchNet" "PitchNet-NoModels"; do
             if [ -d "/Volumes/$volume" ]; then
               hdiutil detach "/Volumes/$volume" || hdiutil detach -force "/Volumes/$volume"
             fi
           done
 
-          rm -f HachiTune-macOS.dmg HachiTune-macOS-NoModels.dmg
+          rm -f PitchNet-macOS.dmg PitchNet-macOS-NoModels.dmg
 
-          hdiutil create -volname "HachiTune" \
+          hdiutil create -volname "PitchNet" \
             -srcfolder package \
             -ov -format UDZO \
-            HachiTune-macOS.dmg
-          hdiutil create -volname "HachiTune-NoModels" \
+            PitchNet-macOS.dmg
+          hdiutil create -volname "PitchNet-NoModels" \
             -srcfolder package-nomodels \
             -ov -format UDZO \
-            HachiTune-macOS-NoModels.dmg
+            PitchNet-macOS-NoModels.dmg
 
       - name: Create App ZIP
         run: |
           cd package
-          zip -r ../HachiTune-macOS-App.zip HachiTune.app
+          zip -r ../PitchNet-macOS-App.zip PitchNet.app
           cd ../package-nomodels
-          zip -r ../HachiTune-macOS-App-NoModels.zip HachiTune.app
+          zip -r ../PitchNet-macOS-App-NoModels.zip PitchNet.app
 
       - name: Create Plugin ZIPs
         run: |
           # VST3 with models
-          if [ -d "package/HachiTune.vst3" ]; then
-            cd package && zip -r ../HachiTune-macOS-VST3.zip HachiTune.vst3 && cd ..
+          if [ -d "package/PitchNet.vst3" ]; then
+            cd package && zip -r ../PitchNet-macOS-VST3.zip PitchNet.vst3 && cd ..
           fi
           # AU with models
-          if [ -d "package/HachiTune.component" ]; then
-            cd package && zip -r ../HachiTune-macOS-AU.zip HachiTune.component && cd ..
+          if [ -d "package/PitchNet.component" ]; then
+            cd package && zip -r ../PitchNet-macOS-AU.zip PitchNet.component && cd ..
           fi
 
       - name: Upload Artifact (DMG)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS
-          path: HachiTune-macOS.dmg
+          name: PitchNet-macOS
+          path: PitchNet-macOS.dmg
           retention-days: 30
 
       - name: Upload Artifact (DMG, No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-NoModels
-          path: HachiTune-macOS-NoModels.dmg
+          name: PitchNet-macOS-NoModels
+          path: PitchNet-macOS-NoModels.dmg
           retention-days: 30
 
       - name: Upload Artifact (App ZIP)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-App
-          path: HachiTune-macOS-App.zip
+          name: PitchNet-macOS-App
+          path: PitchNet-macOS-App.zip
           retention-days: 30
 
       - name: Upload Artifact (App ZIP, No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-App-NoModels
-          path: HachiTune-macOS-App-NoModels.zip
+          name: PitchNet-macOS-App-NoModels
+          path: PitchNet-macOS-App-NoModels.zip
           retention-days: 30
 
       - name: Upload Artifact (Unpacked)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-Unpacked
+          name: PitchNet-macOS-Unpacked
           path: package/
           retention-days: 30
 
       - name: Upload Artifact (Unpacked, No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-Unpacked-NoModels
+          name: PitchNet-macOS-Unpacked-NoModels
           path: package-nomodels/
           retention-days: 30
 
       - name: Upload Artifact (VST3)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-VST3
-          path: HachiTune-macOS-VST3.zip
+          name: PitchNet-macOS-VST3
+          path: PitchNet-macOS-VST3.zip
           retention-days: 30
           if-no-files-found: ignore
 
       - name: Upload Artifact (AU)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-macOS-AU
-          path: HachiTune-macOS-AU.zip
+          name: PitchNet-macOS-AU
+          path: PitchNet-macOS-AU.zip
           retention-days: 30
           if-no-files-found: ignore
 
@@ -420,7 +360,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -461,50 +401,50 @@ jobs:
 
       - name: Prepare Package
         run: |
-          mkdir -p package/HachiTune
+          mkdir -p package/PitchNet
 
           # Copy standalone app
-          cp -R build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/* package/HachiTune/
+          cp -R build/PitchNet_artefacts/${{ env.BUILD_TYPE }}/* package/PitchNet/
 
           # Copy VST3 plugin
-          if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
-            cp -R build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3 package/HachiTune/
+          if [ -d "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
+            cp -R build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3 package/PitchNet/
           fi
 
           # Create launch script
-          cat > package/HachiTune/run.sh << 'EOF'
+          cat > package/PitchNet/run.sh << 'EOF'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           export LD_LIBRARY_PATH="$SCRIPT_DIR:$LD_LIBRARY_PATH"
-          exec "$SCRIPT_DIR/HachiTune" "$@"
+          exec "$SCRIPT_DIR/PitchNet" "$@"
           EOF
-          chmod +x package/HachiTune/run.sh
+          chmod +x package/PitchNet/run.sh
 
           # Create no-models tarball (keep models dirs, remove files)
           rm -rf package-nomodels
           cp -R package package-nomodels
           find package-nomodels -type d -name models -exec sh -c 'rm -rf "$1"/*' _ {} \;
-          mkdir -p package-nomodels/HachiTune/models
+          mkdir -p package-nomodels/PitchNet/models
 
           # Create tarball
           cd package
-          tar -czvf ../HachiTune-Linux.tar.gz HachiTune
+          tar -czvf ../PitchNet-Linux.tar.gz PitchNet
 
           cd ../package-nomodels
-          tar -czvf ../HachiTune-Linux-NoModels.tar.gz HachiTune
+          tar -czvf ../PitchNet-Linux-NoModels.tar.gz PitchNet
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Linux
-          path: HachiTune-Linux.tar.gz
+          name: PitchNet-Linux
+          path: PitchNet-Linux.tar.gz
           retention-days: 30
 
       - name: Upload Artifact (No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Linux-NoModels
-          path: HachiTune-Linux-NoModels.tar.gz
+          name: PitchNet-Linux-NoModels
+          path: PitchNet-Linux-NoModels.tar.gz
           retention-days: 30
 
   # ===========================================
@@ -516,7 +456,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -557,50 +497,50 @@ jobs:
 
       - name: Prepare Package
         run: |
-          mkdir -p package/HachiTune
+          mkdir -p package/PitchNet
 
           # Copy standalone app
-          cp -R build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/* package/HachiTune/
+          cp -R build/PitchNet_artefacts/${{ env.BUILD_TYPE }}/* package/PitchNet/
 
           # Copy VST3 plugin
-          if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
-            cp -R build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3 package/HachiTune/
+          if [ -d "build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
+            cp -R build/PitchNetPlugin_artefacts/${{ env.BUILD_TYPE }}/VST3 package/PitchNet/
           fi
 
           # Create launch script
-          cat > package/HachiTune/run.sh << 'EOF'
+          cat > package/PitchNet/run.sh << 'EOF'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           export LD_LIBRARY_PATH="$SCRIPT_DIR:$LD_LIBRARY_PATH"
-          exec "$SCRIPT_DIR/HachiTune" "$@"
+          exec "$SCRIPT_DIR/PitchNet" "$@"
           EOF
-          chmod +x package/HachiTune/run.sh
+          chmod +x package/PitchNet/run.sh
 
           # Create no-models tarball (keep models dirs, remove files)
           rm -rf package-nomodels
           cp -R package package-nomodels
           find package-nomodels -type d -name models -exec sh -c 'rm -rf "$1"/*' _ {} \;
-          mkdir -p package-nomodels/HachiTune/models
+          mkdir -p package-nomodels/PitchNet/models
 
           # Create tarball
           cd package
-          tar -czvf ../HachiTune-Linux-GPU.tar.gz HachiTune
+          tar -czvf ../PitchNet-Linux-GPU.tar.gz PitchNet
 
           cd ../package-nomodels
-          tar -czvf ../HachiTune-Linux-GPU-NoModels.tar.gz HachiTune
+          tar -czvf ../PitchNet-Linux-GPU-NoModels.tar.gz PitchNet
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Linux-GPU
-          path: HachiTune-Linux-GPU.tar.gz
+          name: PitchNet-Linux-GPU
+          path: PitchNet-Linux-GPU.tar.gz
           retention-days: 30
 
       - name: Upload Artifact (No Models)
         uses: actions/upload-artifact@v4
         with:
-          name: HachiTune-Linux-GPU-NoModels
-          path: HachiTune-Linux-GPU-NoModels.tar.gz
+          name: PitchNet-Linux-GPU-NoModels
+          path: PitchNet-Linux-GPU-NoModels.tar.gz
           retention-days: 30
 
   # ===========================================
@@ -611,7 +551,6 @@ jobs:
     needs:
       - build-windows-cpu
       - build-windows-directml
-      - build-windows-cuda
       - build-macos
       - build-linux
       - build-linux-gpu
@@ -629,72 +568,64 @@ jobs:
           cd artifacts
 
           # Windows packages
-          if [ -d "HachiTune-Windows-CPU" ]; then
-            cd HachiTune-Windows-CPU && zip -r ../HachiTune-Windows-CPU.zip . && cd ..
+          if [ -d "PitchNet-Windows-CPU" ]; then
+            cd PitchNet-Windows-CPU && zip -r ../PitchNet-Windows-CPU.zip . && cd ..
           fi
 
-          if [ -d "HachiTune-Windows-CPU-NoModels" ]; then
-            cd HachiTune-Windows-CPU-NoModels && zip -r ../HachiTune-Windows-CPU-NoModels.zip . && cd ..
+          if [ -d "PitchNet-Windows-CPU-NoModels" ]; then
+            cd PitchNet-Windows-CPU-NoModels && zip -r ../PitchNet-Windows-CPU-NoModels.zip . && cd ..
           fi
 
-          if [ -d "HachiTune-Windows-DirectML" ]; then
-            cd HachiTune-Windows-DirectML && zip -r ../HachiTune-Windows-DirectML.zip . && cd ..
+          if [ -d "PitchNet-Windows-DirectML" ]; then
+            cd PitchNet-Windows-DirectML && zip -r ../PitchNet-Windows-DirectML.zip . && cd ..
           fi
 
-          if [ -d "HachiTune-Windows-DirectML-NoModels" ]; then
-            cd HachiTune-Windows-DirectML-NoModels && zip -r ../HachiTune-Windows-DirectML-NoModels.zip . && cd ..
-          fi
-
-          if [ -d "HachiTune-Windows-CUDA" ]; then
-            cd HachiTune-Windows-CUDA && zip -r ../HachiTune-Windows-CUDA.zip . && cd ..
-          fi
-
-          if [ -d "HachiTune-Windows-CUDA-NoModels" ]; then
-            cd HachiTune-Windows-CUDA-NoModels && zip -r ../HachiTune-Windows-CUDA-NoModels.zip . && cd ..
+          if [ -d "PitchNet-Windows-DirectML-NoModels" ]; then
+            cd PitchNet-Windows-DirectML-NoModels && zip -r ../PitchNet-Windows-DirectML-NoModels.zip . && cd ..
           fi
 
           # macOS DMG is already ready
-          if [ -d "HachiTune-macOS" ]; then
-            mv HachiTune-macOS/*.dmg ./HachiTune-macOS.dmg || true
+          if [ -d "PitchNet-macOS" ]; then
+            mv PitchNet-macOS/*.dmg ./PitchNet-macOS.dmg || true
           fi
 
-          if [ -d "HachiTune-macOS-NoModels" ]; then
-            mv HachiTune-macOS-NoModels/*.dmg ./HachiTune-macOS-NoModels.dmg || true
+          if [ -d "PitchNet-macOS-NoModels" ]; then
+            mv PitchNet-macOS-NoModels/*.dmg ./PitchNet-macOS-NoModels.dmg || true
           fi
 
           # macOS App ZIP is already ready
-          if [ -d "HachiTune-macOS-App" ]; then
-            mv HachiTune-macOS-App/*.zip ./HachiTune-macOS-App.zip || true
+          if [ -d "PitchNet-macOS-App" ]; then
+            mv PitchNet-macOS-App/*.zip ./PitchNet-macOS-App.zip || true
           fi
 
-          if [ -d "HachiTune-macOS-App-NoModels" ]; then
-            mv HachiTune-macOS-App-NoModels/*.zip ./HachiTune-macOS-App-NoModels.zip || true
+          if [ -d "PitchNet-macOS-App-NoModels" ]; then
+            mv PitchNet-macOS-App-NoModels/*.zip ./PitchNet-macOS-App-NoModels.zip || true
           fi
 
           # macOS plugin ZIPs
-          if [ -d "HachiTune-macOS-VST3" ]; then
-            mv HachiTune-macOS-VST3/*.zip ./HachiTune-macOS-VST3.zip || true
+          if [ -d "PitchNet-macOS-VST3" ]; then
+            mv PitchNet-macOS-VST3/*.zip ./PitchNet-macOS-VST3.zip || true
           fi
 
-          if [ -d "HachiTune-macOS-AU" ]; then
-            mv HachiTune-macOS-AU/*.zip ./HachiTune-macOS-AU.zip || true
+          if [ -d "PitchNet-macOS-AU" ]; then
+            mv PitchNet-macOS-AU/*.zip ./PitchNet-macOS-AU.zip || true
           fi
 
           # Linux tarballs are already ready
-          if [ -d "HachiTune-Linux" ]; then
-            mv HachiTune-Linux/*.tar.gz ./HachiTune-Linux.tar.gz || true
+          if [ -d "PitchNet-Linux" ]; then
+            mv PitchNet-Linux/*.tar.gz ./PitchNet-Linux.tar.gz || true
           fi
 
-          if [ -d "HachiTune-Linux-NoModels" ]; then
-            mv HachiTune-Linux-NoModels/*.tar.gz ./HachiTune-Linux-NoModels.tar.gz || true
+          if [ -d "PitchNet-Linux-NoModels" ]; then
+            mv PitchNet-Linux-NoModels/*.tar.gz ./PitchNet-Linux-NoModels.tar.gz || true
           fi
 
-          if [ -d "HachiTune-Linux-GPU" ]; then
-            mv HachiTune-Linux-GPU/*.tar.gz ./HachiTune-Linux-GPU.tar.gz || true
+          if [ -d "PitchNet-Linux-GPU" ]; then
+            mv PitchNet-Linux-GPU/*.tar.gz ./PitchNet-Linux-GPU.tar.gz || true
           fi
 
-          if [ -d "HachiTune-Linux-GPU-NoModels" ]; then
-            mv HachiTune-Linux-GPU-NoModels/*.tar.gz ./HachiTune-Linux-GPU-NoModels.tar.gz || true
+          if [ -d "PitchNet-Linux-GPU-NoModels" ]; then
+            mv PitchNet-Linux-GPU-NoModels/*.tar.gz ./PitchNet-Linux-GPU-NoModels.tar.gz || true
           fi
 
           ls -la
@@ -703,22 +634,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/HachiTune-Windows-CPU.zip
-            artifacts/HachiTune-Windows-CPU-NoModels.zip
-            artifacts/HachiTune-Windows-DirectML.zip
-            artifacts/HachiTune-Windows-DirectML-NoModels.zip
-            artifacts/HachiTune-Windows-CUDA.zip
-            artifacts/HachiTune-Windows-CUDA-NoModels.zip
-            artifacts/HachiTune-macOS.dmg
-            artifacts/HachiTune-macOS-NoModels.dmg
-            artifacts/HachiTune-macOS-App.zip
-            artifacts/HachiTune-macOS-App-NoModels.zip
-            artifacts/HachiTune-macOS-VST3.zip
-            artifacts/HachiTune-macOS-AU.zip
-            artifacts/HachiTune-Linux.tar.gz
-            artifacts/HachiTune-Linux-NoModels.tar.gz
-            artifacts/HachiTune-Linux-GPU.tar.gz
-            artifacts/HachiTune-Linux-GPU-NoModels.tar.gz
+            artifacts/PitchNet-Windows-CPU.zip
+            artifacts/PitchNet-Windows-CPU-NoModels.zip
+            artifacts/PitchNet-Windows-DirectML.zip
+            artifacts/PitchNet-Windows-DirectML-NoModels.zip
+            artifacts/PitchNet-macOS.dmg
+            artifacts/PitchNet-macOS-NoModels.dmg
+            artifacts/PitchNet-macOS-App.zip
+            artifacts/PitchNet-macOS-App-NoModels.zip
+            artifacts/PitchNet-macOS-VST3.zip
+            artifacts/PitchNet-macOS-AU.zip
+            artifacts/PitchNet-Linux.tar.gz
+            artifacts/PitchNet-Linux-NoModels.tar.gz
+            artifacts/PitchNet-Linux-GPU.tar.gz
+            artifacts/PitchNet-Linux-GPU-NoModels.tar.gz
           draft: true
           generate_release_notes: true
           fail_on_unmatched_files: false
