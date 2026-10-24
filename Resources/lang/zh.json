@@ -1,4 +1,11 @@
 {
+  "dialog.unsaved_title": "未保存的项目",
+  "dialog.unsaved_message": "关闭前是否保存此项目的更改？",
+  "dialog.save": "保存",
+  "dialog.dont_save": "不保存",
+  "dialog.save_failed": "保存失败",
+  "dialog.project_save_failed": "无法保存项目，请尝试其他位置。",
+
   "pitch_drawing.apply_prompt": "应用新的音高曲线？",
   "canvas.pitch_drawing": "绘制",
   "canvas.select": "选择",

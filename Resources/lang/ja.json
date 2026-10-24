@@ -1,4 +1,11 @@
 {
+  "dialog.unsaved_title": "未保存のプロジェクト",
+  "dialog.unsaved_message": "閉じる前にプロジェクトの変更を保存しますか？",
+  "dialog.save": "保存",
+  "dialog.dont_save": "保存しない",
+  "dialog.save_failed": "保存に失敗しました",
+  "dialog.project_save_failed": "プロジェクトを保存できませんでした。別の場所をお試しください。",
+
   "pitch_drawing.apply_prompt": "新しいピッチカーブを適用しますか？",
   "canvas.pitch_drawing": "描画",
   "canvas.select": "選択",

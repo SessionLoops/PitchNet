@@ -1,4 +1,11 @@
 {
+  "dialog.unsaved_title": "尚未儲存的專案",
+  "dialog.unsaved_message": "關閉前是否儲存此專案的變更？",
+  "dialog.save": "儲存",
+  "dialog.dont_save": "不儲存",
+  "dialog.save_failed": "儲存失敗",
+  "dialog.project_save_failed": "無法儲存專案，請嘗試其他位置。",
+
   "pitch_drawing.apply_prompt": "套用新的音高曲線？",
   "canvas.pitch_drawing": "繪製",
   "canvas.select": "選擇",

@@ -1,4 +1,11 @@
 {
+  "dialog.unsaved_title": "Proyecto sin guardar",
+  "dialog.unsaved_message": "¿Guardar los cambios del proyecto antes de cerrar?",
+  "dialog.save": "Guardar",
+  "dialog.dont_save": "No guardar",
+  "dialog.save_failed": "Error al guardar",
+  "dialog.project_save_failed": "No se pudo guardar el proyecto. Prueba otra ubicación.",
+
   "pitch_drawing.apply_prompt": "¿Aplicar la nueva curva de tono?",
   "canvas.pitch_drawing": "Dibujo",
   "canvas.select": "Seleccionar",

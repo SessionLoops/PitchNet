@@ -156,6 +156,95 @@ void styleUpdateButton(juce::TextButton &button)
   button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
 }
 
+// Match the analysis overlay: dimmed editor and a compact, rounded grey card.
+class UnsavedProjectPopup final : public juce::Component,
+                                  private juce::ComponentListener
+{
+public:
+  explicit UnsavedProjectPopup(juce::Component &parent)
+      : owner(&parent), saveButton(TR("dialog.save")),
+        discardButton(TR("dialog.dont_save")), cancelButton(TR("dialog.cancel"))
+  {
+    setWantsKeyboardFocus(true);
+    for (auto *button : {&saveButton, &discardButton, &cancelButton})
+    {
+      styleUpdateButton(*button);
+      addAndMakeVisible(*button);
+    }
+    saveButton.onClick = [this] { exitModalState(1); };
+    discardButton.onClick = [this] { exitModalState(2); };
+    cancelButton.onClick = [this] { exitModalState(0); };
+    parent.addAndMakeVisible(this);
+    setBounds(parent.getLocalBounds());
+    parent.addComponentListener(this);
+    toFront(false);
+  }
+
+  ~UnsavedProjectPopup() override
+  {
+    if (owner != nullptr)
+      owner->removeComponentListener(this);
+    for (auto *button : {&saveButton, &discardButton, &cancelButton})
+      button->setLookAndFeel(nullptr);
+  }
+
+  void paint(juce::Graphics &g) override
+  {
+    g.fillAll(juce::Colours::black.withAlpha(0.40f));
+    const auto card = cardBounds();
+    g.setColour(juce::Colour(0xFF333333u));
+    g.fillRoundedRectangle(card.toFloat(), 7.0f);
+    g.setColour(juce::Colour(0xFFEFEFEFu));
+    g.setFont(AppFont::getFont(18.0f));
+    g.drawFittedText(TR("dialog.unsaved_message"), card.getX() + padding,
+                     card.getY() + padding, card.getWidth() - padding * 2,
+                     descriptionHeight,
+                     juce::Justification::centred, 2);
+  }
+
+  void resized() override
+  {
+    auto row = cardBounds().reduced(padding);
+    row.removeFromTop(descriptionHeight + padding);
+    const int width = (row.getWidth() - 20) / 3;
+    for (auto *button : {&saveButton, &discardButton, &cancelButton})
+    {
+      button->setBounds(row.removeFromLeft(width).withHeight(buttonHeight));
+      row.removeFromLeft(10);
+    }
+  }
+
+  bool keyPressed(const juce::KeyPress &key) override
+  {
+    if (key == juce::KeyPress::escapeKey)
+    {
+      exitModalState(0);
+      return true;
+    }
+    return false;
+  }
+
+private:
+  static constexpr int padding = 24;
+  static constexpr int descriptionHeight = 44;
+  static constexpr int buttonHeight = 30;
+
+  juce::Rectangle<int> cardBounds() const
+  {
+    return getLocalBounds().withSizeKeepingCentre(
+        juce::jmin(460, getWidth()),
+        padding * 3 + descriptionHeight + buttonHeight);
+  }
+
+  void componentMovedOrResized(juce::Component &component, bool, bool) override
+  {
+    setBounds(component.getLocalBounds());
+  }
+
+  juce::Component::SafePointer<juce::Component> owner;
+  juce::TextButton saveButton, discardButton, cancelButton;
+};
+
 void styleUpdateLogScrollBars(juce::Component &component)
 {
   if (auto *scrollBar = dynamic_cast<juce::ScrollBar *>(&component))
@@ -1633,21 +1722,96 @@ bool MainComponent::keyPressed(const juce::KeyPress &key,
   return false;
 }
 
-void MainComponent::saveProject(bool saveAs)
+juce::String MainComponent::projectSaveSnapshot() const
+{
+  auto *project = getProject();
+  if (!project)
+    return {};
+  auto json = ProjectSerializer::toJson(*project);
+  // Window geometry does not change the document's edited content.
+  json.getDynamicObject()->removeProperty("uiWidth");
+  json.getDynamicObject()->removeProperty("uiHeight");
+  return juce::JSON::toString(json, true);
+}
+
+void MainComponent::requestClose(std::function<void()> onClose)
+{
+  if (closePromptActive || fileChooser != nullptr || isLoadingAudio.load())
+    return;
+
+  auto *project = getProject();
+  if (!project || (project->getAudioData().waveform.getNumSamples() == 0 &&
+                   project->getNotes().empty()) ||
+      (project->getProjectFilePath() != juce::File{} &&
+       savedProjectSnapshot == projectSaveSnapshot()))
+  {
+    onClose();
+    return;
+  }
+
+  closePromptActive = true;
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  auto handleResult = [safeThis, onClose = std::move(onClose)](int result) {
+            if (safeThis == nullptr)
+              return;
+            if (result == 1)
+            {
+              safeThis->saveProject(false, [safeThis, onClose](bool success) {
+                if (safeThis == nullptr)
+                  return;
+                safeThis->closePromptActive = false;
+                if (success)
+                  onClose();
+              });
+            }
+            else
+            {
+              safeThis->closePromptActive = false;
+              if (result == 2)
+                onClose();
+            }
+          };
+
+#if JUCE_MAC
+  // JUCE presents an NSAlert sheet attached to the standalone window.
+  // NativeMessageBox returns button indices; the custom popup uses 1/2/0.
+  juce::NativeMessageBox::showAsync(
+      juce::MessageBoxOptions()
+          .withIconType(juce::MessageBoxIconType::QuestionIcon)
+          .withTitle(TR("dialog.unsaved_title"))
+          .withMessage(TR("dialog.unsaved_message"))
+          .withButton(TR("dialog.save"))
+          .withButton(TR("dialog.dont_save"))
+          .withButton(TR("dialog.cancel"))
+          .withAssociatedComponent(this),
+      [handleResult = std::move(handleResult)](int buttonIndex) {
+        handleResult(buttonIndex == 0 ? 1 : buttonIndex == 1 ? 2 : 0);
+      });
+#else
+  auto *popup = new UnsavedProjectPopup(*this);
+  popup->enterModalState(
+      true, juce::ModalCallbackFunction::create(std::move(handleResult)), true);
+#endif
+}
+
+void MainComponent::saveProject(bool saveAs, std::function<void(bool)> onComplete)
 {
   if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
   {
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    juce::MessageManager::callAsync([safeThis, saveAs]()
+    juce::MessageManager::callAsync([safeThis, saveAs, onComplete]()
                                     {
       if (safeThis != nullptr)
-        safeThis->saveProject(saveAs); });
+        safeThis->saveProject(saveAs, onComplete); });
     return;
   }
 
   auto *project = getProject();
   if (!project)
+  {
+    if (onComplete) onComplete(false);
     return;
+  }
 
   project->uiWidth = getWidth();
   project->uiHeight = getHeight();
@@ -1664,7 +1828,10 @@ void MainComponent::saveProject(bool saveAs)
   {
     // Prevent re-triggering while dialog is open
     if (fileChooser != nullptr)
+    {
+      if (onComplete) onComplete(false);
       return;
+    }
 
     // Default next to audio if possible
     auto audio = project->getFilePath();
@@ -1679,11 +1846,17 @@ void MainComponent::saveProject(bool saveAs)
     juce::FileChooser chooser(TR("dialog.save_project"), target, "*.pitchnet",
                               true, false, this);
     if (!chooser.browseForFileToSave(true))
+    {
+      if (onComplete) onComplete(false);
       return;
+    }
 
     auto file = chooser.getResult();
     if (file == juce::File{})
+    {
+      if (onComplete) onComplete(false);
       return;
+    }
 
     if (file.getFileExtension().isEmpty())
       file = file.withFileExtension("pitchnet");
@@ -1696,7 +1869,11 @@ void MainComponent::saveProject(bool saveAs)
     if (ok)
       project->setProjectFilePath(file);
 
+    if (ok) savedProjectSnapshot = projectSaveSnapshot();
     toolbar.hideProgress();
+    if (!ok)
+      StyledMessageBox::show(this, TR("dialog.save_failed"), TR("dialog.project_save_failed"), StyledMessageBox::WarningIcon);
+    if (onComplete) onComplete(ok);
     return;
 #else
     fileChooser = std::make_unique<juce::FileChooser>(
@@ -1707,7 +1884,7 @@ void MainComponent::saveProject(bool saveAs)
                         juce::FileBrowserComponent::warnAboutOverwriting;
 
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    fileChooser->launchAsync(chooserFlags, [safeThis](
+    fileChooser->launchAsync(chooserFlags, [safeThis, onComplete](
                                                const juce::FileChooser &fc)
                              {
       if (safeThis == nullptr)
@@ -1717,8 +1894,10 @@ void MainComponent::saveProject(bool saveAs)
       safeThis->fileChooser
           .reset(); // Allow next dialog to open (must be after getResult)
 
-      if (file == juce::File{})
+      if (file == juce::File{}) {
+        if (onComplete) onComplete(false);
         return;
+      }
 
       if (file.getFileExtension().isEmpty())
         file = file.withFileExtension("pitchnet");
@@ -1729,6 +1908,7 @@ void MainComponent::saveProject(bool saveAs)
       auto *project = safeThis ? safeThis->getProject() : nullptr;
       if (!project) {
         safeThis->toolbar.hideProgress();
+        if (onComplete) onComplete(false);
         return;
       }
       auto audioFile = project->getFilePath();
@@ -1738,7 +1918,13 @@ void MainComponent::saveProject(bool saveAs)
       if (ok)
         project->setProjectFilePath(file);
 
-      safeThis->toolbar.hideProgress(); });
+      if (ok)
+        safeThis->savedProjectSnapshot = safeThis->projectSaveSnapshot();
+      safeThis->toolbar.hideProgress();
+      if (!ok)
+        StyledMessageBox::show(safeThis.getComponent(), TR("dialog.save_failed"),
+                               TR("dialog.project_save_failed"), StyledMessageBox::WarningIcon);
+      if (onComplete) onComplete(ok); });
 
     return;
 #endif
@@ -1749,9 +1935,12 @@ void MainComponent::saveProject(bool saveAs)
 
   ensureAudioSha();
   const bool ok = ProjectSerializer::saveToFile(*project, target);
-  juce::ignoreUnused(ok);
+  if (ok) savedProjectSnapshot = projectSaveSnapshot();
 
   toolbar.hideProgress();
+  if (!ok)
+    StyledMessageBox::show(this, TR("dialog.save_failed"), TR("dialog.project_save_failed"), StyledMessageBox::WarningIcon);
+  if (onComplete) onComplete(ok);
 }
 
 void MainComponent::openFile()

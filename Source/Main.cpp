@@ -191,7 +191,12 @@ public:
     AppFont::shutdown(); // Release font resources before JUCE shuts down
   }
 
-  void systemRequestedQuit() override { quit(); }
+  void systemRequestedQuit() override {
+    if (mainWindow != nullptr)
+      mainWindow->requestClose([this] { quit(); });
+    else
+      quit();
+  }
 
   void anotherInstanceStarted(const juce::String &commandLine) override {
     juce::ignoreUnused(commandLine);
@@ -273,6 +278,13 @@ public:
 
     void closeButtonPressed() override {
       JUCEApplication::getInstance()->systemRequestedQuit();
+    }
+
+    void requestClose(std::function<void()> onClose) {
+      if (mainComponent != nullptr)
+        mainComponent->requestClose(std::move(onClose));
+      else
+        onClose();
     }
 
     void openFile(const juce::File &file) {

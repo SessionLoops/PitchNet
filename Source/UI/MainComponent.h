@@ -89,6 +89,8 @@ public:
   explicit MainComponent(bool enableAudioDevice = true);
   ~MainComponent() override;
 
+  void requestClose(std::function<void()> onClose);
+
   void paint(juce::Graphics &g) override;
   void paintOverChildren(juce::Graphics &g) override;
   void resized() override;
@@ -335,7 +337,10 @@ private:
   void segmentIntoNotes();
   void segmentIntoNotes(Project &targetProject);
 
-  void saveProject(bool saveAs = false);
+  void saveProject(bool saveAs = false, std::function<void(bool)> onComplete = {});
+  juce::String projectSaveSnapshot() const;
+  juce::String savedProjectSnapshot;
+  bool closePromptActive = false;
   void restoreProjectPresentation();
 
   void undo();

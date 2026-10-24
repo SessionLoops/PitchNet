@@ -1,4 +1,11 @@
 {
+  "dialog.unsaved_title": "저장하지 않은 프로젝트",
+  "dialog.unsaved_message": "닫기 전에 프로젝트의 변경 사항을 저장하시겠습니까?",
+  "dialog.save": "저장",
+  "dialog.dont_save": "저장 안 함",
+  "dialog.save_failed": "저장 실패",
+  "dialog.project_save_failed": "프로젝트를 저장할 수 없습니다. 다른 위치를 선택해 주세요.",
+
   "pitch_drawing.apply_prompt": "새 피치 곡선을 적용할까요?",
   "canvas.pitch_drawing": "그리기",
   "canvas.select": "선택",

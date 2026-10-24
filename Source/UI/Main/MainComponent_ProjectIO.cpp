@@ -42,6 +42,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
     restoreProjectPresentation();
+    savedProjectSnapshot = projectSaveSnapshot();
     parameterPanel.setProject(project);
     parameterPanel.setSelectedNote(nullptr);
     toolbar.setTotalTime(project->getAudioData().getDuration());
@@ -186,6 +187,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
                 safeThis->pianoRoll.setProject(project);
                 safeThis->pianoRollView.setProject(project);
                 safeThis->restoreProjectPresentation();
+                safeThis->savedProjectSnapshot = safeThis->projectSaveSnapshot();
                 safeThis->parameterPanel.setProject(project);
                 safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
                 safeThis->toolbar.setLoopEnabled(project->getLoopRange().enabled);

@@ -1,4 +1,11 @@
 {
+  "dialog.unsaved_title": "Unsaved project",
+  "dialog.unsaved_message": "Save changes to this project before closing?",
+  "dialog.save": "Save",
+  "dialog.dont_save": "Discard",
+  "dialog.save_failed": "Save failed",
+  "dialog.project_save_failed": "The project could not be saved. Please try another location.",
+
   "pitch_drawing.apply_prompt": "Apply new pitch curve?",
   "canvas.pitch_drawing": "Drawing",
   "canvas.select": "Select",
