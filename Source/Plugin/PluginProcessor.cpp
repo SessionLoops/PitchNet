@@ -2147,7 +2147,6 @@ juce::AudioProcessorEditor *PitchNetAudioProcessor::createEditor() {
 void PitchNetAudioProcessor::getStateInformation(
     juce::MemoryBlock &destData) {
   destData.setSize(0);
-  juce::MemoryOutputStream out(destData, false);
 
   auto apvtsState = apvts.copyState();
   auto apvtsXml = apvtsState.createXml();
@@ -2174,6 +2173,14 @@ void PitchNetAudioProcessor::getStateInformation(
     destData = cachedPluginStateBlock;
     return;
   }
+
+  // Construct the stream only after the cache check. A MemoryOutputStream
+  // bound to destData trims that block to the stream's own write size in its
+  // destructor, so a stream alive across the cache-hit return above would
+  // truncate the copied blob back to zero bytes. The host then saved an empty
+  // state (no jucePluginState in the AU ClassInfo) on every save after the
+  // first query, and the project reopened with an empty canvas.
+  juce::MemoryOutputStream out(destData, false);
 
   // Write the archive straight into the host's block and back-patch its length
   // rather than staging it in a second MemoryBlock first, which doubled both
