@@ -2912,6 +2912,11 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
           // Once the newly analysed project is on the canvas, bring its ARA
           // region into view instead of leaving the viewport at the prior one.
           mainComponent->focusTimelineRange(latestSpan.first, latestSpan.second);
+
+          // exchangeProject() skips the vertical auto-zoom in track view so
+          // switching between already-analysed regions keeps the user's zoom.
+          // A freshly analysed region has never been framed, so fit it here.
+          mainComponent->fitAnalyzedPitchRangeToView();
         }
 
         if (modification != nullptr) {

@@ -160,6 +160,10 @@ public:
   virtual void updateHostAudioTimelineOffset(double timelineOffsetSeconds) = 0;
   virtual void clearHostAudio() = 0;
   virtual void focusTimelineRange(double startSeconds, double endSeconds) = 0;
+  // Vertically fit the current project's analyzed pitch range. Used after a
+  // fresh analysis lands on the canvas, including in track view where
+  // exchangeProject() deliberately keeps the zoom across region switches.
+  virtual void fitAnalyzedPitchRangeToView() = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
   // Where the drawn project content sits on the host timeline, in seconds.
   // Display only; may be negative. See CoordinateMapper for the full contract.

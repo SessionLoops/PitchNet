@@ -247,6 +247,7 @@ public:
   void updateHostAudioTimelineOffset(double timelineOffsetSeconds) override;
   void clearHostAudio() override;
   void focusTimelineRange(double startSeconds, double endSeconds) override;
+  void fitAnalyzedPitchRangeToView() override;
 
   // Plugin mode callbacks
   std::function<void()>

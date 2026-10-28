@@ -2124,6 +2124,12 @@ void MainComponent::analyzeAudio(
   }
 }
 
+void MainComponent::fitAnalyzedPitchRangeToView()
+{
+  if (auto *project = getProject(); project != nullptr && hasAnalyzedProject())
+    fitAnalyzedPitchRangeToView(*project);
+}
+
 void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 {
   float minMidi = std::numeric_limits<float>::max();
