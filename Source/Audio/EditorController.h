@@ -14,10 +14,14 @@
 #include "../Utils/AppLogger.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
+
+struct SharedInferenceModels;
 
 class EditorController
 {
@@ -135,9 +139,17 @@ private:
   GPUProvider getProviderFromDevice(const juce::String &device) const;
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;
-  std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;
-  std::unique_ptr<RMVPEPitchDetector> rmvpePitchDetector;
-  std::unique_ptr<GAMEDetector> gameDetector;
+  // Analysis models come from a SharedInferenceModels set (see the .cpp).
+  // modelPtrMutex guards these pointers; analysis copies them first, so a
+  // device switch never frees models that are still running.
+  mutable std::mutex modelPtrMutex;
+  std::shared_ptr<SharedInferenceModels> sharedModels;
+  std::shared_ptr<FCPEPitchDetector> fcpePitchDetector;
+  std::shared_ptr<RMVPEPitchDetector> rmvpePitchDetector;
+  std::shared_ptr<GAMEDetector> gameDetector;
+  // Generation of the installed set; an older load never replaces a newer one.
+  std::uint64_t installedGeneration = 0;
+  std::atomic<std::uint64_t> reloadGeneration{0};
   std::unique_ptr<Vocoder> vocoder;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
   std::unique_ptr<PlaybackController> playbackController;
@@ -155,6 +167,9 @@ private:
   std::atomic<bool> shuttingDown{false};
   std::atomic<bool> isReloadingModels{false};
   std::mutex modelLoadMutex;
+  std::mutex reloadRequestMutex;
+  std::function<void()> pendingReload;
+  std::condition_variable reloadFinished;
   std::thread modelReloadThread;
 
   // Async load state
