@@ -98,6 +98,24 @@ public:
   // Reload model with new settings (call after changing device)
   bool reloadModel();
 
+  /**
+   * True once a render failed past the vocoder's own fallbacks (on macOS,
+   * after the Core ML CPU retry; on ONNX, on the first failure). Reading it
+   * clears it. The editor uses it to drop to the
+   * classic (PSOLA) engine instead of leaving the edit unrendered.
+   */
+  bool consumeUnrecoverableRenderFailure()
+  {
+    return unrecoverableRenderFailure.exchange(false);
+  }
+
+  /**
+   * True once the last load could not create the GPU session and loaded the
+   * model on CPU instead. Reading it clears it. A CPU vocoder render is far
+   * too slow to use, so the editor switches to classic (PSOLA) when it sees it.
+   */
+  bool consumeCpuFallbackOnLoad() { return cpuFallbackOnLoad.exchange(false); }
+
 private:
   struct AsyncTask
   {
@@ -131,6 +149,11 @@ private:
 #endif
   std::unique_ptr<std::ofstream> logFile;
   int executionDeviceId = 0;
+
+  // Set when infer() exhausted every fallback; see consumeUnrecoverableRenderFailure.
+  std::atomic<bool> unrecoverableRenderFailure{false};
+  // Set when loadModel() fell back from a GPU provider to CPU.
+  std::atomic<bool> cpuFallbackOnLoad{false};
 
   // Thread safety for async operations
   std::atomic<bool> isShuttingDown{false};
@@ -169,6 +192,12 @@ private:
   std::vector<int64_t> f0ShapeScratch;
   std::vector<Ort::Value> inputTensorScratch;
   std::vector<Ort::Value> outputTensorScratch;
+
+  // Full ONNX render (chunking + crossfade) on the current session.
+  // Caller must hold inferenceMutex. Returns empty on failure.
+  std::vector<float> inferOnnxLocked(const std::vector<std::vector<float>> &mel,
+                                     const std::vector<float> &f0,
+                                     size_t numFrames);
 
   // Single-chunk ONNX inference (caller must hold inferenceMutex).
   // Returns empty vector on failure.

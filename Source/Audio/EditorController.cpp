@@ -598,6 +598,10 @@ void EditorController::resynthesizeIncrementalAsync(
     return;
   }
 
+  // Covers every other load path (lazy load above, settings device change,
+  // project open): never render AI on a CPU fallback session.
+  switchToClassicIfVocoderOnCpu();
+
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
   synth->setSynthesisEngine(synthesisEngineType);
@@ -621,6 +625,26 @@ void EditorController::resynthesizeIncrementalAsync(
       {
         if (!success)
         {
+          // The AI render failed for good: fall back to classic (PSOLA) and
+          // render the same edit again rather than leaving it silent. Same
+          // switch as the DirectML analysis fallback.
+          if (synthesisEngineType == SynthesisEngineType::Vocoder && vocoder &&
+              vocoder->consumeUnrecoverableRenderFailure())
+          {
+            LOG("Vocoder render failed on every device; switching synthesis "
+                "engine to PSOLA");
+            juce::MessageManager::callAsync(
+                [this, projectPtr, pending, onComplete, isPluginMode]()
+                {
+                  setSynthesisEngineType(SynthesisEngineType::Psola);
+                  if (onSynthesisEngineFallback)
+                    onSynthesisEngineFallback(SynthesisEngineType::Psola);
+                  resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
+                                               *pending, isPluginMode);
+                });
+            return;
+          }
+
           if (pending->exchange(false))
           {
             juce::MessageManager::callAsync([this, projectPtr, pending, onComplete,
@@ -659,6 +683,25 @@ void EditorController::resynthesizeIncrementalAsync(
                                                                          *pending, isPluginMode); });
         }
       });
+}
+
+bool EditorController::switchToClassicIfVocoderOnCpu()
+{
+  if (!vocoder || !vocoder->consumeCpuFallbackOnLoad())
+    return false;
+  if (synthesisEngineType != SynthesisEngineType::Vocoder)
+    return false;
+
+  setSynthesisEngineType(SynthesisEngineType::Psola);
+  LOG("Vocoder loaded on CPU after a GPU provider failed; synthesis engine "
+      "switched to PSOLA");
+  juce::MessageManager::callAsync(
+      [this]()
+      {
+        if (onSynthesisEngineFallback)
+          onSynthesisEngineFallback(SynthesisEngineType::Psola);
+      });
+  return true;
 }
 
 void EditorController::reportAnalysisException(const juce::String &where,
@@ -1020,6 +1063,7 @@ void EditorController::analyzeAudioImpl(
   {
     if (vocoder->loadModel(modelPath))
     {
+      switchToClassicIfVocoderOnCpu();
     }
     else
     {

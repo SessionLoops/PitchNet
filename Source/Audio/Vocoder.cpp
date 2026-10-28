@@ -384,7 +384,7 @@ bool Vocoder::loadModel(const juce::File &modelPath)
       if (executionDevice == "CPU")
         throw;
 
-      log("Failed to create session with " + executionDevice.toStdString() +
+      logError("Failed to create vocoder session with " + executionDevice.toStdString() +
           ": " + std::string(e.what()));
       log("Retrying vocoder session with CPU");
 
@@ -411,7 +411,7 @@ bool Vocoder::loadModel(const juce::File &modelPath)
       if (executionDevice == "CPU")
         throw;
 
-      log("Failed to create session with " + executionDevice.toStdString() +
+      logError("Failed to create vocoder session with " + executionDevice.toStdString() +
           ": " + std::string(e.what()));
       log("Retrying vocoder session with CPU");
 
@@ -422,6 +422,10 @@ bool Vocoder::loadModel(const juce::File &modelPath)
     }
 #endif
 
+    cpuFallbackOnLoad.store(usedCpuFallback);
+    if (usedCpuFallback)
+      logError("Vocoder loaded on CPU after " + executionDevice.toStdString() +
+               " failed; AI synthesis will fall back to classic");
     ioBinding.reset();
     if (executionDevice != "CPU" && !usedCpuFallback)
     {
@@ -493,7 +497,7 @@ bool Vocoder::loadModel(const juce::File &modelPath)
   }
   catch (const Ort::Exception &e)
   {
-    log("Failed to load ONNX model: " + std::string(e.what()));
+    logError("Failed to load ONNX vocoder model: " + std::string(e.what()));
     loaded = false;
     return false;
   }
@@ -535,16 +539,16 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 
   if (isShuttingDown.load())
     return {};
+  unrecoverableRenderFailure.store(false);
 
   const size_t numFrames = std::min(mel.size(), f0.size());
   if (numFrames == 0)
     return {};
-  const bool verboseInferLog = isVerboseInferLogEnabled();
-  const auto startTotal = std::chrono::high_resolution_clock::now();
-
 #if __APPLE__
   if (usingCoreMLModel && coreMLBackend)
   {
+    const bool verboseInferLog = isVerboseInferLogEnabled();
+    const auto startTotal = std::chrono::high_resolution_clock::now();
     using Units = CoreMLVocoderBackend::ComputeUnits;
     auto renderWithChunkFallback = [&]() {
       auto result = inferCoreMLAllChunksLocked(mel, f0, numFrames,
@@ -583,8 +587,11 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
     if (waveform.empty())
     {
       if (!isShuttingDown.load())
+      {
         logError("Core ML vocoder render failed (" + std::to_string(numFrames) +
-                 " frames); no audio produced");
+                 " frames) on every compute unit");
+        unrecoverableRenderFailure.store(true);
+      }
       return {};
     }
 
@@ -604,11 +611,38 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 #endif
 
 #ifdef HAVE_ONNXRUNTIME
+  auto waveform = inferOnnxLocked(mel, f0, numFrames);
+
+  // A GPU session can pass creation and still fail at render time (DirectML
+  // device removal, out of memory, driver faults) or return NaN/silence.
+  // No CPU retry: a CPU vocoder render is far too slow to be usable, so flag
+  // the failure and let the editor switch this session to classic (PSOLA).
+  if (waveform.empty() && !isShuttingDown.load())
+  {
+    logError("ONNX vocoder render failed (" + std::to_string(numFrames) +
+             " frames) on " + executionDevice.toStdString() +
+             "; falling back to classic synthesis");
+    unrecoverableRenderFailure.store(true);
+  }
+  return waveform;
+#else
+  log("ONNX Runtime is not available");
+  return {};
+#endif
+}
+
+#ifdef HAVE_ONNXRUNTIME
+std::vector<float>
+Vocoder::inferOnnxLocked(const std::vector<std::vector<float>> &mel,
+                         const std::vector<float> &f0, size_t numFrames)
+{
   if (!onnxSession || inputNames.empty() || outputNames.empty())
   {
-    log("ONNX session not available");
+    logError("ONNX vocoder session not available");
     return {};
   }
+  const bool verboseInferLog = isVerboseInferLogEnabled();
+  const auto startTotal = std::chrono::high_resolution_clock::now();
 
   try
   {
@@ -620,7 +654,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       auto result = inferChunkLocked(mel, f0, numFrames);
       if (result.empty())
       {
-        log("Single-chunk inference failed");
+        logError("ONNX single-chunk inference failed");
         return {};
       }
       if (verboseInferLog)
@@ -676,7 +710,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
       auto chunkWav = inferChunkLocked(chunkMel, chunkF0, chunkFrames);
       if (chunkWav.empty())
       {
-        log("Chunk " + std::to_string(chunkIdx) + " inference failed");
+        logError("ONNX chunk " + std::to_string(chunkIdx) + " inference failed");
         return {};
       }
 
@@ -754,14 +788,11 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   }
   catch (const Ort::Exception &e)
   {
-    log("ONNX inference failed: " + std::string(e.what()));
+    logError("ONNX inference failed: " + std::string(e.what()));
     return {};
   }
-#else
-  log("ONNX Runtime is not available");
-  return {};
-#endif
 }
+#endif
 
 #ifdef HAVE_ONNXRUNTIME
 std::vector<float>
@@ -926,12 +957,56 @@ Vocoder::inferChunkLocked(const std::vector<std::vector<float>> &mel,
         "ms infer=" + std::to_string(inferMs) + "ms");
   }
 
-  // Copy and clamp output
-  float *outputData = outputTensor->GetTensorMutableData<float>();
-  std::vector<float> waveform(outputSize);
-  for (size_t i = 0; i < outputSize; ++i)
+  if (outputSize == 0)
   {
-    waveform[i] = std::clamp(outputData[i], -1.0f, 1.0f);
+    logError("ONNX inference returned an empty audio buffer");
+    return {};
+  }
+
+  // Copy output (float32, or float16 from a half-precision export).
+  std::vector<float> waveform(outputSize);
+  if (typeInfo.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16)
+  {
+    const auto *halfData = outputTensor->GetTensorData<Ort::Float16_t>();
+    for (size_t i = 0; i < outputSize; ++i)
+      waveform[i] = halfData[i].ToFloat();
+  }
+  else
+  {
+    const float *outputData = outputTensor->GetTensorData<float>();
+    std::copy_n(outputData, outputSize, waveform.begin());
+  }
+
+  // Validate before clamping: std::clamp lets NaN through, and NaN/Inf or an
+  // all-zero result for voiced input would otherwise reach the mixer as
+  // silence with no error.
+  size_t nonFinite = 0;
+  float peak = 0.0f;
+  for (auto &sample : waveform)
+  {
+    if (!std::isfinite(sample))
+    {
+      ++nonFinite;
+      sample = 0.0f;
+      continue;
+    }
+    peak = std::max(peak, std::abs(sample));
+    sample = std::clamp(sample, -1.0f, 1.0f);
+  }
+  if (nonFinite > 0)
+  {
+    logError("ONNX inference produced " + std::to_string(nonFinite) +
+             " non-finite samples (" + executionDevice.toStdString() + ")");
+    return {};
+  }
+  const bool hasVoicedInput =
+      std::any_of(f0.begin(), f0.begin() + static_cast<ptrdiff_t>(numFrames),
+                  [](float hz) { return hz > 0.0f; });
+  if (hasVoicedInput && peak < 1.0e-6f)
+  {
+    logError("ONNX inference produced silent output for voiced input (" +
+             executionDevice.toStdString() + ")");
+    return {};
   }
 
   return waveform;

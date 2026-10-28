@@ -60,6 +60,10 @@ public:
     return synthesisEngineType;
   }
 
+  // Called on the message thread when a render failure forced the engine
+  // from the AI vocoder to classic (PSOLA), so the UI can follow.
+  std::function<void(SynthesisEngineType)> onSynthesisEngineFallback;
+
   void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
   {
     device = deviceName;
@@ -112,6 +116,10 @@ public:
       const std::function<void()> &onNotesChanged);
 
 private:
+  // If the vocoder had to load on CPU, move an AI engine to classic (PSOLA)
+  // and tell the UI. Returns true when it switched.
+  bool switchToClassicIfVocoderOnCpu();
+
   // Unguarded bodies of analyzeAudio()/segmentIntoNotes(). The public
   // wrappers catch exceptions so a failure on a loader thread shows an
   // error instead of terminating the app.

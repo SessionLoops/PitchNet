@@ -704,6 +704,13 @@ MainComponent::MainComponent(bool enableAudioDevice)
         settingsManager->getSynthesisEngineType());
     editorController->setDeviceConfig(settingsManager->getDevice(),
                                       settingsManager->getGPUDeviceId());
+    editorController->onSynthesisEngineFallback =
+        [safeThis = juce::Component::SafePointer<MainComponent>(this)](
+            SynthesisEngineType type)
+    {
+      if (safeThis != nullptr)
+        safeThis->parameterPanel.setSynthesisEngine(type);
+    };
     editorController->reloadInferenceModels(false);
   }
 
@@ -1341,6 +1348,13 @@ void MainComponent::bindBackendController(EditorController *controller)
           settingsManager->getSynthesisEngineType());
       editorController->setDeviceConfig(settingsManager->getDevice(),
                                         settingsManager->getGPUDeviceId());
+      editorController->onSynthesisEngineFallback =
+          [safeThis = juce::Component::SafePointer<MainComponent>(this)](
+              SynthesisEngineType type)
+      {
+        if (safeThis != nullptr)
+          safeThis->parameterPanel.setSynthesisEngine(type);
+      };
       // Async: this runs on the message thread while the host opens the
       // editor, and a synchronous load froze the host for seconds.
       if (!editorController->isSelectedPitchDetectorLoaded())
