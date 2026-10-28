@@ -201,9 +201,10 @@ jobs:
           curl -L -o Resources/models/rmvpe.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx"
 
           # The Core ML vocoder is not in the repo; it is published on the
-          # "models" release of this repository.
-          curl -fL -o pc_nsf_hifigan.mlmodelc.zip "https://github.com/${{ github.repository }}/releases/download/models/pc_nsf_hifigan.mlmodelc.zip"
-          echo "e055fdc18f0da6bfd3b93d120b64248d7f75fb45bd45742c48eab9b60f776a87  pc_nsf_hifigan.mlmodelc.zip" | shasum -a 256 -c -
+          # "models" release of this repository. mixed-phase-fp32 export:
+          # fp16 network with the sine-source phase path in fp32.
+          curl -fL -o pc_nsf_hifigan.mlmodelc.zip "https://github.com/${{ github.repository }}/releases/download/models/pc_nsf_hifigan_phase_fp32.mlmodelc.zip"
+          echo "e511eca773fd4fc484da1ee5a5ff2bf745156587194e0dceb90f4b5c6227e341  pc_nsf_hifigan.mlmodelc.zip" | shasum -a 256 -c -
           unzip -q pc_nsf_hifigan.mlmodelc.zip -d Resources/models/
           rm pc_nsf_hifigan.mlmodelc.zip
 
