@@ -126,6 +126,8 @@ private:
   juce::File coreMLModelFile;
   std::unique_ptr<CoreMLVocoderBackend> coreMLBackend;
   bool usingCoreMLModel = false;
+  // First chunk size tried for Core ML; smaller on low-memory Macs.
+  size_t coreMLPreferredChunkFrames = 1024;
 #endif
   std::unique_ptr<std::ofstream> logFile;
   int executionDeviceId = 0;
@@ -142,6 +144,11 @@ private:
   mutable std::mutex inferenceMutex;
 
   void log(const std::string &message);
+  // Always written, including Release builds, so field reports of a failing
+  // AI engine come with a reason. Use for errors and fallbacks only.
+  void logError(const std::string &message);
+  std::unique_ptr<std::ofstream> errorLogFile;
+  std::mutex errorLogMutex;
 
 #ifdef HAVE_ONNXRUNTIME
   std::unique_ptr<Ort::Env> onnxEnv;
@@ -174,6 +181,16 @@ private:
 #endif
 
 #if __APPLE__
+  // Loads the Core ML bundle on firstUnits, falling back to CPUOnly if that
+  // fails. Caller must hold inferenceMutex (or be in loadModel).
+  bool loadCoreMLWithFallback(const juce::File &bundle,
+                              CoreMLVocoderBackend::ComputeUnits firstUnits);
+  // Runs one full Core ML render (chunking + crossfade) at the given chunk
+  // size. Returns empty on any chunk failure.
+  std::vector<float>
+  inferCoreMLAllChunksLocked(const std::vector<std::vector<float>> &mel,
+                             const std::vector<float> &f0, size_t numFrames,
+                             size_t maxChunkFrames);
   std::vector<float>
   inferCoreMLChunkLocked(const std::vector<std::vector<float>> &mel,
                          const std::vector<float> &f0,

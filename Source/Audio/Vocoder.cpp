@@ -205,6 +205,47 @@ void Vocoder::log(const std::string &message)
 #endif
 }
 
+void Vocoder::logError(const std::string &message)
+{
+  log(message);
+
+  std::lock_guard<std::mutex> lock(errorLogMutex);
+  if (!errorLogFile)
+  {
+    auto path = PlatformPaths::getLogFile("vocoder_errors.txt");
+    // Keep the file small: start over once it passes 512 KB.
+    const bool truncate = path.getSize() > 512 * 1024;
+    errorLogFile = std::make_unique<std::ofstream>(
+        path.getFullPathName().toStdString(),
+        truncate ? std::ios::trunc : std::ios::app);
+    if (errorLogFile->is_open())
+    {
+      auto now = std::chrono::system_clock::to_time_t(
+          std::chrono::system_clock::now());
+      *errorLogFile << "\n==== PitchNet vocoder " << std::ctime(&now)
+                    << "OS: "
+                    << juce::SystemStats::getOperatingSystemName().toStdString()
+                    << " | CPU: " << juce::SystemStats::getCpuModel().toStdString()
+                    << " | RAM: " << juce::SystemStats::getMemorySizeInMegabytes()
+                    << " MB\n";
+    }
+  }
+  if (errorLogFile && errorLogFile->is_open())
+  {
+    auto now = std::chrono::system_clock::to_time_t(
+        std::chrono::system_clock::now());
+    std::tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &now);
+#else
+    localtime_r(&now, &tm_buf);
+#endif
+    *errorLogFile << std::put_time(&tm_buf, "%H:%M:%S") << " | " << message
+                  << "\n";
+    errorLogFile->flush();
+  }
+}
+
 bool Vocoder::isOnnxRuntimeAvailable()
 {
 #ifdef HAVE_ONNXRUNTIME
@@ -233,16 +274,23 @@ bool Vocoder::loadModel(const juce::File &modelPath)
   if (preferredModelPath.hasFileExtension("mlmodelc") ||
       preferredModelPath.isDirectory())
   {
-    coreMLBackend = std::make_unique<CoreMLVocoderBackend>();
-    std::string error;
-    if (!coreMLBackend->load(preferredModelPath, error))
+    if (!loadCoreMLWithFallback(preferredModelPath,
+                                CoreMLVocoderBackend::ComputeUnits::All))
     {
-      log(error);
-      coreMLBackend.reset();
-      usingCoreMLModel = false;
-      loaded = false;
+      logError("Vocoder: Core ML model could not be loaded on any compute "
+               "unit: " + preferredModelPath.getFullPathName().toStdString());
       return false;
     }
+
+    // 8 GB Macs (MacBook Neo, base Airs) share that memory with the GPU and
+    // the DAW; 1024-frame mixed-precision renders can fail there, so start smaller.
+    const int ramMB = juce::SystemStats::getMemorySizeInMegabytes();
+    coreMLPreferredChunkFrames =
+        (ramMB > 0 && ramMB <= 8192) ? kCoreMLFallbackChunkFrames
+                                     : kMaxChunkFrames;
+    log("Vocoder: Core ML chunk size " +
+        std::to_string(coreMLPreferredChunkFrames) + " frames (RAM " +
+        std::to_string(ramMB) + " MB)");
 
 #ifdef HAVE_ONNXRUNTIME
     onnxSession.reset();
@@ -497,97 +545,48 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 #if __APPLE__
   if (usingCoreMLModel && coreMLBackend)
   {
-    auto inferCoreMLWithChunkSize = [&](size_t maxChunkFrames) {
-      if (numFrames <= maxChunkFrames) {
-        auto result = inferCoreMLChunkLocked(mel, f0, numFrames);
-        if (result.empty())
-          log("Core ML single-chunk inference failed at " +
-              std::to_string(maxChunkFrames) + " frames");
-        return result;
+    using Units = CoreMLVocoderBackend::ComputeUnits;
+    auto renderWithChunkFallback = [&]() {
+      auto result = inferCoreMLAllChunksLocked(mel, f0, numFrames,
+                                               coreMLPreferredChunkFrames);
+      if (result.empty() && !isShuttingDown.load() &&
+          numFrames > kCoreMLFallbackChunkFrames &&
+          coreMLPreferredChunkFrames > kCoreMLFallbackChunkFrames)
+      {
+        logError("Core ML render failed at " +
+                 std::to_string(coreMLPreferredChunkFrames) +
+                 "-frame chunks; retrying at " +
+                 std::to_string(kCoreMLFallbackChunkFrames));
+        result = inferCoreMLAllChunksLocked(mel, f0, numFrames,
+                                            kCoreMLFallbackChunkFrames);
+        if (!result.empty())
+          coreMLPreferredChunkFrames = kCoreMLFallbackChunkFrames;
       }
-
-      const size_t step = maxChunkFrames - kOverlapFrames;
-      const size_t overlapSamples =
-          kOverlapFrames * static_cast<size_t>(hopSize);
-      const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
-      size_t numChunks = 0;
-      for (size_t off = 0; off < numFrames; off += step)
-        ++numChunks;
-
-      log("Core ML chunked inference: " + std::to_string(numFrames) +
-          " frames -> " + std::to_string(numChunks) + " chunks (max " +
-          std::to_string(maxChunkFrames) + ")");
-
-      std::vector<float> waveform(totalSamples, 0.0f);
-      size_t waveformWriteEnd = 0;
-      for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
-           ++chunkIdx, frameOff += step) {
-        if (isShuttingDown.load())
-          return std::vector<float>{};
-        const size_t chunkEnd =
-            std::min(frameOff + maxChunkFrames, numFrames);
-        const size_t chunkFrames = chunkEnd - frameOff;
-        std::vector<std::vector<float>> chunkMel(
-            mel.begin() + static_cast<ptrdiff_t>(frameOff),
-            mel.begin() + static_cast<ptrdiff_t>(chunkEnd));
-        std::vector<float> chunkF0(
-            f0.begin() + static_cast<ptrdiff_t>(frameOff),
-            f0.begin() + static_cast<ptrdiff_t>(chunkEnd));
-        auto chunkWav =
-            inferCoreMLChunkLocked(chunkMel, chunkF0, chunkFrames);
-        if (chunkWav.empty()) {
-          log("Core ML chunk " + std::to_string(chunkIdx) +
-              " inference failed at " + std::to_string(maxChunkFrames) +
-              " frames");
-          return std::vector<float>{};
-        }
-
-        const size_t dstOffset = frameOff * static_cast<size_t>(hopSize);
-        const size_t chunkSamples = chunkWav.size();
-        if (chunkIdx == 0) {
-          const size_t copyLen = std::min(chunkSamples, totalSamples);
-          std::copy_n(chunkWav.begin(), copyLen, waveform.begin());
-          waveformWriteEnd = copyLen;
-          continue;
-        }
-
-        const size_t prevTail =
-            waveformWriteEnd > dstOffset ? waveformWriteEnd - dstOffset : 0;
-        const size_t fadeSamples =
-            std::min({overlapSamples, prevTail, chunkSamples});
-        for (size_t i = 0; i < fadeSamples; ++i) {
-          const float t =
-              static_cast<float>(i) / static_cast<float>(fadeSamples);
-          waveform[dstOffset + i] =
-              waveform[dstOffset + i] * (1.0f - t) + chunkWav[i] * t;
-        }
-
-        const size_t dstTailStart = dstOffset + fadeSamples;
-        const size_t srcTailLen =
-            chunkSamples > fadeSamples ? chunkSamples - fadeSamples : 0;
-        const size_t safeTailLen =
-            std::min(srcTailLen, totalSamples - dstTailStart);
-        if (safeTailLen > 0)
-          std::copy_n(chunkWav.begin() + static_cast<ptrdiff_t>(fadeSamples),
-                      safeTailLen,
-                      waveform.begin() + static_cast<ptrdiff_t>(dstTailStart));
-        waveformWriteEnd = std::min(dstTailStart + safeTailLen, totalSamples);
-      }
-
-      waveform.resize(waveformWriteEnd);
-      for (auto &sample : waveform)
-        sample = std::clamp(sample, -1.0f, 1.0f);
-      return waveform;
+      return result;
     };
 
-    auto waveform = inferCoreMLWithChunkSize(kMaxChunkFrames);
-    if (waveform.empty() && numFrames > kCoreMLFallbackChunkFrames) {
-      log("Core ML retrying inference with " +
-          std::to_string(kCoreMLFallbackChunkFrames) + "-frame chunks");
-      waveform = inferCoreMLWithChunkSize(kCoreMLFallbackChunkFrames);
+    auto waveform = renderWithChunkFallback();
+
+    // GPU/ANE paths can fail outright or "succeed" with NaN/silent output
+    // (seen as silent AI resynthesis on low-end Apple silicon). Fall back to
+    // the CPU for the rest of the session rather than returning silence.
+    if (waveform.empty() && !isShuttingDown.load() && coreMLBackend &&
+        coreMLBackend->getComputeUnits() != Units::CPUOnly)
+    {
+      logError(std::string("Core ML render failed on ") +
+               CoreMLVocoderBackend::toString(coreMLBackend->getComputeUnits()) +
+               "; switching vocoder to CPUOnly for this session");
+      if (loadCoreMLWithFallback(coreMLModelFile, Units::CPUOnly))
+        waveform = renderWithChunkFallback();
     }
+
     if (waveform.empty())
+    {
+      if (!isShuttingDown.load())
+        logError("Core ML vocoder render failed (" + std::to_string(numFrames) +
+                 " frames); no audio produced");
       return {};
+    }
 
     if (verboseInferLog)
     {
@@ -940,6 +939,129 @@ Vocoder::inferChunkLocked(const std::vector<std::vector<float>> &mel,
 #endif
 
 #if __APPLE__
+bool Vocoder::loadCoreMLWithFallback(
+    const juce::File &bundle, CoreMLVocoderBackend::ComputeUnits firstUnits)
+{
+  using Units = CoreMLVocoderBackend::ComputeUnits;
+  std::vector<Units> chain{firstUnits};
+  if (firstUnits != Units::CPUOnly)
+    chain.push_back(Units::CPUOnly);
+
+  for (auto units : chain)
+  {
+    auto backend = std::make_unique<CoreMLVocoderBackend>();
+    std::string error;
+    if (backend->load(bundle, units, error))
+    {
+      coreMLBackend = std::move(backend);
+      usingCoreMLModel = true;
+      loaded = true;
+      if (units != firstUnits)
+        logError(std::string("Core ML vocoder loaded on fallback compute unit ") +
+                 CoreMLVocoderBackend::toString(units));
+      else
+        log(std::string("Core ML vocoder loaded on ") +
+            CoreMLVocoderBackend::toString(units));
+      return true;
+    }
+    logError(error);
+  }
+
+  coreMLBackend.reset();
+  usingCoreMLModel = false;
+  loaded = false;
+  return false;
+}
+
+std::vector<float>
+Vocoder::inferCoreMLAllChunksLocked(const std::vector<std::vector<float>> &mel,
+                                    const std::vector<float> &f0,
+                                    size_t numFrames, size_t maxChunkFrames)
+{
+  if (numFrames <= maxChunkFrames) {
+    auto result = inferCoreMLChunkLocked(mel, f0, numFrames);
+    if (result.empty())
+      log("Core ML single-chunk inference failed at " +
+          std::to_string(maxChunkFrames) + " frames");
+    return result;
+  }
+
+  const size_t step = maxChunkFrames - kOverlapFrames;
+  const size_t overlapSamples =
+      kOverlapFrames * static_cast<size_t>(hopSize);
+  const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
+  size_t numChunks = 0;
+  for (size_t off = 0; off < numFrames; off += step)
+    ++numChunks;
+
+  log("Core ML chunked inference: " + std::to_string(numFrames) +
+      " frames -> " + std::to_string(numChunks) + " chunks (max " +
+      std::to_string(maxChunkFrames) + ")");
+
+  std::vector<float> waveform(totalSamples, 0.0f);
+  size_t waveformWriteEnd = 0;
+  for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
+       ++chunkIdx, frameOff += step) {
+    if (isShuttingDown.load())
+      return std::vector<float>{};
+    const size_t chunkEnd =
+        std::min(frameOff + maxChunkFrames, numFrames);
+    const size_t chunkFrames = chunkEnd - frameOff;
+    std::vector<std::vector<float>> chunkMel(
+        mel.begin() + static_cast<ptrdiff_t>(frameOff),
+        mel.begin() + static_cast<ptrdiff_t>(chunkEnd));
+    std::vector<float> chunkF0(
+        f0.begin() + static_cast<ptrdiff_t>(frameOff),
+        f0.begin() + static_cast<ptrdiff_t>(chunkEnd));
+    auto chunkWav =
+        inferCoreMLChunkLocked(chunkMel, chunkF0, chunkFrames);
+    if (chunkWav.empty()) {
+      log("Core ML chunk " + std::to_string(chunkIdx) +
+          " inference failed at " + std::to_string(maxChunkFrames) +
+          " frames");
+      return std::vector<float>{};
+    }
+
+    const size_t dstOffset = frameOff * static_cast<size_t>(hopSize);
+    const size_t chunkSamples = chunkWav.size();
+    if (chunkIdx == 0) {
+      const size_t copyLen = std::min(chunkSamples, totalSamples);
+      std::copy_n(chunkWav.begin(), copyLen, waveform.begin());
+      waveformWriteEnd = copyLen;
+      continue;
+    }
+
+    const size_t prevTail =
+        waveformWriteEnd > dstOffset ? waveformWriteEnd - dstOffset : 0;
+    const size_t fadeSamples =
+        std::min({overlapSamples, prevTail, chunkSamples});
+    for (size_t i = 0; i < fadeSamples; ++i) {
+      const float t =
+          static_cast<float>(i) / static_cast<float>(fadeSamples);
+      waveform[dstOffset + i] =
+          waveform[dstOffset + i] * (1.0f - t) + chunkWav[i] * t;
+    }
+
+    const size_t dstTailStart = dstOffset + fadeSamples;
+    const size_t srcTailLen =
+        chunkSamples > fadeSamples ? chunkSamples - fadeSamples : 0;
+    const size_t safeTailLen =
+        std::min(srcTailLen, totalSamples - dstTailStart);
+    if (safeTailLen > 0)
+      std::copy_n(chunkWav.begin() + static_cast<ptrdiff_t>(fadeSamples),
+                  safeTailLen,
+                  waveform.begin() + static_cast<ptrdiff_t>(dstTailStart));
+    waveformWriteEnd = std::min(dstTailStart + safeTailLen, totalSamples);
+  }
+
+  waveform.resize(waveformWriteEnd);
+  for (auto &sample : waveform)
+    sample = std::clamp(sample, -1.0f, 1.0f);
+  return waveform;
+}
+#endif
+
+#if __APPLE__
 std::vector<float>
 Vocoder::inferCoreMLChunkLocked(const std::vector<std::vector<float>> &mel,
                                 const std::vector<float> &f0,
@@ -983,7 +1105,7 @@ Vocoder::inferCoreMLChunkLocked(const std::vector<std::vector<float>> &mel,
   auto waveform = coreMLBackend->infer(melInput, f0Input, inputFrames, numMels,
                                        hopSize, error);
   if (waveform.empty() && !error.empty())
-    log(error);
+    logError(error);
   const size_t requestedSamples = numFrames * static_cast<size_t>(hopSize);
   if (waveform.size() > requestedSamples)
     waveform.resize(requestedSamples);

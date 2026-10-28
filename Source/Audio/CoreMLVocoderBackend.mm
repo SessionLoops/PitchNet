@@ -5,6 +5,7 @@
 #import <CoreML/CoreML.h>
 #import <Foundation/Foundation.h>
 #include <algorithm>
+#include <cmath>
 
 struct CoreMLVocoderBackend::Impl
 {
@@ -24,7 +25,22 @@ CoreMLVocoderBackend::CoreMLVocoderBackend() : impl(std::make_unique<Impl>())
 
 CoreMLVocoderBackend::~CoreMLVocoderBackend() = default;
 
-bool CoreMLVocoderBackend::load(const juce::File &modelPath, std::string &error)
+const char *CoreMLVocoderBackend::toString(ComputeUnits units)
+{
+  switch (units)
+  {
+  case ComputeUnits::All:
+    return "All";
+  case ComputeUnits::CPUAndGPU:
+    return "CPUAndGPU";
+  case ComputeUnits::CPUOnly:
+    return "CPUOnly";
+  }
+  return "Unknown";
+}
+
+bool CoreMLVocoderBackend::load(const juce::File &modelPath,
+                                ComputeUnits units, std::string &error)
 {
   @autoreleasepool
   {
@@ -41,7 +57,18 @@ bool CoreMLVocoderBackend::load(const juce::File &modelPath, std::string &error)
     NSURL *url = [NSURL fileURLWithPath:path isDirectory:YES];
 
     MLModelConfiguration *config = [[MLModelConfiguration alloc] init];
-    config.computeUnits = MLComputeUnitsAll;
+    switch (units)
+    {
+    case ComputeUnits::All:
+      config.computeUnits = MLComputeUnitsAll;
+      break;
+    case ComputeUnits::CPUAndGPU:
+      config.computeUnits = MLComputeUnitsCPUAndGPU;
+      break;
+    case ComputeUnits::CPUOnly:
+      config.computeUnits = MLComputeUnitsCPUOnly;
+      break;
+    }
 
     NSError *nsError = nil;
     MLModel *loadedModel = [MLModel modelWithContentsOfURL:url
@@ -50,10 +77,11 @@ bool CoreMLVocoderBackend::load(const juce::File &modelPath, std::string &error)
     if (!loadedModel)
     {
       NSString *message = nsError.localizedDescription ?: @"unknown error";
-      error = "Failed to load Core ML model: " +
-              std::string(message.UTF8String ?: "unknown error");
+      error = "Failed to load Core ML model (" + std::string(toString(units)) +
+              "): " + std::string(message.UTF8String ?: "unknown error");
       return false;
     }
+    computeUnits = units;
 
 #if __has_feature(objc_arc)
     impl->model = loadedModel;
@@ -148,10 +176,64 @@ CoreMLVocoderBackend::infer(const std::vector<float> &mel,
     }
 
     const size_t outputSize = static_cast<size_t>(audioArray.count);
-    const float *audioData = static_cast<const float *>(audioArray.dataPointer);
+    if (outputSize == 0)
+    {
+      error = "Core ML inference returned an empty audio buffer";
+      return {};
+    }
+
+    // The shipped model casts its output to Float32, but guard against a
+    // bundle whose output is Float16: reading that as float is garbage.
     std::vector<float> waveform(outputSize);
-    for (size_t i = 0; i < outputSize; ++i)
-      waveform[i] = std::clamp(audioData[i], -1.0f, 1.0f);
+    if (audioArray.dataType == MLMultiArrayDataTypeFloat32)
+    {
+      const float *audioData =
+          static_cast<const float *>(audioArray.dataPointer);
+      std::copy_n(audioData, outputSize, waveform.begin());
+    }
+    else
+    {
+      for (size_t i = 0; i < outputSize; ++i)
+        waveform[i] = [audioArray[static_cast<NSInteger>(i)] floatValue];
+    }
+
+    // Validate before clamping: std::clamp passes NaN straight through, and
+    // NaN/Inf from an overflow in the model's FP16 conv/resblock body reaches
+    // the mixer as silence.
+    size_t nonFinite = 0;
+    float peak = 0.0f;
+    for (float &sample : waveform)
+    {
+      if (!std::isfinite(sample))
+      {
+        ++nonFinite;
+        sample = 0.0f;
+        continue;
+      }
+      peak = std::max(peak, std::abs(sample));
+      sample = std::clamp(sample, -1.0f, 1.0f);
+    }
+    if (nonFinite > 0)
+    {
+      error = "Core ML inference produced " + std::to_string(nonFinite) +
+              " non-finite samples (" + std::string(toString(computeUnits)) +
+              ")";
+      return {};
+    }
+
+    bool hasVoicedInput = false;
+    for (float hz : f0)
+      if (hz > 0.0f)
+      {
+        hasVoicedInput = true;
+        break;
+      }
+    if (hasVoicedInput && peak < 1.0e-6f)
+    {
+      error = "Core ML inference produced silent output for voiced input (" +
+              std::string(toString(computeUnits)) + ")";
+      return {};
+    }
 
     const size_t expectedSize = numFrames * static_cast<size_t>(hopSize);
     if (expectedSize > 0 && waveform.size() > expectedSize)
@@ -173,7 +255,13 @@ CoreMLVocoderBackend::CoreMLVocoderBackend() : impl(std::make_unique<Impl>())
 
 CoreMLVocoderBackend::~CoreMLVocoderBackend() = default;
 
-bool CoreMLVocoderBackend::load(const juce::File &, std::string &error)
+const char *CoreMLVocoderBackend::toString(ComputeUnits)
+{
+  return "Unavailable";
+}
+
+bool CoreMLVocoderBackend::load(const juce::File &, ComputeUnits,
+                                std::string &error)
 {
   error = "Core ML is only available on Apple platforms";
   return false;
