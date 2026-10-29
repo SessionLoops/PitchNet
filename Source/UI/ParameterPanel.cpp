@@ -31,6 +31,7 @@ constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
 constexpr int kLanguageRowHeight = 26;          // language selector row
+constexpr int kMidiButtonHeight = 28;           // drag-to-DAW button, below the cards
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
@@ -50,10 +51,12 @@ constexpr int kLanguageCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
 
 // Five cards are always present - Rendering, Language, Time, Pitch and UI
-// Brightness - so four gaps sit between them.
+// Brightness - so four gaps sit between them. The MIDI drag button follows
+// the last card, after one more gap.
 constexpr int kPreferredPanelHeight =
     kCardPadY * 2 + kCardGap * 4 + kSynthesisCardHeight + kLanguageCardHeight +
-    kTimeCardHeight + kPitchCardHeight + kBrightnessCardHeight;
+    kTimeCardHeight + kPitchCardHeight + kBrightnessCardHeight +
+    kCardGap + kMidiButtonHeight;
 
 // "System default" sits above the real languages in the picker.
 constexpr int kLanguageMenuAutoId = 7601;
@@ -254,6 +257,18 @@ ParameterPanel::ParameterPanel()
     brightnessSectionLabel.setColour(juce::Label::textColourId,
                                      juce::Colour(0xFF9B9B9Bu));
     brightnessSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+
+    // MIDI button: drag the notes straight into the DAW, or click to save.
+    addAndMakeVisible(midiDragButton);
+    midiDragButton.onCreateDragFile = [this]
+    {
+        return onCreateMidiDragFile ? onCreateMidiDragFile() : juce::File{};
+    };
+    midiDragButton.onClick = [this]
+    {
+        if (onExportMidiClicked)
+            onExportMidiClicked();
+    };
 
     // Language card: always present, directly below Rendering.
     addAndMakeVisible(languageSectionLabel);
@@ -651,6 +666,14 @@ void ParameterPanel::resized()
         cardArea.getX(), brightnessCardStart, cardArea.getWidth(),
         brightnessCardBottom - brightnessCardStart);
 
+    // =========================================================================
+    // MIDI DRAG BUTTON (last, no card)
+    // =========================================================================
+    const int midiButtonTop = brightnessCardBottom + cardGap;
+    midiDragButton.setBounds(cardArea.getX(), midiButtonTop,
+                             cardArea.getWidth(), kMidiButtonHeight);
+    const int midiButtonBottom = midiButtonTop + kMidiButtonHeight;
+
     // The stack is laid out at fixed sizes, so given at least the height it
     // asks for its bottom edge must land exactly where getPreferredHeight()
     // says it will - that value is what the hosting panel scrolls against. A
@@ -658,7 +681,7 @@ void ParameterPanel::resized()
     // out, which is the very case the scrolling exists to avoid.
     const int preferredHeight = getPreferredHeight();
     jassert(outerBounds.getHeight() < preferredHeight ||
-            brightnessCardBottom + cardPadY - outerBounds.getY() ==
+            midiButtonBottom + cardPadY - outerBounds.getY() ==
                 preferredHeight);
     juce::ignoreUnused(preferredHeight);
 }
@@ -806,6 +829,8 @@ void ParameterPanel::refreshLocalisedText()
     synthesisSectionLabel.setText(TR("panel.rendering"), juce::dontSendNotification);
     brightnessSectionLabel.setText(TR("panel.ui_brightness"),
                                    juce::dontSendNotification);
+    midiDragButton.setButtonText(TR("param.midi_drag"));
+    midiDragButton.setTooltip(TR("tooltip.midi_drag"));
 
     chromaticToggle.setButtonText(TR("param.chromatic"));
     scaleToggle.setButtonText(TR("param.scale"));

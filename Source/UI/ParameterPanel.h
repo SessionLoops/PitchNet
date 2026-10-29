@@ -10,6 +10,7 @@
 #include "IMainView.h"
 #include "StyledComponents.h"
 #include "Sliders.h"
+#include "Components/MidiDragButton.h"
 #include "Workspace/PanelContent.h"
 #include <optional>
 #include <vector>
@@ -78,6 +79,11 @@ public:
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
 
+    // MIDI card. Dragging the button asks the owner for a freshly written
+    // .mid file and hands it to the OS as a file drag; a click saves instead.
+    std::function<juce::File()> onCreateMidiDragFile;
+    std::function<void()> onExportMidiClicked;
+
 private:
     void setupTextButton(juce::TextButton& button);
     void showLanguageMenu();
@@ -120,6 +126,7 @@ private:
     juce::Rectangle<int> languageCardBounds;
     juce::Label brightnessSectionLabel;
     juce::Rectangle<int> brightnessCardBounds;
+    MidiDragButton midiDragButton;
 
     // Interface language. "auto" follows the system language; anything else is
     // an explicit choice. The selector is a button that opens a ticked

@@ -859,6 +859,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     settingsManager->setUiBrightnessPercent(brightnessPercent);
     applyUiBrightness(brightnessPercent);
   };
+  parameterPanel.onCreateMidiDragFile = [this]() { return createMidiDragFile(); };
+  parameterPanel.onExportMidiClicked = [this]() { exportMidiFile(); };
   parameterPanel.onLanguageChanged = [this](const juce::String &languageCode)
   {
     // The panel has already switched the language; this only records it.
@@ -2480,6 +2482,46 @@ void MainComponent::exportMidiFile()
               StyledMessageBox::WarningIcon);
         } });
 #endif
+}
+
+juce::File MainComponent::createMidiDragFile()
+{
+  auto *project = getProject();
+  if (project == nullptr || project->getNotes().empty())
+    return {};
+
+  // Name the clip after the source so it reads sensibly in the DAW.
+  juce::String baseName = project->getFilePath().getFileNameWithoutExtension();
+  if (baseName.isEmpty())
+    baseName = project->getProjectFilePath().getFileNameWithoutExtension();
+  if (baseName.isEmpty())
+    baseName = project->getName();
+  baseName = juce::File::createLegalFileName(baseName.trim());
+  if (baseName.isEmpty())
+    baseName = "PitchNet";
+
+  // A fixed temp folder: each drag overwrites the previous file, so nothing
+  // piles up. The DAW imports (copies) the MIDI on drop.
+  auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                 .getChildFile("PitchNet MIDI");
+  if (!dir.createDirectory())
+    return {};
+
+  auto file = dir.getChildFile(baseName + ".mid");
+
+  MidiExporter::ExportOptions options;
+  options.tempo = static_cast<float>(project->getTimelineTempoBpm());
+  options.ticksPerQuarterNote = 480;
+  options.velocity = 100;
+  options.quantizePitch = true; // Round to nearest semitone
+
+  if (!MidiExporter::exportToFile(project->getNotes(), file, options))
+  {
+    AppLogger::log("MIDI drag export failed: " + file.getFullPathName());
+    return {};
+  }
+
+  return file;
 }
 
 void MainComponent::play()

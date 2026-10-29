@@ -286,6 +286,9 @@ private:
   void openFile();
   void exportFile();
   void exportMidiFile();
+  // Writes the notes to a temp .mid for drag-and-drop into a DAW. Returns an
+  // empty File when there is nothing to export or the write fails.
+  juce::File createMidiDragFile();
   void play();
   void pause();
   void stop();
