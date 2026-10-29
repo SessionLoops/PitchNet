@@ -8,6 +8,8 @@
 #include "HostCompatibility.h"
 #include "NonAraCaptureController.h"
 #include <atomic>
+#include <functional>
+#include <optional>
 #include <map>
 #include <set>
 #include <limits>
@@ -49,6 +51,10 @@ public:
   void processBlock(juce::AudioBuffer<float> &, juce::MidiBuffer &) override;
   void processBlockBypassed(juce::AudioBuffer<float> &,
                             juce::MidiBuffer &) override;
+  // Hosts that render a non-ARA take offline (Ableton Live freeze / bounce in
+  // place) switch back to realtime when the render ends, often without ever
+  // sending a transport-stopped block. Finish the take at that point.
+  void setNonRealtime(bool isNonRealtime) noexcept override;
 
 #if !JucePlugin_PreferredChannelConfigurations
   bool isBusesLayoutSupported(const BusesLayout &layouts) const override;
@@ -102,7 +108,8 @@ public:
   void updateProjectStateFromEditor(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
-                                    double timelineOffsetSeconds);
+                                    double timelineOffsetSeconds,
+                                    std::uint64_t pendingTakeId = 0);
   /** Same archive written straight into a caller-owned stream, so the
       plug-in state path emits it once instead of staging a second full copy. */
   bool serializePersistentProjectState(juce::OutputStream &out,
@@ -310,6 +317,59 @@ private:
   /** Not the audio thread: finish an in-progress take because the host
    *  deactivated the plug-in instead of sending a transport-stopped block. */
   void finalizeCaptureForHostStop();
+  /** Audio thread: hand a take claimed by finalizeCapture() to the message
+   *  thread for analysis. Works with the editor closed - the analysis path is
+   *  headless-safe, and dropping a claimed take here loses it for good. */
+  void dispatchFinalizedCapture(
+      const NonAraCaptureController::FinalizeResult &result);
+
+  // ---- Captured-but-not-yet-analyzed take (issue #19) ----------------------
+  // Ableton destroys and re-creates the plug-in instance as part of a freeze,
+  // right after the offline render, before analysis can even start. The only
+  // thing that survives is getStateInformation(). So from the moment a take is
+  // finished until its analysis completes, the raw audio is kept here and
+  // written into the plug-in state; a restored instance resumes the analysis.
+  struct PendingCaptureTake {
+    std::shared_ptr<const juce::AudioBuffer<float>> audio;
+    double sampleRate = 0.0;
+    double timelineOffsetSeconds = 0.0;
+    std::uint64_t id = 0;
+    bool analysisStarted = false;
+  };
+  juce::CriticalSection pendingCaptureTakeLock;
+  std::optional<PendingCaptureTake> pendingCaptureTake; // guarded by the lock
+  std::uint64_t nextPendingCaptureTakeId = 1;           // guarded by the lock
+
+  // A take claimed on the audio thread, waiting to be copied out (no
+  // allocation on the audio thread).
+  std::atomic<bool> captureTakeAwaitingAdoption{false};
+  std::atomic<int> finalizedTakeSamples{0};
+  std::atomic<double> finalizedTakeSampleRate{0.0};
+  std::atomic<double> finalizedTakeOffsetSeconds{0.0};
+  std::atomic<bool> finalizeCaptureOnMessageThread{false};
+
+  // Owned AsyncUpdater instead of MessageManager::callAsync([this]...): it is
+  // cancelled when the processor dies, so a host that destroys the instance
+  // right after the take (Ableton freeze) can no longer run a callback on a
+  // dead processor.
+  struct CaptureTakeLauncher : juce::AsyncUpdater {
+    std::function<void()> callback;
+    void handleAsyncUpdate() override {
+      if (callback)
+        callback();
+    }
+  };
+  CaptureTakeLauncher captureTakeLauncher;
+
+  /** Any thread but the audio thread. Keep the take and schedule analysis. */
+  void storePendingCaptureTake(juce::AudioBuffer<float> audio,
+                               double sampleRate,
+                               double timelineOffsetSeconds);
+  /** Any thread but the audio thread. Copy out a take the audio thread
+   *  claimed, before prepareToPlay() can discard the capture buffer. */
+  void adoptFinalizedCaptureTake();
+  /** Message thread. */
+  void handleCaptureTakeLauncher();
 
   /** Render the non-ARA edit preview into the buffer. Returns true if preview
    *  is active (and produced output or intentional silence), false to let the
@@ -474,6 +534,11 @@ private:
   // Non-ARA capture (Stage 2A): decoupled controller
   std::shared_ptr<NonAraCaptureController> captureController =
       std::make_shared<NonAraCaptureController>();
+  // Audio-thread-only change detectors for CAPTURE_DIAG (issue #19).
+  int captureDiagLastSignature = -1;
+  int captureDiagLastSecondsBucket = -1;
+  bool captureDiagLastHadPosition = true;
+  bool captureDiagLastBypassed = false;
   NonAraCaptureController::State lastCaptureUiState =
       NonAraCaptureController::State::Idle;
   struct LiveCaptureUiState {

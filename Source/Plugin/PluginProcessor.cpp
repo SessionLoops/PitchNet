@@ -4,6 +4,7 @@
 #include "../Undo/PitchUndoManager.h"
 #include "../Models/ProjectModificationRanges.h"
 #include "../Models/ProjectSerializer.h"
+#include "../Models/ProjectTimelineOffset.h"
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
 #include "../UI/Main/SettingsManager.h"
@@ -13,6 +14,7 @@
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "ARADocumentController.h"
 #include "AraDiagnostics.h"
+#include "CaptureDiagnostics.h"
 #include "PitchNetAudioModification.h"
 #include "PluginEditor.h"
 #include <cmath>
@@ -92,6 +94,11 @@ void stampRegionSpanInModificationTime(Project &project,
 namespace {
 constexpr std::uint32_t kPluginStateMagic = 0x504E5053u; // PNPS
 constexpr int kPluginStateBinaryVersion = 1;
+// Optional trailer after the project archive: a captured take whose analysis
+// had not finished when the host asked for state. Readers that predate it stop
+// after the archive and ignore it, so the envelope version is unchanged.
+constexpr std::uint32_t kPendingCaptureTakeMagic = 0x504E544Bu; // PNTK
+constexpr int kPendingCaptureTakeVersion = 1;
 
 bool writeStateString(juce::OutputStream &out, const juce::String &text) {
   const auto bytes = text.getNumBytesAsUTF8();
@@ -270,6 +277,10 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
   araAnalysisController = makeAnalysisController();
   undoManager = std::make_unique<PitchUndoManager>(100);
+  captureTakeLauncher.callback = [this] { handleCaptureTakeLauncher(); };
+  CAPTURE_DIAG("processor created this=" + CAPTURE_DIAG_ID(this) + " host=" +
+               juce::PluginHostType().getHostDescription() + " wrapper=" +
+               juce::AudioProcessor::getWrapperTypeDescription(wrapperType));
 }
 
 // Destructor is defined at the bottom of this file, after ARADocumentController.h
@@ -320,9 +331,18 @@ PitchNetAudioProcessor::getARAClientExtensions() {
 
 void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock) {
+  CAPTURE_DIAG("prepareToPlay this=" + CAPTURE_DIAG_ID(this) +
+               " sr=" + juce::String(sampleRate) +
+               " block=" + juce::String(samplesPerBlock) +
+               " nonRealtime=" + juce::String((int)isNonRealtime()) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()) +
+               " editor=" + juce::String((int)(mainComponent != nullptr)));
   // Re-activation in the middle of a take means the host stopped. Finish the
   // take at the rate it was recorded at instead of letting prepare() below
   // discard it and silently re-arm.
+  adoptFinalizedCaptureTake();
   finalizeCaptureForHostStop();
 
   hostSampleRate = sampleRate;
@@ -384,8 +404,13 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
 }
 
 void PitchNetAudioProcessor::releaseResources() {
+  CAPTURE_DIAG("releaseResources this=" + CAPTURE_DIAG_ID(this) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()));
   // Adobe Audition deactivates the plug-in when the transport stops and never
   // delivers a stopped block, so the take must be finished here.
+  adoptFinalizedCaptureTake();
   finalizeCaptureForHostStop();
 #if JucePlugin_Enable_ARA
   releaseResourcesForARA();
@@ -559,6 +584,12 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
   // Check bypass — if bypassed, pass through input unchanged
   const bool bypassed = bypassParamValue->load() >= 0.5f;
+#if PITCHNET_CAPTURE_DIAGNOSTICS
+  if (bypassed != captureDiagLastBypassed)
+    CAPTURE_DIAG(juce::String("bypass param ") + (bypassed ? "ON" : "OFF") +
+                 " state=" + captureDiagStateName(captureController->getState()));
+  captureDiagLastBypassed = bypassed;
+#endif
   if (bypassed) {
     // Transport sync still needs to run even when bypassed
     transportController.processBlock(getPlayHead(), hostSampleRate);
@@ -601,11 +632,30 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   if (auto *playHead = getPlayHead()) {
     if (auto info = playHead->getPosition())
       posInfo = *info;
-    else
+    else {
+#if PITCHNET_CAPTURE_DIAGNOSTICS
+      if (captureDiagLastHadPosition)
+        CAPTURE_DIAG("processBlock: playhead returned no position - block "
+                     "skipped, state=" +
+                     juce::String(captureDiagStateName(
+                         captureController->getState())));
+      captureDiagLastHadPosition = false;
+#endif
       return; // Unknown transport is not evidence that recording stopped.
+    }
   } else {
+#if PITCHNET_CAPTURE_DIAGNOSTICS
+    if (captureDiagLastHadPosition)
+      CAPTURE_DIAG("processBlock: no playhead - block skipped");
+    captureDiagLastHadPosition = false;
+#endif
     return;
   }
+#if PITCHNET_CAPTURE_DIAGNOSTICS
+  if (!captureDiagLastHadPosition)
+    CAPTURE_DIAG("processBlock: playhead position available again");
+  captureDiagLastHadPosition = true;
+#endif
 
   processNonARAMode(buffer, posInfo,
                     isRealtime() == juce::AudioProcessor::Realtime::yes);
@@ -614,6 +664,13 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 void PitchNetAudioProcessor::processBlockBypassed(
     juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
+#if PITCHNET_CAPTURE_DIAGNOSTICS
+  if (!captureDiagLastBypassed)
+    CAPTURE_DIAG("processBlockBypassed (host bypass) state=" +
+                 juce::String(captureDiagStateName(
+                     captureController->getState())));
+  captureDiagLastBypassed = true;
+#endif
 
   // Transport sync still runs when bypassed so cursor stays in sync
   transportController.processBlock(getPlayHead(), hostSampleRate);
@@ -634,6 +691,42 @@ void PitchNetAudioProcessor::processNonARAMode(
   bool hasProject =
       (mainComponent && mainComponent->hasAnalyzedProject()) ||
       (araAnalysisReady && araAnalysisProjectSnapshot != nullptr);
+
+#if PITCHNET_CAPTURE_DIAGNOSTICS
+  {
+    const auto diagState = captureController->getState();
+    const int signature = (hostIsPlaying ? 1 : 0) | (isRealtime ? 2 : 0) |
+                          (hasProject ? 4 : 0) |
+                          (mainComponent ? 8 : 0) |
+                          (static_cast<int>(diagState) << 4);
+    if (signature != captureDiagLastSignature) {
+      captureDiagLastSignature = signature;
+      const auto pos = posInfo.getTimeInSamples();
+      CAPTURE_DIAG("block: playing=" + juce::String((int)hostIsPlaying) +
+                   " realtime=" + juce::String((int)isRealtime) +
+                   " state=" + captureDiagStateName(diagState) +
+                   " armed=" + juce::String((int)isCaptureArmed()) +
+                   " hasProject=" + juce::String((int)hasProject) +
+                   " editor=" + juce::String((int)(mainComponent != nullptr)) +
+                   " pos=" + (pos ? juce::String(*pos) : juce::String("none")) +
+                   " n=" + juce::String(numSamples) +
+                   " captured=" +
+                   juce::String(captureController->getCapturedSampleCount()));
+    }
+    if (diagState == NonAraCaptureController::State::Capturing &&
+        hostSampleRate > 0.0) {
+      const int bucket = static_cast<int>(
+          captureController->getCapturedSampleCount() / hostSampleRate / 10.0);
+      if (bucket != captureDiagLastSecondsBucket) {
+        captureDiagLastSecondsBucket = bucket;
+        CAPTURE_DIAG("capturing: " + juce::String(bucket * 10) +
+                     "s captured, realtime=" + juce::String((int)isRealtime));
+      }
+    } else {
+      captureDiagLastSecondsBucket = -1;
+    }
+  }
+#endif
 
   // Update UI cursor position from host playback position (only when we have
   // analyzed audio)
@@ -685,21 +778,8 @@ void PitchNetAudioProcessor::processNonARAMode(
 
     if (captureController->shouldFinalize()) {
       NonAraCaptureController::FinalizeResult result;
-      if (captureController->finalizeCapture(hostSampleRate, result) &&
-          mainComponent) {
-        auto controller = captureController;
-        juce::MessageManager::callAsync([this, controller,
-                                         samples = result.numSamples,
-                                         sr = result.sampleRate,
-                                         timelineOffset =
-                                             captureTimelineOffsetSeconds]() mutable {
-          if (!controller)
-            return;
-          auto trimmed = controller->copyCapturedAudio(samples);
-          controller->onAnalysisDispatched();
-          requestCapturedAudioAnalysis(trimmed, sr, timelineOffset);
-        });
-      }
+      if (captureController->finalizeCapture(hostSampleRate, result))
+        dispatchFinalizedCapture(result);
     }
 
     if (captureWasRunning)
@@ -789,21 +869,8 @@ void PitchNetAudioProcessor::processNonARAMode(
 
   if (captureController->shouldFinalize()) {
     NonAraCaptureController::FinalizeResult result;
-    if (captureController->finalizeCapture(hostSampleRate, result) &&
-        mainComponent) {
-      auto controller = captureController;
-      juce::MessageManager::callAsync([this, controller,
-                                       samples = result.numSamples,
-                                       sr = result.sampleRate,
-                                       timelineOffset =
-                                           captureTimelineOffsetSeconds]() mutable {
-        if (!controller)
-          return;
-        auto trimmed = controller->copyCapturedAudio(samples);
-        controller->onAnalysisDispatched();
-        requestCapturedAudioAnalysis(trimmed, sr, timelineOffset);
-      });
-    }
+    if (captureController->finalizeCapture(hostSampleRate, result))
+      dispatchFinalizedCapture(result);
     disarmCaptureUi();
   }
 
@@ -829,10 +896,15 @@ void PitchNetAudioProcessor::startCapture() {
   state->timelineOffsetSeconds.store(0.0);
   captureTimelineOffsetSeconds = 0.0;
   captureController->resetToWaiting();
+  CAPTURE_DIAG("startCapture (armed) this=" + CAPTURE_DIAG_ID(this));
   handleAsyncUpdate();
 }
 
 void PitchNetAudioProcessor::stopCapture() {
+  CAPTURE_DIAG("stopCapture (disarmed by user) state=" +
+               juce::String(captureDiagStateName(captureController->getState())) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()));
   captureController->stop();
   handleAsyncUpdate();
 }
@@ -1058,22 +1130,120 @@ void PitchNetAudioProcessor::disarmCaptureUi() {
   });
 }
 
+void PitchNetAudioProcessor::dispatchFinalizedCapture(
+    const NonAraCaptureController::FinalizeResult &result) {
+  CAPTURE_DIAG("take finalized in processBlock: samples=" +
+               juce::String(result.numSamples) +
+               " sr=" + juce::String(result.sampleRate) +
+               " editor=" + juce::String((int)(mainComponent != nullptr)));
+  // finalizeCapture() has already claimed the take (state Complete, analysis
+  // pending). This used to be skipped when no editor was attached, which
+  // dropped the take and left the controller stuck. Ableton closes plug-in
+  // windows on frozen tracks, so a freeze-captured take hit exactly that.
+  finalizedTakeSamples.store(result.numSamples);
+  finalizedTakeSampleRate.store(result.sampleRate);
+  finalizedTakeOffsetSeconds.store(captureTimelineOffsetSeconds);
+  captureTakeAwaitingAdoption.store(true);
+  captureTakeLauncher.triggerAsyncUpdate();
+}
+
+void PitchNetAudioProcessor::adoptFinalizedCaptureTake() {
+  if (!captureTakeAwaitingAdoption.exchange(false))
+    return;
+  if (!captureController->isAnalysisPending())
+    return;
+  auto audio = captureController->copyCapturedAudio(finalizedTakeSamples.load());
+  captureController->onAnalysisDispatched();
+  storePendingCaptureTake(std::move(audio), finalizedTakeSampleRate.load(),
+                          finalizedTakeOffsetSeconds.load());
+}
+
+void PitchNetAudioProcessor::storePendingCaptureTake(
+    juce::AudioBuffer<float> audio, double sampleRate,
+    double timelineOffsetSeconds) {
+  if (audio.getNumSamples() <= 0 || sampleRate <= 0.0)
+    return;
+  std::uint64_t id = 0;
+  {
+    const juce::ScopedLock lock(pendingCaptureTakeLock);
+    PendingCaptureTake take;
+    take.audio =
+        std::make_shared<const juce::AudioBuffer<float>>(std::move(audio));
+    take.sampleRate = sampleRate;
+    take.timelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
+    take.id = id = nextPendingCaptureTakeId++;
+    pendingCaptureTake = std::move(take);
+  }
+  // The state blob must change now that it carries the take.
+  cachedPluginStateKey = 0;
+  CAPTURE_DIAG("pending take stored id=" + juce::String((juce::int64)id) +
+               " sr=" + juce::String(sampleRate) +
+               " offset=" + juce::String(timelineOffsetSeconds, 3));
+  captureTakeLauncher.triggerAsyncUpdate();
+}
+
+void PitchNetAudioProcessor::handleCaptureTakeLauncher() {
+  if (finalizeCaptureOnMessageThread.exchange(false))
+    finalizeCaptureForHostStop();
+  adoptFinalizedCaptureTake();
+
+  std::shared_ptr<const juce::AudioBuffer<float>> audio;
+  double sampleRate = 0.0, offset = 0.0;
+  std::uint64_t id = 0;
+  {
+    const juce::ScopedLock lock(pendingCaptureTakeLock);
+    if (!pendingCaptureTake || pendingCaptureTake->analysisStarted)
+      return;
+    pendingCaptureTake->analysisStarted = true;
+    audio = pendingCaptureTake->audio;
+    sampleRate = pendingCaptureTake->sampleRate;
+    offset = pendingCaptureTake->timelineOffsetSeconds;
+    id = pendingCaptureTake->id;
+  }
+  requestCapturedAudioAnalysis(*audio, sampleRate, offset, id);
+}
+
+void PitchNetAudioProcessor::setNonRealtime(bool nonRealtime) noexcept {
+  const bool wasNonRealtime = isNonRealtime();
+  juce::AudioProcessor::setNonRealtime(nonRealtime);
+  if (wasNonRealtime == nonRealtime)
+    return; // some wrappers (VST3) call this on every block
+
+  CAPTURE_DIAG(juce::String("setNonRealtime ") +
+               (nonRealtime ? "true (offline render begins)"
+                            : "false (offline render ended)") +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()));
+
+  // An offline render (Ableton freeze / bounce in place) that captured a take
+  // has ended. Finish it on the message thread; finalizeCapture() is safe to
+  // race against a transport-stopped block, exactly one caller wins.
+  if (wasNonRealtime && !nonRealtime &&
+      captureController->getState() ==
+          NonAraCaptureController::State::Capturing) {
+    finalizeCaptureOnMessageThread.store(true);
+    captureTakeLauncher.triggerAsyncUpdate();
+  }
+}
+
 void PitchNetAudioProcessor::finalizeCaptureForHostStop() {
   if (captureController->getState() !=
       NonAraCaptureController::State::Capturing)
     return;
 
+  CAPTURE_DIAG("finalizeCaptureForHostStop: captured=" +
+               juce::String(captureController->getCapturedSampleCount()) +
+               " editor=" + juce::String((int)(mainComponent != nullptr)));
   NonAraCaptureController::FinalizeResult result;
   if (captureController->finalizeCapture(hostSampleRate, result)) {
-    // Copy now: prepareToPlay() may resize the capture buffer right after us.
-    auto trimmed = std::make_shared<juce::AudioBuffer<float>>(
-        captureController->copyCapturedAudio(result.numSamples));
+    // Copy now: prepareToPlay() may resize the capture buffer right after us,
+    // and the host may ask for state (then destroy us) before any async
+    // callback runs - Ableton does exactly that when freezing.
+    auto trimmed = captureController->copyCapturedAudio(result.numSamples);
     captureController->onAnalysisDispatched();
-    juce::MessageManager::callAsync(
-        [this, trimmed, sr = result.sampleRate,
-         offset = liveCaptureUiState->timelineOffsetSeconds.load()]() {
-          requestCapturedAudioAnalysis(*trimmed, sr, offset);
-        });
+    storePendingCaptureTake(std::move(trimmed), result.sampleRate,
+                            liveCaptureUiState->timelineOffsetSeconds.load());
   }
   disarmCaptureUi();
 }
@@ -1117,7 +1287,12 @@ void PitchNetAudioProcessor::dispatchLiveCaptureUpdate() {
 }
 void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
     const juce::AudioBuffer<float> &buffer, double sampleRate,
-    double timelineOffsetSeconds) {
+    double timelineOffsetSeconds, std::uint64_t pendingTakeId) {
+  CAPTURE_DIAG("requestCapturedAudioAnalysis: samples=" +
+               juce::String(buffer.getNumSamples()) +
+               " sr=" + juce::String(sampleRate) +
+               " offset=" + juce::String(timelineOffsetSeconds) +
+               " editor=" + juce::String((int)(mainComponent != nullptr)));
   if (buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
     return;
 
@@ -1163,8 +1338,8 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
           }
         });
       },
-      [this, timelineOffsetSeconds,
-       previousCapturedProject](const juce::AudioBuffer<float> &) {
+      [this, timelineOffsetSeconds, previousCapturedProject,
+       pendingTakeId](const juce::AudioBuffer<float> &) {
         if (!araAnalysisController)
           return;
 
@@ -1300,6 +1475,17 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
                        std::max(0.0, timelineOffsetSeconds));
         } else {
           completedProject = std::make_unique<Project>(*analyzedProject);
+          // The first capture comes back local to zero. Place it at its host
+          // position here, not only in the editor: Ableton closes plug-in
+          // windows on frozen tracks, so a freeze-captured take finishes
+          // analysis headless and was stored, played and persisted from bar 1
+          // (issue #19). With the editor attached, its own
+          // updateHostAudioTimelineOffset() below now finds the offset already
+          // applied and is a no-op.
+          repadProjectToTimelineOffset(*completedProject,
+                                       timelineOffsetSeconds);
+          CAPTURE_DIAG("first capture placed at timeline offset " +
+                       juce::String(timelineOffsetSeconds, 3) + "s");
         }
 
         araAnalysisProjectSnapshot =
@@ -1307,6 +1493,19 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
         invalidateAraAnalysisProjectJson();
         araAnalysisLoading = false;
         araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
+        if (pendingTakeId != 0) {
+          // The analyzed project now persists the take; stop carrying the raw
+          // audio in the plug-in state.
+          const juce::ScopedLock lock(pendingCaptureTakeLock);
+          if (pendingCaptureTake && pendingCaptureTake->id == pendingTakeId)
+            pendingCaptureTake.reset();
+        }
+        CAPTURE_DIAG("capture analysis complete: samples=" +
+                     juce::String(completedProject->getAudioData()
+                                      .waveform.getNumSamples()) +
+                     " notes=" +
+                     juce::String((int)completedProject->getNotes().size()) +
+                     " editor=" + juce::String((int)(mainComponent != nullptr)));
 
         if (mainComponent && araAnalysisReady) {
           mainComponent->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
@@ -2011,6 +2210,11 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
 // ============================================================================
 
 void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
+  CAPTURE_DIAG(juce::String(mc ? "editor attached" : "editor detached") +
+               " this=" + CAPTURE_DIAG_ID(this) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " hasSnapshot=" +
+               juce::String((int)(araAnalysisProjectSnapshot != nullptr)));
 #if JucePlugin_Enable_ARA
   if (mainComponent != mc) {
     cancelAraTrackAnalysisQueue();
@@ -2148,6 +2352,14 @@ void PitchNetAudioProcessor::getStateInformation(
     juce::MemoryBlock &destData) {
   destData.setSize(0);
 
+  // A take claimed on the audio thread may not have been copied out yet.
+  adoptFinalizedCaptureTake();
+  std::optional<PendingCaptureTake> pendingTake;
+  {
+    const juce::ScopedLock lock(pendingCaptureTakeLock);
+    pendingTake = pendingCaptureTake;
+  }
+
   auto apvtsState = apvts.copyState();
   auto apvtsXml = apvtsState.createXml();
   const juce::String parametersXml = apvtsXml ? apvtsXml->toString()
@@ -2168,9 +2380,12 @@ void PitchNetAudioProcessor::getStateInformation(
   // fingerprint rather than Project::isModified(), which not every edit path
   // sets - a missed invalidation here would silently persist stale audio.
   const auto stateKey = computePersistentStateKey(parametersXml, hostBackedARA);
-  if (stateKey != 0 && stateKey == cachedPluginStateKey &&
+  if (!pendingTake && stateKey != 0 && stateKey == cachedPluginStateKey &&
       cachedPluginStateBlock.getSize() > 0) {
     destData = cachedPluginStateBlock;
+    CAPTURE_DIAG("getStateInformation (cached) bytes=" +
+                 juce::String((juce::int64)destData.getSize()) +
+                 " state=" + captureDiagStateName(captureController->getState()));
     return;
   }
 
@@ -2198,14 +2413,47 @@ void PitchNetAudioProcessor::getStateInformation(
   out.setPosition(lengthFieldPosition);
   out.writeInt64(archiveEnd - archiveStart);
   out.setPosition(archiveEnd);
+
+  if (pendingTake && pendingTake->audio) {
+    const auto &audio = *pendingTake->audio;
+    out.writeInt(static_cast<int>(kPendingCaptureTakeMagic));
+    out.writeInt(kPendingCaptureTakeVersion);
+    out.writeDouble(pendingTake->sampleRate);
+    out.writeDouble(pendingTake->timelineOffsetSeconds);
+    out.writeInt(audio.getNumChannels());
+    out.writeInt(audio.getNumSamples());
+    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+      out.write(audio.getReadPointer(ch),
+                static_cast<size_t>(audio.getNumSamples()) * sizeof(float));
+    CAPTURE_DIAG("getStateInformation: wrote pending take id=" +
+                 juce::String((juce::int64)pendingTake->id) +
+                 " samples=" + juce::String(audio.getNumSamples()) +
+                 " offset=" +
+                 juce::String(pendingTake->timelineOffsetSeconds, 3));
+  }
   out.flush();
 
-  cachedPluginStateKey = stateKey;
+  // A blob carrying a pending take is never reused: the take is dropped from
+  // the state as soon as its analysis completes.
+  cachedPluginStateKey = pendingTake ? 0 : stateKey;
   cachedPluginStateBlock = destData;
+  CAPTURE_DIAG("getStateInformation bytes=" +
+               juce::String((juce::int64)destData.getSize()) +
+               " projectBytes=" + juce::String(archiveEnd - archiveStart) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()) +
+               " analysing=" + juce::String((int)araAnalysisLoading));
 }
 
 void PitchNetAudioProcessor::setStateInformation(const void *data,
                                                    int sizeInBytes) {
+  CAPTURE_DIAG("setStateInformation this=" + CAPTURE_DIAG_ID(this) +
+               " bytes=" + juce::String(sizeInBytes) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()) +
+               " analysing=" + juce::String((int)araAnalysisLoading));
   if (!data || sizeInBytes <= 0)
     return;
 
@@ -2252,6 +2500,10 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
       }
 
       const auto projectBytes = in.readInt64();
+      CAPTURE_DIAG("setStateInformation: projectBytes=" +
+                   juce::String(projectBytes) +
+                   (projectBytes > 0 ? " (restoring project)"
+                                     : " (no project in state)"));
       if (projectBytes > 0 &&
           projectBytes <= std::numeric_limits<int>::max()) {
         juce::MemoryBlock projectArchive(static_cast<size_t>(projectBytes));
@@ -2259,6 +2511,35 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
             projectBytes)
           restorePersistentProjectState(projectArchive.getData(),
                                         projectArchive.getSize());
+      }
+
+      // Optional trailer: a take whose analysis had not finished when this
+      // state was saved. Resume it here.
+      if (in.getNumBytesRemaining() >= 32 &&
+          static_cast<std::uint32_t>(in.readInt()) ==
+              kPendingCaptureTakeMagic &&
+          in.readInt() == kPendingCaptureTakeVersion) {
+        const double takeRate = in.readDouble();
+        const double takeOffset = in.readDouble();
+        const int channels = in.readInt();
+        const int samples = in.readInt();
+        const auto needed = static_cast<juce::int64>(channels) * samples *
+                            static_cast<juce::int64>(sizeof(float));
+        CAPTURE_DIAG("setStateInformation: pending take in state samples=" +
+                     juce::String(samples) + " ch=" + juce::String(channels) +
+                     " offset=" + juce::String(takeOffset, 3));
+        if (takeRate > 0.0 && channels > 0 && channels <= 32 && samples > 0 &&
+            in.getNumBytesRemaining() >= needed) {
+          juce::AudioBuffer<float> audio(channels, samples);
+          bool ok = true;
+          for (int ch = 0; ch < channels && ok; ++ch) {
+            const auto bytes =
+                static_cast<int>(static_cast<size_t>(samples) * sizeof(float));
+            ok = in.read(audio.getWritePointer(ch), bytes) == bytes;
+          }
+          if (ok)
+            storePendingCaptureTake(std::move(audio), takeRate, takeOffset);
+        }
       }
       return;
     }
@@ -3436,6 +3717,12 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+  captureTakeLauncher.cancelPendingUpdate();
+  captureTakeLauncher.callback = nullptr;
+  CAPTURE_DIAG("processor destroyed this=" + CAPTURE_DIAG_ID(this) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()));
   // Cancel every backend before member destruction starts joining workers.
   for (auto& entry : modificationRenders)
     if (entry.second.controller) entry.second.controller->requestShutdown();
@@ -3461,6 +3748,12 @@ void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
     const Project &) {}
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+  captureTakeLauncher.cancelPendingUpdate();
+  captureTakeLauncher.callback = nullptr;
+  CAPTURE_DIAG("processor destroyed this=" + CAPTURE_DIAG_ID(this) +
+               " state=" + captureDiagStateName(captureController->getState()) +
+               " captured=" +
+               juce::String(captureController->getCapturedSampleCount()));
   for (auto& entry : modificationRenders)
     if (entry.second.controller) entry.second.controller->requestShutdown();
   modificationRenders.clear();

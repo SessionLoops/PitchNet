@@ -24,7 +24,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "PITCHNET_DEV_BUILD": "ON",
-        "PITCHNET_ARA_DIAGNOSTICS": "ON"
+        "PITCHNET_ARA_DIAGNOSTICS": "ON",
+        "PITCHNET_CAPTURE_DIAGNOSTICS": "ON"
       }
     },
     {
@@ -35,7 +36,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "PITCHNET_DEV_BUILD": "ON",
-        "PITCHNET_ARA_DIAGNOSTICS": "ON"
+        "PITCHNET_ARA_DIAGNOSTICS": "ON",
+        "PITCHNET_CAPTURE_DIAGNOSTICS": "ON"
       }
     },
     {

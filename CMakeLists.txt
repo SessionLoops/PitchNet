@@ -234,6 +234,12 @@ option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OF
 # by default - release builds contain none of it.
 option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF)
 
+# Non-ARA capture lifecycle diagnostics (issue #19, Ableton freeze/undo).
+# Logs host activation, offline-render switches, transport transitions, take
+# finalize/analysis and state save/restore through AppLogger. Needs a config
+# with PITCHNET_LOGGING_ENABLED (Debug/RelWithDebInfo). Off by default.
+option(PITCHNET_CAPTURE_DIAGNOSTICS "Log non-ARA capture lifecycle diagnostics" OFF)
+
 if(PITCHNET_DEV_BUILD)
     set(PITCHNET_PRODUCT_NAME "PitchNet Dev")
     set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet.dev")
@@ -350,6 +356,12 @@ if(MSVC)
                 "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/ILK:${PITCHNET_ILK_DIR}/${_pn_ilk_target}-$<CONFIG>.ilk>")
         endif()
     endforeach()
+endif()
+
+if(PITCHNET_CAPTURE_DIAGNOSTICS)
+    target_compile_definitions(PitchNetPlugin PRIVATE
+        PITCHNET_CAPTURE_DIAGNOSTICS=1)
+    message(STATUS "PitchNet: non-ARA capture diagnostics ENABLED")
 endif()
 
 # ARA compile definitions
