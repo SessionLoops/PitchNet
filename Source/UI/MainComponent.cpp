@@ -1432,7 +1432,8 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
     toolbar.setTransportEnabled(true);
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
     applyCachedHostLoopRange();
-    if (hasAnalyzedProject() && !regionActivationFromCanvas && !pianoRoll.isTrackViewMode())
+    if (hasAnalyzedProject() && !regionActivationFromCanvas &&
+        (!pianoRoll.isTrackViewMode() || autoZoomOnFirstProject))
       fitAnalyzedPitchRangeToView(*project);
   }
   repaint();
@@ -1455,6 +1456,11 @@ void MainComponent::restoreViewportState(
 {
   if (!state.valid)
     return;
+
+  // Reopening the editor within a session restores the user's own viewport;
+  // do not let a deferred first-project auto-zoom override it.
+  autoZoomOnFirstProject = false;
+  autoZoomPendingLayout = false;
 
   pianoRoll.setPixelsPerSecond(state.pixelsPerSecond, false);
   pianoRoll.setPixelsPerSemitone(state.pixelsPerSemitone, 0.0f);
@@ -1610,6 +1616,15 @@ void MainComponent::resized()
 
   if (enableAudioDeviceFlag && settingsManager)
     settingsManager->setWindowSize(getWidth(), getHeight());
+
+  // Plug-in editors attach their project before the host gives them a size,
+  // so an auto-zoom requested then is applied on the first real layout.
+  if (autoZoomPendingLayout && pianoRoll.getVisibleContentHeight() > 0)
+  {
+    autoZoomPendingLayout = false;
+    if (auto *project = getProject())
+      fitAnalyzedPitchRangeToView(*project);
+  }
 }
 
 void MainComponent::mouseDown(const juce::MouseEvent &e)
@@ -2135,6 +2150,14 @@ void MainComponent::fitAnalyzedPitchRangeToView()
 
 void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 {
+  autoZoomOnFirstProject = false;
+  if (pianoRoll.getVisibleContentHeight() <= 0)
+  {
+    autoZoomPendingLayout = true;
+    return;
+  }
+  autoZoomPendingLayout = false;
+
   float minMidi = std::numeric_limits<float>::max();
   float maxMidi = std::numeric_limits<float>::lowest();
 

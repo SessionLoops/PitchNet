@@ -420,6 +420,12 @@ private:
   // True while a canvas click is switching the active region. The clicked
   // region is already on screen, so its project must not refit the view.
   bool regionActivationFromCanvas = false;
+  // A newly opened editor frames the first analyzed project it shows, even in
+  // track view (where region switches otherwise keep the current zoom).
+  bool autoZoomOnFirstProject = true;
+  // A fit was requested before the piano roll had a height; apply it once
+  // the editor has been laid out.
+  bool autoZoomPendingLayout = false;
   bool liveRecordingActive = false;
   bool pianoKeyAuditionActive = false;
   bool pianoKeyAuditionWasPlaying = false;
