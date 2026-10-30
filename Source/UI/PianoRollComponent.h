@@ -194,6 +194,15 @@ public:
     showBasePitch = show;
     repaint();
   }
+  // Opt-in REAPER-style wheel, right-drag pan, click-to-seek, Shift
+  // coarse steps and a visible Timing-mode playhead.
+  void setReaperNavigation(bool enabled)
+  {
+    reaperNavigation = enabled;
+    repaint();
+  }
+  bool isScrubbing() const { return middleButtonScrubActive; }
+
   void setShowSegmentsDebug(bool show)
   {
     showSegmentsDebug = show;
@@ -332,6 +341,10 @@ private:
   void applyModifierZoomDrag(const juce::MouseEvent &e);
   bool isModifierPanDrag(const juce::MouseEvent &e) const;
   void applyModifierPanDrag(const juce::MouseEvent &e);
+  void showCanvasPopupMenu(juce::Point<int> screenPosition);
+  void reaperWheelMove(const juce::MouseEvent &e,
+                       const juce::MouseWheelDetails &wheel,
+                       float scrollMultiplier, float minPps, float minPpsX);
   void updateMouseCursorForEditMode();
 
   Note *findNoteAt(float x, float y);
@@ -517,8 +530,16 @@ private:
   juce::Point<float> modifierZoomLastPosition;
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;
+  // Right button: pans when dragged, opens the canvas menu when clicked.
+  bool rightButtonGestureActive = false;
+  // Left press on empty canvas that seeks on release if it never drags.
+  bool emptyCanvasClickPending = false;
   bool pianoKeyAuditionMouseDown = false;
   bool middleButtonScrubActive = false;
+  bool reaperNavigation = false;
+  // REAPER mode, Shift not held at press: Shift during the drag snaps to
+  // coarse steps. Shift held at press keeps meaning add-to-selection.
+  bool coarseDragSteps = false;
   MainViewRegionPreviewList regionPreviews;
   bool trackViewMode = false;
   double regionPreviewsEndSeconds = 0.0;

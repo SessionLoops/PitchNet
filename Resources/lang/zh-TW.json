@@ -233,6 +233,8 @@
   "settings.debug_raw_f0": "顯示原始偵測的 F0（除錯）",
   "settings.debug_uv_f0": "顯示稠密 UV F0（除錯）",
   "settings.debug_vocoder_f0": "顯示聲碼器 F0（除錯）",
+  "settings.navigation_style": "導覽方式",
+  "settings.navigation_original": "原版",
   "settings.default_gpu": "預設 GPU",
   "settings.device": "裝置:",
   "settings.device_locked": "正在推論。停止後才能切換裝置。",

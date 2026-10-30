@@ -54,6 +54,7 @@ public:
   std::function<void(bool)> onShowActualF0DebugChanged;
   std::function<void(bool)> onShowCleanedF0DebugChanged;
   std::function<void(bool)> onShowVocoderF0DebugChanged;
+  std::function<void(bool)> onReaperNavigationChanged;
   std::function<bool()> canChangeDevice;
 
   // Load/save settings
@@ -162,6 +163,8 @@ private:
   juce::ToggleButton cleanedF0DebugToggle;
   juce::Label vocoderF0DebugLabel;
   juce::ToggleButton vocoderF0DebugToggle;
+  juce::Label reaperNavigationLabel;
+  StyledComboBox navigationStyleComboBox;
 
   juce::Label infoLabel;
 
@@ -195,6 +198,7 @@ private:
   bool showActualF0Debug = false;
   bool showCleanedF0Debug = false;
   bool showVocoderF0Debug = false;
+  bool reaperNavigation = false;
   SettingsTab activeTab = SettingsTab::General;
   juce::TextButton generalTabButton;
   juce::TextButton audioTabButton;
