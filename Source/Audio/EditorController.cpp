@@ -29,9 +29,12 @@ struct SharedInferenceModels
   std::mutex loadMutex;
   std::mutex fcpeMutex;
   std::mutex rmvpeMutex;
+  std::mutex swiftF0Mutex;
   std::mutex gameMutex;
   std::shared_ptr<FCPEPitchDetector> fcpe = std::make_shared<FCPEPitchDetector>();
   std::shared_ptr<RMVPEPitchDetector> rmvpe = std::make_shared<RMVPEPitchDetector>();
+  // SwiftF0 always runs on the CPU (it is tiny), whatever the set's device.
+  std::shared_ptr<SwiftF0PitchDetector> swiftF0 = std::make_shared<SwiftF0PitchDetector>();
   std::shared_ptr<GAMEDetector> game = std::make_shared<GAMEDetector>();
 };
 
@@ -102,6 +105,7 @@ EditorController::EditorController(bool enableAudioDevice)
 
   fcpePitchDetector = std::make_shared<FCPEPitchDetector>();
   rmvpePitchDetector = std::make_shared<RMVPEPitchDetector>();
+  swiftF0PitchDetector = std::make_shared<SwiftF0PitchDetector>();
   gameDetector = std::make_shared<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
@@ -111,6 +115,7 @@ EditorController::EditorController(bool enableAudioDevice)
   melFilterbankPath = PlatformPaths::getModelFile("mel_filterbank.bin");
   centTablePath = PlatformPaths::getModelFile("cent_table.bin");
   rmvpeModelPath = PlatformPaths::getModelFile("rmvpe.onnx");
+  swiftF0ModelPath = PlatformPaths::getModelFile("swift_f0.onnx");
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
 
   incrementalSynth->setVocoder(vocoder.get());
@@ -181,6 +186,7 @@ void EditorController::reloadInferenceModels(bool async)
   auto melPath = melFilterbankPath;
   auto centPath = centTablePath;
   auto rmvpePath = rmvpeModelPath;
+  auto swiftF0Path = swiftF0ModelPath;
   auto gamePath = gameModelDir;
   auto loadTask = [device = device,
                      provider,
@@ -189,11 +195,29 @@ void EditorController::reloadInferenceModels(bool async)
                      melPath,
                      centPath,
                      rmvpePath,
+                     swiftF0Path,
                      gamePath,
                      models](EditorController *self)
   {
     if (!self || self->shuttingDown.load())
       return;
+
+    // SwiftF0 is a ~135 KB CPU model that loads in milliseconds; load it
+    // inline before the GPU models.
+    if (models->swiftF0 && !models->swiftF0->isLoaded())
+    {
+      if (swiftF0Path.existsAsFile())
+      {
+        if (models->swiftF0->loadModel(swiftF0Path))
+          LOG("SwiftF0 pitch detector loaded successfully");
+        else
+          LOG("Failed to load SwiftF0 model");
+      }
+      else
+      {
+        LOG("SwiftF0 model not found at: " + swiftF0Path.getFullPathName());
+      }
+    }
 
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
     // multiple sessions for the same device are created concurrently. This is
@@ -381,6 +405,7 @@ void EditorController::reloadInferenceModels(bool async)
     self->sharedModels = models;
     self->fcpePitchDetector = models->fcpe;
     self->rmvpePitchDetector = models->rmvpe;
+    self->swiftF0PitchDetector = models->swiftF0;
     self->gameDetector = models->game;
   };
 
@@ -437,6 +462,8 @@ bool EditorController::isSelectedPitchDetectorLoaded() const
     return fcpePitchDetector && fcpePitchDetector->isLoaded();
   if (pitchDetectorType == PitchDetectorType::RMVPE)
     return rmvpePitchDetector && rmvpePitchDetector->isLoaded();
+  if (pitchDetectorType == PitchDetectorType::SwiftF0)
+    return swiftF0PitchDetector && swiftF0PitchDetector->isLoaded();
   return false;
 }
 
@@ -930,11 +957,13 @@ void EditorController::analyzeAudioImpl(
   std::shared_ptr<SharedInferenceModels> models;
   std::shared_ptr<FCPEPitchDetector> fcpeModel;
   std::shared_ptr<RMVPEPitchDetector> rmvpeModel;
+  std::shared_ptr<SwiftF0PitchDetector> swiftF0Model;
   {
     const std::lock_guard<std::mutex> lock(modelPtrMutex);
     models = sharedModels;
     fcpeModel = fcpePitchDetector;
     rmvpeModel = rmvpePitchDetector;
+    swiftF0Model = swiftF0PitchDetector;
   }
 
   if (pitchDetectorType == PitchDetectorType::RMVPE)
@@ -973,6 +1002,19 @@ void EditorController::analyzeAudioImpl(
       return;
     }
   }
+  else if (pitchDetectorType == PitchDetectorType::SwiftF0)
+  {
+    if (!swiftF0ModelPath.existsAsFile())
+    {
+      showMissingModelAndAbort("swift_f0.onnx", swiftF0ModelPath);
+      return;
+    }
+    if (!swiftF0Model || !swiftF0Model->isLoaded())
+    {
+      showModelLoadFailedAndAbort("swift_f0.onnx", swiftF0ModelPath);
+      return;
+    }
+  }
 
   LOG("========== PITCH DETECTOR SELECTION ==========");
   LOG("Selected detector: " +
@@ -1008,6 +1050,25 @@ void EditorController::analyzeAudioImpl(
         fcpeModel->extractF0(samples, numSamples, audioData.sampleRate);
     pitchInferenceError = fcpeModel->getLastError();
   }
+  else if (pitchDetectorType == PitchDetectorType::SwiftF0)
+  {
+    const auto modelLock =
+        lockModel(models, swiftF0Model, &SharedInferenceModels::swiftF0,
+                  &SharedInferenceModels::swiftF0Mutex, shuttingDown);
+    if (shuttingDown.load())
+      return;
+    const auto t0 = std::chrono::steady_clock::now();
+    extractedF0 =
+        swiftF0Model->extractF0(samples, numSamples, audioData.sampleRate);
+    pitchInferenceError = swiftF0Model->getLastError();
+    LOG("SwiftF0: " + juce::String(static_cast<int>(extractedF0.size())) +
+        " frames in " +
+        juce::String(std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - t0)
+                         .count(),
+                     1) +
+        " ms");
+  }
 
   if (shuttingDown.load())
     return;
@@ -1017,6 +1078,7 @@ void EditorController::analyzeAudioImpl(
   // so systems without a usable GPU do not fail with a misleading model-file
   // error. Keep the successful CPU detector for subsequent analyses.
   if (extractedF0.empty() &&
+      pitchDetectorType != PitchDetectorType::SwiftF0 &&
       getProviderFromDevice(device) == GPUProvider::DirectML)
   {
     const auto detectorName =
@@ -1141,7 +1203,11 @@ void EditorController::analyzeAudioImpl(
     audioData.rawF0.assign(static_cast<size_t>(targetFrames), 0.0f);
     audioData.voicedMask.assign(static_cast<size_t>(targetFrames), false);
 
-    const double neuralFrameTime = 160.0 / 16000.0;
+    // FCPE/RMVPE: 160-sample hop at 16 kHz (10 ms); SwiftF0: 256 (16 ms).
+    const double neuralFrameTime =
+        pitchDetectorType == PitchDetectorType::SwiftF0
+            ? SwiftF0PitchDetector::FRAME_TIME
+            : 160.0 / 16000.0;
     const double vocoderFrameTime =
         static_cast<double>(HOP_SIZE) /
         static_cast<double>(std::max(1, audioData.sampleRate));

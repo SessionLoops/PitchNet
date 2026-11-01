@@ -187,7 +187,7 @@ private:
   int gpuDeviceId = 0;
   juce::String lastConfirmedDevice = "CPU";
   int lastConfirmedGpuDeviceId = 0;
-  PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
+  PitchDetectorType pitchDetectorType = PitchDetectorType::SwiftF0;
   bool showSegmentsDebug = false;
   bool showGameValuesDebug = false;
   bool showNoteFramesDebug = false;

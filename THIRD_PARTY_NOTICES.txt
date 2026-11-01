@@ -138,6 +138,13 @@ Copyright (c) 2024 Avid Technology Inc.
 The AAX SDK is subject to the Avid AAX SDK License Agreement or, where
 applicable, GPLv3. See https://developer.avid.com/aax for its terms.
 
+SwiftF0 pitch model (Resources/models/swift_f0.onnx)
+Source: https://github.com/lars76/swift-f0
+Copyright (c) 2025-2026 Lars Nieradzik
+Licensed under the MIT License.
+Source/Audio/SwiftF0PitchDetector.cpp ports the windowing, silence gate and
+voicing threshold from swift_f0/core.py.
+
 Bundled fonts and machine-learning model files retain their respective
 upstream licenses and attribution requirements. Their licenses must be
 reviewed for each release before distributing new or changed assets.

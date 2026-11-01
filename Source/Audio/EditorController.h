@@ -4,6 +4,7 @@
 #include "AudioEngine.h"
 #include "Engine/PlaybackController.h"
 #include "FCPEPitchDetector.h"
+#include "SwiftF0PitchDetector.h"
 #include "PitchDetectorType.h"
 #include "RMVPEPitchDetector.h"
 #include "GAMEDetector.h"
@@ -146,6 +147,7 @@ private:
   std::shared_ptr<SharedInferenceModels> sharedModels;
   std::shared_ptr<FCPEPitchDetector> fcpePitchDetector;
   std::shared_ptr<RMVPEPitchDetector> rmvpePitchDetector;
+  std::shared_ptr<SwiftF0PitchDetector> swiftF0PitchDetector;
   std::shared_ptr<GAMEDetector> gameDetector;
   // Generation of the installed set; an older load never replaces a newer one.
   std::uint64_t installedGeneration = 0;
@@ -158,8 +160,9 @@ private:
   juce::File melFilterbankPath;
   juce::File centTablePath;
   juce::File rmvpeModelPath;
+  juce::File swiftF0ModelPath;
   juce::File gameModelDir;
-  PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
+  PitchDetectorType pitchDetectorType = PitchDetectorType::SwiftF0;
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   juce::String device = "CPU";
   int deviceId = 0;

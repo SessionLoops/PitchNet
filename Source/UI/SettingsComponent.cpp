@@ -114,6 +114,7 @@ SettingsComponent::SettingsComponent(
 
   pitchDetectorComboBox.addItem("RMVPE", 1);
   pitchDetectorComboBox.addItem("FCPE", 2);
+  pitchDetectorComboBox.addItem("SwiftF0", 3);
   pitchDetectorComboBox.setSelectedId(
       2, juce::dontSendNotification); // Default to FCPE
   pitchDetectorComboBox.addListener(this);
@@ -608,6 +609,8 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox *comboBox)
       pitchDetectorType = PitchDetectorType::RMVPE;
     else if (selectedId == 2)
       pitchDetectorType = PitchDetectorType::FCPE;
+    else if (selectedId == 3)
+      pitchDetectorType = PitchDetectorType::SwiftF0;
 
     saveSettings();
 
@@ -972,6 +975,8 @@ void SettingsComponent::loadSettings()
     pitchDetectorComboBox.setSelectedId(1, juce::dontSendNotification);
   else if (pitchDetectorType == PitchDetectorType::FCPE)
     pitchDetectorComboBox.setSelectedId(2, juce::dontSendNotification);
+  else if (pitchDetectorType == PitchDetectorType::SwiftF0)
+    pitchDetectorComboBox.setSelectedId(3, juce::dontSendNotification);
 
   segmentsDebugToggle.setToggleState(showSegmentsDebug,
                                      juce::dontSendNotification);

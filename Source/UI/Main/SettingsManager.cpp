@@ -42,9 +42,14 @@ void SettingsManager::loadSettings()
   }
   threads = xml->getIntAttribute("threads", threads);
 
+#if JUCE_DEBUG
+  // The detector can only be chosen in debug builds (the General settings tab
+  // is hidden in release), so a stored value in a release build is just an
+  // old default and must not override the current one.
   juce::String pitchDetectorStr = xml->getStringAttribute(
       "pitchDetector", pitchDetectorTypeToString(pitchDetectorType));
   pitchDetectorType = stringToPitchDetectorType(pitchDetectorStr);
+#endif
 
   juce::String synthesisEngineStr = xml->getStringAttribute(
       "synthesisEngine", synthesisEngineTypeToString(synthesisEngineType));
@@ -116,12 +121,16 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("threads"))
           threads = static_cast<int>(configObj->getProperty("threads"));
 
+#if JUCE_DEBUG
+        // Release builds ignore the stored detector: users cannot choose it
+        // there, so it is only ever an old default (e.g. "FCPE").
         if (configObj->hasProperty("pitchDetector"))
         {
           auto pitchDetectorStr =
               configObj->getProperty("pitchDetector").toString();
           pitchDetectorType = stringToPitchDetectorType(pitchDetectorStr);
         }
+#endif
 
         if (configObj->hasProperty("synthesisEngine"))
         {
