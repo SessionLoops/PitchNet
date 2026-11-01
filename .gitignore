@@ -49,3 +49,6 @@ sign.sh
 sign.bat
 sign.local.bat
 *.p12
+
+# Evaluation datasets (downloaded, not committed)
+tools/f0_compare/vocadito.zip
