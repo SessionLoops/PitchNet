@@ -52,6 +52,8 @@ cp "$ONNX_LIB_DIR/libonnxruntime_providers_shared.so" "$APP_DIR/lib/"
 
 echo "==> Staging models and resources"
 cp -r "$ROOT_DIR/Resources/models" "$APP_DIR/models"
+# Release builds use SwiftF0; FCPE and its tables are debug-only.
+rm -f "$APP_DIR/models/fcpe.onnx" "$APP_DIR/models/mel_filterbank.bin" "$APP_DIR/models/cent_table.bin"
 cp -r "$ROOT_DIR/Resources/lang" "$APP_DIR/lang"
 cp -r "$ROOT_DIR/Resources/fonts" "$APP_DIR/fonts"
 

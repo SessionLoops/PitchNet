@@ -46,10 +46,17 @@ Source: "build\PitchNet_artefacts\Release\PitchNet.exe"; DestDir: "{app}"; Compo
 Source: "build\PitchNet_artefacts\Release\onnxruntime.dll"; DestDir: "{app}"; Components: main; Flags: ignoreversion
 Source: "build\PitchNetPlugin_artefacts\Release\VST3\PitchNet.vst3\*"; DestDir: "{code:getPreVST64Path}"; Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "build\PitchNetPlugin_artefacts\Release\AAX\PitchNet.aaxplugin\*"; DestDir: "{code:getPreAAXPath}"; Components: aax; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "Resources\models\*"; DestDir: "{commonappdata}\{#MyAppPublisher}\{#MyAppName}\models"; Components: main; Flags: ignoreversion recursesubdirs createallsubdirs
+; FCPE and its tables are debug-only; release builds use SwiftF0 (swift_f0.onnx).
+Source: "Resources\models\*"; Excludes: "fcpe.onnx,mel_filterbank.bin,cent_table.bin"; DestDir: "{commonappdata}\{#MyAppPublisher}\{#MyAppName}\models"; Components: main; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Resources\fonts\Montserrat-Medium.ttf"; DestDir: "{commonfonts}"; FontInstall: "Montserrat-Medium"; Components: main; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "Resources\fonts\Montserrat-Regular.ttf"; DestDir: "{commonfonts}"; FontInstall: "Montserrat-Regular"; Components: main; Flags: onlyifdoesntexist uninsneveruninstall
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files.
+
+[InstallDelete]
+; Models shipped by versions before the switch to SwiftF0.
+Type: files; Name: "{commonappdata}\{#MyAppPublisher}\{#MyAppName}\models\fcpe.onnx"
+Type: files; Name: "{commonappdata}\{#MyAppPublisher}\{#MyAppName}\models\mel_filterbank.bin"
+Type: files; Name: "{commonappdata}\{#MyAppPublisher}\{#MyAppName}\models\cent_table.bin"
 
 [Icons]
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"

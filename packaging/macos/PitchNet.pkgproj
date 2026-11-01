@@ -3685,6 +3685,43 @@
 					<true/>
 				</dict>
 				<dict>
+					<key>PATTERNS_ARRAY</key>
+					<array>
+						<dict>
+							<key>REGULAR_EXPRESSION</key>
+							<false/>
+							<key>STRING</key>
+							<string>fcpe.onnx</string>
+							<key>TYPE</key>
+							<integer>0</integer>
+						</dict>
+						<dict>
+							<key>REGULAR_EXPRESSION</key>
+							<false/>
+							<key>STRING</key>
+							<string>mel_filterbank.bin</string>
+							<key>TYPE</key>
+							<integer>0</integer>
+						</dict>
+						<dict>
+							<key>REGULAR_EXPRESSION</key>
+							<false/>
+							<key>STRING</key>
+							<string>cent_table.bin</string>
+							<key>TYPE</key>
+							<integer>0</integer>
+						</dict>
+					</array>
+					<key>PROTECTED</key>
+					<false/>
+					<key>PROXY_NAME</key>
+					<string>Remove FCPE models</string>
+					<key>PROXY_TOOLTIP</key>
+					<string>FCPE is debug-only; release builds use SwiftF0.</string>
+					<key>STATE</key>
+					<true/>
+				</dict>
+				<dict>
 					<key>SEPARATOR</key>
 					<true/>
 				</dict>
