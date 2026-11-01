@@ -125,6 +125,37 @@ public:
     {
         setLookAndFeel(nullptr);
     }
+
+    // Shows "low % - high %" for targets with differing values, like Melodyne,
+    // until the user changes the value. Equal bounds show a single value.
+    void setMixedRange(double low, double high)
+    {
+        mixedLow = low;
+        mixedHigh = high;
+        mixed = high - low > 0.0001;
+        updateText();
+    }
+    bool isMixed() const { return mixed; }
+
+    juce::String getTextFromValue(double value) override
+    {
+        if (mixed)
+            return juce::Slider::getTextFromValue(mixedLow) + " - " +
+                   juce::Slider::getTextFromValue(mixedHigh);
+        return juce::Slider::getTextFromValue(value);
+    }
+
+    void valueChanged() override
+    {
+        if (!mixed)
+            return;
+        mixed = false;
+        updateText();
+    }
+
+private:
+    double mixedLow = 0.0, mixedHigh = 0.0;
+    bool mixed = false;
 };
 
 /**

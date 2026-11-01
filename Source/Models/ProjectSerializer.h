@@ -79,8 +79,10 @@ private:
     // Note serialization
     static juce::var noteToJson(const Note& note, bool includeAnalysisCache,
                                 bool includePitchData);
+    // legacyPitchCenter is the project-wide strength, used for notes saved
+    // before each note stored its own (0 when no correction was applied).
     static bool noteFromJson(Note& note, const juce::var& json,
-                             bool hadPitchCorrection);
+                             float legacyPitchCenter);
 
     // Pitch data serialization
     static juce::var pitchDataToJson(const AudioData& audioData);

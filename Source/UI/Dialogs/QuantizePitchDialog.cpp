@@ -12,8 +12,10 @@ namespace {
 class Content final : public juce::Component
 {
 public:
-  Content(float initialPitchCenter, float initialPitchDrift, bool initialSnapToScale,
-          std::function<void(float, bool, float, bool)> preview,
+  Content(juce::Range<float> pitchCenterRange, float initialPitchCenter,
+          juce::Range<float> pitchDriftRange, float initialPitchDrift,
+          bool initialSnapToScale,
+          std::function<void(float, bool, bool, float, bool)> preview,
           std::function<void(bool)> completed, std::function<void()> refreshPreview)
       : onPreview(std::move(preview)), onComplete(std::move(completed)),
         onRefreshPreview(std::move(refreshPreview))
@@ -24,17 +26,25 @@ public:
 
     pitchCenter.setRange(0.0, 100.0, 1.0);
     pitchCenter.setTextValueSuffix(" %");
+    // Plain read-only value label, as in Melodyne's macro dialog.
+    pitchCenter.setTextBoxStyle(juce::Slider::TextBoxRight, true, valueBoxWidth, 22);
+    pitchCenter.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     pitchCenter.setValue(initialPitchCenter, juce::dontSendNotification);
+    pitchCenter.setMixedRange(pitchCenterRange.getStart(), pitchCenterRange.getEnd());
     pitchCenter.onDragStart = [this] { sliderDragging = true; };
     pitchCenter.onDragEnd = [this] { sliderDragging = false; refreshCorrection(); };
-    pitchCenter.onValueChange = [this] { previewCorrection(); };
+    pitchCenter.onValueChange = [this] { centerEdited = true; previewCorrection(); };
 
     pitchDriftLabel.setText(TR("quantize.pitch_drift"), juce::dontSendNotification);
     pitchDriftLabel.setFont(AppFont::getFont(15.0f));
     pitchDriftLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
     pitchDrift.setRange(0.0, 100.0, 1.0);
     pitchDrift.setTextValueSuffix(" %");
+    // Plain read-only value label, as in Melodyne's macro dialog.
+    pitchDrift.setTextBoxStyle(juce::Slider::TextBoxRight, true, valueBoxWidth, 22);
+    pitchDrift.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     pitchDrift.setValue(initialPitchDrift, juce::dontSendNotification);
+    pitchDrift.setMixedRange(pitchDriftRange.getStart(), pitchDriftRange.getEnd());
     pitchDrift.onDragStart = [this] { sliderDragging = true; };
     pitchDrift.onDragEnd = [this] { sliderDragging = false; refreshCorrection(); };
     pitchDrift.onValueChange = [this] { driftEdited = true; previewCorrection(); };
@@ -130,7 +140,8 @@ private:
     if (finished)
       return;
     if (onPreview)
-      onPreview(static_cast<float>(pitchCenter.getValue()), snapToScale.getToggleState(),
+      onPreview(static_cast<float>(pitchCenter.getValue()), centerEdited,
+                snapToScale.getToggleState(),
                 static_cast<float>(pitchDrift.getValue()), driftEdited);
     previewPending = true;
     if (!sliderDragging)
@@ -146,7 +157,7 @@ private:
       onRefreshPreview();
   }
 
-  std::function<void(float, bool, float, bool)> onPreview;
+  std::function<void(float, bool, bool, float, bool)> onPreview;
   std::function<void(bool)> onComplete;
   std::function<void()> onRefreshPreview;
   bool sliderDragging = false;
@@ -155,7 +166,9 @@ private:
   MacroSlider pitchCenter;
   juce::Label pitchDriftLabel;
   MacroSlider pitchDrift;
+  bool centerEdited = false;
   bool driftEdited = false;
+  static constexpr int valueBoxWidth = 88;
   StyledToggleButton snapToScale;
   juce::TextButton cancelButton, okButton;
   bool finished = false;
@@ -171,8 +184,10 @@ void dismissPopup()
 }
 
 void showPopup(juce::Component *parent, juce::Rectangle<int> anchorBounds,
-               float initialPitchCenter, float initialPitchDrift, bool initialSnapToScale,
-               std::function<void(float, bool, float, bool)> onPreview,
+               juce::Range<float> pitchCenterRange, float initialPitchCenter,
+               juce::Range<float> pitchDriftRange, float initialPitchDrift,
+               bool initialSnapToScale,
+               std::function<void(float, bool, bool, float, bool)> onPreview,
                std::function<void(bool)> onComplete,
                std::function<void()> onRefreshPreview)
 {
@@ -181,9 +196,10 @@ void showPopup(juce::Component *parent, juce::Rectangle<int> anchorBounds,
 
   dismissPopup();
 
-  constexpr int width = 340;
+  constexpr int width = 374;
   constexpr int height = 124;
-  auto *content = new Content(initialPitchCenter, initialPitchDrift, initialSnapToScale,
+  auto *content = new Content(pitchCenterRange, initialPitchCenter,
+                              pitchDriftRange, initialPitchDrift, initialSnapToScale,
                               std::move(onPreview), std::move(onComplete),
                               std::move(onRefreshPreview));
   content->setSize(width, height);

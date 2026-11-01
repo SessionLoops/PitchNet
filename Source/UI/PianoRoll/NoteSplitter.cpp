@@ -119,6 +119,9 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setSrcStartFrame(srcSplitFrame);
     secondNote.setSrcEndFrame(srcEndFrame);
     secondNote.setMidiNote(note->getMidiNote());
+    // Both halves keep the macro source and strength of the original note.
+    secondNote.setLastNonMacroMidiNote(note->getLastNonMacroMidiNote());
+    secondNote.setMacroPitchCenter(note->getMacroPitchCenter());
     secondNote.setLyric(note->getLyric());
     secondNote.setPhoneme(note->getPhoneme());
     secondNote.setVolumeDb(note->getVolumeDb());

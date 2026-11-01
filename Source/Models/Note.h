@@ -89,10 +89,15 @@ public:
     {
         midiNote = note;
         lastNonMacroMidiNote = note;
+        macroPitchCenter = 0.0f; // The new pitch is uncorrected source material.
     }
     float getLastNonMacroMidiNote() const { return lastNonMacroMidiNote; }
     void setLastNonMacroMidiNote(float note) { lastNonMacroMidiNote = note; }
     void setMidiNoteFromPitchCorrection(float note) { midiNote = note; }
+    // Pitch Center strength (0-100%) the macro last applied to this note, so
+    // the macro popup can show the targets' actual state (or their range).
+    float getMacroPitchCenter() const { return macroPitchCenter; }
+    void setMacroPitchCenter(float amount) { macroPitchCenter = juce::jlimit(0.0f, 100.0f, amount); }
     float getOriginalMidiNote() const { return originalMidiNote; }
     void setOriginalMidiNote(float note) { originalMidiNote = note; }
     float getPitchOffset() const { return pitchOffset; }
@@ -235,6 +240,7 @@ private:
 
     float midiNote = 60.0f;
     float lastNonMacroMidiNote = 60.0f;
+    float macroPitchCenter = 0.0f;
     float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
     float formantShift = 0.0f; // Semitones, independent of F0

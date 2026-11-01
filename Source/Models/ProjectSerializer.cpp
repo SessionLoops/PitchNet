@@ -407,8 +407,7 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     if (notesVar.isArray()) {
         for (int i = 0; i < notesVar.size(); ++i) {
             Note note;
-            if (noteFromJson(note, notesVar[i],
-                             project.getPitchCenter() > 0.0001f)) {
+            if (noteFromJson(note, notesVar[i], project.getPitchCenter())) {
                 project.addNote(std::move(note));
             }
         }
@@ -823,6 +822,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("srcEndFrame", note.getSrcEndFrame());
     obj->setProperty("midiNote", note.getMidiNote());
     obj->setProperty("lastNonMacroMidiNote", note.getLastNonMacroMidiNote());
+    obj->setProperty("macroPitchCenter", note.getMacroPitchCenter());
     obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
@@ -869,9 +869,10 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
 }
 
 bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
-                                     bool hadPitchCorrection) {
+                                     float legacyPitchCenter) {
     if (!json.isObject())
         return false;
+    const bool hadPitchCorrection = legacyPitchCenter > 0.0001f;
 
     const int startFrame = json.getProperty("startFrame", 0);
     const int endFrame = json.getProperty("endFrame", 0);
@@ -891,6 +892,10 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     const float legacySourceMidi = hadPitchCorrection ? originalMidiNote : midiNote;
     note.setLastNonMacroMidiNote(static_cast<float>(
         json.getProperty("lastNonMacroMidiNote", legacySourceMidi)));
+    // Older projects kept only the project-wide strength, which the popup
+    // used to show for every note; keep presenting that value.
+    note.setMacroPitchCenter(static_cast<float>(
+        json.getProperty("macroPitchCenter", legacyPitchCenter)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));

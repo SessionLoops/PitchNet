@@ -321,25 +321,28 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
 
   struct NoteCenter {
     Note* note;
-    float midiNote, sourceMidiNote, pitchDrift;
-    float finalMidi = 0.0f, finalDrift = 1.0f;
+    float midiNote, sourceMidiNote, pitchDrift, strength;
+    float finalMidi = 0.0f, finalDrift = 1.0f, finalStrength = 0.0f;
     float renderedMidi = midiNote, renderedDrift = pitchDrift;
   };
   struct State {
     TrackPitchMacroTarget target;
     float originalPitchCenter;
     std::vector<NoteCenter> notes;
+    float finalPitchCenter = 0.0f;
   };
   auto states = std::make_shared<std::vector<State>>();
   for (auto& target : targets) {
     State state{target, target.project->getPitchCenter(), {}};
     for (auto* note : collectPitchMacroNotes(*target.project, track, target.frames))
       state.notes.push_back({note, note->getMidiNote(), note->getLastNonMacroMidiNote(),
-                             note->getPitchDrift()});
+                             note->getPitchDrift(), note->getMacroPitchCenter()});
     states->push_back(std::move(state));
   }
   auto amount = std::make_shared<float>(activeProject->getPitchCenter());
   auto previewEdited = std::make_shared<bool>(false);
+  auto centerWasEdited = std::make_shared<bool>(false);
+  const bool initialSnapToScale = pitchCenterSnapToScale;
   auto safeThis = juce::Component::SafePointer<PianoRollWorkspaceView>(this);
   const auto refreshCurves = [safeThis, states] {
     if (!safeThis) return;
@@ -380,7 +383,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       } else if (state.target.onChanged) state.target.onChanged(true);
     }
   };
-  const auto apply = [safeThis, states, amount](bool redo) {
+  const auto apply = [safeThis, states](bool redo) {
     if (!safeThis) return;
     safeThis->pianoRoll.endMacroCurvePreview();
     bool activeChanged = false;
@@ -389,6 +392,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       auto* project = state.target.project;
       int first = std::numeric_limits<int>::max(), last = -1;
       for (const auto& center : state.notes) {
+        center.note->setMacroPitchCenter(redo ? center.finalStrength : center.strength);
         if (std::abs(center.finalMidi - center.midiNote) <= 0.0001f &&
             std::abs(center.finalDrift - center.pitchDrift) <= 0.0001f) continue;
         center.note->setMidiNoteFromPitchCorrection(redo ? center.finalMidi : center.midiNote);
@@ -398,7 +402,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         first = std::min(first, center.note->getStartFrame());
         last = std::max(last, center.note->getEndFrame());
       }
-      project->setPitchCenter(redo ? *amount : state.originalPitchCenter);
+      project->setPitchCenter(redo ? state.finalPitchCenter : state.originalPitchCenter);
       project->setModified(true);
       if (last >= first) {
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
@@ -428,16 +432,43 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
     std::function<void(bool)> apply;
     bool trackWide;
   };
-  const auto activeState = std::find_if(states->begin(), states->end(),
-      [activeProject](const State& state) { return state.target.project == activeProject; });
-  const float initialDrift = activeState == states->end() || activeState->notes.empty() ? 0.0f
-      : juce::jlimit(0.0f, 100.0f, (1.0f - activeState->notes.front().pitchDrift) * 100.0f);
+  // Like Melodyne, show the targets' own values, as a range when they differ,
+  // with the thumb at their average.
+  float centerLow = 100.0f, centerHigh = 0.0f, driftLow = 100.0f, driftHigh = 0.0f;
+  float centerSum = 0.0f, driftSum = 0.0f;
+  int noteCount = 0;
+  for (const auto& state : *states)
+    for (const auto& center : state.notes) {
+      const float strength = std::round(center.strength);
+      const float drift = std::round(
+          juce::jlimit(0.0f, 100.0f, (1.0f - center.pitchDrift) * 100.0f));
+      centerLow = std::min(centerLow, strength);
+      centerHigh = std::max(centerHigh, strength);
+      driftLow = std::min(driftLow, drift);
+      driftHigh = std::max(driftHigh, drift);
+      centerSum += strength;
+      driftSum += drift;
+      ++noteCount;
+    }
+  const float centerMean = noteCount > 0 ? std::round(centerSum / noteCount) : 0.0f;
+  const float driftMean = noteCount > 0 ? std::round(driftSum / noteCount) : 0.0f;
+  if (centerHigh < centerLow) centerLow = centerHigh = 0.0f;
+  if (driftHigh < driftLow) driftLow = driftHigh = 0.0f;
   const auto anchor = juce::Rectangle<int>(pianoCard.getRight(), pianoCard.getY(), 0, 0);
-  QuantizePitchDialog::showPopup(this, anchor, *amount, initialDrift, pitchCenterSnapToScale,
-      [this, states, targets, amount, previewEdited](float value, bool snapToScale, float drift, bool driftEdited) {
+  QuantizePitchDialog::showPopup(this, anchor, {centerLow, centerHigh}, centerMean,
+      {driftLow, driftHigh}, driftMean,
+      pitchCenterSnapToScale,
+      [this, states, targets, amount, previewEdited, centerWasEdited, initialSnapToScale](
+          float value, bool centerEdited, bool snapToScale, float drift, bool driftEdited) {
         *previewEdited = true;
-        *amount = value;
+        if (centerEdited) {
+          *centerWasEdited = true;
+          *amount = value;
+        }
         pitchCenterSnapToScale = snapToScale;
+        // Until Pitch Center or the snap mode changes, each note keeps its own
+        // correction, so a drift-only edit never re-corrects pitch.
+        const bool recomputePitch = centerEdited || snapToScale != initialSnapToScale;
         std::vector<Note*> previewNotes;
         for (const auto& state : *states)
           if (state.target.project == pianoRoll.getProject())
@@ -446,7 +477,6 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         pianoRoll.beginInactiveMacroPreview(targets);
         for (auto& state : *states) {
           if (state.target.isValid && !state.target.isValid()) continue;
-          const float amount = value;
           const auto selectedScaleMode = state.target.project->getScaleMode();
           const auto correctionScaleMode =
               (selectedScaleMode == ScaleMode::None ||
@@ -457,12 +487,20 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
           // possible deviation (0.5 semitones), while 100% allows none. Notes
           // already inside the remaining allowance are untouched; larger ones
           // are brought down to it while retaining their direction.
-          const float maximumDeviation = (100.0f - amount) * 0.005f;
           for (const auto &center : state.notes)
           {
             if (center.note == nullptr) continue;
             if (driftEdited)
               center.note->setPitchDrift(1.0f - drift / 100.0f);
+            if (!recomputePitch)
+            {
+              center.note->setMidiNoteFromPitchCorrection(center.midiNote);
+              center.note->setMacroPitchCenter(center.strength);
+              continue;
+            }
+            const float amount = centerEdited ? value : center.strength;
+            const float maximumDeviation = (100.0f - amount) * 0.005f;
+            center.note->setMacroPitchCenter(amount);
             // Calculate from the latest regular edit, never from an earlier
             // macro result. This lets a lower amount restore that edit without
             // compounding correction or discarding edits made between passes.
@@ -491,22 +529,27 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         }
         pianoRoll.repaint();
       },
-      [safeThis, states, amount, previewEdited, refreshCurves, renderPreview, apply, track](bool accepted) {
+      [safeThis, states, amount, previewEdited, centerWasEdited, refreshCurves, renderPreview,
+       apply, track](bool accepted) {
         if (!safeThis) return;
         if (accepted && !*previewEdited) return;
         safeThis->pianoRoll.endMacroCurvePreview();
         bool changed = false;
         for (auto& state : *states) {
           if (state.target.isValid && !state.target.isValid()) continue;
-          changed |= std::abs(*amount - state.originalPitchCenter) > 0.0001f;
+          state.finalPitchCenter = *centerWasEdited ? *amount : state.originalPitchCenter;
+          changed |= std::abs(state.finalPitchCenter - state.originalPitchCenter) > 0.0001f;
           for (auto& center : state.notes) {
             center.finalMidi = center.note->getMidiNote();
             center.finalDrift = center.note->getPitchDrift();
+            center.finalStrength = center.note->getMacroPitchCenter();
             changed |= std::abs(center.finalMidi - center.midiNote) > 0.0001f ||
-                       std::abs(center.finalDrift - center.pitchDrift) > 0.0001f;
+                       std::abs(center.finalDrift - center.pitchDrift) > 0.0001f ||
+                       std::abs(center.finalStrength - center.strength) > 0.0001f;
             if (!accepted) {
               center.note->setMidiNoteFromPitchCorrection(center.midiNote);
               center.note->setPitchDrift(center.pitchDrift);
+              center.note->setMacroPitchCenter(center.strength);
             }
           }
         }
@@ -520,7 +563,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         // settings/history here, without re-dirtying notes or rendering again.
         for (auto& state : *states) {
           if (state.target.isValid && !state.target.isValid()) continue;
-          state.target.project->setPitchCenter(*amount);
+          state.target.project->setPitchCenter(state.finalPitchCenter);
           state.target.project->setModified(true);
           if (state.target.onCommit) state.target.onCommit();
         }

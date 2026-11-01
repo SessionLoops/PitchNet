@@ -4,6 +4,7 @@
 #include "../Source/Utils/Localization.h"
 #include "TestAssert.h"
 #include <cmath>
+#include <functional>
 #include <iostream>
 
 struct Fixture {
@@ -13,7 +14,8 @@ struct Fixture {
   PitchUndoManager history;
   int renders = 0, commits = 0;
   juce::Component* popup = nullptr;
-  explicit Fixture(bool track = true) {
+  explicit Fixture(bool track = true,
+                   std::function<void(Project&, Project&)> prepare = {}) {
     for (auto* project : {&a, &b}) {
       project->setPitchCenter(0);
       auto& audio = project->getAudioData();
@@ -24,6 +26,7 @@ struct Fixture {
     }
     a.addNote(Note(5, 25, 60.4f));
     b.addNote(Note(5, 25, 60.7f));
+    if (prepare) prepare(a, b);
     roll.setProject(&a);
     roll.setUndoManager(&history);
     workspace.setSize(800, 400);
@@ -50,11 +53,16 @@ struct Fixture {
     CHECK(popup);
   }
   ~Fixture() { delete popup; }
-  juce::Slider& center() {
+  juce::Slider& slider(int index) {
     for (auto* child : popup->getChildren())
-      if (auto* slider = dynamic_cast<juce::Slider*>(child)) return *slider;
+      if (auto* found = dynamic_cast<juce::Slider*>(child))
+        if (index-- == 0) return *found;
     std::abort();
   }
+  juce::Slider& center() { return slider(0); }
+  juce::Slider& drift() { return slider(1); }
+  static juce::String text(juce::Slider& s) { return s.getTextFromValue(s.getValue()); }
+  float strength(Project& p) { return p.getNotes()[0].getMacroPitchCenter(); }
   void press(bool ok) {
     const auto label = ok ? TR("dialog.ok") : TR("dialog.cancel");
     for (auto* child : popup->getChildren())
@@ -121,6 +129,54 @@ int main() {
     f.press(true);
     CHECK(f.renders == 1 && f.commits == 1);
     CHECK(std::abs(f.b.getNotes()[0].getMidiNote() - 60.7f) < 1e-4f);
+  }
+  {
+    Fixture f; // Each note stores the strength applied to it, with undo.
+    f.drag(100);
+    f.press(true);
+    CHECK(f.strength(f.a) == 100 && f.strength(f.b) == 100);
+    f.history.undo();
+    CHECK(f.strength(f.a) == 0 && f.strength(f.b) == 0);
+    f.history.redo();
+    CHECK(f.strength(f.a) == 100 && f.strength(f.b) == 100);
+  }
+  {
+    Fixture f(true, [](Project& a, Project&) { a.getNotes()[0].setMacroPitchCenter(70); });
+    CHECK(Fixture::text(f.center()) == "0 % - 70 %"); // Melodyne-style range.
+    CHECK(f.center().getValue() == 35); // Thumb at the average (0 and 70).
+    f.press(true); // Untouched sliders change nothing.
+    CHECK(f.renders == 0 && f.commits == 0 && !f.history.canUndo());
+    CHECK(f.strength(f.a) == 70 && f.strength(f.b) == 0);
+  }
+  {
+    Fixture f(true, [](Project& a, Project&) { a.getNotes()[0].setMacroPitchCenter(70); });
+    f.drag(50);
+    CHECK(Fixture::text(f.center()) == "50 %");
+    f.press(true);
+    CHECK(f.strength(f.a) == 50 && f.strength(f.b) == 50);
+  }
+  {
+    Fixture f(true, [](Project& a, Project& b) {
+      for (auto* p : {&a, &b}) {
+        auto& note = p->getNotes()[0];
+        note.setMacroPitchCenter(100);
+        note.setMidiNoteFromPitchCorrection(std::round(note.getMidiNote()));
+      }
+    });
+    CHECK(Fixture::text(f.center()) == "100 %");
+    f.drift().setValue(40, juce::sendNotificationSync); // Drift only.
+    f.press(true);
+    CHECK(f.history.canUndo());
+    CHECK(std::abs(f.a.getNotes()[0].getMidiNote() - 60.0f) < 1e-4f);
+    CHECK(std::abs(f.b.getNotes()[0].getMidiNote() - 61.0f) < 1e-4f);
+    CHECK(f.strength(f.a) == 100);
+    CHECK(std::abs(f.a.getNotes()[0].getPitchDrift() - 0.6f) < 1e-4f);
+  }
+  {
+    Note note(0, 10, 60.4f); // A regular pitch edit becomes uncorrected source.
+    note.setMacroPitchCenter(50);
+    note.setMidiNote(61.0f);
+    CHECK(note.getMacroPitchCenter() == 0);
   }
   std::cout << "Pitch macro render tests passed\n";
 }
