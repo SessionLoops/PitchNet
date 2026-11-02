@@ -125,10 +125,14 @@ std::vector<float> scalePitchDrift(const std::vector<float>& deltaPitch, float f
     }
     trend[static_cast<size_t>(i)] = static_cast<float>(sum / weight);
   }
-  const float mean = computeMean(trend);
+  // Delta is measured from the note's pitch (the blob), so the slow trend is
+  // scaled around zero, not around the curve's own mean. A note whose curve
+  // averages away from its blob (a long scoop, a detector octave dip, or a
+  // note model that places the blob by a different statistic) therefore lands
+  // on the blob at 0%, as in Melodyne, instead of parking at that mean.
   auto result = deltaPitch;
   for (size_t i = 0; i < result.size(); ++i)
-    result[i] += (factor - 1.0f) * (trend[i] - mean);
+    result[i] += (factor - 1.0f) * trend[i];
   return result;
 }
 

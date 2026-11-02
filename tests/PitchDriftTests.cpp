@@ -10,8 +10,10 @@ int main() {
     using namespace PitchToolOperations;
     assert(scalePitchDrift({}, 0).empty());
     assert(scalePitchDrift({0.7f}, 0) == std::vector<float>{0.7f});
+    // A constant offset from the note is slow drift: 0% puts it on the note.
     const std::vector<float> constant(100, 0.5f);
-    assert(scalePitchDrift(constant, 0) == constant);
+    for (float x : scalePitchDrift(constant, 0)) assert(std::abs(x) < 1e-5f);
+    for (float x : scalePitchDrift(constant, 0.5f)) assert(std::abs(x - 0.25f) < 1e-5f);
     std::vector<float> curve(344), wobble(curve.size());
     for (size_t i = 0; i < curve.size(); ++i) {
         const double t = double(i) * HOP_SIZE / SAMPLE_RATE;
@@ -22,9 +24,10 @@ int main() {
     const auto flat = scalePitchDrift(curve, 0);
     const auto inverted = scalePitchDrift(curve, -1);
     const auto amplified = scalePitchDrift(curve, 2);
-    assert(std::abs(computeMean(curve) - computeMean(flat)) < 1e-5f);
+    // The flattened curve centers on the note (zero delta), not on its mean.
+    assert(std::abs(computeMean(flat)) < 0.01f);
     double residual = 0;
-    const float center = computeMean(curve);
+    const float center = 0.0f;
     for (size_t i = 30; i < curve.size() - 30; ++i) {
         residual += std::pow(flat[i] - center - wobble[i], 2);
         assert(std::abs(inverted[i] - (2 * flat[i] - curve[i])) < 1e-6f);
