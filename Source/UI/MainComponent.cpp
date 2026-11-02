@@ -2,6 +2,7 @@
 #include "GpuDeviceList.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
+#include "Polyphonic/PolyLab.h"
 #include "Components/DarkLookAndFeel.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
@@ -1526,6 +1527,9 @@ MainComponent::~MainComponent()
 #endif
   removeKeyListener(commandManager->getKeyMappings());
   stopTimer();
+
+  // The Lab plays through the audio device: close it while the device exists.
+  polyLabWindow.reset();
 
   if (auto *audioEngine = editorController
                               ? editorController->getAudioEngine()
@@ -3920,6 +3924,7 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       // View commands
       CommandIDs::showSettings,
       CommandIDs::showAbout,
+      CommandIDs::showPolyphonicLab,
       CommandIDs::showDeltaPitch,
       CommandIDs::showBasePitch,
 
@@ -4020,6 +4025,12 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
 
   case CommandIDs::showAbout:
     result.setInfo(TR("command.about"), TR("command.about.desp"), TR("menu.view"), 0);
+    break;
+
+  case CommandIDs::showPolyphonicLab:
+    result.setInfo(TR("command.polyphonic_lab"), TR("command.polyphonic_lab.desp"),
+                   TR("menu.view"), 0);
+    result.setActive(!isPluginMode());
     break;
 
   case CommandIDs::showDeltaPitch:
@@ -4175,6 +4186,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     showAboutPopup();
     return true;
 
+  case CommandIDs::showPolyphonicLab:
+    showPolyphonicLab();
+    return true;
+
   case CommandIDs::showDeltaPitch:
   {
     bool newState = !settingsManager->getShowDeltaPitch();
@@ -4243,6 +4258,44 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
   default:
     return false;
   }
+}
+
+void MainComponent::showPolyphonicLab()
+{
+  // Experimental. The Lab plays through this window's audio device, so it is
+  // standalone only, and it works on its own copy of the audio (PolyLab.h).
+  if (isPluginMode())
+    return;
+  auto *audioEngine =
+      editorController ? editorController->getAudioEngine() : nullptr;
+  if (audioEngine == nullptr)
+    return;
+
+  if (polyLabWindow == nullptr)
+  {
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    polyLabWindow = std::make_unique<PolyLabWindow>(
+        audioEngine->getDeviceManager(),
+        [safeThis](PolyLabSource &source)
+        {
+          auto *project = safeThis != nullptr ? safeThis->getProject() : nullptr;
+          if (project == nullptr)
+            return false;
+          const auto &audio = project->getAudioData();
+          const auto &buffer = audio.originalWaveform.getNumSamples() > 0
+                                   ? audio.originalWaveform
+                                   : audio.waveform;
+          if (buffer.getNumSamples() == 0 || audio.sampleRate <= 0)
+            return false;
+          source.audio.makeCopyOf(buffer);
+          source.sampleRate = audio.sampleRate;
+          source.name = project->getFilePath().getFileNameWithoutExtension();
+          if (source.name.isEmpty())
+            source.name = project->getName();
+          return true;
+        });
+  }
+  polyLabWindow->open();
 }
 
 void MainComponent::restoreProjectPresentation()

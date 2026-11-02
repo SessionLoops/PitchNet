@@ -79,6 +79,8 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addCommandItem(commandManager, CommandIDs::selectAll);
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
+                menu.addSeparator();
+                menu.addCommandItem(commandManager, CommandIDs::showPolyphonicLab);
             }
         }
     }

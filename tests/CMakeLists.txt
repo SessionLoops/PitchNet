@@ -50,6 +50,15 @@ endforeach()
 target_sources(NonAraLifecycleTests PRIVATE
     ../Source/Plugin/NonAraCaptureController.cpp)
 
+# Polyphonic note editing (Source/Audio/Polyphonic). The engine has no
+# JUCE dependency; the test links pitchnet_core like the others because the
+# sources are compiled into it. tools/polyphonic/CMakeLists.txt builds the same
+# test without JUCE.
+add_executable(PolyphonicTests PolyphonicTests.cpp)
+target_link_libraries(PolyphonicTests PRIVATE pitchnet_core)
+target_compile_features(PolyphonicTests PRIVATE cxx_std_17)
+add_test(NAME PolyphonicTests COMMAND PolyphonicTests)
+
 add_executable(PitchMacroScopeTests PitchMacroScopeTests.cpp)
 target_link_libraries(PitchMacroScopeTests PRIVATE pitchnet_core)
 target_compile_features(PitchMacroScopeTests PRIVATE cxx_std_17)

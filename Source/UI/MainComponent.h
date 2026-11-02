@@ -27,6 +27,8 @@
 #include <thread>
 #include <vector>
 
+class PolyLabWindow;
+
 class AnalysisBackdrop : public juce::Component {
 public:
   AnalysisBackdrop() {
@@ -305,6 +307,7 @@ private:
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
   void showSettings();
+  void showPolyphonicLab();
   void openRecentFile(const juce::File &file);
   void addRecentFile(const juce::File &file);
   void refreshRecentFilesMenu();
@@ -409,6 +412,8 @@ private:
   std::shared_ptr<juce::TooltipWindow> tooltipWindow;
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;
+  // Experimental polyphonic test bench (standalone only), Source/UI/Polyphonic.
+  std::unique_ptr<PolyLabWindow> polyLabWindow;
 
   std::unique_ptr<juce::FileChooser> fileChooser;
   juce::StringArray recentFiles;

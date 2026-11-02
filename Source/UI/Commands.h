@@ -30,6 +30,7 @@ namespace CommandIDs
         showBasePitch       = 0x2021,
         showSettings        = 0x2022,
         showAbout           = 0x2023,
+        showPolyphonicLab   = 0x2024,
         
         // Transport Commands (0x2030-0x203F)
         playPause           = 0x2030,

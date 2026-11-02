@@ -138,6 +138,22 @@ Copyright (c) 2024 Avid Technology Inc.
 The AAX SDK is subject to the Avid AAX SDK License Agreement or, where
 applicable, GPLv3. See https://developer.avid.com/aax for its terms.
 
+Basic Pitch note model (Resources/models/basic_pitch_nmp.onnx)
+Source: https://github.com/spotify/basic-pitch
+Copyright 2022 Spotify AB
+Licensed under the Apache License, Version 2.0; you may obtain a copy at
+http://www.apache.org/licenses/LICENSE-2.0
+This product includes software developed at Spotify AB (http://www.spotify.com/).
+Source/Audio/Polyphonic/BasicPitchEvidence.cpp ports the model's input
+windowing and output unwrapping from basic_pitch/inference.py and
+basic_pitch/note_creation.py.
+
+Polyphonic note filter model (Source/Audio/Polyphonic/PolyPurifierModel.h)
+Derived from features of recordings in Salamander Grand Piano V3 by Alexander
+Holm (CC BY 3.0, https://creativecommons.org/licenses/by/3.0/) and VSCO 2
+Community Edition by Versilian Studios and Ivy Audio (CC0 1.0). No audio from
+these libraries is distributed.
+
 SwiftF0 pitch model (Resources/models/swift_f0.onnx)
 Source: https://github.com/lars76/swift-f0
 Copyright (c) 2025-2026 Lars Nieradzik
