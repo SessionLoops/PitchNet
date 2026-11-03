@@ -978,6 +978,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   if (origWaveform.getNumChannels() > 0) {
     const float *origPtr = origWaveform.getReadPointer(0);
     std::vector<CommitFrameRange> clearFrameRanges;
+    std::vector<CommitFrameRange> noteVacatedFrameRanges;
     auto addClearFrameRange = [&](int start, int end) {
       start = std::clamp(start, 0, audioData.getNumFrames());
       end = std::clamp(end, start, audioData.getNumFrames());
@@ -1051,6 +1052,21 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         const int offset = note.getEndFrame() - note.getSrcEndFrame();
         addClearFrameRange(region.end + offset, region.end);
       }
+
+      // A note edge moved inward that is not a region edge (e.g. the first
+      // note of a phrase that shares a slicer chunk with the previous phrase)
+      // leaves part of the note's own source audio outside it. That audio has
+      // been retimed into the note, so the original frames must go silent;
+      // otherwise they are resynthesized from their untouched mel and the old
+      // attack/release stays audible and visible next to the shortened note.
+      if (note.getStartFrame() > note.getSrcStartFrame() &&
+          !timingRegions::isFirstNote(*project, note))
+        noteVacatedFrameRanges.push_back(
+            {note.getSrcStartFrame(), note.getStartFrame()});
+      if (note.getEndFrame() < note.getSrcEndFrame() &&
+          !timingRegions::isLastNote(*project, note))
+        noteVacatedFrameRanges.push_back(
+            {note.getEndFrame(), note.getSrcEndFrame()});
 
       if (!note.isDirty() || !hasTimingEdit(note))
         continue;
@@ -1182,6 +1198,63 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           });
       addClearPatch(gap.start * hopSize, gap.end * hopSize, releaseBefore,
                     attackAfter);
+    }
+
+    // Silence the note-level vacated frames, minus anything currently
+    // occupied by a note or by moved lead/tail audio. Only ranges this render
+    // commits are touched, so an untouched gap is not faded again on every
+    // unrelated edit.
+    if (!noteVacatedFrameRanges.empty()) {
+      std::vector<CommitFrameRange> occupiedNoteRanges;
+      for (const auto &other : project->getNotes()) {
+        if (other.isRest())
+          continue;
+        if (other.getEndFrame() > other.getStartFrame())
+          occupiedNoteRanges.push_back(
+              {other.getStartFrame(), other.getEndFrame()});
+        if (hasTimingEdit(other))
+          for (const auto &span : getPreservedTimingSpans(*project, other))
+            if (span.destinationEnd > span.destinationStart)
+              occupiedNoteRanges.push_back(
+                  {span.destinationStart, span.destinationEnd});
+      }
+      std::sort(occupiedNoteRanges.begin(), occupiedNoteRanges.end(),
+                [](const CommitFrameRange &a, const CommitFrameRange &b) {
+                  return a.start < b.start;
+                });
+
+      const int frameCount = audioData.getNumFrames();
+      for (auto range : noteVacatedFrameRanges) {
+        range.start = std::clamp(range.start, 0, frameCount);
+        range.end = std::clamp(range.end, range.start, frameCount);
+        if (range.end <= range.start)
+          continue;
+        const bool committed = std::any_of(
+            commitFrameRanges.begin(), commitFrameRanges.end(),
+            [&](const CommitFrameRange &commit) {
+              return commit.start < range.end && commit.end > range.start;
+            });
+        if (!committed)
+          continue;
+
+        int cursor = range.start;
+        auto emit = [&](int start, int end) {
+          if (end > start)
+            addClearPatch(start * hopSize, end * hopSize, true, true);
+        };
+        for (const auto &occupied : occupiedNoteRanges) {
+          if (occupied.end <= cursor)
+            continue;
+          if (occupied.start >= range.end)
+            break;
+          emit(cursor, std::min(occupied.start, range.end));
+          cursor = std::max(cursor, occupied.end);
+          if (cursor >= range.end)
+            break;
+        }
+        if (cursor < range.end)
+          emit(cursor, range.end);
+      }
     }
   }
 
