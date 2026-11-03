@@ -19,6 +19,7 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
 
     Context ctx;
     ctx.p = params;
+    ctx.evidence = params.detectionMode == DetectionMode::NeuralGuided ? evidence : nullptr;
     ctx.audio = mono;
     ctx.numSamples = numSamples;
     analyzeSpectra(ctx, cancel);

@@ -42,6 +42,9 @@
 namespace polyphonic
 {
 
+/** Candidate search strategy. NeuralGuided is experimental and needs neural evidence. */
+enum class DetectionMode { Harmonic, NeuralGuided };
+
 struct Params
 {
     // ---- framing (scaled with the sample rate by Params::forSampleRate) ----
@@ -99,6 +102,9 @@ struct Params
 
     // ---- diagnostics ----
     bool exportFeatures = false;       // fill Analysis::candidateFeatures (purifier training)
+
+    // Opt-in research detector; without evidence it uses the original DSP-only path.
+    DetectionMode detectionMode = DetectionMode::Harmonic;
 
     /** Framing that keeps ~93 ms windows and 8x overlap at any sample rate. */
     static Params forSampleRate(double rate)

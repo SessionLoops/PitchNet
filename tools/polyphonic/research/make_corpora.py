@@ -9,7 +9,7 @@ writes
     WORK/pcorpus/  36 mixtures with one note struck again at the same pitch (repeated notes, seed 4242)
 Every mixture is a .npz (mix, and stems where kept) plus a .json with the true notes.
 """
-import json, os, sys
+import argparse, json, os, sys
 import numpy as np, soundfile as sf
 from scipy.signal import resample
 
@@ -155,9 +155,24 @@ def repeated_corpus(work, N, sub='pcorpus', seed=4242):
 
 
 if __name__ == '__main__':
-    work = sys.argv[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('work')
+    parser.add_argument('--partition', help='generate only this random-mixture partition')
+    parser.add_argument('--seed', type=int, help='random seed for --partition')
+    parser.add_argument('--count', type=int, default=80, help='mixture count for --partition (default: 80)')
+    parser.add_argument('--no-stems', action='store_true', help='omit stems in a custom training partition')
+    args = parser.parse_args()
+    if args.partition and (args.seed is None or args.count < 1 or args.partition in ('.', '..')
+                           or os.path.basename(args.partition) != args.partition):
+        parser.error('--partition requires --seed, a positive --count and a simple directory name')
+    if not args.partition and (args.seed is not None or args.no_stems):
+        parser.error('--seed and --no-stems require --partition')
+    work = args.work
     N = Notes(work)
-    hand_made(work, N)
-    random_corpus(work, N, 'rcorpus', 12345, 240, keep_stems=False)
-    random_corpus(work, N, 'tcorpus', 999, 80, keep_stems=True)
-    repeated_corpus(work, N)
+    if args.partition:
+        random_corpus(work, N, args.partition, args.seed, args.count, keep_stems=not args.no_stems)
+    else:
+        hand_made(work, N)
+        random_corpus(work, N, 'rcorpus', 12345, 240, keep_stems=False)
+        random_corpus(work, N, 'tcorpus', 999, 80, keep_stems=True)
+        repeated_corpus(work, N)

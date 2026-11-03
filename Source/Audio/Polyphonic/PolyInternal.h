@@ -101,6 +101,7 @@ struct Context
     int numSamples = 0;
     int numFrames = 0;
     int numBins = 0;
+    const NoteEvidence* evidence = nullptr; // non-owning; only for neural-guided candidate search
     Peaks peaks;
     std::vector<float> r0max;          // per frame: maximum of the initial relevance landscape
 };

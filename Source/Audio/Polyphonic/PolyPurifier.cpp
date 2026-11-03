@@ -10,6 +10,7 @@
 
 #include "PolyInternal.h"
 #include "PolyPurifierModel.h"
+#include "PolyGuidedPurifierModel.h"
 
 #include <cassert>
 
@@ -318,8 +319,13 @@ void scoreCandidates(const Context& ctx, std::vector<Candidate>& cands, const No
             }
             x.push_back(static_cast<float>(bpMean));
             x.push_back(static_cast<float>(bpMax));
-            n.probability = predict(purifier::kEvidenceNodes, purifier::kEvidenceTreeStart, purifier::kEvidenceNumTrees,
-                                    purifier::kEvidenceInit, purifier::kEvidenceRate, purifier::kEvidenceNumFeatures, x);
+            if (p.detectionMode == DetectionMode::NeuralGuided)
+                n.probability = predict(guidedPurifier::kEvidenceNodes, guidedPurifier::kEvidenceTreeStart,
+                                        guidedPurifier::kEvidenceNumTrees, guidedPurifier::kEvidenceInit,
+                                        guidedPurifier::kEvidenceRate, guidedPurifier::kEvidenceNumFeatures, x);
+            else
+                n.probability = predict(purifier::kEvidenceNodes, purifier::kEvidenceTreeStart, purifier::kEvidenceNumTrees,
+                                        purifier::kEvidenceInit, purifier::kEvidenceRate, purifier::kEvidenceNumFeatures, x);
         }
         else
         {

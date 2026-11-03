@@ -400,6 +400,42 @@ void extractBlock(Context& ctx, int lo, int hi, int coreLo, int coreHi, std::vec
     const int T = E.rows, cols = rt.c0Hi - rt.c0Lo + 1;
     Matrix R(T, cols);
     relevanceRows(rt, E, 0, T, R);
+    // Guide all pitch hypotheses before explaining away shared harmonic energy.
+    // Keep unweighted strengths/r0max in the learned feature schema.
+    const bool guided = ctx.evidence != nullptr && !ctx.evidence->empty();
+    Matrix guide(guided ? T : 0, guided ? cols : 0, 1.0f);
+    constexpr double guideStrength = 0.75;
+    if (guided)
+    {
+        const auto& ev = *ctx.evidence;
+        for (int t = 0; t < T; ++t)
+        {
+            const float sec = static_cast<float>((lo + t) * p.hop / p.sampleRate);
+            auto it = std::lower_bound(ev.frameTimes.begin(), ev.frameTimes.end(), sec);
+            const int ef = static_cast<int>(std::min<std::ptrdiff_t>(it - ev.frameTimes.begin(), ev.frameTimes.size() - 1));
+            for (int c = 0; c < cols; ++c)
+            {
+                const float m = 69.0f + 12.0f * std::log2(fieldToHz(static_cast<float>(rt.c0Lo + c), p) / 440.0f) - 21.0f;
+                if (m < 0.0f || m > 87.0f)
+                    continue;
+                const int a = static_cast<int>(m), b = std::min(87, a + 1);
+                const float u = m - a;
+                const float q = ev.note[static_cast<size_t>(ef) * 88 + a] * (1 - u) + ev.note[static_cast<size_t>(ef) * 88 + b] * u;
+                guide.at(t, c) = static_cast<float>((1 - guideStrength) + guideStrength * std::sqrt(std::max(0.0f, q)));
+            }
+        }
+    }
+    auto applyGuide = [&](int a, int b) {
+        if (!guided)
+            return;
+        for (int t = a; t < b; ++t)
+            for (int c = 0; c < cols; ++c)
+                R.at(t, c) *= guide.at(t, c);
+    };
+    for (int t = 0; t < T; ++t)
+        if (guided && lo + t >= coreLo && lo + t < coreHi)
+            ctx.r0max[static_cast<size_t>(lo + t)] = *std::max_element(R.row(t), R.row(t) + cols);
+    applyGuide(0, T);
     std::vector<uint8_t> supp(static_cast<size_t>(T) * cols, 0);
     std::vector<float> rowMax(static_cast<size_t>(T));
     std::vector<int> rowArg(static_cast<size_t>(T));
@@ -415,7 +451,7 @@ void extractBlock(Context& ctx, int lo, int hi, int coreLo, int coreHi, std::vec
     for (int t = 0; t < T; ++t)
     {
         updateRow(t);
-        if (lo + t >= coreLo && lo + t < coreHi)
+        if (!guided && lo + t >= coreLo && lo + t < coreHi)
             ctx.r0max[static_cast<size_t>(lo + t)] = rowMax[static_cast<size_t>(t)];
     }
     double eTotal = 0.0;
@@ -440,12 +476,13 @@ void extractBlock(Context& ctx, int lo, int hi, int coreLo, int coreHi, std::vec
         for (size_t i = 0; i < cr.c.size(); ++i)
         {
             cField[i] = cr.c[i] + rt.c0Lo;
-            strength[i] = R.at(cr.t[i], cr.c[i]);
+            strength[i] = guided ? R.at(cr.t[i], cr.c[i]) / guide.at(cr.t[i], cr.c[i]) : R.at(cr.t[i], cr.c[i]);
         }
         const double took = withdraw(E, cr.t, cField, p);
         eTotal -= took;
         const int a = std::max(0, cr.t.front() - 1), b = std::min(T, cr.t.back() + 2);
         relevanceRows(rt, E, a, b, R);
+        applyGuide(a, b);
         if (R.at(t0, c0) > 0.9f * peak)
             for (size_t i = 0; i < cr.t.size(); ++i)
                 for (int d = -1; d <= 1; ++d)

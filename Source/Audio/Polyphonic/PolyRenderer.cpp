@@ -6,7 +6,8 @@
 //           accumulated phase  psi += 2 pi (r - 1) f hop / fs  (Laroche & Dolson 1999), which keeps
 //           the partial phase-coherent from frame to frame without any time stretching. Phases are
 //           those at the frame centre: frames start N/2 before it, so bin k carries (-1)^k and a
-//           region moved by an odd number of bins is flipped back (vibrato changes the shift);
+//           region moved by an odd number of bins is flipped back (vibrato changes the shift).
+//           A scalar compensates Hann overlap-add attenuation at fractional-bin offsets;
 //   formant optional: partial amplitudes follow the note's smoothed spectral envelope;
 //   gain    a scalar; mute removes the share;
 //   time    whole hops plus a fractional linear-phase delay;
@@ -183,6 +184,26 @@ int peakBin(const NoteMasks& nm, const PartialMask& pm, const std::complex<float
  * pi k: moving a region by an odd number of bins flips its sign unless it is flipped back.
  */
 inline float binShiftSign(int shift) { return (shift & 1) != 0 ? -1.0f : 1.0f; }
+
+/**
+ * Integer bin relocation plus continuous phase advance puts a stationary partial at the exact
+ * target frequency, but the residual fractional-bin offset attenuates its carrier in Hann
+ * analysis/synthesis overlap-add. The normalized Fourier transform of the centred Hann squared
+ * window is G(a) = 4 sinc(a) / ((1-a*a)(4-a*a)); compensate its gain for |a| <= 0.5.
+ * This is exact for a complete stationary partial away from edges and approximate for masked
+ * or changing partials. Regions narrower than a full Hann main lobe are left alone. Keeping
+ * the original bin region avoids interpolation truncation spurs.
+ */
+float fractionalShiftGain(double bins, int count)
+{
+    if (count < 3)
+        return 1.0f;
+    const double a = bins - std::nearbyint(bins);
+    if (std::fabs(a) < 1e-8)
+        return 1.0f;
+    const double a2 = a * a;
+    return static_cast<float>((kPi * a / std::sin(kPi * a)) * (1.0 - a2) * (1.0 - 0.25 * a2));
+}
 
 /** Frame range [lo, hi] of a note's masks (empty when hi < lo). */
 std::pair<int, int> noteFrameRange(const Analysis& A, int note)
@@ -401,7 +422,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                     if (pb != nullptr)
                         level += mu * (pa.amplitude > 0.0f ? std::clamp(static_cast<double>(pb->amplitude / pa.amplitude), 0.0, 4.0) : 1.0);
                     const int shift = r != 1.0 ? static_cast<int>(std::nearbyint((r - 1.0) * f / binHz)) : 0;
-                    float g = st.gain * static_cast<float>(level);
+                    float g = st.gain * static_cast<float>(level) * fractionalShiftGain((r - 1.0) * f / binHz, pa.count);
                     if (r != 1.0 && st.env.valid())
                     {
                         const double l0 = std::log(std::max(1.0, f)), l1 = std::log(std::max(1.0, f * r));
@@ -447,8 +468,11 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                 double phase = 0.0;
                 int shift = 0;
                 float g = st.gain;
-                if (r != 1.0)
+                if (st.shifts)
                 {
+                    // A curve returning to zero keeps the phase accumulated by its earlier
+                    // pitch changes. Update the frame even at zero so a later change does not
+                    // apply its frequency offset across the intervening unshifted frames.
                     const double dfh = (r - 1.0) * pm.freqHz;
                     auto it = st.psi.find(pm.harmonic);
                     const int tLast = it == st.psi.end() ? s - 1 : it->second.first;
@@ -456,7 +480,8 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                     phase = phLast + (s - tLast) * 2.0 * kPi * dfh * H / p.sampleRate;
                     st.psi[pm.harmonic] = {s, phase};
                     shift = static_cast<int>(std::nearbyint(dfh / binHz));
-                    if (st.env.valid())
+                    g *= fractionalShiftGain(dfh / binHz, pm.count);
+                    if (r != 1.0 && st.env.valid())
                     {
                         const double l0 = std::log(std::max(1.0f, pm.freqHz)), l1 = std::log(std::max(1.0, pm.freqHz * r));
                         g *= static_cast<float>(std::exp(std::clamp(st.env.at(l1) - st.env.at(l0), -2.3, 2.3)));

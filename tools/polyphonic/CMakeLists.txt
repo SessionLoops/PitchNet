@@ -33,7 +33,23 @@ endif()
 add_executable(polyphonic_cli polyphonic_cli.cpp WavIO.h)
 target_link_libraries(polyphonic_cli PRIVATE polyphonic)
 
+# A separate default makes evaluator/training executable hashes identify the guided strategy.
+# Both executables also accept --detector to select a strategy explicitly.
+add_executable(polyphonic_guided_cli polyphonic_cli.cpp WavIO.h)
+target_compile_definitions(polyphonic_guided_cli PRIVATE POLYPHONIC_GUIDED_DEFAULT=1)
+target_link_libraries(polyphonic_guided_cli PRIVATE polyphonic)
+
 enable_testing()
 add_executable(PolyphonicTests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/PolyphonicTests.cpp")
 target_link_libraries(PolyphonicTests PRIVATE polyphonic)
 add_test(NAME PolyphonicTests COMMAND PolyphonicTests)
+
+add_executable(BasicPitchEvidenceTests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/BasicPitchEvidenceTests.cpp")
+target_link_libraries(BasicPitchEvidenceTests PRIVATE polyphonic)
+add_test(NAME BasicPitchEvidenceTests COMMAND BasicPitchEvidenceTests)
+
+set(POLYPHONIC_BASIC_PITCH_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/../../Resources/models/basic_pitch_nmp.onnx"
+    CACHE FILEPATH "Optional Basic Pitch model for inference regression tests")
+if(ONNXRUNTIME_DIR AND EXISTS "${POLYPHONIC_BASIC_PITCH_MODEL}")
+    add_test(NAME BasicPitchEvidenceModelTests COMMAND BasicPitchEvidenceTests "${POLYPHONIC_BASIC_PITCH_MODEL}")
+endif()

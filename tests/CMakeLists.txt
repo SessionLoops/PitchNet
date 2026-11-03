@@ -59,6 +59,11 @@ target_link_libraries(PolyphonicTests PRIVATE pitchnet_core)
 target_compile_features(PolyphonicTests PRIVATE cxx_std_17)
 add_test(NAME PolyphonicTests COMMAND PolyphonicTests)
 
+add_executable(BasicPitchEvidenceTests BasicPitchEvidenceTests.cpp)
+target_link_libraries(BasicPitchEvidenceTests PRIVATE pitchnet_core)
+target_compile_features(BasicPitchEvidenceTests PRIVATE cxx_std_17)
+add_test(NAME BasicPitchEvidenceTests COMMAND BasicPitchEvidenceTests)
+
 add_executable(PitchMacroScopeTests PitchMacroScopeTests.cpp)
 target_link_libraries(PitchMacroScopeTests PRIVATE pitchnet_core)
 target_compile_features(PitchMacroScopeTests PRIVATE cxx_std_17)

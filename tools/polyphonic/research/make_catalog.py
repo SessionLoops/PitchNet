@@ -1,6 +1,6 @@
 """Measure the pitch of every fetched single-note recording (mono, 44.1 kHz) and write
 WORK/samples/catalog.json.   usage: python make_catalog.py WORK"""
-import glob, json, os, re, sys
+import argparse, glob, hashlib, json, os, re, sys
 from math import gcd
 import numpy as np, soundfile as sf
 from scipy.signal import resample_poly
@@ -65,9 +65,9 @@ def measure_f0(x, nominal_midi):
     return 69 + 12 * np.log2(f0 / 440)
 
 
-def main(work):
+def main(work, piano_velocity=10):
     root = f'{work}/data'
-    specs = [('piano', f'{root}/sal/Samples/*v10.flac', r'([A-G]#?\d)v10'),
+    specs = [('piano', f'{root}/sal/Samples/*v{piano_velocity}.flac', rf'([A-G]#?\d)v{piano_velocity}'),
              ('clarinet', f'{root}/vsco/Woodwinds/Clarinet/susLong/*.wav', r'susLong_([A-G]#?\d)_'),
              ('flute', f'{root}/vsco/Woodwinds/Flute/susNV/*.wav', r'susNV_([A-G]#?\d)_'),
              ('bassoon', f'{root}/vsco/Woodwinds/Bassoon/sus/*.wav', r'PSBassoon_([A-G]#?\d)_'),
@@ -89,10 +89,16 @@ def main(work):
             midi = measure_f0(x, nominal)
             rel = f'samples/{inst}_{tag.replace("#", "s")}.wav'
             sf.write(f'{work}/{rel}', (x / max(1e-9, np.abs(x).max()) * 0.5).astype(np.float32), FS)
-            items.append(dict(inst=inst, tag=tag, nominal=nominal, midi=round(float(midi), 3), path=rel))
+            items.append(dict(inst=inst, tag=tag, nominal=nominal, midi=round(float(midi), 3), path=rel,
+                              source=os.path.relpath(p, work),
+                              source_sha256=hashlib.sha256(open(p, 'rb').read()).hexdigest()))
             print(f'{inst:9s} {tag:4s} nominal {nominal:3d} measured {midi:7.2f}')
     json.dump(items, open(f'{work}/samples/catalog.json', 'w'), indent=1)
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('work')
+    parser.add_argument('--piano-velocity', type=int, default=10)
+    args = parser.parse_args()
+    main(args.work, args.piano_velocity)

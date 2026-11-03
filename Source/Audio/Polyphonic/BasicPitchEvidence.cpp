@@ -120,8 +120,30 @@ std::vector<float> BasicPitchEvidence::resample(const float* x, int numSamples, 
     return y;
 }
 
+std::vector<float> BasicPitchEvidence::frameTimesForSamples(int numSamples)
+{
+    std::vector<float> times;
+    if (numSamples <= 0)
+        return times;
+    constexpr int winHop = kWindowSamples - kOverlapFrames * kHop;
+    constexpr int keep = kWindowFrames - kOverlapFrames;
+    // The left padding and the discarded left overlap are both 15 hops, so they cancel.
+    // A window advances 36164 samples, not 142 * 256: timestamp each retained frame
+    // from its own window rather than assuming an integer frame rate after concatenation.
+    for (int64_t start = 0; start < numSamples; start += winHop)
+        for (int j = 0; j < keep; ++j)
+        {
+            const int64_t sample = start + static_cast<int64_t>(j) * kHop;
+            if (sample >= numSamples)
+                break;
+            times.push_back(static_cast<float>(static_cast<double>(sample) / kSampleRate));
+        }
+    return times;
+}
+
 NoteEvidence BasicPitchEvidence::compute(const float* mono, int numSamples, double sampleRate, const std::atomic<bool>* cancel)
 {
+    error.clear();
     NoteEvidence ev;
 #ifdef HAVE_ONNXRUNTIME
     if (!impl->session || mono == nullptr || numSamples <= 0)
@@ -134,10 +156,8 @@ NoteEvidence BasicPitchEvidence::compute(const float* mono, int numSamples, doub
         audio.insert(audio.begin(), static_cast<size_t>(overlap / 2), 0.0f);
         const int winHop = kWindowSamples - overlap;
         std::vector<int> starts;
-        for (int i = 0; i < static_cast<int>(audio.size()); i += winHop)
+        for (int i = 0; i < nOrig; i += winHop)
             starts.push_back(i);
-        const int fps = kSampleRate / kHop;                     // 86, as in basic_pitch.constants
-        const int nOut = static_cast<int>(std::floor(nOrig * (static_cast<double>(fps) / kSampleRate)));
         const int keep = kWindowFrames - kOverlapFrames;        // frames kept per window
         std::vector<float> note;
         note.reserve(static_cast<size_t>(starts.size()) * keep * 88);
@@ -176,13 +196,8 @@ NoteEvidence BasicPitchEvidence::compute(const float* mono, int numSamples, doub
                     note.insert(note.end(), yn + off, yn + off + 88);
                 }
         }
-        const int frames = std::min(nOut, static_cast<int>(note.size() / 88));
-        note.resize(static_cast<size_t>(frames) * 88);
-        // basic_pitch.note_creation.model_frames_to_time, including its per-window correction
-        const double winOffset = (static_cast<double>(kHop) / kSampleRate) * (kWindowFrames - static_cast<double>(kWindowSamples) / kHop) + 0.0018;
-        ev.frameTimes.resize(static_cast<size_t>(frames));
-        for (int f = 0; f < frames; ++f)
-            ev.frameTimes[static_cast<size_t>(f)] = static_cast<float>(f * static_cast<double>(kHop) / kSampleRate - winOffset * std::floor(f / static_cast<double>(kWindowFrames)));
+        ev.frameTimes = frameTimesForSamples(nOrig);
+        note.resize(ev.frameTimes.size() * 88);
         ev.note = std::move(note);
     }
     catch (const std::exception& e)

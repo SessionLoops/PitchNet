@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "algorithm": "neural-guided harmonic pursuit",
+  "experimental": true,
+  "default_detector_changed": false,
+  "guide_strength": 0.75,
+  "guide_formula": "(1-strength) + strength*sqrt(interpolated_note_posterior)",
+  "training_partitions": [
+    "rcorpus_next",
+    "rcorpus"
+  ],
+  "training_seeds": [
+    20261102,
+    12345
+  ],
+  "training_mixtures": 480,
+  "training_candidates": 17519,
+  "training_positive_candidates": 2094,
+  "validation_partition": "vcorpus",
+  "validation_seed": 20261026,
+  "training_parameters": {
+    "trees": 150,
+    "depth": 3,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "min_samples_leaf": 50,
+    "random_state": 0
+  },
+  "selection": {
+    "selected_utc": "2026-11-02T12:31:32.947677+00:00",
+    "candidate": "guided075-refit",
+    "guide_strength": 0.75,
+    "cli_path": "/private/tmp/pitchnet-detector-guided/models/polyphonic_cli-guided075-refit-frozen",
+    "cli_sha256": "e04cd5746bf38d4bc12b0120c987605734561898ce9272875e0bf748a092c6dd",
+    "model_header_sha256": "27ff2e2d9f5e5a7a1a68ae3f3f04328b013689dd6b1391c0c801eeebf2a58041",
+    "evidence_model_sha256": "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec",
+    "validation_comparison_sha256": "5a194ac2b01b12987b32c2903011dd1f8b25e9a57491d6876cdb8e0c0abafbbc",
+    "selection_rule": "Primary overlapF1 +0.0203 and separationSDR +0.3585dB, onset50F1 decrease0.0033 within0.005selectionguard; faster measuredruntime. No furtherguide/modeltuning after selection.",
+    "heldout_partitions": [
+      "hcorpus",
+      "qcorpus"
+    ],
+    "freeze_manifest_sha256": {
+      "hcorpus": "93aceb107421c67fbc8bb797769cf783daadc1eeedec992b4211103b33b50018",
+      "qcorpus": "19db6688563488ef0fa94b29ff6bf63768d3ea08ac588416243d7f4ead42d6be"
+    },
+    "status": "selected-before-candidate-heldout-evaluation"
+  },
+  "exported_header_sha256": "891414662db1551a6cac9287f5715600b18b3fd527faffa3bfcc7dd6013e8a85",
+  "holdouts": {
+    "hcorpus": {
+      "seed": 20261104,
+      "mixtures": 80,
+      "source_recordings": "28 alternate recordings used in prior iteration; same sample libraries",
+      "scores": {
+        "overlap_precision": {
+          "before": 0.7843137254901961,
+          "after": 0.8171428571428572,
+          "difference": 0.0328291316526611,
+          "difference_95_percent_interval": [
+            -0.010087456765941532,
+            0.07170314405029225
+          ]
+        },
+        "overlap_recall": {
+          "before": 0.89171974522293,
+          "after": 0.910828025477707,
+          "difference": 0.019108280254777066,
+          "difference_95_percent_interval": [
+            -0.006493506493506443,
+            0.04575463212808052
+          ]
+        },
+        "overlap_f1": {
+          "before": 0.834575260804769,
+          "after": 0.8614457831325302,
+          "difference": 0.026870522327761215,
+          "difference_95_percent_interval": [
+            -0.0017327158699438651,
+            0.053417197862339755
+          ]
+        },
+        "onset_50ms_precision": {
+          "before": 0.7170868347338936,
+          "after": 0.7257142857142858,
+          "difference": 0.008627450980392193,
+          "difference_95_percent_interval": [
+            -0.0322019718812935,
+            0.04894727224635087
+          ]
+        },
+        "onset_50ms_recall": {
+          "before": 0.8152866242038217,
+          "after": 0.8089171974522293,
+          "difference": -0.006369426751592355,
+          "difference_95_percent_interval": [
+            -0.039999999999999925,
+            0.02817011788599934
+          ]
+        },
+        "onset_50ms_f1": {
+          "before": 0.7630402384500745,
+          "after": 0.7650602409638554,
+          "difference": 0.002020002513780872,
+          "difference_95_percent_interval": [
+            -0.029752164447171384,
+            0.03462195685994706
+          ]
+        },
+        "onset_100ms_precision": {
+          "before": 0.7507002801120448,
+          "after": 0.76,
+          "difference": 0.009299719887955193,
+          "difference_95_percent_interval": [
+            -0.03533733483302891,
+            0.05382101461475878
+          ]
+        },
+        "onset_100ms_recall": {
+          "before": 0.8535031847133758,
+          "after": 0.8471337579617835,
+          "difference": -0.006369426751592355,
+          "difference_95_percent_interval": [
+            -0.04220893543076646,
+            0.029762890255439926
+          ]
+        },
+        "onset_100ms_f1": {
+          "before": 0.7988077496274217,
+          "after": 0.8012048192771084,
+          "difference": 0.0023970696496866672,
+          "difference_95_percent_interval": [
+            -0.032522311354639316,
+            0.03868575744175736
+          ]
+        },
+        "mean_separation_sdr_db": {
+          "before": 7.034863283873741,
+          "after": 7.378629574845093,
+          "difference": 0.34376629097135236,
+          "difference_95_percent_interval": [
+            0.07809932724065438,
+            0.6333417668666359
+          ]
+        }
+      }
+    },
+    "qcorpus": {
+      "seed": 20261105,
+      "mixtures": 36,
+      "source_recordings": "28 alternate recordings used in prior iteration; same sample libraries",
+      "scores": {
+        "overlap_precision": {
+          "before": 0.8382352941176471,
+          "after": 0.8283582089552238,
+          "difference": -0.00987708516242325,
+          "difference_95_percent_interval": [
+            -0.06523092345749038,
+            0.04830979095380246
+          ]
+        },
+        "overlap_recall": {
+          "before": 0.95,
+          "after": 0.925,
+          "difference": -0.02499999999999991,
+          "difference_95_percent_interval": [
+            -0.05982905982905984,
+            0.008474576271186418
+          ]
+        },
+        "overlap_f1": {
+          "before": 0.890625,
+          "after": 0.8740157480314961,
+          "difference": -0.016609251968503935,
+          "difference_95_percent_interval": [
+            -0.05012381723773847,
+            0.020355793466854556
+          ]
+        },
+        "onset_50ms_precision": {
+          "before": 0.6764705882352942,
+          "after": 0.6865671641791045,
+          "difference": 0.010096575943810304,
+          "difference_95_percent_interval": [
+            -0.05847736383467548,
+            0.07622514450445728
+          ]
+        },
+        "onset_50ms_recall": {
+          "before": 0.7666666666666667,
+          "after": 0.7666666666666667,
+          "difference": 0.0,
+          "difference_95_percent_interval": [
+            -0.05737704918032782,
+            0.05043085030622417
+          ]
+        },
+        "onset_50ms_f1": {
+          "before": 0.71875,
+          "after": 0.7244094488188977,
+          "difference": 0.005659448818897683,
+          "difference_95_percent_interval": [
+            -0.05023695014662757,
+            0.0573073247348002
+          ]
+        },
+        "onset_100ms_precision": {
+          "before": 0.7867647058823529,
+          "after": 0.7910447761194029,
+          "difference": 0.0042800702370500154,
+          "difference_95_percent_interval": [
+            -0.052286184086719596,
+            0.06565267681691765
+          ]
+        },
+        "onset_100ms_recall": {
+          "before": 0.8916666666666667,
+          "after": 0.8833333333333333,
+          "difference": -0.008333333333333415,
+          "difference_95_percent_interval": [
+            -0.05833333333333335,
+            0.04099207424468229
+          ]
+        },
+        "onset_100ms_f1": {
+          "before": 0.8359375,
+          "after": 0.8346456692913385,
+          "difference": -0.0012918307086614567,
+          "difference_95_percent_interval": [
+            -0.04373343535081256,
+            0.044169082828579696
+          ]
+        },
+        "mean_separation_sdr_db": {
+          "before": 10.379178287991648,
+          "after": 10.180876650037657,
+          "difference": -0.1983016379539908,
+          "difference_95_percent_interval": [
+            -0.7509531114273093,
+            0.34380730253991454
+          ]
+        }
+      }
+    }
+  }
+}

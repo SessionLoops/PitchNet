@@ -55,6 +55,40 @@ double toneAmplitude(const std::vector<float>& x, double hz, int from, int to)
 
 double db(double v) { return 20.0 * std::log10(std::max(v, 1e-12)); }
 
+struct SineFit
+{
+    double amplitude, residualSnr;
+};
+
+// Fit both quadratures at the requested frequency: this measures amplitude and spurious
+// content without assuming the renderer's constant phase or an integer number of cycles.
+SineFit fitSine(const std::vector<float>& x, double hz, double sampleRate, int from, int to)
+{
+    double ss = 0.0, cc = 0.0, sc = 0.0, xs = 0.0, xc = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        const double s = std::sin(2 * kPi * hz * i / sampleRate);
+        const double c = std::cos(2 * kPi * hz * i / sampleRate);
+        ss += s * s;
+        cc += c * c;
+        sc += s * c;
+        xs += x[static_cast<size_t>(i)] * s;
+        xc += x[static_cast<size_t>(i)] * c;
+    }
+    const double det = ss * cc - sc * sc;
+    const double a = (xs * cc - xc * sc) / det;
+    const double b = (xc * ss - xs * sc) / det;
+    double signal = 0.0, error = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        const double fitted = a * std::sin(2 * kPi * hz * i / sampleRate)
+                            + b * std::cos(2 * kPi * hz * i / sampleRate);
+        signal += fitted * fitted;
+        error += std::pow(x[static_cast<size_t>(i)] - fitted, 2);
+    }
+    return {std::hypot(a, b), 10.0 * std::log10(signal / std::max(error, 1e-30))};
+}
+
 int findNote(const polyphonic::Analysis& A, double midi)
 {
     for (size_t i = 0; i < A.notes.size(); ++i)
@@ -442,6 +476,139 @@ int main()
             const double t0 = map.outputFrame(0.4 / hopS) * hopS, t1 = map.outputFrame(0.9 / hopS) * hopS;
             std::printf("vibrato C5 stretched x%.1f: body %.2f dB (source %.2f dB)\n", ratio, rmsDb(z, t0, t1), rmsDb(v, 0.4, 0.9));
             CHECK(std::fabs(rmsDb(z, t0, t1) - rmsDb(v, 0.4, 0.9)) < 1.0);
+        }
+    }
+
+    // ---- 10. a pitch curve returning to zero keeps its accumulated phase ----
+    {
+        // An exact bin-centred sinusoid occupies three Hann bins. Supplying that known mask
+        // isolates the renderer from pitch detection and lets us check phase, not just pitch
+        // or spectral magnitude. Raising the frequency by half a cycle over 40 hops must
+        // leave the original-frequency waveform inverted when the pitch offset returns to 0.
+        constexpr int bin = 40, raisedFrames = 40;
+        const double f = static_cast<double>(bin) * kRate / params.fftSize;
+        std::vector<float> x(static_cast<size_t>(2 * kRate));
+        for (size_t i = 0; i < x.size(); ++i)
+            x[i] = static_cast<float>(0.3 * std::sin(2 * kPi * f * i / kRate));
+        polyphonic::Analysis A;
+        A.params = params;
+        A.numSamples = static_cast<int>(x.size());
+        A.numFrames = 1 + (A.numSamples + params.hop - 1) / params.hop;
+        A.numBins = params.fftSize / 2 + 1;
+        polyphonic::Note n;
+        n.endFrame = A.numFrames - 1;
+        n.f0.assign(static_cast<size_t>(A.numFrames), static_cast<float>(f));
+        A.notes.push_back(n);
+        A.masks.resize(1);
+        for (int t = 0; t < A.numFrames; ++t)
+        {
+            polyphonic::PartialMask pm;
+            pm.frame = t;
+            pm.harmonic = 1;
+            pm.lo = bin - 1;
+            pm.count = 3;
+            pm.weightOffset = static_cast<int>(A.masks[0].weights.size());
+            pm.freqHz = static_cast<float>(f);
+            pm.amplitude = 0.3f;
+            A.masks[0].partials.push_back(pm);
+            A.masks[0].weights.insert(A.masks[0].weights.end(), 3, 1.0f);
+        }
+        polyphonic::NoteEdit curve;
+        curve.pitchCurve.assign(static_cast<size_t>(A.numFrames), 0.0f);
+        const float offset = static_cast<float>(12.0 * std::log2(1.0 + kRate / (2.0 * raisedFrames * params.hop * f)));
+        std::fill(curve.pitchCurve.begin(), curve.pitchCurve.begin() + raisedFrames, offset);
+        // A second rise after the zero plateau also checks that the new offset is integrated
+        // for its own duration, rather than for all the frames since the first rise ended.
+        std::fill(curve.pitchCurve.begin() + 100, curve.pitchCurve.begin() + 120, offset);
+        const auto y = polyphonic::render(A, {x}, {{0, curve}})[0];
+        for (const auto& interval : {std::pair<int, int>{50, 90}, {140, 165}})
+        {
+            const double phase = interval.first == 50 ? kPi : 1.5 * kPi;
+            double sig = 0.0, err = 0.0;
+            for (int i = interval.first * params.hop; i < interval.second * params.hop; ++i)
+            {
+                const double ref = 0.3 * std::sin(2 * kPi * f * i / kRate + phase);
+                sig += ref * ref;
+                err += std::pow(y[static_cast<size_t>(i)] - ref, 2);
+            }
+            const double snr = 10.0 * std::log10(sig / std::max(err, 1e-30));
+            std::printf("pitch curve zero plateau %d-%d: %.1f dB waveform SNR against continuous phase\n",
+                        interval.first, interval.second, snr);
+            CHECK(snr > 75.0);
+        }
+    }
+
+    // ---- 11. fractional-bin shifts preserve amplitude without adding distortion ----
+    for (const int sampleRate : {44100, 48000, 96000})
+    {
+        const auto p = polyphonic::Params::forSampleRate(sampleRate);
+        constexpr int bin = 40;
+        const double binHz = static_cast<double>(sampleRate) / p.fftSize;
+        // The exact-bin sine has only three Hann bins, so its analytic output is independent
+        // of analysis, mask estimation, and the pitch-shift implementation. A low off-bin sine
+        // also catches interpolation spurs where the positive and negative spectra are close.
+        for (const bool offBin : {false, true})
+        {
+            const double f = (offBin ? 2.8 : bin) * binHz;
+            std::vector<float> left(static_cast<size_t>(sampleRate)), right(left.size());
+            for (size_t i = 0; i < left.size(); ++i)
+            {
+                left[i] = static_cast<float>(0.3 * std::sin(2 * kPi * f * i / sampleRate + 0.37));
+                right[i] = -0.375f * left[i];
+            }
+            polyphonic::Analysis A;
+            A.params = p;
+            A.numSamples = static_cast<int>(left.size());
+            A.numFrames = 1 + (A.numSamples + p.hop - 1) / p.hop;
+            A.numBins = p.fftSize / 2 + 1;
+            polyphonic::Note n;
+            n.endFrame = A.numFrames - 1;
+            n.f0.assign(static_cast<size_t>(A.numFrames), static_cast<float>(f));
+            A.notes.push_back(n);
+            A.masks.resize(1);
+            const int center = static_cast<int>(std::lround(f / binHz));
+            const int lo = std::max(1, center - (offBin ? 5 : 1));
+            const int hi = center + (offBin ? 5 : 1);
+            for (int t = 0; t < A.numFrames; ++t)
+            {
+                polyphonic::PartialMask pm;
+                pm.frame = t;
+                pm.harmonic = 1;
+                pm.lo = lo;
+                pm.count = hi - lo + 1;
+                pm.weightOffset = static_cast<int>(A.masks[0].weights.size());
+                pm.freqHz = static_cast<float>(f);
+                pm.amplitude = 0.3f;
+                A.masks[0].partials.push_back(pm);
+                A.masks[0].weights.insert(A.masks[0].weights.end(), static_cast<size_t>(pm.count), 1.0f);
+            }
+            const std::vector<double> shifts = offBin ? std::vector<double>{-1.0, 1.0}
+                : std::vector<double>{-2.0, -0.51, -0.5, -0.49, 0.125, 0.49, 0.5, 0.51, 1.0, 2.5};
+            for (const double shift : shifts)
+            {
+                polyphonic::NoteEdit edit;
+                edit.semitones = static_cast<float>(offBin ? shift : 12.0 * std::log2(1.0 + shift / bin));
+                const double target = f * std::pow(2.0, static_cast<double>(edit.semitones) / 12.0);
+                const auto output = polyphonic::render(A, {left, right}, {{0, edit}});
+                CHECK(output.size() == 2);
+                const int from = sampleRate / 5, to = 4 * sampleRate / 5;
+                for (int channel = 0; channel < 2; ++channel)
+                {
+                    const auto fit = fitSine(output[static_cast<size_t>(channel)], target, sampleRate, from, to);
+                    const double amplitudeDb = db(fit.amplitude / (channel == 0 ? 0.3 : 0.3 * 0.375));
+                    std::printf("shift sine %d Hz rate, %.2f -> %.2f Hz, channel %d: %+.5f dB gain, %.1f dB residual SNR\n",
+                                sampleRate, f, target, channel, amplitudeDb, fit.residualSnr);
+                    CHECK(std::fabs(amplitudeDb) < 0.01);
+                    CHECK(fit.residualSnr > 75.0);
+                }
+                double stereoError = 0.0, stereoSignal = 0.0;
+                for (int i = from; i < to; ++i)
+                {
+                    stereoError += std::pow(output[1][static_cast<size_t>(i)] + 0.375 * output[0][static_cast<size_t>(i)], 2);
+                    stereoSignal += std::pow(output[0][static_cast<size_t>(i)], 2);
+                }
+                CHECK(stereoError / stereoSignal < 1e-12);
+            }
         }
     }
 

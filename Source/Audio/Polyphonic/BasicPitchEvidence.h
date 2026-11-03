@@ -48,6 +48,9 @@ public:
     /** Windowed-sinc (Kaiser) resampler used for the model input; exposed for tests. */
     static std::vector<float> resample(const float* x, int numSamples, double fromRate, double toRate);
 
+    /** Times of the retained model frames for numSamples at kSampleRate, excluding padded audio. */
+    static std::vector<float> frameTimesForSamples(int numSamples);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

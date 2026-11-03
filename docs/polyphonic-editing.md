@@ -22,6 +22,32 @@ experimental test window for it, the [Polyphonic Lab](#trying-it-in-pitchnet-the
 It is not yet wired into the main piano roll, ARA or the synthesis pipeline;
 [Integrating into PitchNet](#integrating-into-pitchnet) lays out how.
 
+## Current status — 2026-11-02
+
+The [first regression stage](testing/polyphonic-real-audio.md) fixed neural
+evidence timing/tail retention and pitch-curve phase continuity using recorded
+examples. The [subsequent quality iteration](testing/polyphonic-quality-iteration.md)
+retrained the evidence classifier on 480 mixtures, retaining its 21 features
+and the existing DSP-only trees. It produced modest F1/recall gains on held-out
+mixtures and other recordings from the same libraries, with slightly lower
+overlap precision. The report includes paired confidence intervals and
+experiments that were rejected after validation.
+
+The evaluator now reports one-to-one note-event matching separately from
+many-to-many fragment coverage. The initial results and cross-validation tables
+below are historical and should not be compared directly with the corrected
+metrics in the current report.
+
+The [detector redesign experiments](testing/polyphonic-detector-research.md)
+add an opt-in neural-guided harmonic search and a classifier fitted to its
+candidate population. It improves chord-mixture detection and separation in
+the measured tests, but loses some events on repeated-note mixtures, so the
+original detector remains default. Choose **Guided (experimental)** in the
+Polyphonic Lab's **Detector** selector to try it. The API and CLI also support
+`DetectionMode::NeuralGuided` in `Params` and
+`polyphonic_cli --detector guided --model ...`.
+The learned event-boundary and joint-ownership prototypes were rejected.
+
 ## What the engine does
 
 ```
@@ -99,8 +125,15 @@ frame (so pitch curves work). Phases are counted at the frame centre: the
 frames start N/2 samples before it, so bin k carries a factor (−1)^k, and a
 region moved by an odd number of bins is flipped back. Without that, vibrato,
 which keeps changing a partial's bin shift, flips partials in and out of
-phase (a C5 with 1 % vibrato moved down a semitone scores 19.6 dB against the
-same tone made at B4, 15.6 dB without the flip). Moves are whole hops plus a linear-phase
+phase. Continuous phase accumulation sets the exact frequency, while rounding
+the bin relocation attenuates the level. For regions of at least three bins,
+the renderer compensates the Hann overlap-add carrier gain using the residual
+fractional-bin offset. This is exact for a complete stationary partial and
+approximate for separated masks, modulation and fractional time moves. The C5
+vibrato regression now scores 20.6 dB against the same tone made at B4
+(19.6 dB before gain compensation, 15.6 dB without the sign flip).
+Pitch curves retain accumulated phase when returning to zero.
+Moves are whole hops plus a linear-phase
 fractional delay. Only the edited note's share of the bins around its own
 partials changes; everything else in those frames, unpitched sound included,
 stays where it was. Unedited notes are not touched, and frames that no edit can
@@ -132,7 +165,13 @@ pitch edits measurably worse.
 sparse, extraction runs in 15 s blocks with 2.5 s margins, the NMF in 4 s
 blocks, and the renderer streams frame by frame.
 
-## Results
+## Initial implementation results (historical)
+
+These tables record the original implementation's evaluation. Its overlap
+coverage allowed multiple fragments to match the same note and is not the
+current one-to-one event precision/recall/F1. The old figures are retained as
+historical context; use the [quality iteration report](testing/polyphonic-quality-iteration.md)
+for the corrected scoring, updated model and data-independence limits.
 
 Test material is built from real single-note recordings: Salamander Grand Piano
 (velocity layer 10) and VSCO 2 CE (bassoon, clarinet, oboe, flute, cello and
@@ -213,10 +252,14 @@ again while they still ring, which stay joined to the note before. On a 2-vCPU
 2.1 GHz Xeon: Basic Pitch 1.8 s, analysis 9.8 s, a stereo render with four
 edits 0.4 s, peak memory 174 MB.
 
-**Note-filter cross-validation** (each instrument family held out in turn,
-candidates of the 240 training mixtures; precision / recall of "real note"):
+**Initial note-filter cross-validation (historical mixture groups).** These
+figures use candidates of the original 240 training mixtures and report
+precision / recall of "real note". The grouping assigned one family label to
+each mixture, including mixtures containing multiple families. Recordings and
+families could therefore appear on both sides of a split; this was not a strict
+instrument-family or source-recording holdout.
 
-| held-out family | with evidence | DSP only |
+| held-out mixture group | with evidence | DSP only |
 |---|---|---|
 | piano | 0.82 / 0.79 | 0.42 / 0.68 |
 | harp | 0.94 / 0.90 | 0.91 / 0.59 |
@@ -312,9 +355,16 @@ changes the PitchNet project, its undo history or its render.
 - **Load.** It analyses the open project's audio when it opens (the mono
   44.1 kHz copy PitchNet keeps). **Open Audio...** loads any file at its own
   sample rate, stereo included, up to 10 minutes. Analysis runs in the
-  background with Basic Pitch evidence when `basic_pitch_nmp.onnx` is found;
-  untick the box to compare with DSP-only note filtering (this re-analyses and
-  clears the edits).
+  background with Basic Pitch evidence when `basic_pitch_nmp.onnx` is found.
+  With **Harmonic (default)** selected, untick the evidence box to compare with
+  DSP-only note filtering (this re-analyses and clears the edits).
+- **Detector.** Choose **Harmonic (default)** or **Guided (experimental)** in
+  the settings row. Guided performed better on the tested chords but lost some
+  repeated-note events. Changing the detector re-analyses the loaded audio and
+  clears note edits. Guided automatically enables neural note evidence and
+  locks its checkbox while selected. If that evidence is unavailable, analysis
+  falls back to the harmonic detector with DSP-only filtering; the status line
+  reports the fallback and the detector actually used.
 - **Edit.** Each note is a blob along its own f0 track, thicker where it is
   louder. Drag a note up or down to change its pitch in semitones (hold Alt for
   cents) and sideways to move it, or drag its right end to make it longer or

@@ -1,11 +1,13 @@
 // polyphonic_cli - analyse a WAV file into notes and render per-note edits.
 //
 //   polyphonic_cli in.wav [options]
+//     --detector harmonic|guided        select the detector (guided requires neural evidence)
 //     --model basic_pitch_nmp.onnx       neural note evidence (build with ONNX Runtime)
 //     --evidence file.ev                 precomputed evidence (see --dump-evidence)
 //     --candidates                       also list rejected candidates
 //     --json notes.json                  notes and f0 curves
 //     --edit INDEX:SEMITONES[:GAIN_DB[:mute]]   (repeatable) pitch / gain / mute a note
+//     --pitch-curve INDEX:FILE            per-frame semitone offsets (whitespace-separated text)
 //     --move INDEX:SECONDS               (repeatable) move a note in time
 //     --stretch INDEX:RATIO              (repeatable) lengthen (> 1) or shorten (< 1) a note
 //     --pad SECONDS                      append silence first (room for lengthened notes)
@@ -14,10 +16,13 @@
 //     --solo-all DIR                     every active note's separated signal
 //     --dump-features file.tsv           purifier features per candidate (training)
 //     --dump-evidence file.ev            the evidence computed with --model
+// polyphonic_guided_cli defaults to guided; --detector overrides either executable's default.
 #include "../../Source/Audio/Polyphonic/PolyEngine.h"
 #include "../../Source/Audio/Polyphonic/BasicPitchEvidence.h"
 #include "WavIO.h"
 #include <chrono>
+#include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -48,6 +53,11 @@ int main(int argc, char** argv)
     int soloIndex = -1;
     bool printCandidates = false;
     double padSeconds = 0.0;
+#if defined(POLYPHONIC_GUIDED_DEFAULT) && POLYPHONIC_GUIDED_DEFAULT
+    auto detectionMode = polyphonic::DetectionMode::NeuralGuided;
+#else
+    auto detectionMode = polyphonic::DetectionMode::Harmonic;
+#endif
     for (int i = 2; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -56,12 +66,57 @@ int main(int argc, char** argv)
         else if (a == "--json") jsonPath = next();
         else if (a == "--evidence") evPath = next();
         else if (a == "--model") modelPath = next();
+        else if (a == "--detector")
+        {
+            const auto name = next();
+            if (name == "harmonic") detectionMode = polyphonic::DetectionMode::Harmonic;
+            else if (name == "guided") detectionMode = polyphonic::DetectionMode::NeuralGuided;
+            else
+            {
+                std::fprintf(stderr, "--detector expects harmonic or guided\n");
+                return 2;
+            }
+        }
         else if (a == "--dump-evidence") dumpEvidence = next();
         else if (a == "--dump-features") dumpFeatures = next();
         else if (a == "--candidates") printCandidates = true;
         else if (a == "--solo") { soloIndex = std::atoi(next().c_str()); soloPath = next(); }
         else if (a == "--solo-all") soloDir = next();
         else if (a == "--pad") padSeconds = std::atof(next().c_str());
+        else if (a == "--pitch-curve")
+        {
+            const auto spec = next();
+            const auto colon = spec.find(':');
+            int index = -1;
+            const auto indexEnd = spec.data() + (colon == std::string::npos ? spec.size() : colon);
+            const auto parsed = std::from_chars(spec.data(), indexEnd, index);
+            if (colon == std::string::npos || parsed.ec != std::errc{} || parsed.ptr != indexEnd || index < 0)
+            {
+                std::fprintf(stderr, "--pitch-curve expects a nonnegative INDEX:FILE\n");
+                return 2;
+            }
+            std::ifstream f(spec.substr(colon + 1));
+            std::vector<float> curve;
+            bool finite = true;
+            std::string token;
+            while (f >> token)
+            {
+                std::istringstream number(token);
+                float value;
+                if (!(number >> value) || number.peek() != std::char_traits<char>::eof() || !std::isfinite(value))
+                {
+                    finite = false;
+                    break;
+                }
+                curve.push_back(value);
+            }
+            if (curve.empty() || !finite || !f.eof())
+            {
+                std::fprintf(stderr, "cannot read finite pitch offsets from %s\n", spec.substr(colon + 1).c_str());
+                return 2;
+            }
+            edits[index].pitchCurve = std::move(curve);
+        }
         else if (a == "--edit" || a == "--move" || a == "--stretch")
         {
             std::stringstream ss(next());
@@ -105,7 +160,11 @@ int main(int argc, char** argv)
         }
     }
     auto params = polyphonic::Params::forSampleRate(in.sampleRate);
+    params.detectionMode = detectionMode;
     params.exportFeatures = !dumpFeatures.empty();
+    const char* detectorName = detectionMode == polyphonic::DetectionMode::NeuralGuided ? "guided" : "harmonic";
+    if (detectionMode == polyphonic::DetectionMode::NeuralGuided)
+        std::fprintf(stderr, "detector: guided%s\n", ev.empty() ? " (harmonic fallback: no neural evidence)" : "");
     const auto t0 = std::chrono::steady_clock::now();
     const auto A = polyphonic::analyze(mono.data(), static_cast<int>(mono.size()), params, ev.empty() ? nullptr : &ev);
     const auto t1 = std::chrono::steady_clock::now();
@@ -133,7 +192,8 @@ int main(int argc, char** argv)
     if (!jsonPath.empty())
     {
         std::ofstream j(jsonPath);
-        j << "{\"hop\":" << params.hop << ",\"sampleRate\":" << params.sampleRate << ",\"notes\":[";
+        j << "{\"detector\":\"" << detectorName << "\",\"hop\":" << params.hop
+          << ",\"sampleRate\":" << params.sampleRate << ",\"notes\":[";
         for (size_t i = 0; i < A.notes.size(); ++i)
         {
             const auto& n = A.notes[i];

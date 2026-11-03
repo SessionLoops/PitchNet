@@ -11,12 +11,12 @@ known. File 08 is a real recording.
 | `01-piano-triad-C-major.wav` | Piano C4, E4 and G4 struck together | Drag E4 down one semitone (C major → C minor) | A clean result; compare it with 01b. The engine also lists a faint C5, which is really the C's second partial |
 | `01b-piano-triad-C-minor-played.wav` | The same piano actually playing C minor | Reference for 01 | |
 | `02-piano-arpeggio.wav` | Bass C3, then E4, G4 and C5 entering one after another | Raise G4 to A4 (+2) | The C4 that appears when the C5 enters is a ghost: the bass's second partial, which the C5's partials make look like a note |
-| `03-strings-vibrato.wav` | Cello section on C4 and E4, violin section on G4 and C5, with vibrato | Lower E4 to E♭4 | The E can come in two pieces; Shift-click to select both. The violins' C5, an octave above the cellos' C4, is not found (it is among the rejected candidates) |
+| `03-strings-vibrato.wav` | Cello section on C4 and E4, violin section on G4 and C5, with vibrato | Lower E4 to E♭4 | The E can come in two pieces; Shift-click to select both. The updated note filter finds the violins' C5 as well as the other three pitches |
 | `04-woodwind-quartet.wav` | Bassoon C3, clarinet E4, oboe G5, flute C6 | Clarinet E4 → E♭4, then Solo the clarinet | The oboe sits exactly on the bassoon's sixth partial and is not found; the faint C5 is the bassoon's fourth partial |
 | `05-organ-chord.wav` | Sustained organ C4, E4 and G4, no attacks | E4 → E♭4 | A clean edit. A short, faint F6 is also listed; it comes from the organ's own partials, not a played note |
 | `06-harp-rolled-chord.wav` | Harp C3, E3, G3, C5 and E5 plucked in turn | E3 → F3 | The weakest pitch edit: the top E5 claims E3's fourth partial, so a trace of the old note stays |
 | `07-piano-octave-hard-case.wav` | Piano C3, C4 and G4 | C4 → D4 | Known failure: C4 shares every partial with C3, and G4 is not found |
-| `08-brahms-hungarian-dance-5-strings.wav` | Brahms, Hungarian Dance No. 5, string orchestra, 46 s stereo | Raise some B♭s to B (G minor → G major), or move single melody notes | No reference exists; judge by ear. About 265 notes, 37 of them B♭ |
+| `08-brahms-hungarian-dance-5-strings.wav` | Brahms, Hungarian Dance No. 5, string orchestra, 46 s stereo | Raise some B♭s to B (G minor → G major), or move single melody notes | No annotated reference exists; judge by ear. The updated engine finds 277 notes; that count alone does not establish accuracy |
 | `09-clarinet-short-note.wav` | Clarinet F5 for one second over a held cello G4 and violin-section D4 | Drag the F5's right end from 1.35 s to about 2.47 s (2.08× length) | The F5 then lasts twice as long from its start; compare it with 09b |
 | `09b-clarinet-note-played-longer.wav` | The same clarinet note held for two seconds | Reference for 09 | |
 
