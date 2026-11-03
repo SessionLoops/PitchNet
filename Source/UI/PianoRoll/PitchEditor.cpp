@@ -301,14 +301,17 @@ void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
   isMultiDragging = true;
 }
 
-void PitchEditor::updateMultiNoteDrag(float x, float y, bool invertSnap)
+void PitchEditor::updateMultiNoteDrag(float x, float y, bool invertSnap,
+                                      bool halfSemitoneSteps)
 {
   if (!isMultiDragging || draggedNotes.empty() || !coordMapper)
     return;
 
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
-  if (snapToSemitoneDragEnabled != invertSnap)
+  if (halfSemitoneSteps)
+    deltaSemitones = std::round(deltaSemitones * 2.0f) / 2.0f;
+  else if (snapToSemitoneDragEnabled != invertSnap)
     deltaSemitones =
         getSnappedDragOffset(deltaSemitones, multiDragSnapAnchorMidi);
 

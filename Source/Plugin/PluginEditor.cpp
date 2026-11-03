@@ -555,8 +555,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       if (auto *araDocController = araEditorView->getDocumentController()) {
         if (auto *playbackController =
                 araDocController->getHostPlaybackController()) {
+          // MainComponent::stop() seeks to the edit cursor right after this.
           playbackController->requestStopPlayback();
-          playbackController->requestSetPlaybackPosition(0.0);
           return;
         }
       }

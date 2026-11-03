@@ -14,6 +14,7 @@ PianoRollInteractionContext::PianoRollInteractionContext(
       pixelsPerSemitone(component.pixelsPerSemitone),
       scrollX(component.scrollX),
       snapToSemitoneDrag(component.snapToSemitoneDrag),
+      coarseDragSteps(component.coarseDragSteps),
       pitchReferenceHz(component.pitchReferenceHz),
       selectedScaleMode(component.selectedScaleMode),
       selectedScaleRootNote(component.selectedScaleRootNote),

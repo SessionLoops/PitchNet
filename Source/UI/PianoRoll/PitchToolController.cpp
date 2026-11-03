@@ -97,6 +97,7 @@ bool PitchToolController::mouseDrag(const juce::MouseEvent& e,
   const float deltaX = e.position.x - dragStartPos.x;
   const float deltaY = e.position.y - dragStartPos.y;
 
+  coarseSteps = coarseStepsAllowed && e.mods.isShiftDown();
   applyOperation(affectedNotes, activeHandleType, deltaX, deltaY, mapper);
   return true;
 }
@@ -200,6 +201,13 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
   const float pixelsPerSemitone = juce::jmax(1.0f, mapper.getPixelsPerSemitone());
   const float semitoneDelta = -dragDeltaY / pixelsPerSemitone;
 
+  // Snaps the resulting value, not the delta, so Shift lands on round numbers.
+  const auto step = [this](float value, float stepSize, float fineStep)
+  {
+    const float size = coarseSteps ? stepSize : fineStep;
+    return size > 0.0f ? std::round(value / size) * size : value;
+  };
+
   // Debug logging
 
   for (size_t i = 0; i < notes.size(); ++i)
@@ -214,7 +222,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     {
       // Ten pixels per dB, independent of pitch zoom. Leave pitch state alone.
       note->setVolumeDb(juce::jlimit(-60.0f, 24.0f,
-          std::round((origParams.volumeDb - dragDeltaY / 10.0f) * 10.0f) / 10.0f));
+          step(origParams.volumeDb - dragDeltaY / 10.0f, 0.5f, 0.1f)));
       continue;
     }
     origParams.applyToNote(*note);
@@ -226,7 +234,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       {
         // Drag UP = positive semitoneDelta = left edge goes UP
         const float amount = semitoneDelta;
-        note->setTiltLeft(origParams.tiltLeft + amount);
+        note->setTiltLeft(step(origParams.tiltLeft + amount, 0.5f, 0.0f));
         
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
@@ -236,7 +244,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       case PitchToolHandles::HandleType::TiltRight:
       {
         const float amount = semitoneDelta;
-        note->setTiltRight(origParams.tiltRight + amount);
+        note->setTiltRight(step(origParams.tiltRight + amount, 0.5f, 0.0f));
         
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
@@ -245,13 +253,13 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       }
       case PitchToolHandles::HandleType::Formant:
       {
-        note->setFormantShift(std::round((origParams.formantShift + semitoneDelta) * 10.0f) / 10.0f);
+        note->setFormantShift(step(origParams.formantShift + semitoneDelta, 0.5f, 0.1f));
         note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
         break;
       }
       case PitchToolHandles::HandleType::PitchDrift:
       {
-        note->setPitchDrift(origParams.pitchDrift - dragDeltaY / 100.0f);
+        note->setPitchDrift(step(origParams.pitchDrift - dragDeltaY / 100.0f, 0.05f, 0.0f));
         note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
         break;
       }
@@ -260,7 +268,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Additive accumulation from original value (consistent with tilt handles)
         // Drag UP increases modulation; drag DOWN decreases it.
         const float dragDelta = -dragDeltaY / 100.0f;
-        const float newScale = origParams.vibrato + dragDelta;
+        const float newScale = step(origParams.vibrato + dragDelta, 0.05f, 0.0f);
         note->setVibrato(newScale);
         
         // Preserve tilt offset when adjusting vibrato.

@@ -37,6 +37,7 @@ public:
   float &pixelsPerSemitone;
   double &scrollX;
   bool &snapToSemitoneDrag;
+  bool &coarseDragSteps;
   int &pitchReferenceHz;
   ScaleMode &selectedScaleMode;
   int &selectedScaleRootNote;
