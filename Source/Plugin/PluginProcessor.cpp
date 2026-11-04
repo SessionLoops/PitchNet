@@ -1560,19 +1560,20 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       target != nullptr || (canvasShowsActiveAraRegion && activeRegionKey.isNotEmpty());
 #endif
 
-  if (renderActiveAraRegion) {
-    if (!regionCanvasController)
-      regionCanvasController = makeAnalysisController();
-  } else if (!araAnalysisController) {
+  if (!renderActiveAraRegion && !araAnalysisController)
     araAnalysisController = makeAnalysisController();
-  }
 
-  auto *controller = renderActiveAraRegion ? regionCanvasController.get()
-                                           : araAnalysisController.get();
+  auto *controller = araAnalysisController.get();
   juce::String targetKey;
 #if JucePlugin_Enable_ARA
-  if (target != nullptr) {
+  // Every modification renders on its own controller. A shared one let a
+  // render for one region publish another region's audio (or a background
+  // canvas analysis) into its modification after a region switch.
+  if (target != nullptr)
     targetKey = pitchnetModificationKey(*target);
+  else if (renderActiveAraRegion)
+    targetKey = activeRegionKey;
+  if (targetKey.isNotEmpty()) {
     auto& state = modificationRenders[targetKey];
     if (!state.controller) state.controller = makeAnalysisController();
     controller = state.controller.get();
@@ -1614,11 +1615,17 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                                  : hostSampleRate;
     renderChangedSampleRanges =
         collectDirtyModificationSampleRanges(projectToRender, renderRate);
+    // A request made while a render runs only queues a rerun of the earlier
+    // request's callback; keep its ranges so that publish does not restore
+    // the previous audio over this edit.
+    auto &queued = modificationRenders[targetKey].queuedRanges;
+    queued.insert(queued.end(), renderChangedSampleRanges.begin(),
+                  renderChangedSampleRanges.end());
   }
 #endif
-  auto &pendingRerun =
-      target != nullptr ? modificationRenders[targetKey].pending
-      : renderActiveAraRegion ? regionCanvasRenderPendingRerun : araRenderPendingRerun;
+  auto &pendingRerun = targetKey.isNotEmpty()
+                           ? modificationRenders[targetKey].pending
+                           : araRenderPendingRerun;
 
   controller->resynthesizeIncrementalAsync(
       *backendProject,
@@ -1636,8 +1643,9 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
           const auto current = araRegions.find(renderRegionKey);
           if (current == araRegions.end() ||
               current->second.revision != renderRegionRevision) {
-            if (target != nullptr) modificationRenders[renderRegionKey].pending.store(false);
-            else regionCanvasRenderPendingRerun.store(false);
+            auto &state = modificationRenders[renderRegionKey];
+            state.pending.store(false);
+            state.queuedRanges.clear();
             return; // The host split/replaced this project's note and audio data.
           }
         }
@@ -1691,7 +1699,16 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               // own span out of it via getStartInAudioModificationSamples().
               juce::AudioBuffer<float> processedSlice;
               processedSlice.makeCopyOf(audioData.waveform);
-              if (!renderChangedSampleRanges.empty()) {
+              auto changedRanges = renderChangedSampleRanges;
+              {
+                auto &state = modificationRenders[renderRegionKey];
+                changedRanges.insert(changedRanges.end(),
+                                     state.queuedRanges.begin(),
+                                     state.queuedRanges.end());
+                if (!state.pending.load())
+                  state.queuedRanges.clear();
+              }
+              if (!changedRanges.empty()) {
                 juce::AudioBuffer<float> previousProcessed;
                 double previousRate = 0.0;
                 juce::int64 previousStart = 0;
@@ -1702,7 +1719,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                   preserveProcessedAudioOutsideRanges(
                       processedSlice, processedRate,
                       /*startSampleInModification*/ 0, previousProcessed,
-                      previousRate, previousStart, renderChangedSampleRanges);
+                      previousRate, previousStart, changedRanges);
               }
               ARA_DIAG("publish[render] mod=" + ARA_DIAG_PTR(renderModification) +
                        " key=" + renderRegionKey + " samples=" +
@@ -1710,7 +1727,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                        " rate=" + juce::String(processedRate, 1) + " offset=0" +
                        " fp=" + juce::String(araDiagFingerprint(processedSlice), 6) +
                        " changedRanges=" +
-                       juce::String(static_cast<int>(renderChangedSampleRanges.size())));
+                       juce::String(static_cast<int>(changedRanges.size())));
               renderModification->setProcessedAudio(
                   processedSlice, processedRate,
                   /*startSampleInModification*/ 0);
@@ -2998,8 +3015,8 @@ void PitchNetAudioProcessor::updateAraTrackAnalysisQueue(
   }
 
   const bool busy = isAraCanvasWorkerRunning();
-  // Rendering uses this controller's Project too. Let existing synthesis and
-  // model reloads finish before starting a job that replaces that Project.
+  // Let model reloads finish before starting a job that replaces this
+  // controller's Project. Renders use their own per-modification controllers.
   if (!busy && regionCanvasController && regionCanvasController->isInferenceBusy())
     return;
   if (!trackAnalysisRunning && (busy || !missing.empty())) {

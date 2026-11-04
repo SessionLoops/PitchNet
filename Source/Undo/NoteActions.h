@@ -41,6 +41,10 @@ public:
             onNoteChanged(note);
     }
     juce::String getName() const override { return actionName; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        out.push_back(&note);
+    }
 
 private:
     Note *note;
@@ -98,6 +102,11 @@ public:
     }
 
     juce::String getName() const override { return actionName; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     std::vector<Note *> notes;
@@ -184,6 +193,11 @@ public:
     {
         return side == TiltSide::Left ? "Reset Tilt Left" : "Reset Tilt Right";
     }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     std::vector<Note *> notes;
@@ -234,6 +248,10 @@ public:
     }
 
     juce::String getName() const override { return "Snap to Semitone"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        out.push_back(&note);
+    }
 
 private:
     Note *note;
@@ -293,6 +311,11 @@ public:
     }
 
     juce::String getName() const override { return "Snap Notes to Semitone"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     std::vector<Note *> notes;

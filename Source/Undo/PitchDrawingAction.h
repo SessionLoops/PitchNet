@@ -37,6 +37,12 @@ public:
     void undo() override { apply(before); }
     void redo() override { apply(after); }
     juce::String getName() const override { return "Apply Pitch Drawing"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto *states : {&before, &after})
+            for (auto &state : *states)
+                out.push_back(&state.note);
+    }
 
 private:
     void apply(const std::vector<PitchDrawingNoteState>& states)
