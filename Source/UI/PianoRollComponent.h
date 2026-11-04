@@ -502,6 +502,8 @@ private:
 public:
   void invalidateWaveformCache();
   void invalidateBasePitchCache();
+  // Undo/redo can insert or erase notes, which moves the note vector.
+  void forgetNotePointers() { hoveredNote = nullptr; }
   void beginMacroCurvePreview(const std::vector<Note*>& notes);
   void endMacroCurvePreview();
   std::function<std::vector<TrackPitchMacroTarget>()> getTrackEditTargets;
