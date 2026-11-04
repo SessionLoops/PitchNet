@@ -1582,11 +1582,25 @@ void PitchNetAudioProcessorEditor::syncHostLoopSnapshotFromPlayHead() {
 
 void PitchNetAudioProcessorEditor::setupCallbacks() {
   // When project data changes (analysis complete or synthesis complete)
+  // Publishing copies the whole project and take several times and
+  // serializes it. Slider drags fire this on every tick, so coalesce a burst
+  // into one publish. Editor close publishes synchronously via the processor.
   mainView->setOnProjectDataChanged([this]() {
-    if (auto *project = mainView->getProject())
-      audioProcessor.updateProjectStateFromEditor(*project);
-    mainView->bindRealtimeProcessor(audioProcessor.getRealtimeProcessor());
-    audioProcessor.getRealtimeProcessor().invalidate();
+    if (projectPublishPending)
+      return;
+    projectPublishPending = true;
+    juce::Component::SafePointer<PitchNetAudioProcessorEditor> safe(this);
+    juce::Timer::callAfterDelay(60, [safe]() {
+      if (safe == nullptr)
+        return;
+      auto *editor = safe.getComponent();
+      editor->projectPublishPending = false;
+      if (auto *project = editor->mainView->getProject())
+        editor->audioProcessor.updateProjectStateFromEditor(*project);
+      editor->mainView->bindRealtimeProcessor(
+          editor->audioProcessor.getRealtimeProcessor());
+      editor->audioProcessor.getRealtimeProcessor().invalidate();
+    });
   });
 
   // onPitchEditFinished is handled by onProjectDataChanged (called after async

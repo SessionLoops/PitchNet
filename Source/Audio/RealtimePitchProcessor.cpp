@@ -218,11 +218,14 @@ void RealtimePitchProcessor::invalidate() {
   {
     const juce::ScopedLock sl(bufferLock);
     proj = project;
-    if (proj) {
-      auto &audioData = proj->getAudioData();
-      waveformSnapshot.makeCopyOf(audioData.waveform);
-      srcSampleRate = audioData.sampleRate;
-    }
+  }
+  // Copy outside bufferLock: processBlock() takes that lock on the audio
+  // thread, and copying a whole song's waveform under it stalled playback on
+  // every edit. The project is only written on this (message) thread.
+  if (proj) {
+    auto &audioData = proj->getAudioData();
+    waveformSnapshot.makeCopyOf(audioData.waveform);
+    srcSampleRate = audioData.sampleRate;
   }
 
   // Safety check: verify waveform has valid dimensions before accessing

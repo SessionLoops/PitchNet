@@ -419,6 +419,8 @@ private:
   juce::StringArray recentFiles;
 
   bool isPlaying = false;
+  juce::uint32 lastOverviewRefreshMs = 0;
+  bool overviewRefreshScheduled = false;
   bool hostTransportControlAvailable = true;
   std::function<void(const juce::String &)> onRegionActivationRequested;
   std::function<void(bool)> onTrackViewModeChanged;
