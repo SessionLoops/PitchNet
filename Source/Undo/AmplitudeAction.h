@@ -20,6 +20,11 @@ public:
     void redo() override { apply(before, after); }
     bool requiresAudioResynthesis() const override { return false; }
     juce::String getName() const override { return name; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     void apply(const std::vector<float>& from, const std::vector<float>& to)

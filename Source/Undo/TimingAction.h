@@ -104,6 +104,12 @@ public:
     void undo() override { applyNoteTimingStates(project, before); }
     void redo() override { applyNoteTimingStates(project, after); }
     juce::String getName() const override { return name; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto *states : {&before, &after})
+            for (auto &state : *states)
+                out.push_back(&state.note);
+    }
 
 private:
     Project& project;

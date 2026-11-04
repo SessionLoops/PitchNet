@@ -682,6 +682,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   commandManager = std::make_unique<juce::ApplicationCommandManager>();
   if (undoManager)
   {
+    undoManager->noteStorage = [this]() -> std::vector<Note> *
+    {
+      auto *project = getProject();
+      return project ? &project->getNotes() : nullptr;
+    };
     undoManager->onHistoryChanged = [this]()
     {
       if (commandManager)
@@ -1394,6 +1399,11 @@ void MainComponent::bindUndoManager(PitchUndoManager *manager)
   if (undoManager)
   {
     juce::Component::SafePointer<MainComponent> safeThis(this);
+    undoManager->noteStorage = [safeThis]() -> std::vector<Note> *
+    {
+      auto *project = safeThis != nullptr ? safeThis->getProject() : nullptr;
+      return project ? &project->getNotes() : nullptr;
+    };
     undoManager->onHistoryChanged = [safeThis]()
     {
       if (safeThis == nullptr)

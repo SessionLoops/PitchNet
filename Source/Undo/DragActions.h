@@ -64,6 +64,10 @@ public:
     }
 
     juce::String getName() const override { return "Drag Note Pitch"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        out.push_back(&note);
+    }
 
 private:
     Note *note;
@@ -134,6 +138,11 @@ public:
     }
 
     juce::String getName() const override { return "Drag Multiple Notes"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     std::vector<Note *> notes;
@@ -188,6 +197,11 @@ public:
     }
 
     juce::String getName() const override { return "Nudge Note Pitch"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     std::vector<Note *> notes;
@@ -221,6 +235,11 @@ public:
     void undo() override { apply(oldMidis, oldDrifts, oldPitchCenter); }
     void redo() override { apply(newMidis, newDrifts, newPitchCenter); }
     juce::String getName() const override { return "Pitch Macro"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     void apply(const std::vector<float> &midis, const std::vector<float> &drifts, float pitchCenter)
