@@ -321,6 +321,8 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
 
   struct NoteCenter {
     Note* note;
+    // Splits/merges move the note vector; note is re-resolved from this.
+    size_t index;
     float midiNote, sourceMidiNote, pitchDrift, strength;
     float finalMidi = 0.0f, finalDrift = 1.0f, finalStrength = 0.0f;
     float renderedMidi = midiNote, renderedDrift = pitchDrift;
@@ -331,11 +333,20 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
     std::vector<NoteCenter> notes;
     float finalPitchCenter = 0.0f;
   };
+  const auto resolveMacroNotes = [](State& state) {
+    auto& notes = state.target.project->getNotes();
+    for (auto& center : state.notes) {
+      if (center.index >= notes.size()) return false;
+      center.note = &notes[center.index];
+    }
+    return true;
+  };
   auto states = std::make_shared<std::vector<State>>();
   for (auto& target : targets) {
     State state{target, target.project->getPitchCenter(), {}};
     for (auto* note : collectPitchMacroNotes(*target.project, track, target.frames))
-      state.notes.push_back({note, note->getMidiNote(), note->getLastNonMacroMidiNote(),
+      state.notes.push_back({note, static_cast<size_t>(note - target.project->getNotes().data()),
+                             note->getMidiNote(), note->getLastNonMacroMidiNote(),
                              note->getPitchDrift(), note->getMacroPitchCenter()});
     states->push_back(std::move(state));
   }
@@ -358,10 +369,11 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
   };
   // Track the last requested sound, rather than comparing with popup-open
   // values: a later drag can return to the original and still need a render.
-  const auto renderPreview = [safeThis, states] {
+  const auto renderPreview = [safeThis, states, resolveMacroNotes] {
     if (!safeThis) return;
     for (auto& state : *states) {
       if (state.target.isValid && !state.target.isValid()) continue;
+      if (!resolveMacroNotes(state)) continue;
       int first = std::numeric_limits<int>::max(), last = -1;
       for (auto& center : state.notes) {
         const float midi = center.note->getMidiNote(), drift = center.note->getPitchDrift();
@@ -383,12 +395,13 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       } else if (state.target.onChanged) state.target.onChanged(true);
     }
   };
-  const auto apply = [safeThis, states](bool redo) {
+  const auto apply = [safeThis, states, resolveMacroNotes](bool redo) {
     if (!safeThis) return;
     safeThis->pianoRoll.endMacroCurvePreview();
     bool activeChanged = false;
     for (auto& state : *states) {
       if (state.target.isValid && !state.target.isValid()) continue;
+      if (!resolveMacroNotes(state)) continue;
       auto* project = state.target.project;
       int first = std::numeric_limits<int>::max(), last = -1;
       for (const auto& center : state.notes) {
