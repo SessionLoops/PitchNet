@@ -121,6 +121,10 @@ public:
   float getPixelsPerSecond() const { return pixelsPerSecond; }
   float getPixelsPerSemitone() const { return pixelsPerSemitone; }
 
+  // Visual height multiplier for note waveform blobs (1.0 = default).
+  void setBlobHeightScale(float scale);
+  float getBlobHeightScale() const;
+
   // Scale-grid visualization
   void setScaleMode(ScaleMode mode);
   void setScaleRootNote(int noteInOctave);
@@ -379,6 +383,7 @@ private:
   {
     double scrollX = 0.0, scrollY = 0.0, displayOffset = 0.0;
     float pixelsPerSecond = 0.0f, pixelsPerSemitone = 0.0f;
+    float blobHeightScale = 1.0f;
     int width = 0, height = 0;
     const void *previews = nullptr;
     bool showDeltaPitch = false, showBasePitch = false;
@@ -387,7 +392,8 @@ private:
       return scrollX == o.scrollX && scrollY == o.scrollY &&
              displayOffset == o.displayOffset &&
              pixelsPerSecond == o.pixelsPerSecond &&
-             pixelsPerSemitone == o.pixelsPerSemitone && width == o.width &&
+             pixelsPerSemitone == o.pixelsPerSemitone &&
+             blobHeightScale == o.blobHeightScale && width == o.width &&
              height == o.height && previews == o.previews &&
              showDeltaPitch == o.showDeltaPitch &&
              showBasePitch == o.showBasePitch;

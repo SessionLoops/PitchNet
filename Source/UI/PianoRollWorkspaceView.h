@@ -74,8 +74,10 @@ private:
   FloatingZoomSliderLookAndFeel floatingZoomSliderLookAndFeel;
   FloatingControlBackground zoomXBackground;
   FloatingControlBackground zoomYBackground;
+  FloatingControlBackground blobHeightBackground;
   juce::Slider zoomXSlider;
   juce::Slider zoomYSlider;
+  juce::Slider blobHeightSlider;
   juce::Rectangle<float> zoomXBg;
   juce::Rectangle<float> zoomYBg;
   juce::Rectangle<float> toggleBg;
@@ -97,6 +99,7 @@ private:
   static constexpr int zoomSliderWidth = floatingSliderThickness;
   static constexpr int zoomSliderHeight = 88;
   static constexpr int zoomSliderLength = 110;
+  static constexpr int blobHeightSliderHeight = 62;
   static constexpr int overlayControlGap = 12;
   static constexpr int overlayVerticalGap = overlayControlGap - 4;
 

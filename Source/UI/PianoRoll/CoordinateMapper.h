@@ -22,6 +22,12 @@ public:
     float getPixelsPerSecond() const { return pixelsPerSecond; }
     float getPixelsPerSemitone() const { return pixelsPerSemitone; }
 
+    // Visual height multiplier for the waveform blobs drawn on notes.
+    static constexpr float minBlobHeightScale = 0.25f;
+    static constexpr float maxBlobHeightScale = 3.0f;
+    void setBlobHeightScale(float s) { blobHeightScale = juce::jlimit(minBlobHeightScale, maxBlobHeightScale, s); }
+    float getBlobHeightScale() const { return blobHeightScale; }
+
     // Scroll settings
     void setScrollX(double x) { scrollX = std::max(viewStartSeconds * pixelsPerSecond, x); }
     void setScrollY(double y) { scrollY = std::max(0.0, y); }
@@ -118,6 +124,7 @@ public:
 private:
     float pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
     float pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
+    float blobHeightScale = 1.0f;
     double scrollX = 0.0;
     double scrollY = 0.0;
     double timelineDisplayOffset = 0.0;

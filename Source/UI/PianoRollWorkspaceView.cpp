@@ -162,6 +162,21 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
                                        0.5f);
   };
 
+  blobHeightSlider.setSliderStyle(juce::Slider::LinearVertical);
+  blobHeightSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+  blobHeightSlider.setLookAndFeel(&floatingZoomSliderLookAndFeel);
+  blobHeightSlider.setRange(CoordinateMapper::minBlobHeightScale,
+                            CoordinateMapper::maxBlobHeightScale, 0.01);
+  blobHeightSlider.setSkewFactorFromMidPoint(1.0);
+  blobHeightSlider.setDoubleClickReturnValue(true, 1.0);
+  blobHeightSlider.setValue(pianoRoll.getBlobHeightScale(),
+                            juce::dontSendNotification);
+  blobHeightSlider.setTooltip(TR("tooltip.blob_height"));
+  blobHeightSlider.onValueChange = [this]()
+  {
+    pianoRoll.setBlobHeightScale(static_cast<float>(blobHeightSlider.getValue()));
+  };
+
   autoZoomButton.setImage(juce::ImageFileFormat::loadFrom(
       BinaryData::autozoom_png, static_cast<size_t>(BinaryData::autozoom_pngSize)));
   autoZoomButton.setTooltip(TR("tooltip.vertical_auto_zoom"));
@@ -188,10 +203,12 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   addAndMakeVisible(overviewCard);
   addAndMakeVisible(zoomXBackground);
   addAndMakeVisible(zoomYBackground);
+  addAndMakeVisible(blobHeightBackground);
   addAndMakeVisible(autoZoomButton);
   addAndMakeVisible(overviewToggleButton);
   addAndMakeVisible(zoomXSlider);
   addAndMakeVisible(zoomYSlider);
+  addAndMakeVisible(blobHeightSlider);
 
   overviewCard.setVisible(false);
   overviewPanel.setVisible(false);
@@ -203,6 +220,7 @@ PianoRollWorkspaceView::~PianoRollWorkspaceView()
 {
   zoomXSlider.setLookAndFeel(nullptr);
   zoomYSlider.setLookAndFeel(nullptr);
+  blobHeightSlider.setLookAndFeel(nullptr);
 }
 
 void PianoRollWorkspaceView::paint(juce::Graphics &g)
@@ -269,8 +287,15 @@ void PianoRollWorkspaceView::resized()
       autoZoomButton.getY() - overlayVerticalGap - zoomSliderHeight,
       zoomSliderWidth, zoomSliderHeight);
 
+  auto blobHeightRect = juce::Rectangle<int>(
+      zoomYLeft,
+      zoomYRect.getY() - overlayVerticalGap - blobHeightSliderHeight,
+      zoomSliderWidth, blobHeightSliderHeight);
+
   zoomXSlider.setBounds(zoomXRect);
   zoomYSlider.setBounds(zoomYRect);
+  blobHeightSlider.setBounds(blobHeightRect);
+  blobHeightBackground.setBounds(blobHeightRect);
 
   zoomXBg = zoomXRect.toFloat();
   zoomYBg = zoomYRect.toFloat();
@@ -691,4 +716,5 @@ void PianoRollWorkspaceView::timerCallback()
 void PianoRollWorkspaceView::refreshLocalisedText()
 {
   autoZoomButton.setTooltip(TR("tooltip.vertical_auto_zoom"));
+  blobHeightSlider.setTooltip(TR("tooltip.blob_height"));
 }

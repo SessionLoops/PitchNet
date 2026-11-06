@@ -244,7 +244,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
               : *std::max_element(shadowEnvelope.begin(), shadowEnvelope.end());
 
       const float centerY = y + noteHeight * 0.5f;
-      const float waveHeight = noteHeight * 3.0f;
+      const float waveHeight = noteHeight * 3.0f * coordMapper->getBlobHeightScale();
       shadowVisualBounds =
           juce::Rectangle<float>(x, centerY - maxSample * waveHeight * 0.5f,
                                  renderedWidth, maxSample * waveHeight);
@@ -354,7 +354,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
       {
         const float centerY = y + h * 0.5f;
-        const float waveHeight = h * 3.0f;
+        const float waveHeight = h * 3.0f * coordMapper->getBlobHeightScale();
         const int pointCount =
             std::max(2, std::min(2048, static_cast<int>(std::ceil(w * 2.0f)) + 1));
         waveValues = VisualWaveformEnvelope::build(

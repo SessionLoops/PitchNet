@@ -888,6 +888,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
   key.scrollY = scrollY;
   key.pixelsPerSecond = pixelsPerSecond;
   key.pixelsPerSemitone = pixelsPerSemitone;
+  key.blobHeightScale = coordMapper->getBlobHeightScale();
   key.width = mainArea.getWidth();
   key.height = mainArea.getHeight();
   key.previews = regionPreviews.get();
@@ -1010,6 +1011,7 @@ void PianoRollComponent::drawPinnedTrackNotes(
   key.scrollY = scrollY;
   key.pixelsPerSecond = pixelsPerSecond;
   key.pixelsPerSemitone = pixelsPerSemitone;
+  key.blobHeightScale = coordMapper->getBlobHeightScale();
   key.width = mainArea.getWidth();
   key.height = mainArea.getHeight();
   key.previews = regionPreviews.get();
@@ -3224,6 +3226,19 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
   // The caller is responsible for synchronizing other components
 }
 
+void PianoRollComponent::setBlobHeightScale(float scale)
+{
+  const float old = coordMapper->getBlobHeightScale();
+  coordMapper->setBlobHeightScale(scale);
+  if (std::abs(old - coordMapper->getBlobHeightScale()) > 0.0001f)
+    repaint();
+}
+
+float PianoRollComponent::getBlobHeightScale() const
+{
+  return coordMapper->getBlobHeightScale();
+}
+
 void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 {
   const float oldPps = pixelsPerSemitone;
@@ -3628,7 +3643,7 @@ PianoRollComponent::getNoteHoverShadowBounds(const Note &note) const
             : *std::max_element(envelope.begin(), envelope.end());
 
     const float centreY = y + h * 0.5f;
-    const float waveHeight = h * 3.0f;
+    const float waveHeight = h * 3.0f * coordMapper->getBlobHeightScale();
     shadowBounds = juce::Rectangle<float>(x, centreY - maxSample * waveHeight * 0.5f,
                                           renderedWidth, maxSample * waveHeight);
   }
