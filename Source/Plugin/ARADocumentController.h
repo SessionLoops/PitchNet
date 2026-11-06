@@ -2,12 +2,14 @@
 
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
+#include "AraTempoMap.h"
 
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <set>
 #include <thread>
 #include <unordered_map>
@@ -377,6 +379,24 @@ public:
   void willDestroyPlaybackRegion(juce::ARAPlaybackRegion *playbackRegion)
       override;
 
+  // Host tempo map. ARA hosts publish tempo and bar signatures on the musical
+  // context, and that is the only tempo source PitchNet can rely on in every
+  // ARA host: Pro Tools does not deliver its session tempo through the
+  // playhead of the instance that owns the editor, so the UI stayed at the
+  // 120 BPM default (#30).
+  void doUpdateMusicalContextContent(
+      juce::ARAMusicalContext *musicalContext,
+      juce::ARAContentUpdateScopes scopeFlags) override;
+  void willDestroyMusicalContext(
+      juce::ARAMusicalContext *musicalContext) override;
+  // Re-reads the musical context for the current region and pushes the result
+  // to the editor. Message thread only.
+  void refreshHostMusicalTimeline();
+  const std::optional<pitchnet::ara::MusicalTimeline> &
+  getHostMusicalTimeline() const {
+    return hostMusicalTimeline;
+  }
+
   // Extract a single region's audio and hand it to the processor for per-region
   // analysis (populates that region's persistent Project and, if it is the
   // active region, switches the canvas to it). Used for selection-driven
@@ -471,6 +491,10 @@ private:
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
   bool hostEditing = false;
+  bool hostMusicalTimelineDirty = false;
+  std::optional<pitchnet::ara::MusicalTimeline> hostMusicalTimeline;
+  juce::ARAMusicalContext *findCurrentMusicalContext() const;
+  void pushHostMusicalTimelineToEditor();
   std::vector<juce::ARAPlaybackRegion *> deferredRegionUpdates;
   void stopAnalysisThread();
 

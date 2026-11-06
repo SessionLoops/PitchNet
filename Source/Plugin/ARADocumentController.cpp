@@ -1274,6 +1274,8 @@ void PitchNetDocumentController::setMainComponent(IMainView *mc) {
   }
 
   mainComponent = mc;
+  if (mainComponent != nullptr)
+    refreshHostMusicalTimeline();
   if (mainComponent && pendingRestoredProjectData.getSize() > 0 &&
       !restoreProjectStateCallback) {
     juce::String jsonString(
@@ -1805,6 +1807,8 @@ void PitchNetDocumentController::setCurrentPlaybackRegion(
   currentAudioSource = region->getAudioModification()->getAudioSource();
   currentDocument = currentAudioSource ? currentAudioSource->getDocument()
                                        : currentDocument;
+  if (!hostEditing)
+    refreshHostMusicalTimeline();
 }
 
 void PitchNetDocumentController::willDestroyAudioSource(
@@ -1871,6 +1875,10 @@ void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
   deferredRegionUpdates.clear();
   for (auto *region : updates)
     didUpdatePlaybackRegionProperties(region);
+
+  // Tempo map edits, region moves and context changes all land here; the
+  // refresh only notifies the editor when the result actually changed.
+  refreshHostMusicalTimeline();
 
   if (auto *processor = getRegionCanvasProcessor();
       processor != nullptr && processor->getMainComponent() != nullptr &&
@@ -2110,6 +2118,122 @@ void PitchNetDocumentController::willDestroyPlaybackRegion(
   // slice lost the edits on the others. It is also wrong for a modification
   // that legitimately outlives its regions, such as an inactive track version.
   // Only willDestroyAudioModification() may erase modification-owned state.
+}
+
+// ---------------------------------------------------------------------------
+// Host tempo map (#30)
+// ---------------------------------------------------------------------------
+
+void PitchNetDocumentController::doUpdateMusicalContextContent(
+    juce::ARAMusicalContext *musicalContext,
+    juce::ARAContentUpdateScopes scopeFlags) {
+  juce::ignoreUnused(musicalContext);
+  if (!scopeFlags.affectTimeline())
+    return;
+
+  // Content updates arrive inside the host's editing cycle; read the map once
+  // the graph is consistent again.
+  if (hostEditing) {
+    hostMusicalTimelineDirty = true;
+    return;
+  }
+  refreshHostMusicalTimeline();
+}
+
+void PitchNetDocumentController::willDestroyMusicalContext(
+    juce::ARAMusicalContext *musicalContext) {
+  juce::ignoreUnused(musicalContext);
+  // The context may still be the current one; re-resolve after the host has
+  // finished removing it.
+  hostMusicalTimelineDirty = true;
+}
+
+juce::ARAMusicalContext *
+PitchNetDocumentController::findCurrentMusicalContext() const {
+  if (currentPlaybackRegion != nullptr)
+    if (auto *sequence = currentPlaybackRegion->getRegionSequence())
+      if (auto *context = sequence->getMusicalContext())
+        return context;
+
+  if (currentRegionSequence != nullptr)
+    if (auto *context = currentRegionSequence->getMusicalContext())
+      return context;
+
+  if (currentDocument != nullptr) {
+    const auto &contexts = currentDocument->getMusicalContexts();
+    if (!contexts.empty())
+      return contexts.front();
+  }
+
+  return nullptr;
+}
+
+void PitchNetDocumentController::refreshHostMusicalTimeline() {
+  hostMusicalTimelineDirty = false;
+
+  std::optional<pitchnet::ara::MusicalTimeline> timeline;
+  if (auto *context = findCurrentMusicalContext()) {
+    const ARA::PlugIn::HostContentReader<ARA::kARAContentTypeTempoEntries>
+        tempoReader(context);
+    if (tempoReader && tempoReader.getEventCount() >= 2) {
+      std::vector<pitchnet::ara::TempoMapEntry> tempoEntries;
+      tempoEntries.reserve(static_cast<size_t>(tempoReader.getEventCount()));
+      for (ARA::ARAInt32 i = 0; i < tempoReader.getEventCount(); ++i)
+        if (const auto *entry = tempoReader.getDataPtrForEvent(i))
+          tempoEntries.push_back({entry->timePosition, entry->quarterPosition});
+
+      std::vector<pitchnet::ara::BarSignatureEntry> barSignatures;
+      const ARA::PlugIn::HostContentReader<ARA::kARAContentTypeBarSignatures>
+          barReader(context);
+      if (barReader) {
+        barSignatures.reserve(static_cast<size_t>(barReader.getEventCount()));
+        for (ARA::ARAInt32 i = 0; i < barReader.getEventCount(); ++i)
+          if (const auto *entry = barReader.getDataPtrForEvent(i))
+            barSignatures.push_back(
+                {static_cast<int>(entry->numerator),
+                 static_cast<int>(entry->denominator), entry->position});
+      }
+
+      // PitchNet's grid holds a single tempo, so use the one in effect where
+      // the edited region starts.
+      const double regionStart =
+          currentPlaybackRegion != nullptr
+              ? currentPlaybackRegion->getStartInPlaybackTime()
+              : 0.0;
+      timeline = pitchnet::ara::musicalTimelineAt(tempoEntries, barSignatures,
+                                                  regionStart);
+    }
+  }
+
+  const bool changed =
+      timeline.has_value() != hostMusicalTimeline.has_value() ||
+      (timeline && (std::abs(timeline->bpm - hostMusicalTimeline->bpm) > 1.0e-6 ||
+                    timeline->numerator != hostMusicalTimeline->numerator ||
+                    timeline->denominator != hostMusicalTimeline->denominator ||
+                    timeline->hasBarSignature !=
+                        hostMusicalTimeline->hasBarSignature));
+  hostMusicalTimeline = timeline;
+
+  ARA_DIAG("tempoMap " +
+           (timeline ? juce::String(timeline->bpm, 3) + " bpm " +
+                           juce::String(timeline->numerator) + "/" +
+                           juce::String(timeline->denominator)
+                     : juce::String("unavailable")));
+
+  if (changed)
+    pushHostMusicalTimelineToEditor();
+}
+
+void PitchNetDocumentController::pushHostMusicalTimelineToEditor() {
+  if (mainComponent == nullptr)
+    return;
+
+  if (hostMusicalTimeline)
+    mainComponent->updateHostMusicalTimeline(
+        true, hostMusicalTimeline->bpm, hostMusicalTimeline->numerator,
+        hostMusicalTimeline->denominator, hostMusicalTimeline->hasBarSignature);
+  else
+    mainComponent->updateHostMusicalTimeline(false, 0.0, 0, 0, false);
 }
 // Takes MODIFICATION seconds, because that is the space the Project - and so
 // the piano roll the user is selecting in - lives in. Previously it took

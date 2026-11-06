@@ -279,6 +279,8 @@ public:
   void updateHostPlaybackState(bool isPlaying) override;
   void updateHostTimelineState(double bpm, int numerator,
                                int denominator) override;
+  void updateHostMusicalTimeline(bool available, double bpm, int numerator,
+                                 int denominator, bool hasSignature) override;
   void updateHostLoopRange(double startSeconds, double endSeconds,
                            bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback
@@ -460,6 +462,14 @@ private:
   std::atomic<bool> hasPendingCursorUpdate{false};
 
   bool hasCachedHostTimelineState = false;
+  // ARA musical-context tempo; overrides the playhead tempo while set.
+  bool hasAraMusicalTimeline = false;
+  double araMusicalTempoBpm = 120.0;
+  int araMusicalBeatNumerator = 4;
+  int araMusicalBeatDenominator = 4;
+  bool araMusicalHasSignature = false;
+  void applyHostTimelineState(double bpm, int numerator, int denominator);
+  void applyEffectiveHostTimelineState();
   double cachedHostTempoBpm = 120.0;
   int cachedHostBeatNumerator = 4;
   int cachedHostBeatDenominator = 4;

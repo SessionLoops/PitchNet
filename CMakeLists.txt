@@ -420,6 +420,7 @@ file(GLOB PLUGIN_SOURCES
     "Source/Plugin/PluginEditor.cpp" "Source/Plugin/PluginEditor.h"
     "Source/Plugin/AAX_VARABinding.cpp"
     "Source/Plugin/ARADocumentController.cpp" "Source/Plugin/ARADocumentController.h"
+    "Source/Plugin/AraTempoMap.h"
     "Source/Plugin/NonAraCaptureController.cpp" "Source/Plugin/NonAraCaptureController.h"
     "Source/Plugin/HostCompatibility.cpp" "Source/Plugin/HostCompatibility.h")
 

@@ -169,8 +169,16 @@ public:
   // Display only; may be negative. See CoordinateMapper for the full contract.
   virtual void setTimelineDisplayOffset(double seconds) = 0;
   virtual void updateHostPlaybackState(bool isPlaying) = 0;
+  // Tempo/meter reported by the host playhead (AudioPlayHead).
   virtual void updateHostTimelineState(double bpm, int numerator,
                                        int denominator) = 0;
+  // Tempo/meter read from the ARA musical context. While available it takes
+  // precedence over the playhead values, which some ARA hosts (Pro Tools) do
+  // not deliver to the editor's instance. available=false hands control back
+  // to the playhead. hasSignature=false keeps the playhead/current meter.
+  virtual void updateHostMusicalTimeline(bool available, double bpm,
+                                         int numerator, int denominator,
+                                         bool hasSignature) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
                                    bool enabled, bool hasRange) = 0;
   virtual void notifyHostStopped() = 0;

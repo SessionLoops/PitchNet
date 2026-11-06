@@ -845,9 +845,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
-    if (hasCachedHostTimelineState)
-      updateHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
-                              cachedHostBeatDenominator);
+    if (isPluginMode())
+      applyEffectiveHostTimelineState();
   };
   // The Regions card changes the panel's natural height when it appears, and
   // that height is what the side panel scrolls against.
@@ -3660,7 +3659,54 @@ void MainComponent::updateHostTimelineState(double bpm, int numerator,
   cachedHostTempoBpm = bpm;
   cachedHostBeatNumerator = numerator;
   cachedHostBeatDenominator = denominator;
+  applyEffectiveHostTimelineState();
+}
 
+void MainComponent::updateHostMusicalTimeline(bool available, double bpm,
+                                              int numerator, int denominator,
+                                              bool hasSignature)
+{
+  if (!isPluginMode())
+    return;
+
+  hasAraMusicalTimeline = available && std::isfinite(bpm) && bpm > 0.0;
+  if (hasAraMusicalTimeline)
+  {
+    araMusicalTempoBpm = bpm;
+    araMusicalHasSignature = hasSignature && numerator > 0 && denominator > 0;
+    if (araMusicalHasSignature)
+    {
+      araMusicalBeatNumerator = numerator;
+      araMusicalBeatDenominator = denominator;
+    }
+  }
+  applyEffectiveHostTimelineState();
+}
+
+void MainComponent::applyEffectiveHostTimelineState()
+{
+  // The ARA musical context is authoritative when the host provides one: in
+  // Pro Tools the playhead seen by the editor's instance keeps reporting the
+  // 120 BPM default (#30). The playhead still supplies the meter if the
+  // context has no bar signatures.
+  if (hasAraMusicalTimeline)
+  {
+    applyHostTimelineState(
+        araMusicalTempoBpm,
+        araMusicalHasSignature ? araMusicalBeatNumerator : cachedHostBeatNumerator,
+        araMusicalHasSignature ? araMusicalBeatDenominator
+                               : cachedHostBeatDenominator);
+    return;
+  }
+
+  if (hasCachedHostTimelineState)
+    applyHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
+                           cachedHostBeatDenominator);
+}
+
+void MainComponent::applyHostTimelineState(double bpm, int numerator,
+                                           int denominator)
+{
   // Analysis and project restoration can replace timeline settings without a
   // host tempo change. Reapply the host values whenever a project is bound.
   if (auto *project = getProject())
