@@ -147,7 +147,7 @@ public:
 
   const juce::String getApplicationName() override { return "PitchNet"; }
 
-  const juce::String getApplicationVersion() override { return "0.7.4"; }
+  const juce::String getApplicationVersion() override { return "0.7.5"; }
 
   bool moreThanOneInstanceAllowed() override { return true; }
 

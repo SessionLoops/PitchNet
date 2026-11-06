@@ -83,7 +83,7 @@ juce::String getCurrentApplicationVersion()
 #elif defined(JucePlugin_VersionString)
   return JucePlugin_VersionString;
 #else
-  return "0.7.4";
+  return "0.7.5";
 #endif
 }
 
