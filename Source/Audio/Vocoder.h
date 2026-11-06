@@ -59,7 +59,8 @@ public:
    * @return Synthesized waveform, or empty vector on failure
    */
   std::vector<float> infer(const std::vector<std::vector<float>> &mel,
-                           const std::vector<float> &f0);
+                           const std::vector<float> &f0,
+                           const std::atomic<bool> *cancelFlag = nullptr);
 
   /**
    * Synthesize with pitch shift.
@@ -157,6 +158,15 @@ private:
 
   // Thread safety for async operations
   std::atomic<bool> isShuttingDown{false};
+  // Cancel flag of the render currently inside infer(), checked between
+  // chunks so a superseded long render stops early instead of running to
+  // completion. Only touched while inferenceMutex is held.
+  const std::atomic<bool> *activeCancelFlag = nullptr;
+  bool renderCancelled() const
+  {
+    return isShuttingDown.load() ||
+           (activeCancelFlag != nullptr && activeCancelFlag->load());
+  }
   std::atomic<int> activeAsyncTasks{0};
   std::mutex asyncMutex;
   std::condition_variable asyncCondition;

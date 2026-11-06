@@ -1372,13 +1372,20 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const size_t capturedNoteCount = project->getNotes().size();
   auto capturedCancelFlag = cancelFlag;
   auto capturedProject = project;
+  // Paired with the synthesizeRegion lines above: without an outcome line a
+  // log cannot tell a render that committed from one that was superseded.
+  const double renderStartMs = juce::Time::getMillisecondCounterHiRes();
+  auto elapsedText = [renderStartMs]() {
+    return juce::String((juce::Time::getMillisecondCounterHiRes() -
+                         renderStartMs) / 1000.0, 1) + "s";
+  };
 
 
   // Everything past the render is engine-agnostic: both paths hand back the
   // same span of samples and share this callback verbatim.
   auto onRendered =
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
-       capturedEndFrame, hopSize, currentJobId, onComplete,
+       capturedEndFrame, hopSize, currentJobId, onComplete, elapsedText,
        formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
        capturedNoteCount, commitFrameRanges = std::move(commitFrameRanges),
@@ -1389,12 +1396,16 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         if (currentJobId != jobId.load())
           return;
         if (capturedCancelFlag->load()) {
+          LOG("synthesizeRegion: cancelled after " + elapsedText() +
+              " (superseded by a newer edit)");
           isBusy = false;
           if (onComplete)
             onComplete(false);
           return;
         }
         if (synthesizedAudio.empty()) {
+          LOG("synthesizeRegion: render returned no audio after " +
+              elapsedText());
           isBusy = false;
           if (onComplete)
             onComplete(false);
@@ -1403,7 +1414,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
         std::thread([this, capturedCancelFlag, capturedProject,
                      capturedStartFrame, capturedEndFrame, hopSize,
-                     currentJobId, onComplete, hasDirtyNoteAnchors,
+                     currentJobId, onComplete, elapsedText, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
                      commitFrameRanges, blendMask, originalSegment,
                      audioMovePatches, formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
@@ -1420,6 +1431,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
           auto &audioData = capturedProject->getAudioData();
           if (capturedProject->getNotes().size() != capturedNoteCount) {
+            LOG("synthesizeRegion: discarded after " + elapsedText() +
+                " (note count changed during render)");
             isBusy = false;
             if (onComplete)
               juce::MessageManager::callAsync(
@@ -2040,6 +2053,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             note.setSynthDirty(false);
           }
 
+          LOG("synthesizeRegion: committed after " + elapsedText());
           isBusy = false;
           juce::MessageManager::callAsync(
               [capturedProject, onComplete]() {

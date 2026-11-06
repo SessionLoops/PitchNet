@@ -121,7 +121,7 @@ Vocoder::Vocoder()
         continue;
       }
 
-      auto result = infer(task.mel, task.f0);
+      auto result = infer(task.mel, task.f0, task.cancelFlag.get());
 
       // Mark task done
       if (activeAsyncTasks.fetch_sub(1) == 1) {
@@ -529,7 +529,8 @@ bool Vocoder::loadModel(const juce::File &modelPath)
 }
 
 std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
-                                  const std::vector<float> &f0)
+                                  const std::vector<float> &f0,
+                                  const std::atomic<bool> *cancelFlag)
 {
   if (!loaded || mel.empty() || f0.empty())
     return {};
@@ -537,7 +538,14 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   // Lock to ensure thread-safe access to ONNX session
   std::lock_guard<std::mutex> lock(inferenceMutex);
 
-  if (isShuttingDown.load())
+  activeCancelFlag = cancelFlag;
+  struct CancelFlagReset
+  {
+    const std::atomic<bool> *&flag;
+    ~CancelFlagReset() { flag = nullptr; }
+  } cancelFlagReset{activeCancelFlag};
+
+  if (renderCancelled())
     return {};
   unrecoverableRenderFailure.store(false);
 
@@ -553,7 +561,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
     auto renderWithChunkFallback = [&]() {
       auto result = inferCoreMLAllChunksLocked(mel, f0, numFrames,
                                                coreMLPreferredChunkFrames);
-      if (result.empty() && !isShuttingDown.load() &&
+      if (result.empty() && !renderCancelled() &&
           numFrames > kCoreMLFallbackChunkFrames &&
           coreMLPreferredChunkFrames > kCoreMLFallbackChunkFrames)
       {
@@ -574,7 +582,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
     // GPU/ANE paths can fail outright or "succeed" with NaN/silent output
     // (seen as silent AI resynthesis on low-end Apple silicon). Fall back to
     // the CPU for the rest of the session rather than returning silence.
-    if (waveform.empty() && !isShuttingDown.load() && coreMLBackend &&
+    if (waveform.empty() && !renderCancelled() && coreMLBackend &&
         coreMLBackend->getComputeUnits() != Units::CPUOnly)
     {
       logError(std::string("Core ML render failed on ") +
@@ -586,7 +594,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
 
     if (waveform.empty())
     {
-      if (!isShuttingDown.load())
+      if (!renderCancelled())
       {
         logError("Core ML vocoder render failed (" + std::to_string(numFrames) +
                  " frames) on every compute unit");
@@ -617,7 +625,7 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   // device removal, out of memory, driver faults) or return NaN/silence.
   // No CPU retry: a CPU vocoder render is far too slow to be usable, so flag
   // the failure and let the editor switch this session to classic (PSOLA).
-  if (waveform.empty() && !isShuttingDown.load())
+  if (waveform.empty() && !renderCancelled())
   {
     logError("ONNX vocoder render failed (" + std::to_string(numFrames) +
              " frames) on " + executionDevice.toStdString() +
@@ -693,7 +701,7 @@ Vocoder::inferOnnxLocked(const std::vector<std::vector<float>> &mel,
     for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
          ++chunkIdx, frameOff += step)
     {
-      if (isShuttingDown.load())
+      if (renderCancelled())
         return {};
       const size_t chunkEnd =
           std::min(frameOff + kMaxChunkFrames, numFrames);
@@ -1077,7 +1085,7 @@ Vocoder::inferCoreMLAllChunksLocked(const std::vector<std::vector<float>> &mel,
   size_t waveformWriteEnd = 0;
   for (size_t chunkIdx = 0, frameOff = 0; frameOff < numFrames;
        ++chunkIdx, frameOff += step) {
-    if (isShuttingDown.load())
+    if (renderCancelled())
       return std::vector<float>{};
     const size_t chunkEnd =
         std::min(frameOff + maxChunkFrames, numFrames);

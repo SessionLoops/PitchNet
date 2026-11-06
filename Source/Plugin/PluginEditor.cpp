@@ -341,7 +341,11 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       auto* sequence = region->getRegionSequence();
       if (!sequence) return nullptr;
       auto* manager = editor->audioProcessor.getTrackUndoManager(araTrackKey(sequence));
-      const juce::String regionName(region->getName());
+      // ARA names are UTF-8; juce::String(const char*) would read them as
+      // Latin-1 and garble non-ASCII clip names in the Undo/Redo labels.
+      const char* rawRegionName = region->getName();
+      const juce::String regionName =
+          rawRegionName ? juce::String::fromUTF8(rawRegionName).trim() : juce::String();
       const juce::String label = regionName.isNotEmpty() ? regionName : "Clip";
       const auto trackKey = araTrackKey(sequence);
       manager->decorateAction = [safeEditorForHistory, key, label, trackKey](std::unique_ptr<UndoableAction> action) {
