@@ -612,6 +612,63 @@ int main()
         }
     }
 
+    // ---- 12. a note on its own with its edit: what the full render adds for that note ----
+    {
+        std::vector<float> x(static_cast<size_t>(2.4 * kRate), 0.0f);
+        addTone(x, midiToHz(60), 0.1, 1.8, 0.25);
+        addTone(x, midiToHz(66), 0.1, 1.8, 0.2);
+        addTone(x, midiToHz(71), 0.1, 1.8, 0.2);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int c4 = findNote(A, 60), fs4 = findNote(A, 66), b4 = findNote(A, 71);
+        CHECK(c4 >= 0 && fs4 >= 0 && b4 >= 0);
+        const int a = static_cast<int>(0.4 * kRate), b = static_cast<int>(1.4 * kRate);
+        polyphonic::NoteEdit muted;
+        muted.mute = true;
+        // the span as a whole-length signal, for comparison with full renders
+        auto placed = [&](const polyphonic::AudioSpan& s) {
+            std::vector<float> y(x.size(), 0.0f);
+            CHECK(s.channels.size() == 1 && s.start >= 0 && s.start + s.channels[0].size() <= x.size());
+            std::copy(s.channels[0].begin(), s.channels[0].end(), y.begin() + s.start);
+            return y;
+        };
+        // render(edit) - render(mute) is exactly the edited note's contribution, and nothing is
+        // left out of the span
+        polyphonic::NoteEdit down, warped;
+        down.semitones = -1.0f;
+        warped.semitones = -1.0f;
+        warped.stretch = 1.5f;
+        warped.timeOffsetSeconds = 0.1;
+        for (const auto& ed : { down, warped })
+        {
+            const auto full = polyphonic::render(A, {x}, {{fs4, ed}})[0];
+            const auto without = polyphonic::render(A, {x}, {{fs4, muted}})[0];
+            const auto span = polyphonic::renderNotes(A, {x}, {fs4}, {{fs4, ed}, {c4, down}});
+            const auto alone = placed(span);
+            double err = 0.0;
+            for (size_t i = 0; i < x.size(); ++i)
+                err = std::max(err, std::fabs(static_cast<double>(full[i]) - without[i] - alone[i]));
+            std::printf("F#4 on its own (stretch %.1f): %.2f-%.2f s, differs from the full render's share by %.1e\n", ed.stretch,
+                        span.start / static_cast<double>(kRate), (span.start + span.channels[0].size()) / static_cast<double>(kRate), err);
+            CHECK(err < 1e-4);
+            CHECK(span.channels[0].size() < x.size());
+        }
+        // the edited note alone: F4, without F#4 or the other notes
+        const auto alone = placed(polyphonic::renderNotes(A, {x}, {fs4}, {{fs4, down}}));
+        const double f4 = db(toneAmplitude(alone, midiToHz(65), a, b)), fs = db(toneAmplitude(alone, midiToHz(66), a, b));
+        const double c = db(toneAmplitude(alone, midiToHz(60), a, b)), bb = db(toneAmplitude(alone, midiToHz(71), a, b));
+        std::printf("F#4 -> F4 on its own: F4 %.1f dB, F#4 %.1f dB, C4 %.1f dB, B4 %.1f dB\n", f4, fs, c, bb);
+        CHECK(f4 > db(toneAmplitude(x, midiToHz(66), a, b)) - 1.5);
+        CHECK(fs < f4 - 30.0 && c < f4 - 25.0 && bb < f4 - 25.0);
+        // unedited notes come out as their separated signal; other notes' edits are ignored
+        const auto plain = placed(polyphonic::renderNotes(A, {x}, {c4}, {{fs4, down}}));
+        const auto separated = polyphonic::extractNotes(A, {x}, {c4})[0];
+        for (size_t i = 0; i < x.size(); ++i)
+            CHECK(std::fabs(plain[i] - separated[i]) < 1e-6f);
+        // a muted note on its own is an empty span
+        const auto silent = polyphonic::renderNotes(A, {x}, {fs4}, {{fs4, muted}});
+        CHECK(silent.channels.size() == 1 && silent.channels[0].empty());
+    }
+
     std::printf("PolyphonicTests passed\n");
     return 0;
 }

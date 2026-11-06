@@ -249,6 +249,27 @@ std::vector<std::vector<float>> extractNotes(const Analysis& analysis,
                                              const std::vector<int>& noteIndices,
                                              const std::atomic<bool>* cancel = nullptr);
 
+/** Part of a recording: `channels` hold the samples from `start` on. */
+struct AudioSpan
+{
+    int start = 0;
+    std::vector<std::vector<float>> channels;
+};
+
+/**
+ * A set of notes on their own with their entries in `edits` applied (pitch, gain, mute, move,
+ * stretch), for hearing an edit while it is being made. It is the same synthesis as render(): the
+ * listed notes sound exactly as they will in the full render, minus everything else. Notes
+ * without an edit come out as their separated signal; edits of notes not listed are ignored.
+ * Only the samples the notes reach are rendered and returned, so the cost follows the notes,
+ * not the recording (an empty span when nothing sounds, e.g. a muted note).
+ */
+AudioSpan renderNotes(const Analysis& analysis,
+                      const std::vector<std::vector<float>>& channels,
+                      const std::vector<int>& noteIndices,
+                      const std::map<int, NoteEdit>& edits,
+                      const std::atomic<bool>* cancel = nullptr);
+
 /** One note's separated signal (no edits), for auditioning/solo. */
 std::vector<float> extractNote(const Analysis& analysis, const std::vector<float>& channel, int noteIndex);
 

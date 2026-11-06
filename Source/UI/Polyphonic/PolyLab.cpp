@@ -168,8 +168,10 @@ public:
         if (!playing.load() || now == nullptr || now->empty())
         {
             fade = 1.0f;   // a switch while stopped needs no crossfade
+            renderAudition(info);
             return;
         }
+        auditionOn = false;   // the take is playing: a note being held gives way
         const Channels* before = slots[previous].get();
         const double rate = deviceRate.load();
         const double step = sourceRate / rate;
@@ -200,14 +202,58 @@ public:
         positionSeconds.store(position / sourceRate);
     }
 
+    /**
+     * One note heard on its own while it is held or dragged, over silence while the take is
+     * stopped. `audio` starts at sample `start` of the take. While a note is sounding, a new
+     * rendering of it takes over at the same point with a 10 ms crossfade, so a note dragged to
+     * another pitch keeps sounding at the new one; otherwise it plays from `fromSample`.
+     */
+    void audition(std::shared_ptr<const Channels> audio, int start, int fromSample)
+    {
+        std::shared_ptr<const Channels> released[2];
+        {
+            const juce::SpinLock::ScopedLockType sl(lock);
+            released[0] = std::move(auditionPrevious);
+            if (auditionOn && !auditionStopping && auditionAudio != nullptr)
+            {
+                auditionPrevious = std::move(auditionAudio);
+                auditionPreviousPos = auditionPos;
+                auditionPos += static_cast<double>(auditionStart - start);
+                auditionCross = 0.0f;
+            }
+            else
+            {
+                released[1] = std::move(auditionAudio);
+                auditionPos = static_cast<double>(fromSample - start);
+                auditionGain = 0.0f;
+                auditionCross = 1.0f;
+            }
+            auditionAudio = std::move(audio);
+            auditionStart = start;
+            auditionOn = auditionAudio != nullptr && !auditionAudio->empty();
+            auditionStopping = false;
+        }
+    }
+
+    /** Fades the held note out (10 ms). */
+    void stopAudition()
+    {
+        const juce::SpinLock::ScopedLockType sl(lock);
+        auditionStopping = true;
+    }
+
     void setSource(std::shared_ptr<const Channels> audio, double rate)
     {
         std::shared_ptr<const Channels> released[numSlots];
+        std::shared_ptr<const Channels> releasedAudition[2];
         const double seconds = audio != nullptr && !audio->empty() && rate > 0.0
                                    ? static_cast<double>((*audio)[0].size()) / rate : 0.0;
         {
             const juce::SpinLock::ScopedLockType sl(lock);
             playing.store(false);
+            auditionOn = false;
+            releasedAudition[0] = std::move(auditionAudio);
+            releasedAudition[1] = std::move(auditionPrevious);
             for (int s = 0; s < numSlots; ++s)
                 released[s] = std::move(slots[s]);
             slots[original] = std::move(audio);
@@ -262,6 +308,42 @@ public:
     double getLength() const { return lengthSeconds.load(); }
 
 private:
+    /** The held note, written over the cleared buffer; called on the audio thread under the lock. */
+    void renderAudition(const juce::AudioSourceChannelInfo& info)
+    {
+        const Channels* now = auditionAudio.get();
+        if (!auditionOn || now == nullptr || now->empty())
+            return;
+        const Channels* before = auditionPrevious.get();
+        const double rate = deviceRate.load();
+        const double step = sourceRate / rate;
+        const float ramp = static_cast<float>(1.0 / (0.01 * rate));
+        const double length = static_cast<double>((*now)[0].size());
+        auto& out = *info.buffer;
+        for (int i = 0; i < info.numSamples; ++i)
+        {
+            if (auditionPos >= length || (auditionStopping && auditionGain <= 0.0f))
+            {
+                auditionOn = false;
+                break;
+            }
+            const double p = std::max(0.0, auditionPos), q = std::max(0.0, auditionPreviousPos);
+            const int i0 = static_cast<int>(p), j0 = static_cast<int>(q);
+            const float frac = static_cast<float>(p - i0), prevFrac = static_cast<float>(q - j0);
+            for (int c = 0; c < out.getNumChannels(); ++c)
+            {
+                float v = auditionPos < 0.0 ? 0.0f : read(now, c, i0, frac);
+                if (auditionCross < 1.0f)
+                    v = auditionCross * v + (1.0f - auditionCross) * read(before, c, j0, prevFrac);
+                out.setSample(c, info.startSample + i, v * auditionGain);
+            }
+            auditionPos += step;
+            auditionPreviousPos += step;
+            auditionCross = std::min(1.0f, auditionCross + ramp);
+            auditionGain = auditionStopping ? std::max(0.0f, auditionGain - ramp) : std::min(1.0f, auditionGain + ramp);
+        }
+    }
+
     /** Catmull-Rom interpolation; exact at whole-sample positions. */
     static float read(const Channels* audio, int channel, int i, float t)
     {
@@ -295,6 +377,71 @@ private:
     std::atomic<int> selected { original };
     std::atomic<bool> playing { false };
     std::atomic<bool> crossfadePending { false };
+
+    // the held note (under `lock`)
+    std::shared_ptr<const Channels> auditionAudio, auditionPrevious;
+    int auditionStart = 0;
+    double auditionPos = 0.0, auditionPreviousPos = 0.0;
+    float auditionGain = 0.0f, auditionCross = 1.0f;
+    bool auditionOn = false, auditionStopping = false;
+};
+
+//==============================================================================
+/** Speaker toggle: hear a note on its own while you hold or drag it. */
+class AuditionButton : public juce::Button
+{
+public:
+    AuditionButton() : juce::Button("Hear notes")
+    {
+        setClickingTogglesState(true);
+        setWantsKeyboardFocus(false);
+    }
+
+    void paintButton(juce::Graphics& g, bool over, bool down) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(1.0f);
+        const bool on = getToggleState();
+        auto fill = on ? APP_COLOR_PRIMARY : APP_COLOR_SURFACE_RAISED;
+        if (over)
+            fill = fill.brighter(0.12f);
+        if (down)
+            fill = fill.darker(0.2f);
+        g.setColour(fill);
+        g.fillRoundedRectangle(b, 5.0f);
+        g.setColour(APP_COLOR_BORDER);
+        g.drawRoundedRectangle(b, 5.0f, 1.0f);
+
+        const auto c = b.getCentre();
+        const float s = std::min(b.getWidth(), b.getHeight()) * 0.1f;
+        const float x0 = c.x - 3.0f * s;
+        juce::Path speaker;
+        speaker.startNewSubPath(x0, c.y - 1.1f * s);
+        speaker.lineTo(x0 + 1.4f * s, c.y - 1.1f * s);
+        speaker.lineTo(x0 + 3.2f * s, c.y - 2.8f * s);
+        speaker.lineTo(x0 + 3.2f * s, c.y + 2.8f * s);
+        speaker.lineTo(x0 + 1.4f * s, c.y + 1.1f * s);
+        speaker.lineTo(x0, c.y + 1.1f * s);
+        speaker.closeSubPath();
+        const auto ink = on ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_TEXT_MUTED;
+        g.setColour(ink);
+        g.fillPath(speaker);
+        const float x1 = x0 + 4.4f * s;
+        if (on)
+        {
+            for (float r : { 1.6f * s, 3.0f * s })
+            {
+                juce::Path wave;
+                wave.addCentredArc(x1 - 0.6f * s, c.y, r, r, 0.0f, juce::MathConstants<float>::pi * 0.22f,
+                                   juce::MathConstants<float>::pi * 0.78f, true);
+                g.strokePath(wave, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+        }
+        else
+        {
+            g.drawLine(x1, c.y - 1.3f * s, x1 + 2.6f * s, c.y + 1.3f * s, 1.4f);
+            g.drawLine(x1, c.y + 1.3f * s, x1 + 2.6f * s, c.y - 1.3f * s, 1.4f);
+        }
+    }
 };
 
 //==============================================================================
@@ -361,6 +508,8 @@ public:
     std::function<void(double)> onSeek;
     std::function<void()> onTogglePlay;
     std::function<void()> onToggleCompare;
+    std::function<void(int)> onNotePressed;   // a note (or its right end) was grabbed
+    std::function<void()> onNoteReleased;
 
     explicit NoteCanvas(std::map<int, polyphonic::NoteEdit>& editsToUse) : edits(editsToUse)
     {
@@ -577,6 +726,8 @@ public:
             dragMoved = false;
             snapshot.clear();
             snapshot[edge] = editOf(edge);
+            if (onNotePressed)
+                onNotePressed(edge);
             repaint();
             return;
         }
@@ -611,6 +762,8 @@ public:
             snapshot.clear();
             for (int i : selection)
                 snapshot[i] = editOf(i);
+            if (onNotePressed)
+                onNotePressed(hit);
         }
         else
         {
@@ -701,6 +854,8 @@ public:
 
     void mouseUp(const juce::MouseEvent&) override
     {
+        if ((drag == Drag::notes || drag == Drag::stretch) && onNoteReleased)
+            onNoteReleased();
         if (drag == Drag::stretch)
         {
             if (dragMoved)
@@ -1355,6 +1510,15 @@ public:
         playButton.onClick = [this] { togglePlay(); };
         addAndMakeVisible(playButton);
 
+        auditionButton.setToggleState(true, juce::dontSendNotification);
+        auditionButton.setTooltip(TR("polylab.audition_tip"));
+        auditionButton.onClick = [this] {
+            if (!auditionButton.getToggleState())
+                stopAudition();
+            canvas.grabKeyboardFocus();
+        };
+        addAndMakeVisible(auditionButton);
+
         evidenceToggle.setButtonText(TR("polylab.evidence"));
         evidenceToggle.setToggleState(evidenceModel->file.existsAsFile(), juce::dontSendNotification);
         evidenceToggle.setWantsKeyboardFocus(false);
@@ -1384,7 +1548,12 @@ public:
         hintLabel.setFont(AppFont::getFont(12.0f));
         hintLabel.setText(TR("polylab.hint"), juce::dontSendNotification);
 
-        canvas.onEditsChanging = [this] { updateSelectionLabel(); };
+        canvas.onEditsChanging = [this] {
+            updateSelectionLabel();
+            auditionEditChanged();
+        };
+        canvas.onNotePressed = [this](int index) { startAudition(index); };
+        canvas.onNoteReleased = [this] { stopAudition(); };
         canvas.onEditsChanged = [this] { editsChanged(); };
         canvas.onSelectionChanged = [this] { selectionChanged(); };
         canvas.onSeek = [this](double t) { player.seek(t); };
@@ -1405,9 +1574,10 @@ public:
     ~Content() override
     {
         stopTimer();
-        for (const auto& flag : { analysisCancel, renderCancel, soloCancel })
+        for (const auto& flag : { analysisCancel, renderCancel, soloCancel, auditionCancel })
             if (flag != nullptr)
                 flag->store(true);
+        auditionPool.removeAllJobs(true, 60000);
         pool.removeAllJobs(true, 60000);
         deviceManager.removeAudioCallback(&sourcePlayer);
         sourcePlayer.setSource(nullptr);
@@ -1453,6 +1623,8 @@ public:
         originalButton.setBounds(bar.removeFromLeft(92));
         editedButton.setBounds(bar.removeFromLeft(92));
         soloButton.setBounds(bar.removeFromLeft(72));
+        bar.removeFromLeft(8);
+        auditionButton.setBounds(bar.removeFromLeft(38));
         bar.removeFromLeft(14);
         timeLabel.setBounds(oneLine(bar.removeFromLeft(124)));
         exportButton.setBounds(bar.removeFromRight(124));
@@ -1487,9 +1659,103 @@ private:
     void togglePlay()
     {
         if (player.isPlaying())
+        {
             player.pause();
+        }
         else
+        {
+            stopAudition();
             player.play();
+        }
+    }
+
+    // ---- hearing the note under the mouse ----
+
+    /** How a note sounds under its edit; where it sits in time does not change that. */
+    polyphonic::NoteEdit soundOf(int index) const
+    {
+        const auto it = edits.find(index);
+        auto e = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+        e.timeOffsetSeconds = 0.0;
+        return e;
+    }
+
+    static bool sameSound(const polyphonic::NoteEdit& a, const polyphonic::NoteEdit& b)
+    {
+        return a.semitones == b.semitones && a.pitchCurve == b.pitchCurve && a.gainDb == b.gainDb && a.mute == b.mute
+               && a.preserveFormants == b.preserveFormants && a.stretch == b.stretch;
+    }
+
+    void startAudition(int index)
+    {
+        stopAudition();
+        if (!auditionButton.getToggleState() || player.isPlaying() || analysis == nullptr || source == nullptr
+            || index < 0 || index >= static_cast<int>(analysis->notes.size()))
+            return;
+        auditionNote = index;
+        auditionDirty = true;
+        renderAudition();
+    }
+
+    void auditionEditChanged()
+    {
+        if (auditionNote >= 0 && !sameSound(soundOf(auditionNote), auditionLast))
+        {
+            auditionDirty = true;
+            renderAudition();
+        }
+    }
+
+    void stopAudition()
+    {
+        ++auditionGeneration;
+        auditionNote = -1;
+        auditionDirty = false;
+        if (auditionCancel != nullptr)
+            auditionCancel->store(true);
+        player.stopAudition();
+    }
+
+    /** One render at a time: a change made while it runs is picked up when it finishes. */
+    void renderAudition()
+    {
+        if (auditionBusy || !auditionDirty || auditionNote < 0 || analysis == nullptr || source == nullptr)
+            return;
+        auditionDirty = false;
+        auditionBusy = true;
+        const int index = auditionNote;
+        const auto edit = soundOf(index);
+        auditionLast = edit;
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        auditionCancel = cancel;
+        const int generation = auditionGeneration;
+        auto an = analysis;
+        auto src = source;
+        juce::Component::SafePointer<Content> safe(this);
+        auditionPool.addJob([safe, an, src, index, edit, cancel, generation] {
+            auto span = std::make_shared<polyphonic::AudioSpan>(
+                polyphonic::renderNotes(*an, *src->channels, { index }, { { index, edit } }, cancel.get()));
+            juce::MessageManager::callAsync([safe, span, index, generation] {
+                if (safe != nullptr)
+                    safe->auditionReady(generation, index, span);
+            });
+        });
+    }
+
+    void auditionReady(int generation, int index, std::shared_ptr<polyphonic::AudioSpan> span)
+    {
+        auditionBusy = false;
+        if (generation == auditionGeneration && index == auditionNote && !player.isPlaying() && analysis != nullptr
+            && !span->channels.empty() && !span->channels[0].empty())
+        {
+            // from just before the note starts
+            const auto& n = analysis->notes[static_cast<size_t>(index)];
+            const int onset = static_cast<int>(std::lround(analysis->frameToSeconds(n.startFrame) * source->sampleRate));
+            const int from = std::max(span->start, onset - static_cast<int>(0.03 * source->sampleRate));
+            const int start = span->start;
+            player.audition(std::make_shared<const Channels>(std::move(span->channels)), start, from);
+        }
+        renderAudition();
     }
 
     void selectVariant(int slot)
@@ -1586,6 +1852,7 @@ private:
     {
         if (source == nullptr)
             return;
+        stopAudition();   // its note numbers belong to the old analysis
         for (const auto& flag : { analysisCancel, renderCancel, soloCancel })
             if (flag != nullptr)
                 flag->store(true);
@@ -1880,6 +2147,8 @@ private:
     juce::TextButton projectButton, openButton, resetButton, exportButton;
     juce::TextButton originalButton, editedButton, soloButton;
     PlayButton playButton;
+    AuditionButton auditionButton;
+    juce::TooltipWindow tooltips { this, 600 };
     juce::ToggleButton evidenceToggle, candidatesToggle;
     juce::Label sourceLabel, statusLabel, selectionLabel, timeLabel, hintLabel;
     std::unique_ptr<juce::FileChooser> chooser;
@@ -1904,8 +2173,18 @@ private:
     juce::uint32 soloDueMs = 0;
     juce::String note;
 
-    // Declared last: jobs hold only shared copies, but they post back to this object.
+    // the note under the mouse, heard on its own
+    int auditionNote = -1;
+    int auditionGeneration = 0;
+    bool auditionBusy = false;    // a render is running
+    bool auditionDirty = false;   // the note's sound changed since that render started
+    polyphonic::NoteEdit auditionLast;
+    std::shared_ptr<std::atomic<bool>> auditionCancel;
+
+    // Declared last: jobs hold only shared copies, but they post back to this object. Hearing a
+    // note has its own thread so it never waits behind a full render.
     juce::ThreadPool pool { 1 };
+    juce::ThreadPool auditionPool { 1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Content)
 };

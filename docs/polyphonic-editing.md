@@ -141,7 +141,10 @@ reach skip the transforms altogether: their windowed input goes straight into th
 overlap-add, which is what the FFT round trip would return. An unedited render
 therefore gives back the input exactly, and re-rendering after an edit costs
 time in proportion to the edited notes, not to the length of the recording.
-`extractNotes()` renders a set of notes on their own (solo).
+`extractNotes()` renders a set of notes on their own (solo); `renderNotes()` renders
+them with their edits applied, over only the samples they reach, which is what
+the Lab plays while you hold a note (a 3.7 s note of a 46 s stereo take in about
+60 ms).
 
 **Stretching.** A stretched note's first 80 ms (`Params::stretchAttackSeconds`,
 counted from its start) play as recorded. After that, output frame u plays the
@@ -309,7 +312,7 @@ instrument-family or source-recording holdout.
 
 | File | What |
 |---|---|
-| `PolyEngine.h` | public API: `Params`, `analyze()`, `render()`, `extractNotes()`, `extractNote()`, `Note`, `NoteEdit`, `NoteEvidence` |
+| `PolyEngine.h` | public API: `Params`, `analyze()`, `render()`, `renderNotes()`, `extractNotes()`, `extractNote()`, `Note`, `NoteEdit`, `AudioSpan`, `NoteEvidence` |
 | `PolyEngine.cpp` | the analysis pipeline |
 | `PolySpectral.cpp` | streaming STFT, instantaneous frequency, tonality, whitening, peaks |
 | `PolyExtraction.cpp` | cents field, harmonic-sum salience, iterative estimation and cancellation, pruning, f0/inharmonicity, repeated-note splits, onset refinement, fragment merging |
@@ -319,7 +322,7 @@ instrument-family or source-recording holdout.
 | `BasicPitchEvidence.*` | Basic Pitch note posteriorgram through ONNX Runtime (needs `HAVE_ONNXRUNTIME`) |
 | `PolyFFT.h` | dependency-free real FFT |
 | `tools/polyphonic/` | `polyphonic_cli`, standalone CMake for the tool and tests, research scripts |
-| `tests/PolyphonicTests.cpp` | synthetic-signal tests: detection, identity, pitch, gain, mute, move, stretch, vibrato, stereo, solo, untouched frames, repeated notes, unpitched sound left in place |
+| `tests/PolyphonicTests.cpp` | synthetic-signal tests: detection, identity, pitch, gain, mute, move, stretch, vibrato, stereo, solo, a note on its own with its edit, untouched frames, repeated notes, unpitched sound left in place |
 | `Source/UI/Polyphonic/PolyLab.*` | the Polyphonic Lab window (standalone app, Edit menu) |
 
 ```cpp
@@ -377,6 +380,10 @@ changes the PitchNet project, its undo history or its render.
   through the app's audio device and switch at the same position with a short
   crossfade; Space plays, A toggles Original/Edited. Each edit re-renders in
   the background, usually in well under a second.
+- **Hear a note.** While playback is stopped, holding a note (or its right end)
+  plays it on its own, as edited. Drag it and it keeps sounding at its new pitch
+  or length; let go and it fades out. The speaker button next to Solo turns this
+  off.
 - **Export.** **Export WAV...** writes the edited take as a 24-bit WAV at the
   source rate.
 
@@ -417,7 +424,8 @@ What is missing is the product around it:
    stereo, and frames no edit reaches are copied rather than transformed, so a
    re-render after an edit costs time in proportion to the edited notes (a
    quarter of a second for 70 s of stereo piano with four edits).
-   `extractNotes` serves a solo button. The Polyphonic Lab shows the whole loop
+   `extractNotes` serves a solo button and `renderNotes` lets a note be heard
+   while it is dragged. The Polyphonic Lab shows the whole loop
    (analysis thread, edits, background render, A/B playback) in one file.
 5. **Packaging.** Ship `Resources/models/basic_pitch_nmp.onnx` (from the
    `basic-pitch` repository, `basic_pitch/saved_models/icassp_2022/nmp.onnx`,

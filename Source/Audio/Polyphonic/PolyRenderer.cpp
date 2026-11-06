@@ -25,6 +25,7 @@
 
 #include "PolyInternal.h"
 
+#include <limits>
 #include <numeric>
 
 namespace polyphonic
@@ -215,16 +216,21 @@ std::pair<int, int> noteFrameRange(const Analysis& A, int note)
 }
 
 /**
- * Core synthesis. With a non-empty `solo` the output is the separated signal of those notes only
- * (edits are ignored).
+ * Core synthesis. With a non-empty `solo` the output is those notes only: each as its edit in
+ * `edits` makes it (transformed exactly as in a full render), or its separated signal when it has
+ * no edit. Edits of notes outside `solo` are ignored.
  *
  * Frames that no edit can reach are not transformed at all: their windowed input goes straight
  * into the overlap-add, which is exactly what the FFT round trip would give. Rendering a few
  * edits therefore costs time in proportion to the edited notes, not to the recording.
+ *
+ * The output covers samples [fromSample, toSample) (toSample < 0: to the end). Only the frames
+ * that overlap that range are processed, and they are processed in order, so the samples in it
+ * are exactly those of a whole render.
  */
 std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<std::vector<float>>& channels,
                                            const std::map<int, NoteEdit>& edits, const std::vector<int>& solo,
-                                           const std::atomic<bool>* cancel)
+                                           const std::atomic<bool>* cancel, int fromSample = 0, int toSample = -1)
 {
     const Params& p = A.params;
     const int numCh = static_cast<int>(channels.size());
@@ -233,6 +239,12 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     const int numSamples = static_cast<int>(channels[0].size());
     const int N = p.fftSize, H = p.hop, pad = N / 2;
     const int T = 1 + (numSamples + H - 1) / H;
+    const int from = std::clamp(fromSample, 0, numSamples);
+    const int to = toSample < 0 ? numSamples : std::clamp(toSample, from, numSamples);
+    // frame u overlaps samples [u H - pad, u H - pad + N)
+    const auto floorDiv = [](int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
+    const int uFirst = std::max(0, floorDiv(from + pad - N, H) + 1);
+    const int uLast = std::min(T - 1, floorDiv(to + pad - 1, H));
     const int K = N / 2 + 1;
     const double binHz = p.sampleRate / p.fftSize;
     SourceFrames source(channels, p);
@@ -279,6 +291,19 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         if (ni >= 0 && ni < static_cast<int>(A.masks.size()))
             soloNotes.push_back(ni);
     const bool soloMode = !solo.empty();
+    // On their own, only the listed notes' edits apply: an edited note contributes its transformed
+    // copy (and nothing is removed), an unedited one its separated share, everything else silence.
+    std::vector<char> soloEdited(A.masks.size(), 0);
+    if (soloMode)
+    {
+        states.erase(std::remove_if(states.begin(), states.end(),
+                                    [&](const EditState& s) {
+                                        return std::find(soloNotes.begin(), soloNotes.end(), s.note) == soloNotes.end();
+                                    }),
+                     states.end());
+        for (const auto& s : states)
+            soloEdited[static_cast<size_t>(s.note)] = 1;
+    }
     auto untouched = [&](int u) {
         for (const auto& st : states)
             if (u >= st.touchLo && u <= st.touchHi)
@@ -289,7 +314,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     std::vector<std::vector<Complex>> Y(static_cast<size_t>(numCh), std::vector<Complex>(static_cast<size_t>(K)));
     std::vector<std::vector<double>> acc(static_cast<size_t>(numCh), std::vector<double>(static_cast<size_t>(N), 0.0));
     std::vector<double> nrm(static_cast<size_t>(N), 0.0);
-    std::vector<std::vector<float>> out(static_cast<size_t>(numCh), std::vector<float>(static_cast<size_t>(numSamples), 0.0f));
+    std::vector<std::vector<float>> out(static_cast<size_t>(numCh), std::vector<float>(static_cast<size_t>(to - from), 0.0f));
     std::vector<float> frame(static_cast<size_t>(N));
     std::vector<Complex> spec(static_cast<size_t>(K));
 
@@ -301,9 +326,9 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         {
             const size_t r = static_cast<size_t>(q % N);
             const std::ptrdiff_t i = q - pad;
-            if (i >= 0 && i < numSamples)
+            if (i >= from && i < to)
                 for (int c = 0; c < numCh; ++c)
-                    out[static_cast<size_t>(c)][static_cast<size_t>(i)] =
+                    out[static_cast<size_t>(c)][static_cast<size_t>(i - from)] =
                         static_cast<float>(acc[static_cast<size_t>(c)][r] / std::max(nrm[r], 1e-8));
             for (int c = 0; c < numCh; ++c)
                 acc[static_cast<size_t>(c)][r] = 0.0;
@@ -315,7 +340,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     for (int i = 0; i < N; ++i)
         window2[static_cast<size_t>(i)] = static_cast<double>(window[static_cast<size_t>(i)]) * window[static_cast<size_t>(i)];
 
-    for (int u = 0; u < T; ++u)
+    for (int u = uFirst; u <= uLast; ++u)
     {
         if (cancel && cancel->load())
             return {};
@@ -325,8 +350,12 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             transform = false;
             for (auto& y : Y)
                 std::fill(y.begin(), y.end(), Complex{});
+            for (const auto& st : states)
+                transform = transform || (u >= st.touchLo && u <= st.touchHi);
             for (int ni : soloNotes)
             {
+                if (soloEdited[static_cast<size_t>(ni)])
+                    continue;                           // added below as its edited copy
                 const auto& nm = A.masks[static_cast<size_t>(ni)];
                 const auto [b, e] = partialsAt(nm, u);
                 if (b == e)
@@ -368,14 +397,15 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             for (int c = 0; c < numCh; ++c)
                 std::copy(source.get(c, u), source.get(c, u) + K, Y[static_cast<size_t>(c)].begin());
         }
-        const size_t editsHere = (soloMode || !transform) ? 0 : states.size();
+        const size_t editsHere = transform ? states.size() : 0;
         for (size_t sIndex = 0; sIndex < editsHere; ++sIndex)
         {
             auto& st = states[sIndex];
             const Note& n = A.notes[static_cast<size_t>(st.note)];
             const NoteMasks& nm = A.masks[static_cast<size_t>(st.note)];
             const NoteEdit& ed = *st.edit;
-            // 1) remove the note's own share at this frame
+            // 1) remove the note's own share at this frame (on its own there is nothing to remove)
+            if (!soloMode)
             {
                 const auto [b, e] = partialsAt(nm, u);
                 for (int c = 0; c < numCh; ++c)
@@ -528,7 +558,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             nrm[static_cast<size_t>((static_cast<std::ptrdiff_t>(u) * H + i) % N)] += window2[static_cast<size_t>(i)];
         finalize(static_cast<std::ptrdiff_t>(u) * H, static_cast<std::ptrdiff_t>(u + 1) * H);
     }
-    finalize(static_cast<std::ptrdiff_t>(T) * H, static_cast<std::ptrdiff_t>(T - 1) * H + N);
+    finalize(static_cast<std::ptrdiff_t>(uLast + 1) * H, static_cast<std::ptrdiff_t>(uLast) * H + N);
     return out;
 }
 } // namespace
@@ -557,6 +587,53 @@ std::vector<std::vector<float>> extractNotes(const Analysis& A, const std::vecto
     if (noteIndices.empty())
         return std::vector<std::vector<float>>(channels.size(), std::vector<float>(channels.empty() ? 0 : channels[0].size(), 0.0f));
     return synthesize(A, channels, {}, noteIndices, cancel);
+}
+
+AudioSpan renderNotes(const Analysis& A, const std::vector<std::vector<float>>& channels,
+                      const std::vector<int>& noteIndices, const std::map<int, NoteEdit>& edits,
+                      const std::atomic<bool>* cancel)
+{
+    AudioSpan span;
+    span.channels.resize(channels.size());
+    if (channels.empty() || channels[0].empty())
+        return span;
+    const Params& p = A.params;
+    const int H = p.hop, pad = p.fftSize / 2;
+    // the frames these notes reach: their own, or where an edit puts their transformed copy
+    int lo = std::numeric_limits<int>::max(), hi = std::numeric_limits<int>::min();
+    for (int ni : noteIndices)
+    {
+        if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()))
+            continue;
+        auto [a, b] = noteFrameRange(A, ni);
+        if (b < a)
+            continue;
+        const auto it = edits.find(ni);
+        if (it != edits.end() && !it->second.isIdentity())
+        {
+            const NoteEdit& ed = it->second;
+            if (ed.mute)
+                continue;
+            const auto map = stretchMap(A, ni, ed);
+            if (map.ratio != 1.0)
+                b = static_cast<int>(std::ceil(map.outputFrame(b)));
+            const int D = static_cast<int>(std::lround(ed.timeOffsetSeconds * p.sampleRate / H));
+            a += D;
+            b += D;
+        }
+        lo = std::min(lo, a);
+        hi = std::max(hi, b);
+    }
+    if (hi < lo)
+        return span;
+    const int numSamples = static_cast<int>(channels[0].size());
+    const int from = std::clamp(lo * H - pad, 0, numSamples);
+    const int to = std::clamp(hi * H - pad + p.fftSize, from, numSamples);
+    if (to <= from)
+        return span;
+    span.start = from;
+    span.channels = synthesize(A, channels, edits, noteIndices, cancel, from, to);
+    return span;
 }
 
 std::vector<float> extractNote(const Analysis& A, const std::vector<float>& channel, int noteIndex)
