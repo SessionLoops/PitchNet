@@ -33,8 +33,9 @@
  *              render reproduces the input.
  *
  * Only pitched notes are modelled. Transients and other unpitched sound are never
- * detected as objects of their own or attached to notes; they stay in the
- * recording where they are.
+ * detected as objects of their own. Unless an edit sets NoteEdit::takeBackground
+ * (experimental; the Polyphonic Lab always does), they are not attached to notes
+ * either and stay in the recording where they are.
  *
  * Self-contained C++17 without JUCE. Analysis and rendering are offline
  * operations for a worker thread, not the audio thread. See docs/polyphonic-editing.md.
@@ -199,6 +200,10 @@ struct NoteEdit
     bool preserveFormants = false;     // instrument partial patterns are not formants; see docs
     double timeOffsetSeconds = 0.0;    // move the note
     float stretch = 1.0f;              // length ratio (> 1 longer, < 1 shorter, 0.25..4); the attack keeps its speed
+    // Experimental: the note also owns a part of what no note owns (the background around its
+    // harmonics, the noise at its start, its decay for up to 2 s; see render()). A mute removes that
+    // part too, and a move, pitch or gain change takes it along (a stretch does not).
+    bool takeBackground = false;
     bool isIdentity() const
     {
         return !mute && semitones == 0.0f && pitchCurve.empty() && gainDb == 0.0f && timeOffsetSeconds == 0.0 && stretch == 1.0f;
@@ -234,6 +239,16 @@ Analysis analyze(const float* mono, int numSamples, const Params& params,
  * Notes without an entry in `edits` pass through untouched, and frames no edit
  * reaches are copied rather than transformed, so the cost follows the edited
  * notes rather than the length of the recording.
+ *
+ * A note's share of a bin is its model over the total model including the noise
+ * floor, so an edit leaves the noise floor's share of its bins, and everything no note
+ * owns, in place.
+ * Experimental (NoteEdit::takeBackground): what no note owns is split among the notes
+ * sounding in each frame (by level and spectral shape; at an onset what is new goes to
+ * the notes starting there; a claim fades out over 2 s after a note ends). A muted note
+ * removes its part, and a moved, re-pitched or re-gained note takes it along, each
+ * partial's band moving with that partial. Muting every note then silences the frames
+ * their claims cover.
  */
 std::vector<std::vector<float>> render(const Analysis& analysis,
                                        const std::vector<std::vector<float>>& channels,
@@ -242,12 +257,15 @@ std::vector<std::vector<float>> render(const Analysis& analysis,
 
 /**
  * The separated signal of a set of notes (no edits) for each input channel, for
- * auditioning a selection on its own. Empty `noteIndices` gives silence.
+ * auditioning a selection on its own. Empty `noteIndices` gives silence. With
+ * `takeBackground` each note also brings its part of what no note owns (exactly what a
+ * NoteEdit::takeBackground mute removes).
  */
 std::vector<std::vector<float>> extractNotes(const Analysis& analysis,
                                              const std::vector<std::vector<float>>& channels,
                                              const std::vector<int>& noteIndices,
-                                             const std::atomic<bool>* cancel = nullptr);
+                                             const std::atomic<bool>* cancel = nullptr,
+                                             bool takeBackground = false);
 
 /** Part of a recording: `channels` hold the samples from `start` on. */
 struct AudioSpan
@@ -260,7 +278,9 @@ struct AudioSpan
  * A set of notes on their own with their entries in `edits` applied (pitch, gain, mute, move,
  * stretch), for hearing an edit while it is being made. It is the same synthesis as render(): the
  * listed notes sound exactly as they will in the full render, minus everything else. Notes
- * without an edit come out as their separated signal; edits of notes not listed are ignored.
+ * without an edit come out as their separated signal (with their part of the background when
+ * their entry sets NoteEdit::takeBackground, even if it changes nothing else); edits of notes not
+ * listed are ignored.
  * Only the samples the notes reach are rendered and returned, so the cost follows the notes,
  * not the recording (an empty span when nothing sounds, e.g. a muted note).
  */

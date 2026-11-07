@@ -1790,6 +1790,7 @@ private:
         const auto it = edits.find(index);
         auto e = it != edits.end() ? it->second : polyphonic::NoteEdit{};
         e.timeOffsetSeconds = 0.0;
+        e.takeBackground = true;                      // as in the render (see startRender)
         return e;
     }
 
@@ -1858,15 +1859,21 @@ private:
     void auditionReady(int generation, int index, std::shared_ptr<polyphonic::AudioSpan> span)
     {
         auditionBusy = false;
-        if (generation == auditionGeneration && index == auditionNote && !player.isPlaying() && analysis != nullptr
-            && !span->channels.empty() && !span->channels[0].empty())
+        if (generation == auditionGeneration && index == auditionNote && !player.isPlaying() && analysis != nullptr)
         {
-            // from just before the note starts
-            const auto& n = analysis->notes[static_cast<size_t>(index)];
-            const int onset = static_cast<int>(std::lround(analysis->frameToSeconds(n.startFrame) * source->sampleRate));
-            const int from = std::max(span->start, onset - static_cast<int>(0.03 * source->sampleRate));
-            const int start = span->start;
-            player.audition(std::make_shared<const Channels>(std::move(span->channels)), start, from);
+            if (soundOf(index).mute || span->channels.empty() || span->channels[0].empty())
+            {
+                player.stopAudition();
+            }
+            else
+            {
+                // from just before the note starts
+                const auto& n = analysis->notes[static_cast<size_t>(index)];
+                const int onset = static_cast<int>(std::lround(analysis->frameToSeconds(n.startFrame) * source->sampleRate));
+                const int from = std::max(span->start, onset - static_cast<int>(0.03 * source->sampleRate));
+                const int start = span->start;
+                player.audition(std::make_shared<const Channels>(std::move(span->channels)), start, from);
+            }
         }
         renderAudition();
     }
@@ -1985,6 +1992,7 @@ private:
         auto cancel = std::make_shared<std::atomic<bool>>(false);
         analysisCancel = cancel;
         analysis.reset();
+        ++renderGeneration;
         edits.clear();
         renderDueMs = soloDueMs = 0;
         rendering = soloing = false;
@@ -2060,6 +2068,7 @@ private:
 
     void editsChanged()
     {
+        auditionEditChanged();
         renderDueMs = juce::Time::getMillisecondCounter() + 40;
         if (player.getSelected() == LabPlayer::original && !edits.empty() && !switchedAfterFirstEdit)
         {
@@ -2076,6 +2085,7 @@ private:
             return;
         if (renderCancel != nullptr)
             renderCancel->store(true);
+        const int generation = ++renderGeneration;
         if (edits.empty())
         {
             rendering = false;
@@ -2086,12 +2096,17 @@ private:
         auto cancel = std::make_shared<std::atomic<bool>>(false);
         renderCancel = cancel;
         rendering = true;
-        const int generation = ++renderGeneration;
         auto an = analysis;
         auto src = source;
         auto toRender = edits;
+        // edited and deleted notes take their part of what no note owns along (their attack noise,
+        // the background around their harmonics, their decay)
+        for (auto& entry : toRender)
+            entry.second.takeBackground = true;
         juce::Component::SafePointer<Content> safe(this);
         pool.addJob([safe, an, src, toRender, cancel, generation] {
+            if (cancel->load())
+                return;
             auto out = std::make_shared<Channels>(polyphonic::render(*an, *src->channels, toRender, cancel.get()));
             if (cancel->load() || out->empty())
                 return;
@@ -2138,7 +2153,8 @@ private:
         auto src = source;
         juce::Component::SafePointer<Content> safe(this);
         pool.addJob([safe, an, src, notes, cancel, generation] {
-            auto out = std::make_shared<Channels>(polyphonic::extractNotes(*an, *src->channels, notes, cancel.get()));
+            // with their part of what no note owns, as the render takes it along
+            auto out = std::make_shared<Channels>(polyphonic::extractNotes(*an, *src->channels, notes, cancel.get(), true));
             if (cancel->load() || out->empty())
                 return;
             juce::MessageManager::callAsync([safe, out, generation] {

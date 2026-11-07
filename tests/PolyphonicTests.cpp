@@ -669,6 +669,84 @@ int main()
         CHECK(silent.channels.size() == 1 && silent.channels[0].empty());
     }
 
+    // ---- 13. a note taking its background (experimental): a muted note removes its part of what no
+    //      note owns, a moved one takes it along, and on its own it is what the full render adds ----
+    {
+        // a tone whose onset comes with a noise burst (its attack), over a quiet noise floor
+        std::vector<float> x(static_cast<size_t>(2.2 * kRate), 0.0f);
+        uint32_t seed = 4242u;
+        auto noise = [&seed]() {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
+        };
+        for (auto& v : x)
+            v = 0.003f * noise();
+        const double on = 0.4;
+        const int burst = static_cast<int>(0.03 * kRate);
+        for (int i = 0; i < burst; ++i)
+            x[static_cast<size_t>(on * kRate) + static_cast<size_t>(i)] += 0.2f * noise() * (1.0f - static_cast<float>(i) / burst);
+        addTone(x, midiToHz(64), on, 1.4, 0.25);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int e4 = findNote(A, 64);
+        CHECK(e4 >= 0);
+        polyphonic::NoteEdit flagOnly, ownMute, plainMove, ownMove;
+        flagOnly.takeBackground = true;               // with no other change the flag changes nothing
+        ownMute.mute = true;
+        ownMute.takeBackground = true;
+        plainMove.timeOffsetSeconds = 0.3;
+        ownMove = plainMove;
+        ownMove.takeBackground = true;
+        const auto same = polyphonic::render(A, {x}, {{e4, flagOnly}})[0];
+        double err = 0.0;
+        for (size_t i = 0; i < x.size(); ++i)
+            err = std::max(err, std::fabs(static_cast<double>(same[i]) - x[i]));
+        CHECK(err < 1e-4);
+
+        // muting the only note with its background leaves next to nothing while it sounds
+        const auto muted = polyphonic::render(A, {x}, {{e4, ownMute}})[0];
+        double eIn = 0.0, eLeft = 0.0;
+        for (int i = static_cast<int>((on + 0.1) * kRate); i < static_cast<int>((on + 1.3) * kRate); ++i)
+        {
+            eIn += static_cast<double>(x[static_cast<size_t>(i)]) * x[static_cast<size_t>(i)];
+            eLeft += static_cast<double>(muted[static_cast<size_t>(i)]) * muted[static_cast<size_t>(i)];
+        }
+        // moving it takes the attack along: the burst's energy above the tone's partials (9-14 kHz),
+        // around the old onset and around the new one
+        const auto pMoved = polyphonic::render(A, {x}, {{e4, plainMove}})[0];
+        const auto oMoved = polyphonic::render(A, {x}, {{e4, ownMove}})[0];
+        auto burstEnergy = [&](const std::vector<float>& y, double t) {
+            double e = 0.0;
+            for (double hz = 9000.0; hz < 14000.0; hz += 50.0)
+                e += std::pow(toneAmplitude(y, hz, static_cast<int>((t - 0.01) * kRate), static_cast<int>((t + 0.05) * kRate)), 2.0);
+            return 10.0 * std::log10(e + 1e-30);
+        };
+        const double orig = burstEnergy(x, on);
+        const double oldPlain = burstEnergy(pMoved, on), oldOwn = burstEnergy(oMoved, on);
+        const double newPlain = burstEnergy(pMoved, on + 0.3), newOwn = burstEnergy(oMoved, on + 0.3);
+        std::printf("own background: muted %.1f dB re input; attack burst %.1f dB, moved 0.3 s: at the old onset %.1f (plain %.1f), at the new %.1f (plain %.1f)\n",
+                    10.0 * std::log10(eLeft / eIn), orig, oldOwn, oldPlain, newOwn, newPlain);
+        CHECK(10.0 * std::log10(eLeft / eIn) < -40.0);
+        CHECK(oldOwn < orig - 10.0 && oldPlain > orig - 3.0);
+        CHECK(std::fabs(newOwn - orig) < 3.0 && newPlain < orig - 10.0);
+
+        // on its own it is exactly what the full render adds for it, and Solo with the background
+        // is exactly what such a mute removes
+        const auto span = polyphonic::renderNotes(A, {x}, {e4}, {{e4, ownMove}});
+        std::vector<float> alone(x.size(), 0.0f);
+        CHECK(span.channels.size() == 1 && span.start >= 0 && span.start + span.channels[0].size() <= x.size());
+        std::copy(span.channels[0].begin(), span.channels[0].end(), alone.begin() + span.start);
+        const auto solo = polyphonic::extractNotes(A, {x}, {e4}, nullptr, true)[0];
+        double aloneErr = 0.0, soloErr = 0.0;
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            aloneErr = std::max(aloneErr, std::fabs(static_cast<double>(oMoved[i]) - muted[i] - alone[i]));
+            soloErr = std::max(soloErr, std::fabs(static_cast<double>(x[i]) - muted[i] - solo[i]));
+        }
+        std::printf("own background: moved note on its own differs from the full render's share by %.1e, Solo from the mute by %.1e\n",
+                    aloneErr, soloErr);
+        CHECK(aloneErr < 1e-4 && soloErr < 1e-4);
+    }
+
     std::printf("PolyphonicTests passed\n");
     return 0;
 }

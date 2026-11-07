@@ -11,10 +11,12 @@ harmonic NMF sound model (Ewert & Müller 2012) and phase-vocoder shifting of
 partials (Laroche & Dolson 1999).
 
 Only pitched sound is modelled. Transients and other unpitched sound (hammer
-and pick noise, breath, percussion) are never detected as objects of their own
-and never attached to notes: they stay in the recording where they are. Muting
-or moving a note therefore takes its harmonic body and leaves its attack noise
-behind.
+and pick noise, breath, percussion) are never detected as objects of their own.
+With plain shares they are not attached to notes either: they stay in the
+recording where they are, so muting or moving a note takes its harmonic body and
+leaves its attack noise behind. The Lab instead lets every edited note take its
+part of what no note owns, attack noise included (experimental
+`NoteEdit::takeBackground`, see [What the engine does](#what-the-engine-does)).
 
 Status: the engine (`Source/Audio/Polyphonic`), a command-line tool, unit tests
 and the training/evaluation scripts are in place, and the standalone app has an
@@ -136,15 +138,43 @@ Pitch curves retain accumulated phase when returning to zero.
 Moves are whole hops plus a linear-phase
 fractional delay. Only the edited note's share of the bins around its own
 partials changes; everything else in those frames, unpitched sound included,
-stays where it was. Unedited notes are not touched, and frames that no edit can
-reach skip the transforms altogether: their windowed input goes straight into the
-overlap-add, which is what the FFT round trip would return. An unedited render
-therefore gives back the input exactly, and re-rendering after an edit costs
-time in proportion to the edited notes, not to the length of the recording.
+stays where it was (unless the note takes its background, below). Unedited
+notes are not touched, and frames that no edit can reach skip the transforms
+altogether: their windowed input goes straight into the overlap-add, which is
+what the FFT round trip would return. An unedited render therefore gives back the
+input exactly, and re-rendering after an edit costs time in proportion to the
+edited notes, not to the length of the recording.
 `extractNotes()` renders a set of notes on their own (solo); `renderNotes()` renders
 them with their edits applied, over only the samples they reach, which is what
 the Lab plays while you hold a note (a 3.7 s note of a 46 s stereo take in about
 60 ms).
+
+**Notes taking their background (experimental).** With `NoteEdit::takeBackground`
+what no note owns is split among the notes sounding in each frame: by level and
+spectral shape (each partial widened to fill the gap to its neighbours, a small
+floor elsewhere), with what is new at an onset going to the notes starting there,
+and with a claim that decays and fades out over 2 s after a note ends. A muted
+note removes its part; a moved, re-pitched or re-gained note takes it along, each
+partial's band moving with that partial (a stretched note does not).
+`extractNotes()` can add the same part, so Solo plays exactly what such a mute
+removes. Measured against plain shares:
+
+| | plain | taking their background |
+|---|---|---|
+| every note muted: what is left, staggered piano arpeggio / a strings recording | −17.3 / −8.2 dB | −136 / −29.9 dB |
+| one note kept, the rest muted: SDR against its stem (held-out chords, 259) | 5.8 dB | 9.6 dB |
+| one note muted: SDR against the mix without it (held-out chords, 263) | 14.0 dB | 14.4 dB |
+| one note moved 0.25 s: spectral SNR against the mix with its stem moved (297 notes) | 15.5 dB | 15.9 dB |
+| … notes that start on their own (83) / with other notes (214) | 15.4 / 15.6 dB | 16.9 / 15.6 dB |
+| one note up 2 semitones: spectral SNR against the same edit on the stem alone, all of it moved (297 notes) | 14.0 dB | 14.3 dB |
+
+With every note muted, the frames a claim reaches are silent; what is left of the
+strings recording is the room after its last note, more than 2 s later. Notes
+that start together split their attacks by level, so in chords a muted or moved
+note can take part of its neighbours' attacks: the worst single cases lost up to
+12.7 dB against plain shares. Where a deleted note's partials coincide with a
+kept note's (G4 over a kept C3), the kept note's share of those bins stays.
+`polyphonic_cli --take-background` applies it to every edit.
 
 **Stretching.** A stretched note's first 80 ms (`Params::stretchAttackSeconds`,
 counted from its start) play as recorded. After that, output frame u plays the
@@ -285,10 +315,13 @@ instrument-family or source-recording holdout.
 - **Octave ghosts.** Conversely an overtone can survive as a note (C5 over a
   piano C4 at probability 0.53). Editing the real note then leaves those
   partials behind until the ghost is deactivated.
-- **Attack noise stays behind.** Unpitched sound is not attached to notes, so
-  muting a note leaves its hammer, pick or breath noise in place, and moving a
-  note moves its pitched body but not its attack. On sustained material it
-  hardly matters; on piano and harp it is what remains of a muted note.
+- **Attack noise stays behind** with plain shares. Unpitched sound is not
+  attached to notes, so muting a note leaves its hammer, pick or breath noise in
+  place, and moving a note moves its pitched body but not its attack. On
+  sustained material it hardly matters; on piano and harp it is what remains of
+  a muted note. Notes taking their background (as in the Lab) take their attack
+  along, except when stretched; notes that start together share their attacks by
+  level.
 - **Repeated notes** are split only where the note's partials clearly rise
   again after a dip; a fast repetition that never decays in between (common
   with the sustain pedal), a re-tongued wind note or a legato bow change stays
@@ -322,7 +355,7 @@ instrument-family or source-recording holdout.
 | `BasicPitchEvidence.*` | Basic Pitch note posteriorgram through ONNX Runtime (needs `HAVE_ONNXRUNTIME`) |
 | `PolyFFT.h` | dependency-free real FFT |
 | `tools/polyphonic/` | `polyphonic_cli`, standalone CMake for the tool and tests, research scripts |
-| `tests/PolyphonicTests.cpp` | synthetic-signal tests: detection, identity, pitch, gain, mute, move, stretch, vibrato, stereo, solo, a note on its own with its edit, untouched frames, repeated notes, unpitched sound left in place |
+| `tests/PolyphonicTests.cpp` | synthetic-signal tests: detection, identity, pitch, gain, mute, move, stretch, vibrato, stereo, solo, a note on its own with its edit, untouched frames, repeated notes, unpitched sound left in place, notes taking their background |
 | `Source/UI/Polyphonic/PolyLab.*` | the Polyphonic Lab window (standalone app, Edit menu) |
 
 ```cpp
@@ -376,13 +409,17 @@ changes the PitchNet project, its undo history or its render.
   cents) and sideways to move it, or drag either end to make it longer or
   shorter: the right end keeps the start where it is, the left end keeps the
   end where it is and moves the start, attack included. Either way the attack
-  keeps its speed and only the rest of the note is stretched (dragging the left
-  end also moves the note, so like a move it leaves the attack noise where it
-  was). Shift- or Cmd-click and rubber-band selection edit several notes at
-  once. Arrow keys nudge pitch (Shift: an octave) and
-  time, Delete mutes, R or a double-click resets. Edited notes turn teal with a
-  dashed outline where they were. **Show rejected candidates** draws the
-  note filter's rejects in amber.
+  keeps its speed and only the rest of the note is stretched (a stretched note
+  leaves its attack noise and the rest of its background where they were).
+  Shift- or Cmd-click and rubber-band selection edit several notes at once.
+  Arrow keys nudge pitch (Shift: an octave) and time. Delete mutes the
+  selection. R or a double-click resets. Edited notes turn teal with a dashed
+  outline where they were. **Show rejected candidates** draws the note filter's
+  rejects in amber.
+- **Notes take their background.** Deleted, moved, re-pitched and re-gained
+  notes take their part of what no note owns along (`NoteEdit::takeBackground`,
+  see [What the engine does](#what-the-engine-does)), and Solo and a held note
+  include it; stretched notes leave it where it was.
 - **Listen.** Original, Edited and Solo (the selected notes on their own) play
   through the app's audio device and switch at the same position with a short
   crossfade; Space plays, A toggles Original/Edited. Each edit re-renders in

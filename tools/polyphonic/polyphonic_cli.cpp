@@ -11,6 +11,7 @@
 //     --move INDEX:SECONDS               (repeatable) move a note in time
 //     --stretch INDEX:RATIO              (repeatable) lengthen (> 1) or shorten (< 1) a note
 //     --pad SECONDS                      append silence first (room for lengthened notes)
+//     --take-background                  edited and muted notes also take their part of what no note owns (experimental)
 //     --out out.wav                      render with the edits (32-bit float WAV)
 //     --solo INDEX solo.wav              one note's separated signal
 //     --solo-all DIR                     every active note's separated signal
@@ -52,6 +53,7 @@ int main(int argc, char** argv)
     std::string outPath, jsonPath, evPath, soloPath, soloDir, modelPath, dumpEvidence, dumpFeatures;
     int soloIndex = -1;
     bool printCandidates = false;
+    bool takeBackground = false;
     double padSeconds = 0.0;
 #if defined(POLYPHONIC_GUIDED_DEFAULT) && POLYPHONIC_GUIDED_DEFAULT
     auto detectionMode = polyphonic::DetectionMode::NeuralGuided;
@@ -80,6 +82,7 @@ int main(int argc, char** argv)
         else if (a == "--dump-evidence") dumpEvidence = next();
         else if (a == "--dump-features") dumpFeatures = next();
         else if (a == "--candidates") printCandidates = true;
+        else if (a == "--take-background") takeBackground = true;
         else if (a == "--solo") { soloIndex = std::atoi(next().c_str()); soloPath = next(); }
         else if (a == "--solo-all") soloDir = next();
         else if (a == "--pad") padSeconds = std::atof(next().c_str());
@@ -135,6 +138,8 @@ int main(int argc, char** argv)
             }
         }
     }
+    for (auto& entry : edits)
+        entry.second.takeBackground = takeBackground;
     if (padSeconds > 0.0)
         for (auto& ch : in.channels)
             ch.resize(ch.size() + static_cast<size_t>(padSeconds * in.sampleRate), 0.0f);
