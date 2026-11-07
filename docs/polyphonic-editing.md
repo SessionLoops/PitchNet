@@ -362,16 +362,23 @@ changes the PitchNet project, its undo history or its render.
   With **Harmonic (default)** selected, untick the evidence box to compare with
   DSP-only note filtering (this re-analyses and clears the edits).
 - **Detector.** Choose **Harmonic (default)** or **Guided (experimental)** in
-  the settings row. Guided performed better on the tested chords but lost some
-  repeated-note events. Changing the detector re-analyses the loaded audio and
-  clears note edits. Guided automatically enables neural note evidence and
-  locks its checkbox while selected. If that evidence is unavailable, analysis
-  falls back to the harmonic detector with DSP-only filtering; the status line
-  reports the fallback and the detector actually used.
+  the settings row (at the right of the top bar, or on a row of its own below
+  it when the window is too narrow). Guided performed better on the tested
+  chords but lost some repeated-note events. Changing the detector re-analyses
+  the loaded audio and clears note edits. Guided automatically enables neural
+  note evidence and locks its checkbox while selected; switching back to
+  Harmonic restores the checkbox as you left it. If that evidence is
+  unavailable, analysis falls back to the harmonic detector with DSP-only
+  filtering; the status line reports the fallback and the detector actually
+  used ("guided detector" when Guided ran).
 - **Edit.** Each note is a blob along its own f0 track, thicker where it is
   louder. Drag a note up or down to change its pitch in semitones (hold Alt for
-  cents) and sideways to move it, or drag its right end to make it longer or
-  shorter; Shift- or Cmd-click and rubber-band selection edit several notes at
+  cents) and sideways to move it, or drag either end to make it longer or
+  shorter: the right end keeps the start where it is, the left end keeps the
+  end where it is and moves the start, attack included. Either way the attack
+  keeps its speed and only the rest of the note is stretched (dragging the left
+  end also moves the note, so like a move it leaves the attack noise where it
+  was). Shift- or Cmd-click and rubber-band selection edit several notes at
   once. Arrow keys nudge pitch (Shift: an octave) and
   time, Delete mutes, R or a double-click resets. Edited notes turn teal with a
   dashed outline where they were. **Show rejected candidates** draws the
@@ -380,7 +387,7 @@ changes the PitchNet project, its undo history or its render.
   through the app's audio device and switch at the same position with a short
   crossfade; Space plays, A toggles Original/Edited. Each edit re-renders in
   the background, usually in well under a second.
-- **Hear a note.** While playback is stopped, holding a note (or its right end)
+- **Hear a note.** While playback is stopped, holding a note (or either end)
   plays it on its own, as edited. Drag it and it keeps sounding at its new pitch
   or length; let go and it fades out. The speaker button next to Solo turns this
   off.
@@ -412,8 +419,10 @@ What is missing is the product around it:
 3. **Piano roll.** Notes overlap in time, so `Note`-per-frame assumptions
    (one F0 curve per project in `AudioData`) do not apply. Draw each
    `polyphonic::Note` as a blob with its own f0 curve; drag up/down sets
-   `semitones`, left/right sets `timeOffsetSeconds`, dragging the end sets
-   `stretch` (use `stretchMap()` to draw the stretched note), the volume handle
+   `semitones`, left/right sets `timeOffsetSeconds`, dragging the right end sets
+   `stretch` (use `stretchMap()` to draw the stretched note) and dragging the
+   left end sets `stretch` and `timeOffsetSeconds` together so that the note
+   still ends where it did, the volume handle
    sets `gainDb`, delete sets `mute`, and per-frame pitch tools write
    `pitchCurve`.
    A "note assignment" view can show inactive candidates; activating one needs

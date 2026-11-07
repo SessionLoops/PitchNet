@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <set>
 #include <vector>
@@ -679,15 +680,15 @@ public:
     void mouseMove(const juce::MouseEvent& e) override
     {
         const bool inRoll = rollArea().contains(e.position);
-        const int edge = inRoll ? edgeAt(e.position) : -1;
-        const int h = edge >= 0 ? edge : (inRoll ? noteAt(e.position) : -1);
+        const auto edge = inRoll ? edgeAt(e.position) : Edge {};
+        const int h = edge.note >= 0 ? edge.note : (inRoll ? noteAt(e.position) : -1);
         if (h != hovered)
         {
             hovered = h;
             repaint();
         }
-        setMouseCursor(edge >= 0 ? juce::MouseCursor::LeftRightResizeCursor
-                                 : (h >= 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor));
+        setMouseCursor(edge.note >= 0 ? juce::MouseCursor::LeftRightResizeCursor
+                                      : (h >= 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor));
     }
 
     void mouseExit(const juce::MouseEvent&) override
@@ -713,21 +714,22 @@ public:
         if (p.x < static_cast<float>(kKeysWidth) || analysis == nullptr)
             return;
         const bool additive = e.mods.isShiftDown() || e.mods.isCommandDown();
-        if (const int edge = additive ? -1 : edgeAt(p); edge >= 0)
+        if (const auto edge = additive ? Edge {} : edgeAt(p); edge.note >= 0)
         {
-            if (selection != std::set<int>{ edge })
+            if (selection != std::set<int>{ edge.note })
             {
-                selection = { edge };
+                selection = { edge.note };
                 selectionChanged();
             }
             drag = Drag::stretch;
-            stretchNote = edge;
+            stretchNote = edge.note;
+            stretchFromStart = edge.start;
             dragStart = p;
             dragMoved = false;
             snapshot.clear();
-            snapshot[edge] = editOf(edge);
+            snapshot[edge.note] = editOf(edge.note);
             if (onNotePressed)
-                onNotePressed(edge);
+                onNotePressed(edge.note);
             repaint();
             return;
         }
@@ -789,6 +791,7 @@ public:
         }
         if (drag == Drag::stretch)
         {
+            // Only the part after the attack stretches; the attack keeps its speed either way.
             const auto& n = analysis->notes[static_cast<size_t>(stretchNote)];
             const auto base = snapshot[stretchNote];
             const auto map = polyphonic::stretchMap(*analysis, stretchNote, base);
@@ -796,15 +799,37 @@ public:
             const double span = n.endFrame - map.anchor;
             if (span < 2.0)
                 return;
-            const double endFrame = (xToTime(e.position.x) - base.timeOffsetSeconds) * framesPerSecond;
-            const double lastFrame = (duration - 0.05 - base.timeOffsetSeconds) * framesPerSecond;  // stay inside the take
-            double ratio = (endFrame - map.anchor) / span;
-            ratio = std::min(ratio, (lastFrame - map.anchor) / span);
-            ratio = std::round(juce::jlimit(0.25, 4.0, ratio) * 100.0) / 100.0;
+            const double dt = xToTime(e.position.x) - xToTime(dragStart.x);   // the end moves as far as the mouse
+            const double end = playedAt(stretchNote, base, n.endFrame);
+            double ratio = 1.0;
+            double offset = base.timeOffsetSeconds;
+            if (stretchFromStart)
+            {
+                // The left end: the note still ends where it did and its start, attack included, follows
+                // the mouse. ratioFor(t) is the stretch that makes the note start at t.
+                const auto ratioFor = [&](double start) {
+                    return ((end - start) * framesPerSecond - (map.anchor - n.startFrame)) / span;
+                };
+                ratio = std::round(juce::jlimit(0.25, 4.0, ratioFor(playedAt(stretchNote, base, n.startFrame) + dt)) * 100.0) / 100.0;
+                ratio = std::max(0.25, std::min(ratio, std::floor(ratioFor(0.0) * 100.0) / 100.0));   // stay inside the take
+                // Whatever the stretch adds to the length comes off the start (exactly the old offset when the
+                // stretch is unchanged, so pressing the end without dragging it edits nothing).
+                const double stored = static_cast<float>(ratio);   // the edit keeps it as a float
+                offset = clampOffset(stretchNote, base.timeOffsetSeconds - span * (stored - map.ratio) / framesPerSecond);
+            }
+            else
+            {
+                // The right end: the start stays put.
+                const double endFrame = (end + dt - base.timeOffsetSeconds) * framesPerSecond;
+                const double lastFrame = (duration - 0.05 - base.timeOffsetSeconds) * framesPerSecond;  // stay inside the take
+                ratio = std::min((endFrame - map.anchor) / span, (lastFrame - map.anchor) / span);
+                ratio = std::round(juce::jlimit(0.25, 4.0, ratio) * 100.0) / 100.0;
+            }
             auto& ed = edits[stretchNote];
-            if (static_cast<float>(ratio) != ed.stretch)
+            if (static_cast<float>(ratio) != ed.stretch || offset != ed.timeOffsetSeconds)
             {
                 ed.stretch = static_cast<float>(ratio);
+                ed.timeOffsetSeconds = offset;
                 dragMoved = true;
                 if (onEditsChanging)
                     onEditsChanging();
@@ -1093,27 +1118,49 @@ private:
         return analysis->frameToSeconds(polyphonic::stretchMap(*analysis, i, e).outputFrame(frame)) + e.timeOffsetSeconds;
     }
 
-    /** The note whose right end (the stretch handle) is under p, or -1. */
-    int edgeAt(juce::Point<float> p) const
+    /** A stretch handle: either end of a note. */
+    struct Edge
     {
+        int note = -1;
+        bool start = false;   // the left end: the note's end stays put while its start follows the mouse
+    };
+
+    /** The note end (a stretch handle) under p, the nearest if several are, a selected note's first. */
+    Edge edgeAt(juce::Point<float> p) const
+    {
+        Edge best;
         if (analysis == nullptr)
-            return -1;
-        const auto touches = [&](int i) {
+            return best;
+        float bestDistance = std::numeric_limits<float>::max();
+        const auto consider = [&](int i) {
             const auto e = editOf(i);
             const auto& n = analysis->notes[static_cast<size_t>(i)];
             if (e.mute || n.f0.empty() || n.endFrame - polyphonic::stretchMap(*analysis, i, e).anchor < 2.0)
-                return false;
-            const float x = timeToX(playedAt(i, e, n.endFrame));
-            const float y = midiToY(midiAt(i, static_cast<int>(n.f0.size()) - 1) + e.semitones);
-            return std::abs(p.x - x) <= 5.0f && std::abs(p.y - y) <= std::max(6.0f, 0.5f * noteThickness() + 2.0f);
+                return;   // nothing after the attack to stretch
+            const float x0 = timeToX(playedAt(i, e, n.startFrame));
+            const float x1 = timeToX(playedAt(i, e, n.endFrame));
+            const float inside = std::min(5.0f, 0.25f * (x1 - x0));   // a short note keeps its middle for moving it
+            const float reach = std::max(6.0f, 0.5f * noteThickness() + 2.0f);
+            const auto check = [&](float x, float midi, bool start) {
+                const float inward = start ? p.x - x : x - p.x;
+                if (inward > inside || inward < -5.0f || std::abs(p.y - midiToY(midi + e.semitones)) > reach)
+                    return;
+                if (std::abs(inward) < bestDistance)
+                {
+                    bestDistance = std::abs(inward);
+                    best = { i, start };
+                }
+            };
+            check(x0, midiAt(i, 0), true);
+            check(x1, midiAt(i, static_cast<int>(n.f0.size()) - 1), false);
         };
         for (auto it = selection.rbegin(); it != selection.rend(); ++it)
-            if (touches(*it))
-                return *it;
+            consider(*it);
+        if (best.note >= 0)
+            return best;
         for (int i = numActive - 1; i >= 0; --i)
-            if (touches(i))
-                return i;
-        return -1;
+            consider(i);
+        return best;
     }
 
     double clampOffset(int i, double offset) const
@@ -1432,6 +1479,7 @@ private:
     std::map<int, polyphonic::NoteEdit> snapshot;
     juce::Rectangle<float> band;
     int stretchNote = -1;
+    bool stretchFromStart = false;   // dragging the note's left end
 };
 
 bool writeWav(const juce::File& file, const Channels& channels, double sampleRate)
@@ -1519,10 +1567,27 @@ public:
         };
         addAndMakeVisible(auditionButton);
 
+        detectorLabel.setText(TR("polylab.detector"), juce::dontSendNotification);
+        detectorLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
+        detectorLabel.setBorderSize({});
+        detectorLabel.setJustificationType(juce::Justification::centredRight);
+        detectorLabel.setInterceptsMouseClicks(false, false);
+        addAndMakeVisible(detectorLabel);
+        detectorBox.addItem(TR("polylab.detector_harmonic"), kHarmonicDetector);
+        detectorBox.addItem(TR("polylab.detector_guided"), kGuidedDetector);
+        detectorBox.setSelectedId(kHarmonicDetector, juce::dontSendNotification);
+        detectorBox.setColour(juce::ComboBox::backgroundColourId, APP_COLOR_SURFACE_RAISED);
+        detectorBox.setTooltip(TR("polylab.detector_tip"));
+        detectorBox.setWantsKeyboardFocus(false);
+        detectorBox.onChange = [this] { detectorChanged(); };
+        addAndMakeVisible(detectorBox);
+
+        evidenceChoice = evidenceModel->file.existsAsFile();
         evidenceToggle.setButtonText(TR("polylab.evidence"));
-        evidenceToggle.setToggleState(evidenceModel->file.existsAsFile(), juce::dontSendNotification);
+        evidenceToggle.setToggleState(evidenceChoice, juce::dontSendNotification);
         evidenceToggle.setWantsKeyboardFocus(false);
         evidenceToggle.onClick = [this] {
+            evidenceChoice = evidenceToggle.getToggleState();
             if (source != nullptr)
                 startAnalysis();
         };
@@ -1540,6 +1605,7 @@ public:
             l->setInterceptsMouseClicks(false, false);
             addAndMakeVisible(*l);
         }
+        statusLabel.setInterceptsMouseClicks(true, false);   // for its tooltip when it does not fit
         sourceLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         selectionLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         selectionLabel.setJustificationType(juce::Justification::centredRight);
@@ -1596,10 +1662,10 @@ public:
     {
         g.fillAll(APP_COLOR_BACKGROUND);
         g.setColour(APP_COLOR_SURFACE);
-        g.fillRect(0, 0, getWidth(), 2 * kBarHeight);
+        g.fillRect(0, 0, getWidth(), transportTop + kBarHeight);
         g.setColour(APP_COLOR_BORDER_SUBTLE);
-        g.fillRect(0, kBarHeight, getWidth(), 1);
-        g.fillRect(0, 2 * kBarHeight, getWidth(), 1);
+        g.fillRect(0, transportTop, getWidth(), 1);
+        g.fillRect(0, transportTop + kBarHeight, getWidth(), 1);
     }
 
     void resized() override
@@ -1610,10 +1676,22 @@ public:
         top.removeFromLeft(8);
         openButton.setBounds(top.removeFromLeft(132));
         top.removeFromLeft(16);
-        candidatesToggle.setBounds(top.removeFromRight(196));
-        top.removeFromRight(8);
-        evidenceToggle.setBounds(top.removeFromRight(262));
-        top.removeFromRight(12);
+
+        // The analysis settings sit at the right of the top bar, or on a row of their own below it
+        // when the window is too narrow for them and the source.
+        const auto widths = settingsWidths();
+        const bool ownRow = top.getWidth() - widths.total() - 12 < kMinSourceWidth;
+        auto settings = ownRow ? r.removeFromTop(kSettingsRowHeight).reduced(14, 6) : top.removeFromRight(widths.total());
+        if (!ownRow)
+            top.removeFromRight(12);
+        transportTop = r.getY();
+        detectorLabel.setBounds(settings.removeFromLeft(widths.caption).withSizeKeepingCentre(widths.caption, 20));
+        settings.removeFromLeft(kCaptionGap);
+        detectorBox.setBounds(settings.removeFromLeft(widths.box).withSizeKeepingCentre(widths.box, 28));
+        settings.removeFromLeft(kSettingsGap);
+        evidenceToggle.setBounds(settings.removeFromLeft(widths.evidence));
+        settings.removeFromLeft(kToggleGap);
+        candidatesToggle.setBounds(settings.removeFromLeft(widths.candidates));
         sourceLabel.setBounds(top.withSizeKeepingCentre(top.getWidth(), 20));
 
         auto bar = r.removeFromTop(kBarHeight).reduced(14, 8);
@@ -1636,10 +1714,45 @@ public:
 
         hintLabel.setBounds(r.removeFromBottom(28).reduced(14, 4));
         canvas.setBounds(r.reduced(14, 0).withTrimmedTop(10));
+        updateStatusTooltip();
     }
 
 private:
     static constexpr int kBarHeight = 50;
+    static constexpr int kSettingsRowHeight = 40;
+    static constexpr int kMinSourceWidth = 260;   // below this the settings get a row of their own
+    static constexpr int kCaptionGap = 6;
+    static constexpr int kSettingsGap = 16;
+    static constexpr int kToggleGap = 8;
+    static constexpr int kHarmonicDetector = 1;
+    static constexpr int kGuidedDetector = 2;
+
+    struct SettingsWidths
+    {
+        int caption = 0, box = 0, evidence = 0, candidates = 0;
+        int total() const { return caption + kCaptionGap + box + kSettingsGap + evidence + kToggleGap + candidates; }
+    };
+
+    /** The settings at the width of their text, which depends on the language and the font. */
+    SettingsWidths settingsWidths()
+    {
+        // The Lab draws with DarkLookAndFeel: labels (a combo box's text too) in its label font, toggles
+        // as a 28 px switch 4 px in with 14 px text 6 px after it. A combo box leaves 30 px of its
+        // width for the arrow and its text label has a 5 px border on each side.
+        const auto labelFont = DarkLookAndFeel::getInstance().getLabelFont(detectorLabel);
+        const auto toggleWidth = [](const juce::Button& b) {
+            return 4 + 28 + 6 + juce::GlyphArrangement::getStringWidthInt(AppFont::getFont(14.0f), b.getButtonText()) + 6;
+        };
+        int widestItem = 0;
+        for (int i = 0; i < detectorBox.getNumItems(); ++i)
+            widestItem = std::max(widestItem, juce::GlyphArrangement::getStringWidthInt(labelFont, detectorBox.getItemText(i)));
+        SettingsWidths w;
+        w.caption = juce::GlyphArrangement::getStringWidthInt(labelFont, detectorLabel.getText()) + 2;
+        w.box = widestItem + 30 + 2 * 5 + 8;
+        w.evidence = toggleWidth(evidenceToggle);
+        w.candidates = toggleWidth(candidatesToggle);
+        return w;
+    }
 
     void timerCallback() override
     {
@@ -1848,6 +1961,19 @@ private:
         startAnalysis();
     }
 
+    bool guidedSelected() const { return detectorBox.getSelectedId() == kGuidedDetector; }
+
+    /** Guided always uses the neural evidence: its box is ticked and locked while Guided is selected. */
+    void detectorChanged()
+    {
+        const bool guided = guidedSelected();
+        evidenceToggle.setToggleState(guided || evidenceChoice, juce::dontSendNotification);
+        evidenceToggle.setEnabled(!guided);
+        evidenceToggle.setTooltip(guided ? TR("polylab.evidence_locked") : juce::String());
+        canvas.grabKeyboardFocus();
+        startAnalysis();
+    }
+
     void startAnalysis()
     {
         if (source == nullptr)
@@ -1869,14 +1995,16 @@ private:
         player.setSlot(LabPlayer::solo, nullptr);
         selectVariant(LabPlayer::original);
         analysing = true;
+        analysisNote.clear();
         analysisProgress->store(0.0f);
         const int generation = ++analysisGeneration;
-        const bool useEvidence = evidenceToggle.getToggleState();
+        const bool guided = guidedSelected();
+        const bool useEvidence = guided || evidenceToggle.getToggleState();
         auto src = source;
         auto model = evidenceModel;
         auto progress = analysisProgress;
         juce::Component::SafePointer<Content> safe(this);
-        pool.addJob([safe, src, model, progress, cancel, generation, useEvidence] {
+        pool.addJob([safe, src, model, progress, cancel, generation, useEvidence, guided] {
             const auto t0 = juce::Time::getMillisecondCounterHiRes();
             polyphonic::NoteEvidence evidence;
             bool evidenceMissing = false;
@@ -1890,7 +2018,11 @@ private:
             if (cancel->load())
                 return;
             progress->store(0.15f);
-            const auto params = polyphonic::Params::forSampleRate(src->sampleRate);
+            // Guided needs the evidence; without it the notes come from the harmonic detector.
+            const bool guidedFallback = guided && evidence.empty();
+            auto params = polyphonic::Params::forSampleRate(src->sampleRate);
+            params.detectionMode = guided && !guidedFallback ? polyphonic::DetectionMode::NeuralGuided
+                                                              : polyphonic::DetectionMode::Harmonic;
             auto result = std::make_shared<polyphonic::Analysis>(polyphonic::analyze(
                 src->mono.data(), src->numSamples(), params, evidence.empty() ? nullptr : &evidence, cancel.get(),
                 [progress](float v) { progress->store(0.15f + 0.85f * v); }));
@@ -1898,16 +2030,16 @@ private:
                 return;
             const double seconds = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
             const bool usedEvidence = !evidence.empty();
-            juce::MessageManager::callAsync([safe, result, generation, seconds, usedEvidence, evidenceMissing] {
+            juce::MessageManager::callAsync([safe, result, generation, seconds, usedEvidence, evidenceMissing, guidedFallback] {
                 if (safe != nullptr)
-                    safe->analysisFinished(result, generation, seconds, usedEvidence, evidenceMissing);
+                    safe->analysisFinished(result, generation, seconds, usedEvidence, evidenceMissing, guidedFallback);
             });
         });
         updateStatus();
     }
 
     void analysisFinished(std::shared_ptr<const polyphonic::Analysis> result, int generation, double seconds,
-                          bool usedEvidence, bool evidenceMissing)
+                          bool usedEvidence, bool evidenceMissing, bool guidedFallback)
     {
         if (generation != analysisGeneration)
             return;
@@ -1915,8 +2047,10 @@ private:
         analysis = std::move(result);
         analysisSeconds = seconds;
         analysedWithEvidence = usedEvidence;
-        if (evidenceMissing)
-            setNote(TR("polylab.evidence_missing"));
+        if (guidedFallback)
+            analysisNote = TR("polylab.guided_fallback");
+        else if (evidenceMissing)
+            analysisNote = TR("polylab.evidence_missing");
         edits.clear();
         canvas.setAnalysis(analysis, source->seconds());
         player.setSlot(LabPlayer::edited, source->channels);   // identical until something is edited
@@ -2090,7 +2224,11 @@ private:
             canvas.setMessage(active == 0 ? TR("polylab.no_notes") : juce::String());
             text = juce::String(active) + " " + TR("polylab.notes") + "  ·  " + TR("polylab.analysed") + " "
                    + juce::String(analysisSeconds, 1) + " s";
-            if (!analysedWithEvidence)
+            if (analysis->params.detectionMode == polyphonic::DetectionMode::NeuralGuided)
+                text << "  ·  " << TR("polylab.guided_used");
+            if (analysisNote.isNotEmpty())
+                text << "  ·  " << analysisNote;   // says which detector and filtering were used
+            else if (!analysedWithEvidence)
                 text << "  ·  " << TR("polylab.dsp_only");
             if (rendering || renderDueMs != 0 || soloing)
                 text << "  ·  " << TR("polylab.rendering") << "...";
@@ -2100,10 +2238,22 @@ private:
         statusLabel.setText(text, juce::dontSendNotification);
         if (player.getSelected() == LabPlayer::solo && canvas.getSelection().empty() && analysis != nullptr)
             statusLabel.setText(TR("polylab.solo_empty"), juce::dontSendNotification);
+        updateStatusTooltip();
         resetButton.setEnabled(!edits.empty());
         exportButton.setEnabled(analysis != nullptr);
         playButton.setEnabled(source != nullptr);
         updateSelectionLabel();
+    }
+
+    /** The whole status line as a tooltip when it does not fit. */
+    void updateStatusTooltip()
+    {
+        const auto text = statusLabel.getText();
+        const auto font = DarkLookAndFeel::getInstance().getLabelFont(statusLabel);
+        const auto area = statusLabel.getBorderSize().subtractedFrom(statusLabel.getLocalBounds());
+        const bool fits = juce::GlyphArrangement::getStringWidth(font, text) * statusLabel.getMinimumHorizontalScale()
+                          <= static_cast<float>(area.getWidth());
+        statusLabel.setTooltip(fits ? juce::String() : text);
     }
 
     void updateSelectionLabel()
@@ -2149,6 +2299,8 @@ private:
     PlayButton playButton;
     AuditionButton auditionButton;
     juce::TooltipWindow tooltips { this, 600 };
+    juce::Label detectorLabel;
+    juce::ComboBox detectorBox;
     juce::ToggleButton evidenceToggle, candidatesToggle;
     juce::Label sourceLabel, statusLabel, selectionLabel, timeLabel, hintLabel;
     std::unique_ptr<juce::FileChooser> chooser;
@@ -2167,11 +2319,14 @@ private:
     bool soloing = false;
     bool soloCurrent = false;
     bool analysedWithEvidence = false;
+    bool evidenceChoice = false;   // the evidence box as the user set it; Guided overrides it while selected
     bool switchedAfterFirstEdit = false;
     double analysisSeconds = 0.0;
     juce::uint32 renderDueMs = 0;
     juce::uint32 soloDueMs = 0;
     juce::String note;
+    juce::String analysisNote;     // how the current analysis fell short of what was asked, if it did
+    int transportTop = kBarHeight; // where the transport bar starts (below the settings row when it has one)
 
     // the note under the mouse, heard on its own
     int auditionNote = -1;
