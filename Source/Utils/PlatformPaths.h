@@ -16,7 +16,8 @@
  *   - Config: %APPDATA%/PitchNet/
  *
  * Linux:
- *   - Models: <exe_dir>/models/
+ *   - Models: ~/.local/share/<company>/<app>/models/ (per-user install)
+ *             or /opt/<company>/<app>/models/ (system-wide install)
  *   - Logs: ~/.config/PitchNet/logs/
  *   - Config: ~/.config/PitchNet/
  */
@@ -46,6 +47,13 @@ namespace PlatformPaths
 
         return {};
 #else
+#if JUCE_LINUX
+        // A per-user (no sudo) install takes precedence over a system-wide one.
+        auto perUserResources = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                                    .getChildFile(".local/share/Session Loops/PitchNet");
+        if (perUserResources.getChildFile("models").isDirectory())
+            return perUserResources;
+#endif
         return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
 #if JUCE_MAC
             .getChildFile("Application Support")
