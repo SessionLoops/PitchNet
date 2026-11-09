@@ -28,7 +28,7 @@ PitchNet is a standalone app and audio plugin for editing vocal pitch in a piano
 - Export audio (WAV) and MIDI
 - Standalone app plus VST3/AU plugins (AAX optional, ARA supported)
 - GPU acceleration via CUDA or DirectML on Windows; CoreML on macOS
-- Multi-language UI (English, Japanese, Chinese Simplified, Chinese Traditional)
+- Multi-language UI (English, Spanish, Japanese, Korean, Portuguese, Russian, Chinese Simplified, Chinese Traditional)
 
 ## Download
 To [Download PitchNet](https://sessionloops.com/pitchnet#downloads)

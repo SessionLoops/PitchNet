@@ -117,6 +117,10 @@ public:
       return "ko";
     if (locale.startsWithIgnoreCase("es"))
       return "es";
+    if (locale.startsWithIgnoreCase("pt"))
+      return "pt";
+    if (locale.startsWithIgnoreCase("ru"))
+      return "ru";
 
     return "en";
   }
@@ -182,8 +186,8 @@ public:
 
   /** The codes this build knows about, in the order the UI lists them. */
   static const std::vector<juce::String> &getKnownLanguageCodes() {
-    static const std::vector<juce::String> codes = {"en",    "es", "ja",
-                                                    "ko",    "zh", "zh-TW"};
+    static const std::vector<juce::String> codes = {"en", "es", "ja", "ko",
+                                                    "pt", "ru", "zh", "zh-TW"};
     return codes;
   }
 
@@ -218,6 +222,11 @@ private:
       return juce::String::fromUTF8("\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e");
     if (code == "ko")
       return juce::String::fromUTF8("\xed\x95\x9c\xea\xb5\xad\xec\x96\xb4");
+    if (code == "pt")
+      return juce::String::fromUTF8("Portugu\xc3\xaas");
+    if (code == "ru")
+      return juce::String::fromUTF8(
+          "\xd0\xa0\xd1\x83\xd1\x81\xd1\x81\xd0\xba\xd0\xb8\xd0\xb9");
     if (code == "zh")
       return juce::String::fromUTF8("\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87");
     if (code == "zh-TW")
