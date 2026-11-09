@@ -424,11 +424,17 @@ void PitchNetAudioProcessor::releaseResources() {
 #if !JucePlugin_PreferredChannelConfigurations
 bool PitchNetAudioProcessor::isBusesLayoutSupported(
     const BusesLayout &layouts) const {
-  if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+  const auto in = layouts.getMainInputChannelSet();
+  const auto out = layouts.getMainOutputChannelSet();
+  if (out != juce::AudioChannelSet::mono() &&
+      out != juce::AudioChannelSet::stereo())
     return false;
-  auto out = layouts.getMainOutputChannelSet();
-  return out == juce::AudioChannelSet::mono() ||
-         out == juce::AudioChannelSet::stereo();
+  if (in == out)
+    return true;
+  // Some ARA hosts (e.g. Cubase/Nuendo 12) give VST3 playback-render
+  // instances an output bus only. Accept a disabled input there, but keep
+  // AU/AAX channel configurations unchanged.
+  return wrapperType == wrapperType_VST3 && in.isDisabled();
 }
 #endif
 
