@@ -1,6 +1,7 @@
 #include "PitchCurveRenderer.h"
 #include "PitchEditor.h"
 #include "States/SelectHandler.h"
+#include "../../Audio/BreathSibilanceAnalysis.h"
 #include "../../Utils/BasePitchCurve.h"
 #include "../../Utils/PitchCurveProcessor.h"
 #include "../../Utils/Constants.h"
@@ -158,6 +159,34 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       pathStarted = false;
     };
 
+    // Breath and sibilance frames break the curve. Inside the dashNoise range
+    // they are drawn dashed instead, one run at a time: createDashedStroke
+    // joins the separate sub-paths of a single path with straight lines.
+    juce::Path dashedRun;
+    bool dashedStarted = false;
+    auto strokeDashedRun = [&]()
+    {
+      if (dashedStarted)
+      {
+        const float dashLengths[] = {5.0f, 4.0f};
+        juce::Path dashes;
+        juce::PathStrokeType(2.0f).createDashedStroke(dashes, dashedRun,
+                                                      dashLengths, 2);
+        g.fillPath(dashes);
+      }
+      dashedRun.clear();
+      dashedStarted = false;
+    };
+    juce::Point<float> previousPoint;
+    bool hasPreviousPoint = false;
+    bool previousWasDashed = false;
+    auto breakCurve = [&]()
+    {
+      strokeCurrentPath();
+      strokeDashedRun();
+      hasPreviousPoint = false;
+    };
+
     const auto &chunkRanges = audioData.segmentChunkRanges;
     auto getRegionIndex = [&chunkRanges](const Note &note)
     {
@@ -209,7 +238,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         {
           // Break the polyline here so the next visible note does not join
           // across the skipped (off-screen) span.
-          strokeCurrentPath();
+          breakCurve();
           hasPreviousNote = false;
           continue;
         }
@@ -227,22 +256,50 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
           currentRegion >= 0 && currentRegion == previousRegion;
 
       if (!continuesPreviousPath)
-        strokeCurrentPath();
+        breakCurve();
+
+      // The curve is laid out over the note's committed frames and read
+      // through its time map (NoteTiming.h), as the synthesizer reads it.
+      // While a timing drag is in progress, each frame is drawn where the
+      // same recorded frame will play: a stretched vowel spreads out, the
+      // consonants keep their width.
+      const auto committed = notetiming::forNote(audioData, note);
+      const bool previewing = note.hasTimingPreview() &&
+                              note.getSrcDurationFrames() > 0 &&
+                              note.getDurationFrames() > 0 &&
+                              visualEndFrame > visualStartFrame;
+      const auto onScreen = previewing
+                                ? notetiming::forNoteOnScreen(audioData, note)
+                                : notetiming::TimeMap{};
+      const auto visualFrameOf = [&](int frame)
+      {
+        if (!previewing)
+          return static_cast<float>(frame);
+        return static_cast<float>(
+            onScreen.destinationAt(
+                committed.sourceAt(static_cast<double>(frame) + 0.5)) -
+            0.5);
+      };
+      const auto committedFrameOf = [&](double visualFrame)
+      {
+        if (!previewing)
+          return visualFrame;
+        return committed.destinationAt(onScreen.sourceAt(visualFrame + 0.5)) -
+               0.5;
+      };
 
       // Clip long notes to the viewport before constructing the path.
-      const int sourceLength = std::max(1, endFrame - startFrame);
-      const float visualLength = visualEndFrame - visualStartFrame;
       int firstVisible = startFrame;
       int lastVisible = endFrame;
-      if (visualLength > 0.0f)
+      if (visualEndFrame > visualStartFrame)
       {
         const double left = scrollX / pixelsPerSecond * audioData.sampleRate / HOP_SIZE;
         const double right = (scrollX + params.componentWidth) / pixelsPerSecond
                              * audioData.sampleRate / HOP_SIZE;
-        firstVisible = std::max(startFrame, startFrame + static_cast<int>(
-            std::floor((left - visualStartFrame) / visualLength * sourceLength)) - 1);
-        lastVisible = std::min(endFrame, startFrame + static_cast<int>(
-            std::ceil((right - visualStartFrame) / visualLength * sourceLength)) + 1);
+        firstVisible = std::max(startFrame, static_cast<int>(
+            std::floor(committedFrameOf(left))) - 1);
+        lastVisible = std::min(endFrame, static_cast<int>(
+            std::ceil(committedFrameOf(right))) + 1);
       }
       for (int i = firstVisible; i < lastVisible; ++i)
       {
@@ -269,30 +326,54 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
           finalMidi = baseMidi + deltaMidi + globalOffset + macroOffset(note, i, true);
         }
 
-        if (finalMidi > 0.0f)
+        const bool noise = breathsibilance::isNoise(
+            breathsibilance::labelAtNoteFrame(audioData, committed, i));
+        const bool dashed = noise && i >= params.dashNoiseFirstFrame &&
+                            i <= params.dashNoiseLastFrame;
+        if (finalMidi > 0.0f && (!noise || dashed))
         {
-          const float position =
-              (static_cast<float>(i - startFrame) + 0.5f) /
-              static_cast<float>(sourceLength);
-          const float visualFrame =
-              visualStartFrame + position * (visualEndFrame - visualStartFrame) -
-              0.5f;
-          const float x = framesToSeconds(visualFrame) * pixelsPerSecond;
+          const float x = framesToSeconds(visualFrameOf(i)) * pixelsPerSecond;
           const float y = coordMapper->midiToY(finalMidi) +
                           pixelsPerSemitone * 0.5f;
-          if (!pathStarted)
+          const juce::Point<float> point(x, y);
+          if (dashed || (hasPreviousPoint && previousWasDashed))
           {
-            path.startNewSubPath(x, y);
+            // Any segment touching a dashed frame is dashed, so the solid and
+            // dashed runs meet without a gap.
+            if (!dashedStarted)
+            {
+              dashedRun.startNewSubPath(hasPreviousPoint ? previousPoint
+                                                         : point);
+              dashedStarted = true;
+            }
+            dashedRun.lineTo(point);
+            if (dashed)
+            {
+              strokeCurrentPath();
+            }
+            else
+            {
+              strokeDashedRun();
+              path.startNewSubPath(point);
+              pathStarted = true;
+            }
+          }
+          else if (!pathStarted)
+          {
+            path.startNewSubPath(point);
             pathStarted = true;
           }
           else
           {
-            path.lineTo(x, y);
+            path.lineTo(point);
           }
+          previousPoint = point;
+          previousWasDashed = dashed;
+          hasPreviousPoint = true;
         }
         else
         {
-          strokeCurrentPath();
+          breakCurve();
         }
       }
 
@@ -302,6 +383,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
     }
 
     strokeCurrentPath();
+    strokeDashedRun();
   }
 
   auto drawHzDebugCurve =

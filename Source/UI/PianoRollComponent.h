@@ -317,6 +317,8 @@ private:
   bool prepareTrackPointer(juce::Point<float>, bool notesOnly = false);
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
+  // Breaths and sibilants outside notes (inside notes, NoteRenderer hatches).
+  void drawBreathSibilance(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
   void updatePitchDrawingConfirmationPopup();
@@ -340,6 +342,16 @@ private:
 
   Note *findNoteAt(float x, float y);
   Note *findPreviewButtonNoteAt(float x, float y) const;
+
+  // Breath notes (breathnotes, BreathNotes.h): the one at a world position
+  // (its key, or -1). They are not selected: a press on one starts dragging
+  // its level, and a double-click resets it.
+  int findBreathAt(float x, float y) const;
+  void beginBreathDrag(int key, float worldY);
+  void dragBreaths(float worldY);
+  void releaseBreaths();
+  bool isDraggingBreaths() const { return breathDragging; }
+  void resetBreathLevel(int key);
   juce::Rectangle<float> getPreviewButtonBounds(const Note &note) const;
   juce::Rectangle<float> getNoteHoverShadowBounds(const Note &note) const;
   juce::Rectangle<float> getResetButtonBounds(const Note &note) const;
@@ -440,6 +452,28 @@ private:
   PianoRollViewState viewState;
   int &hoveredPitchToolHandle = viewState.hoveredPitchToolHandle;
   Note *hoveredNote = nullptr;
+  // Breath notes: selected and hovered keys, and a level drag in progress.
+  struct BreathDragItem
+  {
+    int key = -1;
+    int sourceFirst = 0;
+    int sourceLast = 0;
+    int firstSample = 0;
+    int lastSample = 0;
+    float startDb = 0.0f;
+    float db = 0.0f;
+  };
+  int hoveredBreath = -1;
+  // While a breath's level is dragged: the gain the drag will apply to the
+  // rendered audio, per sample, for the background waveform (worked out once
+  // per drag step).
+  const VisualWaveformEnvelope::GainCurve *breathGainPreview() const;
+  mutable VisualWaveformEnvelope::GainCurve breathPreview;
+  mutable bool breathPreviewValid = false;
+  bool breathDragging = false;
+  float breathDragStartY = 0.0f;
+  int breathDragGrabbed = -1;
+  std::vector<BreathDragItem> breathDragItems;
   Button previewButton;
   Button resetButton;
   int previewButtonWidth = 28;

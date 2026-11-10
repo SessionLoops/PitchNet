@@ -4,6 +4,7 @@
 // =============================================================================
 
 #include "../MainComponent.h"
+#include "../../Audio/BreathSibilanceAnalysis.h"
 #include "../../Models/ProjectSerializer.h"
 #include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
@@ -157,6 +158,9 @@ void MainComponent::openProjectFile(const juce::File &file) {
                   audioData.cleanedF0 = audioData.rawF0;
                 if (audioData.denseF0.empty())
                   audioData.denseF0 = audioData.f0;
+
+                // Not saved with the project: relabel from the reloaded audio.
+                breathsibilance::ensure(audioData);
 
                 if (audioData.basePitch.empty() || audioData.deltaPitch.empty()) {
                   if (!audioData.f0.empty()) {

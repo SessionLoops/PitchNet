@@ -1,7 +1,7 @@
 #include "PitchCurveProcessor.h"
 #include "BasePitchCurve.h"
-#include "CurveResampler.h"
 #include "PitchToolOperations.h"
+#include "../Audio/NoteTiming.h"
 #include "../Utils/Constants.h"
 #include <algorithm>
 #include <cmath>
@@ -262,7 +262,7 @@ namespace PitchCurveProcessor
     {
         const int frames = note.getEndFrame() - note.getStartFrame();
         if (frames <= 0 || sourceDeltaFor(note).empty()) return {};
-        auto source = CurveResampler::resampleLinear(sourceDeltaFor(note), frames);
+        auto source = notetiming::curveOnNote(project.getAudioData(), note, sourceDeltaFor(note));
         const auto context = buildAdjacentContext(project.getNotes(), note);
         auto zero = PitchToolOperations::applyAllTransformations(source,
             note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
@@ -315,12 +315,14 @@ namespace PitchCurveProcessor
             if (numFrames <= 0)
                 continue;
 
-            // Resample stored delta to match the current output frame count.
+            // Lay the stored contour over the note's current frames: a
+            // stretched note holds its vowel, so the contour follows the
+            // audio it was written over (NoteTiming.h).
             std::vector<float> resampledBuf;
             const std::vector<float>* sourceDataPtr = &rawSourceData;
             if (static_cast<int>(rawSourceData.size()) != numFrames)
             {
-                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
+                resampledBuf = notetiming::curveOnNote(audioData, note, rawSourceData);
                 sourceDataPtr = &resampledBuf;
             }
             const auto& sourceData = *sourceDataPtr;
@@ -419,7 +421,7 @@ namespace PitchCurveProcessor
             const std::vector<float>* sourceDataPtr = &rawSourceData;
             if (static_cast<int>(rawSourceData.size()) != numFrames)
             {
-                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
+                resampledBuf = notetiming::curveOnNote(audioData, *note, rawSourceData);
                 sourceDataPtr = &resampledBuf;
             }
             const auto& sourceData = *sourceDataPtr;
@@ -495,12 +497,14 @@ namespace PitchCurveProcessor
             if (numFrames <= 0)
                 continue;
 
-            // Resample stored delta to match the current output frame count.
+            // Lay the stored contour over the note's current frames: a
+            // stretched note holds its vowel, so the contour follows the
+            // audio it was written over (NoteTiming.h).
             std::vector<float> resampledBuf;
             const std::vector<float>* sourceDataPtr = &rawSourceData;
             if (static_cast<int>(rawSourceData.size()) != numFrames)
             {
-                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
+                resampledBuf = notetiming::curveOnNote(audioData, *note, rawSourceData);
                 sourceDataPtr = &resampledBuf;
             }
             const auto& sourceData = *sourceDataPtr;

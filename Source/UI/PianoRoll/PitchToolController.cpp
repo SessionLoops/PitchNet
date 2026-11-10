@@ -1,22 +1,61 @@
 #include "PitchToolController.h"
+#include "../../Audio/ProjectGain.h"
 #include "../../Undo/AmplitudeAction.h"
 #include "../../Utils/PitchCurveProcessor.h"
 
 #include <algorithm>
+#include <climits>
 #include <limits>
 
 PitchToolController::PitchToolController()
 {
 }
 
-float PitchToolController::getAmplitudePreviewGain(const Note& note) const
+const VisualWaveformEnvelope::GainCurve*
+PitchToolController::getGainPreview(const Project& forProject) const
 {
-  if (!dragging || activeHandleType != PitchToolHandles::HandleType::Amplitude)
-    return 1.0f;
-  for (size_t i = 0; i < affectedNotes.size(); ++i)
-    if (affectedNotes[i] == &note && i < originalParams.size())
-      return std::pow(10.0f, (note.getVolumeDb() - originalParams[i].volumeDb) / 20.0f);
-  return 1.0f;
+  const bool gainDrag =
+      dragging && project == &forProject &&
+      (activeHandleType == PitchToolHandles::HandleType::Amplitude ||
+       activeHandleType == PitchToolHandles::HandleType::SibilantBalance);
+  if (!gainDrag)
+    return nullptr;
+  if (!gainPreviewValid)
+  {
+    gainPreviewValid = true;
+    gainPreview = {};
+    // The dragged notes as they were when the drag began.
+    std::vector<std::pair<const Note*, Note>> before;
+    std::vector<const Note*> changed;
+    for (size_t i = 0; i < affectedNotes.size() && i < originalParams.size(); ++i)
+    {
+      const Note* note = affectedNotes[i];
+      if (!note || note->isRest() ||
+          (note->getVolumeDb() == originalParams[i].volumeDb &&
+           note->getSibilantBalance() == originalParams[i].sibilantBalance))
+        continue;
+      Note was = *note;
+      was.setVolumeDb(originalParams[i].volumeDb);
+      was.setSibilantBalance(originalParams[i].sibilantBalance);
+      before.emplace_back(note, std::move(was));
+      changed.push_back(note);
+    }
+    const auto& audioData = project->getAudioData();
+    if (!before.empty())
+    {
+      // In analysis samples; the waveform is at its own rate. The notes
+      // and the stray sibilants that belong to them.
+      const auto [first, last] = projectgain::noteGainSpan(*project, changed);
+      auto [start, gains] = projectgain::changeRatioAround(
+          audioData, projectgain::regions(*project, before),
+          projectgain::regions(*project), first, last);
+      gainPreview.startSample = start;
+      gainPreview.curveRate = SAMPLE_RATE;
+      gainPreview.waveformRate = audioData.sampleRate;
+      gainPreview.gains = std::move(gains);
+    }
+  }
+  return gainPreview.gains.empty() ? nullptr : &gainPreview;
 }
 
 bool PitchToolController::mouseDown(const juce::MouseEvent& e,
@@ -50,7 +89,8 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
        handle.type == PitchToolHandles::HandleType::Vibrato ||
        handle.type == PitchToolHandles::HandleType::PitchDrift ||
        handle.type == PitchToolHandles::HandleType::Formant ||
-       handle.type == PitchToolHandles::HandleType::Amplitude);
+       handle.type == PitchToolHandles::HandleType::Amplitude ||
+       handle.type == PitchToolHandles::HandleType::SibilantBalance);
   if (isGroupEdit || !handle.note)
     affectedNotes = selectedNotes;
   else
@@ -82,6 +122,7 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
 
   dragStartPos = e.position;
   dragging = true;
+  gainPreviewValid = false;
   return true;
 }
 
@@ -98,6 +139,7 @@ bool PitchToolController::mouseDrag(const juce::MouseEvent& e,
   const float deltaY = e.position.y - dragStartPos.y;
 
   applyOperation(affectedNotes, activeHandleType, deltaX, deltaY, mapper);
+  gainPreviewValid = false;
   return true;
 }
 
@@ -109,6 +151,32 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
 
   if (!dragging)
     return false;
+
+  if (activeHandleType == PitchToolHandles::HandleType::SibilantBalance && project)
+  {
+    std::vector<float> volumes, before, after;
+    for (size_t i = 0; i < affectedNotes.size(); ++i)
+    {
+      volumes.push_back(originalParams[i].volumeDb);
+      before.push_back(originalParams[i].sibilantBalance);
+      after.push_back(affectedNotes[i] ? affectedNotes[i]->getSibilantBalance()
+                                       : before.back());
+    }
+    auto action = gainedit::noteGains(*project, affectedNotes, volumes, volumes,
+                                      before, after, onAmplitudeEdited,
+                                      "Change Sibilant Balance");
+    dragging = false;
+    activeHandleType = PitchToolHandles::HandleType::None;
+    activeHandleNote = nullptr;
+    affectedNotes.clear();
+    originalParams.clear();
+    if (before != after)
+    {
+      action->redo();
+      if (undoManager) undoManager->addAction(std::move(action));
+    }
+    return true;
+  }
 
   if (activeHandleType == PitchToolHandles::HandleType::Amplitude && project)
   {
@@ -217,6 +285,15 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
           std::round((origParams.volumeDb - dragDeltaY / 10.0f) * 10.0f) / 10.0f));
       continue;
     }
+    if (type == PitchToolHandles::HandleType::SibilantBalance)
+    {
+      // One percent per pixel, up towards +100% (the rest of the note
+      // quieter), down towards -100% (the sibilants quieter).
+      note->setSibilantBalance(
+          std::round((origParams.sibilantBalance - dragDeltaY / 100.0f) * 100.0f) /
+          100.0f);
+      continue;
+    }
     origParams.applyToNote(*note);
 
     // Apply new transformation by updating the appropriate parameter
@@ -300,7 +377,8 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     note->markDirty();
   }
 
-  if (type == PitchToolHandles::HandleType::Amplitude)
+  if (type == PitchToolHandles::HandleType::Amplitude ||
+      type == PitchToolHandles::HandleType::SibilantBalance)
   {
     if (onPitchEdited) onPitchEdited();
     return;

@@ -109,6 +109,31 @@ inline bool repadProjectToTimelineOffset(Project &project,
   repadFloatVector(audioData.deltaPitch);
   repadBoolVector(audioData.voicedMask);
   repadBoolVector(audioData.vadMask);
+  {
+    auto &labels = audioData.breathSibilance;
+    const int oldSize = static_cast<int>(labels.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    std::vector<std::uint8_t> shifted(
+        static_cast<size_t>(newOffsetFrames +
+                            std::max(0, oldSize - contentStart)),
+        0);
+    std::copy(labels.begin() + contentStart, labels.end(),
+              shifted.begin() + newOffsetFrames);
+    labels = std::move(shifted);
+  }
+  if (!audioData.breathGainDb.empty())
+  {
+    auto &gains = audioData.breathGainDb;
+    const int oldSize = static_cast<int>(gains.size());
+    const int contentStart = std::min(oldOffsetFrames, oldSize);
+    std::vector<float> shifted(
+        static_cast<size_t>(newOffsetFrames +
+                            std::max(0, oldSize - contentStart)),
+        0.0f);
+    std::copy(gains.begin() + contentStart, gains.end(),
+              shifted.begin() + newOffsetFrames);
+    gains = std::move(shifted);
+  }
 
   auto shiftFrame = [frameDelta](int frame)
   {

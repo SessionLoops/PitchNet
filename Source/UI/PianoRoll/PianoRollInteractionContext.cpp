@@ -80,6 +80,36 @@ std::vector<Note *> PianoRollInteractionContext::getSelectedNotes() const
   return component.getSelectedNotes();
 }
 
+int PianoRollInteractionContext::findBreathAt(float x, float y) const
+{
+  return component.findBreathAt(x, y);
+}
+
+void PianoRollInteractionContext::beginBreathDrag(int key, float worldY)
+{
+  component.beginBreathDrag(key, worldY);
+}
+
+void PianoRollInteractionContext::dragBreaths(float worldY)
+{
+  component.dragBreaths(worldY);
+}
+
+void PianoRollInteractionContext::releaseBreaths()
+{
+  component.releaseBreaths();
+}
+
+bool PianoRollInteractionContext::isDraggingBreaths() const
+{
+  return component.isDraggingBreaths();
+}
+
+void PianoRollInteractionContext::resetBreathLevel(int key)
+{
+  component.resetBreathLevel(key);
+}
+
 void PianoRollInteractionContext::updatePitchToolHandlesFromSelection()
 {
   component.updatePitchToolHandlesFromSelection();

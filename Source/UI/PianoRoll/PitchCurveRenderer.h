@@ -28,6 +28,13 @@ public:
     bool showCleanedF0Debug;
     bool showVocoderF0Debug;
     bool hidePitchCurves = false;
+    // The pitch curve is left out over detected breaths and sibilants: there
+    // it is only interpolated, and those frames play the original recording.
+    // The live pitch-drawing preview sets this frame range (inclusive) to the
+    // stretch being drawn, where those frames are dashed instead so the new
+    // line reads as one piece. Empty by default.
+    int dashNoiseFirstFrame = 0;
+    int dashNoiseLastFrame = -1;
     float pitchCurveAlpha = 1.0f;
     const std::vector<float>* midiCurveOverride = nullptr;
     int componentWidth;

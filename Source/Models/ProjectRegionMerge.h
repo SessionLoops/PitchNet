@@ -60,6 +60,8 @@ inline std::unique_ptr<Project> mergeProjectPlaybackParts(
     overlay(output.deltaPitch, input.deltaPitch);
     overlay(output.voicedMask, input.voicedMask);
     overlay(output.vadMask, input.vadMask);
+    overlay(output.breathSibilance, input.breathSibilance);
+    overlay(output.breathGainDb, input.breathGainDb);
     overlay(output.melSpectrogram, input.melSpectrogram);
     hasMel = hasMel && !input.melSpectrogram.empty();
     const int begin = juce::roundToInt(part.start * rate);

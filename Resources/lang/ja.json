@@ -116,6 +116,7 @@
   "handle.amplitude": "振幅",
   "handle.formant": "フォルマントシフト",
   "handle.pitch_drift": "ピッチドリフト",
+  "handle.sibilant_balance": "歯擦音バランス",
   "handle.tilt_left": "左の傾き",
   "handle.tilt_right": "右の傾き",
   "handle.vibrato": "ピッチモジュレーション",

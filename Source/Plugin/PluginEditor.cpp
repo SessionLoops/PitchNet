@@ -91,6 +91,22 @@ std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
   sliceFloats(src.deltaPitch, dst.deltaPitch);
   sliceBools(src.voicedMask, dst.voicedMask);
   sliceBools(src.vadMask, dst.vadMask);
+  {
+    const int end =
+        std::min(lastFrame, static_cast<int>(src.breathSibilance.size()));
+    if (end > firstFrame)
+      dst.breathSibilance.assign(src.breathSibilance.begin() + firstFrame,
+                                 src.breathSibilance.begin() + end);
+  }
+  {
+    // Stored only as far as the last edited breath.
+    dst.breathGainDb.clear();
+    const int end =
+        std::min(lastFrame, static_cast<int>(src.breathGainDb.size()));
+    if (end > firstFrame)
+      dst.breathGainDb.assign(src.breathGainDb.begin() + firstFrame,
+                              src.breathGainDb.begin() + end);
+  }
 
   const int numSamples = src.waveform.getNumSamples();
   if (numSamples > 0 && src.sampleRate > 0 && src.waveform.getNumChannels() > 0)

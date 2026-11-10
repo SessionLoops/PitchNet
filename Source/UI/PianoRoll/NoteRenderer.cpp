@@ -1,4 +1,5 @@
 #include "NoteRenderer.h"
+#include "BreathSibilanceRenderer.h"
 #include "PitchToolController.h"
 #include "PitchToolHandles.h"
 #include "BoxSelector.h"
@@ -7,6 +8,7 @@
 #include "States/SplitHandler.h"
 #include "VisualWaveformEnvelope.h"
 #include "../Components/AppFont.h"
+#include "../../Audio/NoteTiming.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/ScaleUtils.h"
 #include "../../Utils/UI/Theme.h"
@@ -17,6 +19,39 @@
 
 namespace
 {
+// `values` is an envelope spread evenly over the note's recorded frames.
+// Lay it out over the note's on-screen frames the way the note will play
+// them (NoteTiming.h): during a timing drag, the vowel stretches and the
+// consonants keep their width, as they will sound.
+std::vector<float> layOutAsPlayed(const std::vector<float> &values,
+                                  const AudioData &audioData,
+                                  const Note &note)
+{
+  const size_t count = values.size();
+  const double sourceStart = note.getSrcStartFrame();
+  const double sourceLength = note.getSrcDurationFrames();
+  const double visualStart = note.getVisualStartFrame();
+  const double visualLength = note.getVisualDurationFrames();
+  if (count < 2 || !(sourceLength > 0.0) || !(visualLength > 0.0))
+    return values;
+
+  const auto map = notetiming::forNoteOnScreen(audioData, note);
+  const double last = static_cast<double>(count - 1);
+  std::vector<float> laidOut(count);
+  for (size_t i = 0; i < count; ++i)
+  {
+    const double visual = visualStart + visualLength * static_cast<double>(i) / last;
+    const double source = map.sourceAt(visual + 0.5) - 0.5;
+    const double position =
+        std::clamp((source - sourceStart) / sourceLength * last, 0.0, last);
+    const auto left = static_cast<size_t>(std::floor(position));
+    const size_t right = std::min(left + 1, count - 1);
+    const auto amount = static_cast<float>(position - static_cast<double>(left));
+    laidOut[i] = values[left] * (1.0f - amount) + values[right] * amount;
+  }
+  return laidOut;
+}
+
 struct NoteGradientColours
 {
   juce::Colour centre;
@@ -97,6 +132,15 @@ bool isContinuousSplitPair(const Note &left, const Note &right)
          left.getSrcEndFrame() == right.getSrcStartFrame();
 }
 } // namespace
+
+juce::Colour NoteRenderer::bodyColour(const Note &note) const
+{
+  if (greyscale)
+    return juce::Colour(0xFFCCCCCCu);
+  const int pitchReferenceHz = project ? project->getPitchReferenceHz() : 440;
+  return getNoteGradientColours(note.getAdjustedMidiNote(), pitchReferenceHz)
+      .centre;
+}
 
 void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                         int componentWidth)
@@ -236,8 +280,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           std::max(2, std::min(512, static_cast<int>(std::ceil(noteWidth)) + 1));
       const auto shadowEnvelope = VisualWaveformEnvelope::build(
           samples, totalSamples, startSample, endSample, shadowPointCount,
-          renderedWidth, audioData.sampleRate, pixelsPerSecond, true,
-          pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
+          renderedWidth, audioData.sampleRate, pixelsPerSecond, true, 1.0f,
+          {},
+          pitchToolController ? pitchToolController->getGainPreview(*project)
+                              : nullptr);
       const float maxSample =
           shadowEnvelope.empty()
               ? 0.0f
@@ -357,10 +403,16 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const float waveHeight = h * 3.0f * coordMapper->getBlobHeightScale();
         const int pointCount =
             std::max(2, std::min(2048, static_cast<int>(std::ceil(w * 2.0f)) + 1));
+        // While a gain handle (amplitude, sibilant balance) is dragged, the
+        // note at its new levels: the gain the edit will apply, smoothed
+        // edges included, so a cut part comes back exactly as it will sound.
         waveValues = VisualWaveformEnvelope::build(
             samples, totalSamples, startSample, endSample, pointCount, w,
-            audioData.sampleRate, pixelsPerSecond, true,
-            pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
+            audioData.sampleRate, pixelsPerSecond, true, 1.0f, {},
+            pitchToolController ? pitchToolController->getGainPreview(*project)
+                                : nullptr);
+        if (note.hasTimingPreview())
+          waveValues = layOutAsPlayed(waveValues, audioData, note);
 
         const size_t numPoints = waveValues.size();
         if (numPoints < 2)
@@ -476,6 +528,14 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           }
 
           waveformPath.closeSubPath();
+          // Consonants and breaths follow the waveform like the rest of the
+          // note, so their size shows their level - and the sibilant
+          // balance. A 1 px band keeps a near-silent one visible, never
+          // thicker than the note's own loudest part.
+          const float noiseBandHeight =
+              std::min(1.0f, waveformPath.getBounds().getHeight());
+          waveformPath.addPath(BreathSibilanceRenderer::noiseBands(
+              audioData, note, x, renderedWidth, centerY, noiseBandHeight));
           noteVisualBounds = waveformPath.getBounds();
           bodyShape = waveformPath;
 
@@ -539,6 +599,11 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         bodyShape.addRoundedRectangle(x, y, renderedWidth, h, 2.0f);
       }
 
+      // Hatch the unpitched parts (sibilants, breaths) of the body.
+      if (fillBodies)
+        BreathSibilanceRenderer::hatchNoteBody(g, audioData, note, bodyShape,
+                                               x, renderedWidth);
+
       noFill.reset();
       if (outlineColour.has_value() && !bodyShape.isEmpty())
       {
@@ -577,10 +642,19 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const bool isAmplitudeDragged = pitchToolController && pitchToolController->isDragging() &&
         pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Amplitude &&
         pitchToolController->getActiveHandleNote() == &note;
-    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged || isAmplitudeDragged))
+    const bool isSibilantDragged = pitchToolController &&
+        pitchToolController->isDraggingSibilantBalance() &&
+        pitchToolController->getActiveHandleNote() == &note;
+    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged || isAmplitudeDragged || isSibilantDragged))
     {
       juce::String label;
-      if (isAmplitudeDragged)
+      if (isSibilantDragged)
+      {
+        const int percent =
+            static_cast<int>(std::lround(note.getSibilantBalance() * 100.0f));
+        label = (percent > 0 ? "+" : "") + juce::String(percent) + " %";
+      }
+      else if (isAmplitudeDragged)
       {
         const juce::String prefix = note.getVolumeDb() > 0.0f ? "+" : "";
         const float rms = note.getSourceAmplitude();

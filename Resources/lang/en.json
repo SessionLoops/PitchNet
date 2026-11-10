@@ -118,6 +118,7 @@
   "handle.amplitude": "Amplitude",
   "handle.formant": "Formant Shift",
   "handle.pitch_drift": "Pitch Drift",
+  "handle.sibilant_balance": "Sibilant Balance",
   "handle.tilt_left": "Left Slope",
   "handle.tilt_right": "Right Slope",
   "handle.vibrato": "Pitch Modulation",

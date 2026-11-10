@@ -22,6 +22,16 @@ PitchNet is a standalone app and audio plugin for editing vocal pitch in a piano
 - GAME-based note segmentation with D3PM diffusion model
 - Pitch curve editing with per-note delta, scale, offset, tilt, and variance controls
 - Real-time incremental vocoder resynthesis (PC-NSF-HiFiGAN)
+- Breath and sibilance detection: consonants join the note they lead into,
+  breaths stay out of notes, breaths and sibilants keep the original
+  recording when notes are retuned, and both are hatched in the piano roll
+  with no pitch curve over them ([details](docs/breath-sibilance-detection.md))
+- Stretching a note holds its vowel: consonants keep their recorded length
+  and the original recording ([details](docs/breath-sibilance-detection.md#stretching-notes))
+- Breath notes: every breath is drawn as its own note - drag it to change its
+  level ([details](docs/breath-sibilance-detection.md#breath-notes))
+- Sibilant Balance per note, like Melodyne's: turn down a note's sibilants or
+  the rest of it ([details](docs/breath-sibilance-detection.md#sibilant-balance))
 - High-quality, band-limited audio sample-rate conversion with
   [r8brain-free-src](https://github.com/avaneev/r8brain-free-src)
 - Undo/redo for all editing operations

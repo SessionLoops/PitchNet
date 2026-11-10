@@ -118,6 +118,7 @@
   "handle.amplitude": "Амплитуда",
   "handle.formant": "Сдвиг форманты",
   "handle.pitch_drift": "Дрейф высоты",
+  "handle.sibilant_balance": "Баланс сибилянтов",
   "handle.tilt_left": "Левый наклон",
   "handle.tilt_right": "Правый наклон",
   "handle.vibrato": "Модуляция высоты",

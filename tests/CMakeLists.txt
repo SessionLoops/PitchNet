@@ -16,6 +16,7 @@ set(PITCHNET_TEST_SOURCES
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
     AraTempoMapTests.cpp
+    BreathSibilanceTests.cpp
     FormantShiftTests.cpp
     HostSyncTempoTests.cpp
     NoteGainCurveTests.cpp

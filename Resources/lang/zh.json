@@ -116,6 +116,7 @@
   "handle.amplitude": "振幅",
   "handle.formant": "共振峰偏移",
   "handle.pitch_drift": "音高漂移",
+  "handle.sibilant_balance": "齿音平衡",
   "handle.tilt_left": "左侧斜率",
   "handle.tilt_right": "右侧斜率",
   "handle.vibrato": "音高调制",

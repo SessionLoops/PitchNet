@@ -3,6 +3,8 @@
 #include "../Utils/PitchMacroScope.h"
 #include "../Utils/AppLogger.h"
 #include "../Undo/AmplitudeAction.h"
+#include "../Undo/GainEditAction.h"
+#include "../Audio/BreathNotes.h"
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
 #include "../Utils/Constants.h"
@@ -12,6 +14,7 @@
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
 #include "../Utils/TimingRegionUtils.h"
+#include "PianoRoll/BreathSibilanceRenderer.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
@@ -102,6 +105,7 @@ namespace
     float midiNote;
     float pitchOffset;
     float volumeDb;
+    float sibilantBalance;
     float formantShift;
     float tiltLeft;
     float tiltRight;
@@ -116,7 +120,8 @@ namespace
 
     static NoteEditState capture(const Note& note)
     {
-      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(), note.getFormantShift(),
+      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(),
+              note.getSibilantBalance(), note.getFormantShift(),
               note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
@@ -125,7 +130,7 @@ namespace
 
     static NoteEditState defaultsFor(const Note& note)
     {
-      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
               0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch()};
     }
 
@@ -134,6 +139,7 @@ namespace
       note.setMidiNote(midiNote);
       note.setPitchOffset(pitchOffset);
       note.setVolumeDb(volumeDb);
+      note.setSibilantBalance(sibilantBalance);
       note.setFormantShift(formantShift);
       note.setTiltLeft(tiltLeft);
       note.setTiltRight(tiltRight);
@@ -183,7 +189,10 @@ namespace
   }
 
   bool hasFormantEdits(const Note& note) { return note.getFormantShift() != 0.0f; }
-  bool hasAmplitudeEdits(const Note& note) { return note.getVolumeDb() != 0.0f; }
+  bool hasAmplitudeEdits(const Note& note)
+  {
+    return note.getVolumeDb() != 0.0f || note.getSibilantBalance() != 0.0f;
+  }
   bool hasTimingEdits(const Note& note)
   {
     return note.getStartFrame() != note.getSrcStartFrame() ||
@@ -207,6 +216,7 @@ namespace
         auto state = pitch ? NoteEditState::defaultsFor(*note) : before.back();
         state.formantShift = formant ? 0.0f : before.back().formantShift;
         state.volumeDb = amplitude ? 0.0f : before.back().volumeDb;
+        state.sibilantBalance = amplitude ? 0.0f : before.back().sibilantBalance;
         after.push_back(std::move(state));
       }
     }
@@ -283,7 +293,18 @@ PianoRollComponent::PianoRollComponent()
   gridRenderer->setCoordinateMapper(coordMapper.get());
   timelineRenderer->setCoordinateMapper(coordMapper.get());
   waveformBackgroundRenderer->setCoordinateMapper(coordMapper.get());
-  waveformBackgroundRenderer->setPitchToolController(pitchToolController.get());
+  // The background waveform shows a gain edit while it is dragged: a breath
+  // note's level, or a gain handle.
+  waveformBackgroundRenderer->gainPreview =
+      [this]() -> const VisualWaveformEnvelope::GainCurve *
+  {
+    if (!project)
+      return nullptr;
+    if (breathDragging)
+      return breathGainPreview();
+    return pitchToolController ? pitchToolController->getGainPreview(*project)
+                               : nullptr;
+  };
   // Lets the waveform renderer request a full-quality rebuild once a zoom settles.
   waveformBackgroundRenderer->onRepaintRequested = [this] { repaint(); };
   noteRenderer->setCoordinateMapper(coordMapper.get());
@@ -564,6 +585,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     }
 
     drawGameChunksDebugOverlay(g);
+    drawBreathSibilance(g);
     drawNotes(g, NoteRenderPass::Body);
     drawNotes(g, NoteRenderPass::HoverShadow);
     drawNotes(g, NoteRenderPass::HoveredBody);
@@ -1184,6 +1206,177 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
   g.fillRect(startX, 0.0f, endX - startX, height);
 }
 
+void PianoRollComponent::drawBreathSibilance(juce::Graphics &g)
+{
+  if (!project || !coordMapper || pixelsPerSecond <= 0.0f)
+    return;
+
+  const double visibleStartSeconds = scrollX / pixelsPerSecond;
+  const double visibleEndSeconds = (scrollX + getWidth()) / pixelsPerSecond;
+  BreathSibilanceRenderer::BreathView view;
+  view.noteColour = [this](const Note &note)
+  { return noteRenderer ? noteRenderer->bodyColour(note) : juce::Colours::white; };
+  // The breath under the pointer is highlighted, and the one being dragged
+  // stays so while the pointer leaves it.
+  view.hovered = breathDragging ? breathDragGrabbed
+                 : editMode == EditMode::Select ? hoveredBreath
+                                                : -1;
+  if (breathDragging)
+  {
+    view.draggedDb = [this](int key) -> std::optional<float>
+    {
+      for (const auto &item : breathDragItems)
+        if (item.key == key)
+          return item.db;
+      return std::nullopt;
+    };
+    view.labelled = breathDragGrabbed;
+  }
+  BreathSibilanceRenderer::drawOutsideNotes(g, *project, *coordMapper,
+                                            visibleStartSeconds,
+                                            visibleEndSeconds, view);
+}
+
+int PianoRollComponent::findBreathAt(float x, float y) const
+{
+  if (!project || !coordMapper || editMode != EditMode::Select)
+    return -1;
+  return BreathSibilanceRenderer::breathAt(*project, *coordMapper, x, y);
+}
+
+void PianoRollComponent::beginBreathDrag(int key, float worldY)
+{
+  breathDragItems.clear();
+  breathDragging = false;
+  breathDragGrabbed = -1;
+  if (!project || key < 0)
+    return;
+  const auto placements = breathnotes::place(*project);
+  const auto *placement = breathnotes::find(placements, key);
+  if (placement == nullptr)
+    return;
+  BreathDragItem item;
+  item.key = key;
+  item.sourceFirst = std::max(
+      0, static_cast<int>(std::floor(placement->left - placement->shift + 0.5f)));
+  item.sourceLast =
+      static_cast<int>(std::floor(placement->right - placement->shift + 0.5f));
+  item.firstSample = static_cast<int>(std::lround(placement->left * HOP_SIZE));
+  item.lastSample = static_cast<int>(std::lround(placement->right * HOP_SIZE));
+  item.startDb = item.db =
+      breathnotes::gainDb(project->getAudioData(), *placement);
+  breathDragItems.push_back(item);
+  breathDragging = true;
+  breathDragStartY = worldY;
+  breathDragGrabbed = key;
+  breathPreviewValid = false;
+  repaint();
+}
+
+const VisualWaveformEnvelope::GainCurve *
+PianoRollComponent::breathGainPreview() const
+{
+  if (!project || !breathDragging || breathDragItems.empty())
+    return nullptr;
+  if (!breathPreviewValid)
+  {
+    breathPreviewValid = true;
+    breathPreview = {};
+    const auto &item = breathDragItems.front();
+    const auto &audioData = project->getAudioData();
+    if (item.db != item.startDb)
+    {
+      // The level is stored only when the drag ends: the gain from the
+      // stored level to the dragged one, smoothed as the edit will apply it.
+      auto [start, gains] = projectgain::changeRatioAround(
+          audioData, projectgain::regions(*project),
+          projectgain::regions(*project, {}, {item.key, item.db}),
+          item.firstSample, item.lastSample);
+      breathPreview.startSample = start;
+      breathPreview.curveRate = SAMPLE_RATE;
+      breathPreview.waveformRate = audioData.sampleRate;
+      breathPreview.gains = std::move(gains);
+    }
+  }
+  return breathPreview.gains.empty() ? nullptr : &breathPreview;
+}
+
+void PianoRollComponent::dragBreaths(float worldY)
+{
+  if (!breathDragging)
+    return;
+  // Ten pixels per dB, as the amplitude handle.
+  const float deltaDb = -(worldY - breathDragStartY) / 10.0f;
+  bool changed = false;
+  for (auto &item : breathDragItems)
+  {
+    const float db = juce::jlimit(
+        -60.0f, 24.0f, std::round((item.startDb + deltaDb) * 10.0f) / 10.0f);
+    changed = changed || db != item.db;
+    item.db = db;
+  }
+  if (!changed)
+    return;
+  // The background waveform follows the level as it is dragged.
+  breathPreviewValid = false;
+  invalidateWaveformCache();
+  repaint();
+}
+
+void PianoRollComponent::releaseBreaths()
+{
+  if (!breathDragging)
+    return;
+  std::vector<gainedit::BreathChange> changes;
+  for (const auto &item : breathDragItems)
+    if (item.db != item.startDb)
+      changes.push_back({item.sourceFirst, item.sourceLast, item.firstSample,
+                         item.lastSample, item.startDb, item.db});
+  breathDragging = false;
+  breathDragGrabbed = -1;
+  breathDragItems.clear();
+  if (project && !changes.empty())
+  {
+    auto action = gainedit::breathGains(
+        *project, std::move(changes),
+        pitchToolController ? pitchToolController->onAmplitudeEdited
+                            : std::function<void()>{},
+        "Change Breath Level");
+    action->redo();
+    if (undoManager)
+      undoManager->addAction(std::move(action));
+  }
+  repaint();
+}
+
+void PianoRollComponent::resetBreathLevel(int key)
+{
+  if (!project)
+    return;
+  const auto placements = breathnotes::place(*project);
+  const auto *placement = breathnotes::find(placements, key);
+  if (placement == nullptr)
+    return;
+  const float db = breathnotes::gainDb(project->getAudioData(), *placement);
+  if (db == 0.0f)
+    return;
+  gainedit::BreathChange change{
+      std::max(0, static_cast<int>(
+                      std::floor(placement->left - placement->shift + 0.5f))),
+      static_cast<int>(std::floor(placement->right - placement->shift + 0.5f)),
+      static_cast<int>(std::lround(placement->left * HOP_SIZE)),
+      static_cast<int>(std::lround(placement->right * HOP_SIZE)), db, 0.0f};
+  auto action = gainedit::breathGains(
+      *project, {change},
+      pitchToolController ? pitchToolController->onAmplitudeEdited
+                          : std::function<void()>{},
+      "Reset Breath Level");
+  action->redo();
+  if (undoManager)
+    undoManager->addAction(std::move(action));
+  repaint();
+}
+
 void PianoRollComponent::drawGameChunksDebugOverlay(juce::Graphics &g)
 {
   if (!showSegmentsDebug || !project)
@@ -1523,6 +1716,12 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
     params.showDeltaPitch = true;
     params.pitchCurveAlpha = 1.0f;
     params.midiCurveOverride = &pitchDrawingHandler_->getPreviewMidiCurve();
+    // Keep the line being placed whole: within the drawn stretch,
+    // breath/sibilance frames are dashed now and left out once the drawing
+    // is applied. The rest of the curve leaves them out as usual.
+    const auto drawnFrames = pitchDrawingHandler_->getDrawnFrameRange();
+    params.dashNoiseFirstFrame = drawnFrames.first;
+    params.dashNoiseLastFrame = drawnFrames.second;
   }
   pitchCurveRenderer->draw(g, params);
 }
@@ -2280,6 +2479,19 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (editMode != EditMode::Split)
     setHoveredNote(editMode == EditMode::PitchDrawing ? nullptr : noteUnderMouse);
 
+  // A breath note under the pointer, where no note or note control is.
+  {
+    const int breath =
+        !noteUnderMouse && e.y >= headerHeight && e.x >= pianoKeysWidth
+            ? findBreathAt(adjustedX, adjustedY)
+            : -1;
+    if (breath != hoveredBreath)
+    {
+      hoveredBreath = breath;
+      repaint();
+    }
+  }
+
   // Loop timeline cursor handling (always active)
   loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
 
@@ -2327,7 +2539,9 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   }
   else if (editMode == EditMode::Select)
   {
-    setMouseCursor(juce::MouseCursor::NormalCursor);
+    // A breath note's level is dragged up and down.
+    setMouseCursor(hoveredBreath >= 0 ? juce::MouseCursor::UpDownResizeCursor
+                                      : juce::MouseCursor::NormalCursor);
   }
   else if (editMode == EditMode::Split)
   {
@@ -2432,6 +2646,7 @@ juce::String PianoRollComponent::getTooltip()
     case PitchToolHandles::HandleType::TiltLeft: return TR("handle.tilt_left");
     case PitchToolHandles::HandleType::Vibrato: return TR("handle.vibrato");
     case PitchToolHandles::HandleType::PitchDrift: return TR("handle.pitch_drift");
+    case PitchToolHandles::HandleType::SibilantBalance: return TR("handle.sibilant_balance");
     case PitchToolHandles::HandleType::Amplitude: return TR("handle.amplitude");
     case PitchToolHandles::HandleType::Formant: return TR("handle.formant");
     case PitchToolHandles::HandleType::TiltRight: return TR("handle.tilt_right");
@@ -2489,6 +2704,24 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   if (editMode == EditMode::PitchDrawing && pitchDrawingHandler_ &&
       pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
+
+  // The sibilant balance handle and breath notes have double-click actions
+  // of their own: mute or restore the sibilants (as in Melodyne), and reset
+  // a breath's level.
+  if (editMode == EditMode::Select && currentHandler_)
+  {
+    const int handle =
+        pitchToolHandles ? pitchToolHandles->hitTest(adjustedX, adjustedY) : -1;
+    const bool sibilantHandle =
+        handle >= 0 && pitchToolHandles->getHandle(handle).type ==
+                           PitchToolHandles::HandleType::SibilantBalance;
+    if (sibilantHandle || (!findNoteAt(adjustedX, adjustedY) &&
+                           findBreathAt(adjustedX, adjustedY) >= 0))
+    {
+      currentHandler_->mouseDoubleClick(e, adjustedX, adjustedY);
+      return;
+    }
+  }
 
   // Keep note-specific double-click interactions with their edit handlers.
   // Everywhere else on the canvas, a double-click controls transport at the
@@ -2708,6 +2941,10 @@ void PianoRollComponent::setProject(Project *proj)
   liveRecordingSampleRate = 0.0;
   project = proj;
   hoveredNote = nullptr;
+  hoveredBreath = -1;
+  breathDragging = false;
+  breathDragGrabbed = -1;
+  breathDragItems.clear();
   setPreviewPlaybackState(false, 0, 0);
   selectedScaleMode =
       project != nullptr ? project->getScaleMode() : ScaleMode::Chromatic;
@@ -3635,8 +3872,10 @@ PianoRollComponent::getNoteHoverShadowBounds(const Note &note) const
         std::max(2, std::min(512, static_cast<int>(std::ceil(w)) + 1));
     const auto envelope = VisualWaveformEnvelope::build(
         samples, totalSamples, startSample, endSample, pointCount,
-        renderedWidth, audioData.sampleRate, pixelsPerSecond, true,
-        pitchToolController ? pitchToolController->getAmplitudePreviewGain(note) : 1.0f);
+        renderedWidth, audioData.sampleRate, pixelsPerSecond, true, 1.0f, {},
+        pitchToolController && project
+            ? pitchToolController->getGainPreview(*project)
+            : nullptr);
     const float maxSample =
         envelope.empty()
             ? 0.0f
@@ -3802,12 +4041,17 @@ void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
   const auto targets = getResetTargetNotes(note);
   if (mode == NoteRestoreMode::Amplitude)
   {
-    std::vector<float> before, after(targets.size(), 0.0f);
-    for (const auto* target : targets) before.push_back(target->getVolumeDb());
-    if (before == after) return;
-    applyRestoreAction(std::make_unique<AmplitudeAction>(
-        *project, targets, before, after, pitchToolController->onAmplitudeEdited,
-        "Restore Amplitude"));
+    // Volume and sibilant balance are both level edits.
+    std::vector<float> volumes, balances, zeros(targets.size(), 0.0f);
+    for (const auto* target : targets)
+    {
+      volumes.push_back(target->getVolumeDb());
+      balances.push_back(target->getSibilantBalance());
+    }
+    if (volumes == zeros && balances == zeros) return;
+    applyRestoreAction(gainedit::noteGains(
+        *project, targets, volumes, zeros, balances, zeros,
+        pitchToolController->onAmplitudeEdited, "Restore Amplitude"));
     return;
   }
 

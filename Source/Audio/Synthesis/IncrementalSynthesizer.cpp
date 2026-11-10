@@ -1,5 +1,9 @@
 #include "IncrementalSynthesizer.h"
+#include "BreathSibilanceProtection.h"
 #include "FormantShifter.h"
+#include "../BreathSibilanceAnalysis.h"
+#include "../NoteTiming.h"
+#include "../ProjectGain.h"
 #include "OriginalWaveformRestore.h"
 #include "../../Utils/NoteGainCurve.h"
 #include "../../Utils/AppLogger.h"
@@ -123,26 +127,21 @@ std::vector<float> interpolateMelFrame(
   return frame;
 }
 
+// A retimed note's frames read the mel through its time map
+// (NoteTiming.h): the vowel is stretched, consonants are copied frame for
+// frame, so an "s" or a "t" keeps its recorded length.
 void retimeMelInterval(const std::vector<std::vector<float>> &sourceMel,
-                       int sourceStart, int sourceEnd, int destinationStart,
+                       const notetiming::TimeMap &map, int destinationStart,
                        int destinationEnd, int rangeStart, int rangeEnd,
                        std::vector<std::vector<float>> &melRange) {
-  const int sourceLength = sourceEnd - sourceStart;
-  const int destinationLength = destinationEnd - destinationStart;
-  if (sourceLength <= 0 || destinationLength <= 0)
+  if (destinationEnd <= destinationStart)
     return;
 
   const int overlapStart = std::max(rangeStart, destinationStart);
   const int overlapEnd = std::min(rangeEnd, destinationEnd);
-  for (int frame = overlapStart; frame < overlapEnd; ++frame) {
-    const double normalized =
-        (static_cast<double>(frame - destinationStart) + 0.5) /
-        static_cast<double>(destinationLength);
-    const double sourceFrame = static_cast<double>(sourceStart) +
-                               normalized * sourceLength - 0.5;
+  for (int frame = overlapStart; frame < overlapEnd; ++frame)
     melRange[static_cast<size_t>(frame - rangeStart)] =
-        interpolateMelFrame(sourceMel, sourceFrame);
-  }
+        interpolateMelFrame(sourceMel, map.sourceFrameAt(frame));
 }
 
 void moveMelInterval(const std::vector<std::vector<float>> &sourceMel,
@@ -170,9 +169,11 @@ void applyNoteTimingToMel(const Project &project, int rangeStart,
     for (const auto &span : getPreservedTimingSpans(project, note))
       moveMelInterval(sourceMel, span, rangeStart, rangeEnd, melRange);
 
-    retimeMelInterval(sourceMel, note.getSrcStartFrame(),
-                      note.getSrcEndFrame(), note.getStartFrame(),
-                      note.getEndFrame(), rangeStart, rangeEnd, melRange);
+    if (note.getSrcDurationFrames() > 0)
+      retimeMelInterval(sourceMel,
+                        notetiming::forNote(project.getAudioData(), note),
+                        note.getStartFrame(), note.getEndFrame(), rangeStart,
+                        rangeEnd, melRange);
   }
 }
 
@@ -186,24 +187,18 @@ void moveSourceFrameInterval(const PreservedTimingSpan &span, int rangeStart,
         static_cast<double>(span.sourceStart + frame - span.destinationStart);
 }
 
-void retimeSourceFrameInterval(int sourceStart, int sourceEnd,
+void retimeSourceFrameInterval(const notetiming::TimeMap &map,
                                int destinationStart, int destinationEnd,
                                int rangeStart, int rangeEnd,
                                std::vector<double> &sourceFrameMap) {
-  const int sourceLength = sourceEnd - sourceStart;
-  const int destinationLength = destinationEnd - destinationStart;
-  if (sourceLength <= 0 || destinationLength <= 0)
+  if (destinationEnd <= destinationStart)
     return;
 
   const int overlapStart = std::max(rangeStart, destinationStart);
   const int overlapEnd = std::min(rangeEnd, destinationEnd);
-  for (int frame = overlapStart; frame < overlapEnd; ++frame) {
-    const double normalized =
-        (static_cast<double>(frame - destinationStart) + 0.5) /
-        static_cast<double>(destinationLength);
+  for (int frame = overlapStart; frame < overlapEnd; ++frame)
     sourceFrameMap[static_cast<size_t>(frame - rangeStart)] =
-        static_cast<double>(sourceStart) + normalized * sourceLength - 0.5;
-  }
+        map.sourceFrameAt(frame);
 }
 
 // The phase-vocoder counterpart of applyNoteTimingToMel(): the vocoder path
@@ -220,9 +215,11 @@ void applyNoteTimingToSourceFrames(const Project &project, int rangeStart,
     for (const auto &span : getPreservedTimingSpans(project, note))
       moveSourceFrameInterval(span, rangeStart, rangeEnd, sourceFrameMap);
 
-    retimeSourceFrameInterval(note.getSrcStartFrame(), note.getSrcEndFrame(),
-                              note.getStartFrame(), note.getEndFrame(),
-                              rangeStart, rangeEnd, sourceFrameMap);
+    if (note.getSrcDurationFrames() > 0)
+      retimeSourceFrameInterval(
+          notetiming::forNote(project.getAudioData(), note),
+          note.getStartFrame(), note.getEndFrame(), rangeStart, rangeEnd,
+          sourceFrameMap);
   }
 }
 
@@ -630,7 +627,8 @@ IncrementalSynthesizer::computeSynthesisRange(int dirtyStart, int dirtyEnd) {
 }
 
 // ---------------------------------------------------------------------------
-// generateBlendMask: per-sample blend factor from voicedMask.
+// generateBlendMask: per-sample blend factor from voicedMask and the
+// breath/sibilance labels.
 // 1.0 = synthesized, 0.0 = original, smooth ramps at transitions.
 // ---------------------------------------------------------------------------
 std::vector<float>
@@ -705,6 +703,12 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
       mask[s] = fromVal + (toVal - fromVal) * t;
     }
   }
+
+  // Step 4: detected breaths and sibilants keep the original recording at
+  // any length (see BreathSibilanceProtection.h for why and how).
+  breathsibilance::protectNoiseInBlendMask(
+      mask, project->getAudioData().breathSibilance, startFrame, numFrames,
+      hopSize);
 
   return mask;
 }
@@ -835,6 +839,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       onComplete(false);
     return;
   }
+
+  // Breath/sibilance labels are not saved with a project. Every load path
+  // rebuilds them; this catches any path that did not, before the blend
+  // mask reads them.
+  breathsibilance::ensure(audioData);
 
   // Generate blend mask before async call (voicedMask is stable here).
   // Both engines share the analysis frame grid; the phase vocoder just may
@@ -971,6 +980,23 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 originalSegment.begin());
   }
 
+  // A retimed note is synthesized whole (above), except its breaths and
+  // sibilants: they keep their recorded length when the note is stretched,
+  // so they can play the recording, copied from where it was recorded.
+  if (origWaveform.getNumChannels() > 0 && !audioData.breathSibilance.empty()) {
+    for (const auto &note : project->getNotes()) {
+      if (note.isRest() || !hasTimingEdit(note) ||
+          note.getSrcDurationFrames() <= 0 ||
+          note.getEndFrame() <= startFrame || note.getStartFrame() >= endFrame)
+        continue;
+      breathsibilance::protectMovedNoiseInBlend(
+          blendMask, originalSegment, origWaveform.getReadPointer(0),
+          totalOrigSamples, audioData.breathSibilance,
+          notetiming::forNote(audioData, note), note.getStartFrame(),
+          note.getEndFrame(), startFrame, endFrame - startFrame, hopSize);
+    }
+  }
+
   // Preserve the audio attached outside a region's first/last pitched note as
   // immutable waveform patches. They are captured before the async render so
   // repeated edits and undo do not accumulate synthesis or splice artifacts.
@@ -1085,6 +1111,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         patch.destinationStartSample = destinationStartSample;
         patch.samples.assign(origPtr + sourceStartSample,
                              origPtr + sourceEndSample);
+        // A breath in the moved lead-in or tail keeps its level, as does a
+        // stray sibilant the gain of its note.
+        {
+          const auto regions = projectgain::outsideNoteRegions(*project);
+          if (!regions.empty()) {
+            const auto gain = NoteGainCurve::build(
+                regions, destinationStartSample, sampleCount,
+                totalOrigSamples, hopSize);
+            for (size_t i = 0; i < patch.samples.size() && i < gain.size(); ++i)
+              patch.samples[i] *= gain[i];
+          }
+        }
         audioMovePatches.push_back(std::move(patch));
       }
     }
@@ -1524,15 +1562,23 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 b * synth + (1.0f - b) * orig;
           }
 
-          // Use the same gain envelope as direct amplitude edits.
-          std::vector<NoteGainCurve::Region> gainRegions;
-          for (const auto& note : capturedProject->getNotes())
-            if (!note.isRest())
-              gainRegions.push_back({note.getStartFrame() * hopSize,
-                                     note.getEndFrame() * hopSize, note.getVolumeDb()});
+          // Use the same gain envelope as direct gain edits (GainEditAction):
+          // note volumes, sibilant balance and breath levels.
+          const auto gainRegions = projectgain::regions(*capturedProject);
           const auto sampleGain = NoteGainCurve::build(
               gainRegions, startSample, samplesToWrite,
               audioData.waveform.getNumSamples(), hopSize);
+          // Gains outside the notes alone (breath levels, stray sibilants):
+          // a restore of pristine audio around a neutral note must keep them.
+          const auto breathRegions =
+              projectgain::outsideNoteRegions(*capturedProject);
+          const auto breathGain =
+              breathRegions.empty()
+                  ? std::vector<float>{}
+                  : NoteGainCurve::build(breathRegions, startSample,
+                                         samplesToWrite,
+                                         audioData.waveform.getNumSamples(),
+                                         hopSize);
 
           for (int i = 0; i < samplesToWrite; ++i) {
             targetSegment[static_cast<size_t>(i)] *=
@@ -1662,8 +1708,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
               const float blend = std::min(leftBlend, rightBlend);
               const auto index = static_cast<size_t>(sample);
-              targetSegment[index] +=
-                  blend * (originalSegment[index] - targetSegment[index]);
+              const float restored =
+                  breathGain.empty() ? originalSegment[index]
+                                     : originalSegment[index] * breathGain[index];
+              targetSegment[index] += blend * (restored - targetSegment[index]);
             }
           }
 
@@ -1790,6 +1838,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (!hasGlobalFormant && !resetSpans.empty() && originalSamples > 0 &&
                 original.getNumChannels() > 0) {
               std::vector<OriginalWaveformRestore::Range> timingProtectedRanges;
+              // A breath with its level changed is not pristine either; its
+              // gain curve is smoothed 128 samples past its ends.
+              for (const auto &region : breathRegions)
+                timingProtectedRanges.push_back({region.start - 128,
+                                                 region.end + 128});
               for (const auto &patch : audioMovePatches) {
                 // Timing clear fades extend 128 samples outside the gap.
                 if (patch.clearStartSample >= 0 &&

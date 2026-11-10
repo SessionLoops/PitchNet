@@ -3,10 +3,10 @@
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
+#include "VisualWaveformEnvelope.h"
 #include "../RegionPreview.h"
+#include <functional>
 #include <optional>
-
-class PitchToolController;
 
 /**
  * Draws the time-domain waveform behind the piano roll grid, with an internal
@@ -26,7 +26,10 @@ public:
   // after a zoom has settled and the cache should be rebuilt at full quality.
   std::function<void()> onRepaintRequested;
 
-  void setPitchToolController(PitchToolController* controller) { pitchToolController = controller; }
+  // While a gain edit is being dragged - the amplitude or sibilant balance
+  // handle, a breath note's level - the gain it will apply to the project's
+  // rendered audio, per sample, for the waveform to show; null otherwise.
+  std::function<const VisualWaveformEnvelope::GainCurve *()> gainPreview;
   void setCoordinateMapper(CoordinateMapper *mapper) { coordMapper = mapper; }
   void setProject(Project *proj)
   {
@@ -78,7 +81,6 @@ private:
   MainViewRegionPreviewList regionPreviews;
   // Track mode: only this span of the project (project seconds) is drawn.
   std::optional<std::pair<double, double>> projectDrawRange;
-  PitchToolController* pitchToolController = nullptr;
   bool cachedAmplitudePreview = false;
 
   juce::Image waveformCache;

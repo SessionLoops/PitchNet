@@ -3,6 +3,8 @@
 #include "InteractionHandler.h"
 #include "../../../Utils/TransformParams.h"
 
+#include <algorithm>
+#include <utility>
 #include <vector>
 
 class PitchDrawingHandler final : public InteractionHandler
@@ -31,6 +33,17 @@ public:
   bool removeAnchorAt(float worldX, float worldY);
   const std::vector<float>& getOriginalMidiCurve() const { return originalMidiCurve; }
   const std::vector<float>& getPreviewMidiCurve() const { return previewMidiCurve; }
+  // Timeline frames the preview replaces, first to last anchor inclusive;
+  // {0, -1} (empty) with no anchors.
+  std::pair<int, int> getDrawnFrameRange() const
+  {
+    if (anchors.empty())
+      return {0, -1};
+    const auto [first, last] = std::minmax_element(
+        anchors.begin(), anchors.end(),
+        [](const Anchor& a, const Anchor& b) { return a.frame < b.frame; });
+    return {first->frame, last->frame};
+  }
   void clearHover();
   bool apply();
 

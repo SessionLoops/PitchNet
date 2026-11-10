@@ -66,6 +66,12 @@ public:
 
   Note *findNoteAt(float x, float y);
   std::vector<Note *> getSelectedNotes() const;
+  int findBreathAt(float x, float y) const;
+  void beginBreathDrag(int key, float worldY);
+  void dragBreaths(float worldY);
+  void releaseBreaths();
+  bool isDraggingBreaths() const;
+  void resetBreathLevel(int key);
   void updatePitchToolHandlesFromSelection();
   void invalidateWaveformCache();
   void invalidateBasePitchCache();

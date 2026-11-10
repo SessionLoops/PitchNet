@@ -116,6 +116,7 @@
   "handle.amplitude": "진폭",
   "handle.formant": "포먼트 시프트",
   "handle.pitch_drift": "피치 드리프트",
+  "handle.sibilant_balance": "치찰음 밸런스",
   "handle.tilt_left": "왼쪽 기울기",
   "handle.tilt_right": "오른쪽 기울기",
   "handle.vibrato": "피치 모듈레이션",

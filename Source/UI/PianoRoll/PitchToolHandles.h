@@ -15,6 +15,7 @@ public:
     TiltRight,
     Vibrato,
     PitchDrift,
+    SibilantBalance,
     Formant,
     Amplitude,
     SmoothLeft,
@@ -101,6 +102,7 @@ private:
   juce::Image driftIcon;
   juce::Image formantIcon;
   juce::Image amplitudeIcon;
+  juce::Image sibilantIcon;
   juce::Image rightTiltIcon;
 
   void addHandle(HandleType type, float worldX, float worldY, Note* note = nullptr);

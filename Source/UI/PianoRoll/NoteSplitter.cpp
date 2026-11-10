@@ -1,4 +1,5 @@
 #include "NoteSplitter.h"
+#include "../../Audio/NoteTiming.h"
 #include "../../Utils/NoteAmplitude.h"
 #include "../../Utils/Constants.h"
 #include <algorithm>
@@ -104,12 +105,12 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setEndFrame(endFrame);
     const int srcStartFrame = note->getSrcStartFrame();
     const int srcEndFrame = note->getSrcEndFrame();
-    const double splitRatio = static_cast<double>(splitFrame - startFrame) /
-                              static_cast<double>(endFrame - startFrame);
     const int sourceDuration = srcEndFrame - srcStartFrame;
-    const int sourceSplitCandidate =
-        srcStartFrame + static_cast<int>(
-                            std::lround(splitRatio * sourceDuration));
+    // The recorded frame the note plays at the split, through its time map:
+    // in a stretched note, a split in the held vowel cuts the vowel.
+    const auto& splitAudio = project->getAudioData();
+    const int sourceSplitCandidate = static_cast<int>(std::lround(
+        notetiming::forNote(splitAudio, *note).sourceAt(splitFrame)));
     const int srcSplitFrame = sourceDuration >= 2
                                   ? std::clamp(sourceSplitCandidate,
                                                srcStartFrame + 1,
@@ -125,6 +126,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setLyric(note->getLyric());
     secondNote.setPhoneme(note->getPhoneme());
     secondNote.setVolumeDb(note->getVolumeDb());
+    secondNote.setSibilantBalance(note->getSibilantBalance());
     secondNote.setSelected(note->isSelected());
     secondNote.setTiltLeft(note->getTiltLeft());
     secondNote.setTiltRight(note->getTiltRight());
@@ -138,9 +140,21 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setPitchOffset(0.0f);
 
     // Split originalDeltaPitch if available.
+    // Each curve stored with the note divides where the recorded frame at the
+    // split was when the curve was written: at the split for a curve written
+    // at the note's current length, at the recorded frame for the analysed
+    // contour of a stretched note.
+    const auto curveSplit = [&](size_t length) {
+        if (static_cast<int>(length) == endFrame - startFrame)
+            return splitFrame - startFrame;
+        return notetiming::curveIndexAtSource(splitAudio, *note,
+                                              static_cast<int>(length),
+                                              srcSplitFrame);
+    };
+
     if (note->hasOriginalDeltaPitch()) {
         const auto& origDelta = note->getOriginalDeltaPitch();
-        int splitOffset = splitFrame - startFrame;
+        int splitOffset = curveSplit(origDelta.size());
         splitOffset = std::max(0, std::min(splitOffset, static_cast<int>(origDelta.size())));
         std::vector<float> leftDelta(origDelta.begin(), origDelta.begin() + splitOffset);
         std::vector<float> rightDelta(origDelta.begin() + splitOffset, origDelta.end());
@@ -177,7 +191,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     // Keep per-note pitch data aligned with the new frame ranges.
     if (note->hasDeltaPitch()) {
         const auto& delta = note->getDeltaPitch();
-        int splitOffset = splitFrame - startFrame;
+        int splitOffset = curveSplit(delta.size());
         splitOffset = std::clamp(splitOffset, 0, static_cast<int>(delta.size()));
         std::vector<float> leftDelta(delta.begin(), delta.begin() + splitOffset);
         std::vector<float> rightDelta(delta.begin() + splitOffset, delta.end());
@@ -187,7 +201,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     if (note->hasBakedDeltaPitch()) {
         const auto& delta = note->getBakedDeltaPitch();
-        int splitOffset = splitFrame - startFrame;
+        int splitOffset = curveSplit(delta.size());
         splitOffset = std::clamp(splitOffset, 0, static_cast<int>(delta.size()));
         std::vector<float> leftDelta(delta.begin(), delta.begin() + splitOffset);
         std::vector<float> rightDelta(delta.begin() + splitOffset, delta.end());
@@ -197,7 +211,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     const auto& f0Values = note->getF0Values();
     if (!f0Values.empty()) {
-        int splitOffset = splitFrame - startFrame;
+        int splitOffset = curveSplit(f0Values.size());
         splitOffset = std::clamp(splitOffset, 0, static_cast<int>(f0Values.size()));
         std::vector<float> leftF0(f0Values.begin(), f0Values.begin() + splitOffset);
         std::vector<float> rightF0(f0Values.begin() + splitOffset, f0Values.end());

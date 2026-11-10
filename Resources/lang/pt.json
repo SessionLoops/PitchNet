@@ -118,6 +118,7 @@
   "handle.amplitude": "Amplitude",
   "handle.formant": "Deslocamento de formante",
   "handle.pitch_drift": "Deriva de afinação",
+  "handle.sibilant_balance": "Equilíbrio de sibilantes",
   "handle.tilt_left": "Inclinação esquerda",
   "handle.tilt_right": "Inclinação direita",
   "handle.vibrato": "Modulação de afinação",

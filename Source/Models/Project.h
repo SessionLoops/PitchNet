@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "Note.h"
+#include <cstdint>
 #include <vector>
 #include <memory>
 #include <utility>
@@ -52,6 +53,14 @@ struct AudioData
     std::vector<float> deltaPitch;                       // [T] delta pitch in MIDI (dense)
     std::vector<bool> voicedMask;                        // [T] uv mask (true = voiced, F0-based)
     std::vector<bool> vadMask;                           // [T] energy-based VAD (true = has audio energy, captures consonants)
+    // [T] breathsibilance::Label per frame (0 none, 1 sibilance, 2 breath).
+    // Derived from originalWaveform + voicedMask, so it is not saved with a
+    // project; breathsibilance::ensure() rebuilds it after a load.
+    std::vector<std::uint8_t> breathSibilance;
+    // [T or shorter] gain of the breath notes in dB per source frame (0, or
+    // past the end, = unchanged). A user edit, so it is saved with a project
+    // (as runs); see breathnotes (BreathNotes.h).
+    std::vector<float> breathGainDb;
     std::vector<std::pair<int, int>> segmentChunkRanges; // [N] GAME slicer chunks in frame range [start, end)
     std::vector<SegmentDebugChunk> segmentDebugChunks;   // raw GAME outputs for debug visualization
 

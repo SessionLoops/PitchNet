@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Project.h"
+#include "../Audio/NoteTiming.h"
 #include "../Utils/Constants.h"
 #include <algorithm>
 
@@ -19,19 +20,30 @@ inline void clipProjectToPlaybackRange(Project &project, double start, double en
       return true;
     if (left == oldStart && right == oldEnd)
       return false;
+    // The recorded frames the note plays at the cuts, through its time map
+    // (a stretched note holds its vowel), and where each curve stored with
+    // the note divides there: at the cut for a curve written at the note's
+    // current length, at the recorded frame otherwise.
+    const auto map = notetiming::forNote(audio, note);
+    const int sourceLeft = static_cast<int>(std::lround(map.sourceAt(left)));
+    const int sourceRight = static_cast<int>(std::lround(map.sourceAt(right)));
     const auto slice = [&](const std::vector<float> &values) {
-      const int a = std::clamp(left - oldStart, 0, static_cast<int>(values.size()));
-      const int b = std::clamp(right - oldStart, a, static_cast<int>(values.size()));
+      const int size = static_cast<int>(values.size());
+      const auto indexAt = [&](int frame, int sourceFrame) {
+        return size == oldEnd - oldStart
+                   ? frame - oldStart
+                   : notetiming::curveIndexAtSource(audio, note, size, sourceFrame);
+      };
+      const int a = std::clamp(indexAt(left, sourceLeft), 0, size);
+      const int b = std::clamp(indexAt(right, sourceRight), a, size);
       return std::vector<float>(values.begin() + a, values.begin() + b);
     };
-    const double scale = static_cast<double>(note.getSrcDurationFrames()) / (oldEnd - oldStart);
-    const int srcStart = note.getSrcStartFrame();
-    note.setSrcStartFrame(srcStart + static_cast<int>(std::lround((left - oldStart) * scale)));
-    note.setSrcEndFrame(srcStart + static_cast<int>(std::lround((right - oldStart) * scale)));
     note.setDeltaPitch(slice(note.getDeltaPitch()));
     note.setOriginalDeltaPitch(slice(note.getOriginalDeltaPitch()));
     note.setBakedDeltaPitch(slice(note.getBakedDeltaPitch()));
     note.setF0Values(slice(note.getF0Values()));
+    note.setSrcStartFrame(sourceLeft);
+    note.setSrcEndFrame(sourceRight);
     note.setStartFrame(left);
     note.setEndFrame(right);
     note.clearTimingPreview();

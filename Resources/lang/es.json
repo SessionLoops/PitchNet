@@ -116,6 +116,7 @@
   "handle.amplitude": "Amplitud",
   "handle.formant": "Cambio de formante",
   "handle.pitch_drift": "Deriva de tono",
+  "handle.sibilant_balance": "Balance de sibilantes",
   "handle.tilt_left": "Pendiente izquierda",
   "handle.tilt_right": "Pendiente derecha",
   "handle.vibrato": "Modulación de tono",

@@ -1,5 +1,6 @@
 #include "../Utils/NoteAmplitude.h"
 #include "ProjectSerializer.h"
+#include "../Audio/BreathSibilanceAnalysis.h"
 #include "../Utils/Constants.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -182,6 +183,30 @@ juce::var ProjectSerializer::toJson(const Project& project,
     }
     obj->setProperty("playbackRegionRanges", regionRanges);
 
+    // Breath note gains (a user edit), as [start, end, dB] runs of source
+    // frames; the breath labels themselves are rebuilt on load.
+    {
+        juce::Array<juce::var> runs;
+        const auto &gains = project.getAudioData().breathGainDb;
+        for (size_t i = 0; i < gains.size();) {
+            if (gains[i] == 0.0f) {
+                ++i;
+                continue;
+            }
+            size_t j = i + 1;
+            while (j < gains.size() && gains[j] == gains[i])
+                ++j;
+            juce::Array<juce::var> run;
+            run.add(static_cast<int>(i));
+            run.add(static_cast<int>(j));
+            run.add(static_cast<double>(gains[i]));
+            runs.add(run);
+            i = j;
+        }
+        if (!runs.isEmpty())
+            obj->setProperty("breathGains", runs);
+    }
+
     // Global parameters
     obj->setProperty("globalPitchOffset", project.getGlobalPitchOffset());
     obj->setProperty("formantShift", project.getFormantShift());
@@ -307,6 +332,27 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
                     static_cast<double>((*range)[1]));
         }
     }
+    audioData.breathGainDb.clear();
+    if (auto *runs = json.getProperty("breathGains", juce::var()).getArray()) {
+        constexpr int kMaxFrames = 1 << 26;
+        for (const auto &runVar : *runs) {
+            auto *run = runVar.getArray();
+            if (run == nullptr || run->size() < 3)
+                continue;
+            const int start = static_cast<int>((*run)[0]);
+            const int end = static_cast<int>((*run)[1]);
+            // The range a breath note's level can be dragged to.
+            const auto db = juce::jlimit(
+                -60.0f, 24.0f,
+                static_cast<float>(static_cast<double>((*run)[2])));
+            if (start < 0 || end <= start || end > kMaxFrames)
+                continue;
+            if (static_cast<int>(audioData.breathGainDb.size()) < end)
+                audioData.breathGainDb.resize(static_cast<size_t>(end), 0.0f);
+            std::fill(audioData.breathGainDb.begin() + start,
+                      audioData.breathGainDb.begin() + end, db);
+        }
+    }
 
     // Load the stored region key before resolving inheritance.
     project.setUseProjectKey(false);
@@ -417,6 +463,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     auto pitchDataVar = json.getProperty("pitchData", juce::var());
     if (pitchDataVar.isObject()) {
         pitchDataFromJson(audioData, pitchDataVar);
+        // Breath/sibilance labels follow the voicing just replaced.
+        audioData.breathSibilance.clear();
     }
     audioBufferFromJson(audioData.waveform,
                         json.getProperty("waveform", juce::var()));
@@ -509,6 +557,10 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
             note.setOriginalDeltaPitch(std::move(origDelta));
         }
     }
+
+    // Not stored: rebuilt from the pristine audio when the JSON carried it.
+    // A binary archive reads its buffers after this and relabels then.
+    breathsibilance::ensure(audioData);
 
     project.setModified(false);
     return true;
@@ -657,6 +709,7 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         !readBoolVector(in, audioData.voicedMask) ||
         !readBoolVector(in, audioData.vadMask))
         return false;
+    audioData.breathSibilance.clear(); // relabelled from this voicing below
     if (hasMelSpectrogram) {
         if (!readMel(in, audioData.melSpectrogram))
             return false;
@@ -807,6 +860,11 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
                       0.0f);
     }
 
+    // Breath/sibilance labels are derived from the same pristine source and
+    // are not stored in the archive either. Host-backed archives get them
+    // when ARA hydrates the source.
+    breathsibilance::ensure(audioData);
+
     project.setModified(false);
     return true;
 }
@@ -826,6 +884,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
+    if (note.getSibilantBalance() != 0.0f)
+        obj->setProperty("sibilantBalance", note.getSibilantBalance());
     obj->setProperty("sourceAmplitude", note.getSourceAmplitude());
     obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
@@ -898,6 +958,8 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
         json.getProperty("macroPitchCenter", legacyPitchCenter)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
+    note.setSibilantBalance(
+        static_cast<float>(json.getProperty("sibilantBalance", 0.0)));
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));
     note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));

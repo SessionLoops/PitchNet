@@ -5,6 +5,7 @@
 #include "../../../Utils/BasePitchPreview.h"
 #include "../../../Utils/TransformParams.h"
 #include "../../../Undo/PitchToolAction.h"
+#include "../../../Undo/GainEditAction.h"
 
 #include <unordered_set>
 
@@ -127,6 +128,12 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
 
     owner_.repaint();
   }
+  else if (const int breath = owner_.findBreathAt(worldX, worldY); breath >= 0)
+  {
+    // A breath note: drag its level. It is not selected, and the note
+    // selection stays as it is, as for a handle.
+    owner_.beginBreathDrag(breath, worldY);
+  }
   else
   {
     // Clicked on empty area - start box selection
@@ -150,6 +157,13 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   const bool shouldRepaint =
       (now - owner_.lastDragRepaintTime) >=
       PianoRollComponent::minDragRepaintInterval;
+
+  if (owner_.isDraggingBreaths())
+  {
+    juce::ignoreUnused(e);
+    owner_.dragBreaths(worldY);
+    return true;
+  }
 
   // Pitch tool drag
   if (owner_.pitchToolController &&
@@ -369,12 +383,21 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   if (!project)
     return false;
 
+  if (owner_.isDraggingBreaths())
+  {
+    owner_.releaseBreaths();
+    return true;
+  }
+
   // Pitch tool mouseUp
   if (owner_.pitchToolController &&
       owner_.pitchToolController->isDragging())
   {
-    const bool amplitudeEdit = owner_.pitchToolController->getActiveHandleType() ==
-        PitchToolHandles::HandleType::Amplitude;
+    const auto handleType = owner_.pitchToolController->getActiveHandleType();
+    // Gain-only edits change the rendered audio directly: nothing to render.
+    const bool amplitudeEdit =
+        handleType == PitchToolHandles::HandleType::Amplitude ||
+        handleType == PitchToolHandles::HandleType::SibilantBalance;
     owner_.pitchToolController->mouseUp(e, owner_.undoManager,
                                         nullptr);
     owner_.updatePitchToolHandlesFromSelection();
@@ -717,6 +740,59 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
   auto *project = owner_.project;
   if (!project)
     return;
+
+  // Sibilant balance, as in Melodyne: double-click mutes the sibilants
+  // (-100%); double-click again restores the note (0%). It acts on the
+  // handle's note, or the whole selection when that note is in it.
+  if (owner_.pitchToolHandles)
+  {
+    const int hitIndex = owner_.pitchToolHandles->hitTest(worldX, worldY);
+    if (hitIndex >= 0 &&
+        owner_.pitchToolHandles->getHandle(hitIndex).type ==
+            PitchToolHandles::HandleType::SibilantBalance)
+    {
+      Note *handleNote = owner_.pitchToolHandles->getHandle(hitIndex).note;
+      auto targets = project->getSelectedNotes();
+      if (handleNote &&
+          std::find(targets.begin(), targets.end(), handleNote) == targets.end())
+        targets = {handleNote};
+      if (targets.empty())
+        return;
+      const bool allMuted = std::all_of(
+          targets.begin(), targets.end(), [](const Note *note)
+          { return !note || note->getSibilantBalance() <= -1.0f; });
+      std::vector<float> volumes, before, after;
+      for (const auto *note : targets)
+      {
+        volumes.push_back(note ? note->getVolumeDb() : 0.0f);
+        before.push_back(note ? note->getSibilantBalance() : 0.0f);
+        after.push_back(allMuted ? 0.0f : -1.0f);
+      }
+      if (before != after)
+      {
+        auto action = gainedit::noteGains(
+            *project, targets, volumes, volumes, before, after,
+            owner_.pitchToolController
+                ? owner_.pitchToolController->onAmplitudeEdited
+                : std::function<void()>{},
+            "Change Sibilant Balance");
+        action->redo();
+        if (owner_.undoManager)
+          owner_.undoManager->addAction(std::move(action));
+      }
+      owner_.updatePitchToolHandlesFromSelection();
+      owner_.repaint();
+      return;
+    }
+  }
+
+  // A breath note: double-click resets its level.
+  if (!owner_.findNoteAt(worldX, worldY))
+    if (const int breath = owner_.findBreathAt(worldX, worldY); breath >= 0)
+    {
+      owner_.resetBreathLevel(breath);
+      return;
+    }
 
   // Check if double-clicking on a pitch tool handle
   if (owner_.pitchToolHandles &&

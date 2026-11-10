@@ -15,7 +15,7 @@
  * Voiced-Only Blend synthesizer.
  * Resynthesizes dirty regions using the selected engine, then blends:
  *   voiced frames  → synthesized audio
- *   unvoiced frames → original audio (preserves breathing)
+ *   long unvoiced runs, detected breaths and sibilants → original audio
  *
  * Two engines produce that synthesized audio. Vocoder regenerates the region
  * from its mel spectrogram; PsolaSynthesizer transforms the original waveform
@@ -46,8 +46,9 @@ private:
   /// expand to include complete segments + padding frames.
   std::pair<int, int> computeSynthesisRange(int dirtyStart, int dirtyEnd);
 
-  /// Generate per-sample blend mask from voicedMask.
-  /// 1.0 = use synthesized, 0.0 = use original, smooth ramps at transitions.
+  /// Generate per-sample blend mask from voicedMask and the breath/sibilance
+  /// labels. 1.0 = use synthesized, 0.0 = use original, smooth ramps at
+  /// transitions.
   std::vector<float> generateBlendMask(int startFrame, int endFrame,
                                        int hopSize);
 

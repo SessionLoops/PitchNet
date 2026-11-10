@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "../Utils/AudioResampler.h"
+#include "../Audio/BreathSibilanceAnalysis.h"
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
 #include "../Models/ProjectModificationRanges.h"
@@ -424,17 +425,11 @@ void PitchNetAudioProcessor::releaseResources() {
 #if !JucePlugin_PreferredChannelConfigurations
 bool PitchNetAudioProcessor::isBusesLayoutSupported(
     const BusesLayout &layouts) const {
-  const auto in = layouts.getMainInputChannelSet();
-  const auto out = layouts.getMainOutputChannelSet();
-  if (out != juce::AudioChannelSet::mono() &&
-      out != juce::AudioChannelSet::stereo())
+  if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
     return false;
-  if (in == out)
-    return true;
-  // Some ARA hosts (e.g. Cubase/Nuendo 12) give VST3 playback-render
-  // instances an output bus only. Accept a disabled input there, but keep
-  // AU/AAX channel configurations unchanged.
-  return wrapperType == wrapperType_VST3 && in.isDisabled();
+  auto out = layouts.getMainOutputChannelSet();
+  return out == juce::AudioChannelSet::mono() ||
+         out == juce::AudioChannelSet::stereo();
 }
 #endif
 
@@ -1420,6 +1415,22 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
           mergeFloats(dst.deltaPitch, src.deltaPitch);
           mergeBools(dst.voicedMask, src.voicedMask);
           mergeBools(dst.vadMask, src.vadMask);
+          dst.breathSibilance.resize(
+              std::max(dst.breathSibilance.size(),
+                       static_cast<size_t>(frameOffset) +
+                           src.breathSibilance.size()),
+              0);
+          std::copy(src.breathSibilance.begin(), src.breathSibilance.end(),
+                    dst.breathSibilance.begin() + frameOffset);
+          if (!src.breathGainDb.empty()) {
+            dst.breathGainDb.resize(
+                std::max(dst.breathGainDb.size(),
+                         static_cast<size_t>(frameOffset) +
+                             src.breathGainDb.size()),
+                0.0f);
+            std::copy(src.breathGainDb.begin(), src.breathGainDb.end(),
+                      dst.breathGainDb.begin() + frameOffset);
+          }
           dst.melSpectrogram.resize(
               std::max(dst.melSpectrogram.size(),
                        static_cast<size_t>(frameOffset) +
@@ -3384,8 +3395,10 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
   const bool takesEarlyOut = audioData.waveform.getNumSamples() > 0 &&
                              audioData.originalWaveform.getNumSamples() > 0 &&
                              !audioData.melSpectrogram.empty();
-  if (takesEarlyOut)
+  if (takesEarlyOut) {
+    breathsibilance::ensure(audioData);
     return true;
+  }
 
   // Region analysis is stored at PitchNet's working rate, which can differ
   // from the ARA source rate. Recreate the same resampled pristine buffer that
@@ -3459,6 +3472,10 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
       }
     }
   }
+
+  // Breath/sibilance labels are not archived; derive them from the source
+  // just restored, like the mel spectrogram above.
+  breathsibilance::ensure(audioData);
 
   // Untouched regions and processed renders that no longer cover a
   // trimmed/extended region remain source-backed. There is intentionally no

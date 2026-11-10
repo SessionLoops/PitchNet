@@ -8,8 +8,10 @@
 #include "../../Utils/TransformParams.h"
 #include "CoordinateMapper.h"
 #include "PitchToolHandles.h"
+#include "VisualWaveformEnvelope.h"
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 /**
@@ -48,7 +50,19 @@ public:
    * Check if currently dragging a handle.
    */
   bool isDragging() const { return dragging; }
-  float getAmplitudePreviewGain(const Note& note) const;
+  /**
+   * While the amplitude or sibilant balance handle is dragged: the gain the
+   * drag applies to `forProject`'s rendered audio, per sample - exactly what
+   * the edit will apply when the drag ends (projectgain::changeRatio), edges
+   * included. Null when there is nothing to preview.
+   */
+  const VisualWaveformEnvelope::GainCurve* getGainPreview(
+      const Project& forProject) const;
+  bool isDraggingSibilantBalance() const
+  {
+    return dragging &&
+           activeHandleType == PitchToolHandles::HandleType::SibilantBalance;
+  }
   bool isDraggingVibrato() const
   {
     return dragging && activeHandleType == PitchToolHandles::HandleType::Vibrato;
@@ -90,6 +104,9 @@ private:
   std::vector<Note*> affectedNotes;
   std::vector<TransformParams> originalParams;
   juce::Point<float> dragStartPos;
+  // getGainPreview's curve, worked out once per drag step.
+  mutable VisualWaveformEnvelope::GainCurve gainPreview;
+  mutable bool gainPreviewValid = false;
 
   void applyOperation(std::vector<Note*>& notes,
                       PitchToolHandles::HandleType type,

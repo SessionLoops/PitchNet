@@ -108,6 +108,15 @@ public:
     float getVolumeDb() const { return volumeDb; }
     void setVolumeDb(float db) { volumeDb = db; }
 
+    // Sibilant balance, -1..1 (shown as -100%..+100%; 0 = unchanged), like
+    // Melodyne's: below 0 the note's hatched sibilant/breath frames get
+    // quieter, above 0 the rest of the note does. It only ever cuts.
+    float getSibilantBalance() const { return sibilantBalance; }
+    void setSibilantBalance(float balance)
+    {
+        sibilantBalance = juce::jlimit(-1.0f, 1.0f, balance);
+    }
+
     // RMS of pristine source audio; gain edits are applied separately.
     float getSourceAmplitude() const { return sourceAmplitude; }
     void setSourceAmplitude(float rms) { sourceAmplitude = rms; }
@@ -246,6 +255,7 @@ private:
     float formantShift = 0.0f; // Semitones, independent of F0
     float sourceAmplitude = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
+    float sibilantBalance = 0.0f; // -1..1, see getSibilantBalance()
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
     std::vector<float> originalDeltaPitch;  // Pristine curve from analysis (never modified)

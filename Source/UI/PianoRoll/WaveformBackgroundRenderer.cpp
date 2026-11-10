@@ -1,6 +1,5 @@
 #include "WaveformBackgroundRenderer.h"
 #include "VisualWaveformEnvelope.h"
-#include "PitchToolController.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
 
@@ -80,8 +79,10 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
   const int viewRight = viewLeft + viewWidth;
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
 
-  const bool amplitudePreview = pitchToolController && pitchToolController->isDragging() &&
-      pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Amplitude;
+  // A gain drag in progress (a handle, a breath note's level), previewed
+  // below with the gain it will apply - smoothed edges included.
+  const auto *activeGainPreview = gainPreview ? gainPreview() : nullptr;
+  const bool amplitudePreview = activeGainPreview != nullptr;
 
   const bool cacheUsable = waveformCache.isValid() && !cacheDirty &&
                            cachedAmplitudePreview == amplitudePreview &&
@@ -186,21 +187,10 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
                                    samplesPerPixel)));
     const int pointCount = lastPixel - firstPixel;
 
-    std::vector<VisualWaveformEnvelope::GainRegion> gainRegions;
-    if (previewGain && amplitudePreview && project)
-      for (const auto* note : pitchToolController->getAffectedNotes())
-      {
-        if (!note || note->isRest())
-          continue;
-        gainRegions.push_back({
-            static_cast<int>(framesToSeconds(note->getStartFrame()) * sampleRate),
-            static_cast<int>(framesToSeconds(note->getEndFrame()) * sampleRate),
-            pitchToolController->getAmplitudePreviewGain(*note)});
-      }
-
     const auto displayEnvelope = VisualWaveformEnvelope::build(
         samples, numSamples, startSample, endSample, pointCount,
-        static_cast<float>(pointCount), sampleRate, pixelsPerSecond, true, 1.0f, gainRegions);
+        static_cast<float>(pointCount), sampleRate, pixelsPerSecond, true, 1.0f,
+        {}, previewGain ? activeGainPreview : nullptr);
 
     juce::Path waveformPath;
     waveformPath.startNewSubPath(static_cast<float>(firstPixel), centerY);

@@ -13,6 +13,16 @@ struct GainRegion
   float gain;
 };
 
+// A gain per sample: waveform sample s is multiplied by
+// gains[s * curveRate / waveformRate - startSample] where that index exists.
+struct GainCurve
+{
+  int startSample = 0; // in the curve's samples
+  int curveRate = 1;
+  int waveformRate = 1;
+  std::vector<float> gains;
+};
+
 inline float calculateRms(const std::vector<double> &sumSquares,
                           int prefixStartSample, int startSample,
                           int endSample)
@@ -75,7 +85,8 @@ inline std::vector<float> build(const float *samples, int totalSamples,
                                 float pixelsPerSecond,
                                 bool adaptWindowToPixels = true,
                                 float gain = 1.0f,
-                                const std::vector<GainRegion>& gainRegions = {})
+                                const std::vector<GainRegion>& gainRegions = {},
+                                const GainCurve* gainCurve = nullptr)
 {
   std::vector<float> values(static_cast<size_t>(std::max(0, pointCount)), 0.0f);
   if (!samples || totalSamples <= 0 || pointCount <= 0 || endSample <= startSample ||
@@ -104,6 +115,17 @@ inline std::vector<float> build(const float *samples, int totalSamples,
     for (const auto& region : gainRegions)
       if (sample >= region.startSample && sample < region.endSample)
         value *= region.gain;
+    if (gainCurve != nullptr)
+    {
+      const long long position =
+          gainCurve->curveRate == gainCurve->waveformRate
+              ? static_cast<long long>(sample)
+              : static_cast<long long>(sample) * gainCurve->curveRate /
+                    gainCurve->waveformRate;
+      const long long index = position - gainCurve->startSample;
+      if (index >= 0 && index < static_cast<long long>(gainCurve->gains.size()))
+        value *= gainCurve->gains[static_cast<size_t>(index)];
+    }
     const auto localIndex = static_cast<size_t>(sample - prefixStartSample + 1);
     sumSquares[localIndex] = sumSquares[localIndex - 1] + value * value;
   }

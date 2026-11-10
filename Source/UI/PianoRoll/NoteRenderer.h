@@ -62,6 +62,9 @@ public:
   void draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             int componentWidth);
 
+  /** The main colour a note's body is drawn in (its gradient's centre). */
+  juce::Colour bodyColour(const Note &note) const;
+
 private:
   CoordinateMapper *coordMapper = nullptr;
   Project *project = nullptr;

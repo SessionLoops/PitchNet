@@ -1,4 +1,6 @@
 #include "EditorController.h"
+#include "BreathSibilanceAnalysis.h"
+#include "NoteEdges.h"
 #include "../Utils/NoteAmplitude.h"
 #include "../Utils/AudioResampler.h"
 #include "../Utils/SHA256Utils.h"
@@ -1273,6 +1275,11 @@ void EditorController::analyzeAudioImpl(
       }
     }
 
+    // Breath and sibilance frames, from the same audio and voicing. Note
+    // segmentation keeps breaths out of notes and the synthesizer keeps both
+    // as original audio instead of vocoding them.
+    breathsibilance::analyse(audioData, audioData.waveform);
+
     onProgress(0.325, TR("progress.preparing_pitch"));
     audioData.cleanedF0 =
         F0Smoother::removeOutliers(audioData.rawF0, 1.5f);
@@ -1363,6 +1370,8 @@ void EditorController::analyzeAudioAsync(
           projectCopy->getAudioData().voicedMask;
       project->getAudioData().vadMask =
           projectCopy->getAudioData().vadMask;
+      project->getAudioData().breathSibilance =
+          projectCopy->getAudioData().breathSibilance;
       project->getAudioData().originalWaveform.makeCopyOf(
           projectCopy->getAudioData().originalWaveform);
       project->getAudioData().basePitch =
@@ -1614,134 +1623,62 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
       juce::MessageManager::callAsync(onStreamingUpdate);
     }
 
-    // VAD + GAME rest-guided boundary refinement:
-    // expand note heads/tails into energetic consonant regions so note lengths
-    // better cover pre/post-consonants.
-    if (!notes.empty() && !audioData.vadMask.empty())
+    // Note edges around the vowels: a consonant joins the note it leads
+    // into, a word-final one before a pause or breath stays with its note,
+    // and breaths stay out of notes (see NoteEdges.h for the rules).
+    if (!notes.empty() && f0Size > 0)
     {
-      struct RestRange
+      std::sort(notes.begin(), notes.end(),
+                [](const Note &a, const Note &b)
+                { return a.getStartFrame() < b.getStartFrame(); });
+      std::vector<noteedges::Span> spans;
+      spans.reserve(notes.size());
+      for (const auto &note : notes)
+        spans.push_back({note.getStartFrame(), note.getEndFrame()});
+      spans = noteedges::attachConsonants(
+          std::move(spans), audioData.voicedMask, audioData.vadMask,
+          audioData.breathSibilance, f0Size);
+
+      for (size_t i = 0; i < notes.size(); ++i)
       {
-        int start = 0;
-        int end = 0;
-      };
-      std::vector<RestRange> rests;
-      for (const auto &chunk : audioData.segmentDebugChunks)
-      {
-        for (const auto &ev : chunk.events)
-        {
-          if (!ev.isRest)
-            continue;
-          if (ev.endFrame <= ev.startFrame)
-            continue;
-          rests.push_back({ev.startFrame, ev.endFrame});
-        }
-      }
-
-      auto vadRatioInRange = [&](int s, int e) -> float
-      {
-        if (e <= s || audioData.vadMask.empty())
-          return 0.0f;
-        s = std::max(0, s);
-        e = std::min(e, static_cast<int>(audioData.vadMask.size()));
-        if (e <= s)
-          return 0.0f;
-        int voiced = 0;
-        for (int i = s; i < e; ++i)
-        {
-          if (audioData.vadMask[static_cast<size_t>(i)])
-            ++voiced;
-        }
-        return static_cast<float>(voiced) / static_cast<float>(e - s);
-      };
-
-      constexpr int kMaxHeadFrames = 14;       // ~162ms
-      constexpr int kMaxTailFrames = 10;       // ~116ms
-      constexpr int kRestBridgeGap = 4;        // allow tiny gap
-      constexpr int kMaxRestAttach = 18;       // max attached rest length
-      constexpr float kVadAttachRatio = 0.30f; // energetic enough to attach
-
-      const int f0Size = static_cast<int>(audioData.f0.size());
-
-      for (size_t ni = 0; ni < notes.size(); ++ni)
-      {
-        auto &note = notes[ni];
-        int start = note.getStartFrame();
-        int end = note.getEndFrame();
-        if (end <= start)
-          continue;
-
-        int prevEnd = 0;
-        if (ni > 0)
-          prevEnd = notes[ni - 1].getEndFrame();
-        int nextStart = static_cast<int>(audioData.vadMask.size());
-        if (ni + 1 < notes.size())
-          nextStart = notes[ni + 1].getStartFrame();
-
-        // 1) Plain VAD backward/forward expansion.
-        int newStart = start;
-        for (int i = start - 1; i >= std::max(prevEnd, start - kMaxHeadFrames);
-             --i)
-        {
-          if (i >= 0 && i < static_cast<int>(audioData.vadMask.size()) &&
-              audioData.vadMask[static_cast<size_t>(i)])
-            newStart = i;
-          else
-            break;
-        }
-
-        int newEnd = end;
-        for (int i = end; i < std::min(nextStart, end + kMaxTailFrames); ++i)
-        {
-          if (i >= 0 && i < static_cast<int>(audioData.vadMask.size()) &&
-              audioData.vadMask[static_cast<size_t>(i)])
-            newEnd = i + 1;
-          else
-            break;
-        }
-
-        // 2) Rest-guided attach (front/back) gated by VAD ratio.
-        for (const auto &rr : rests)
-        {
-          const int restLen = rr.end - rr.start;
-          if (restLen <= 0 || restLen > kMaxRestAttach)
-            continue;
-
-          // Front rest -> note head
-          if (rr.end <= start && start - rr.end <= kRestBridgeGap)
-          {
-            const int candStart = std::max(prevEnd, rr.start);
-            if (candStart < newStart &&
-                vadRatioInRange(candStart, start) >= kVadAttachRatio)
-            {
-              newStart = std::max(candStart, start - kMaxHeadFrames);
-            }
-          }
-
-          // Back rest -> note tail
-          if (rr.start >= end && rr.start - end <= kRestBridgeGap)
-          {
-            const int candEnd = std::min(nextStart, rr.end);
-            if (candEnd > newEnd &&
-                vadRatioInRange(end, candEnd) >= kVadAttachRatio)
-            {
-              newEnd = std::min(candEnd, end + kMaxTailFrames);
-            }
-          }
-        }
-
-        newStart = std::max(prevEnd, newStart);
-        newEnd = std::max(newStart + 1, std::min(nextStart, newEnd));
-        newStart = std::max(0, std::min(newStart, f0Size - 1));
-        newEnd = std::max(newStart + 1, std::min(newEnd, f0Size));
-
+        auto &note = notes[i];
+        const int newStart = std::clamp(spans[i].start, 0, f0Size - 1);
+        const int newEnd = std::clamp(spans[i].end, newStart + 1, f0Size);
         note.setStartFrame(newStart);
         note.setEndFrame(newEnd);
         note.setSrcStartFrame(newStart);
         note.setSrcEndFrame(newEnd);
-        std::vector<float> f0Values(audioData.f0.begin() + newStart,
-                                    audioData.f0.begin() + newEnd);
-        note.setF0Values(std::move(f0Values));
+        note.setF0Values(std::vector<float>(audioData.f0.begin() + newStart,
+                                            audioData.f0.begin() + newEnd));
       }
+    }
+
+    const auto isBreathFrame = [&audioData](int frame)
+    {
+      return breathsibilance::labelAt(audioData.breathSibilance, frame) ==
+             breathsibilance::Breath;
+    };
+
+    // A note GAME placed on unvoiced audio that is a third or more breath is
+    // not a sung note: drop it.
+    if (!audioData.breathSibilance.empty())
+    {
+      notes.erase(
+          std::remove_if(
+              notes.begin(), notes.end(),
+              [&](const Note &note)
+              {
+                int breathFrames = 0;
+                for (int i = note.getStartFrame(); i < note.getEndFrame(); ++i)
+                {
+                  if (i < static_cast<int>(audioData.voicedMask.size()) &&
+                      audioData.voicedMask[static_cast<size_t>(i)])
+                    return false;
+                  breathFrames += isBreathFrame(i) ? 1 : 0;
+                }
+                return breathFrames * 3 >= note.getDurationFrames();
+              }),
+          notes.end());
     }
 
     for (auto& note : notes)
