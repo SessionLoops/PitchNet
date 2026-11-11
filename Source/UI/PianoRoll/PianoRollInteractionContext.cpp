@@ -75,6 +75,11 @@ Note *PianoRollInteractionContext::findNoteAt(float x, float y)
   return component.findNoteAt(x, y);
 }
 
+float PianoRollInteractionContext::getDoubleClickSnapTarget(const Note& note) const
+{
+  return component.getDoubleClickSnapTarget(note);
+}
+
 std::vector<Note *> PianoRollInteractionContext::getSelectedNotes() const
 {
   return component.getSelectedNotes();

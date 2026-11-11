@@ -226,6 +226,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("snapToSemitones", project.getSnapToSemitones());
     obj->setProperty("dragSnapMode",
                      static_cast<int>(project.getDragSnapMode()));
+    obj->setProperty("doubleClickSnapMode",
+                     static_cast<int>(project.getDoubleClickSnapMode()));
     obj->setProperty("timelineDisplayMode",
                      static_cast<int>(project.getTimelineDisplayMode()));
     obj->setProperty("timelineBeatNumerator", project.getTimelineBeatNumerator());
@@ -402,6 +404,14 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
                 static_cast<DragSnapMode>(dragSnapModeValue));
         else
             project.setDragSnapMode(DragSnapMode::Chromatic);
+    }
+    {
+        const int mode = static_cast<int>(json.getProperty("doubleClickSnapMode", 0));
+        if (mode >= static_cast<int>(DoubleClickSnapMode::PitchCenter) &&
+            mode <= static_cast<int>(DoubleClickSnapMode::MidiReference))
+            project.setDoubleClickSnapMode(static_cast<DoubleClickSnapMode>(mode));
+        else
+            project.setDoubleClickSnapMode(DoubleClickSnapMode::PitchCenter);
     }
     {
         const int modeValue = static_cast<int>(json.getProperty(

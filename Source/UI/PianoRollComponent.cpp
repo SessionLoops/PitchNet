@@ -585,6 +585,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     }
 
     drawGameChunksDebugOverlay(g);
+    drawMidiReference(g);
     drawBreathNotes(g);
     drawNotes(g, NoteRenderPass::Body);
     drawNotes(g, NoteRenderPass::HoverShadow);
@@ -1219,6 +1220,91 @@ void PianoRollComponent::setNoiseVisibility(bool show)
   inactiveLayer = {};
   pinnedLayer = {};
   repaint();
+}
+
+void PianoRollComponent::setMidiReferenceNotes(const std::vector<MidiReference::Note>& notes,
+                                             bool visible)
+{
+  midiReferenceNotes = notes;
+  midiReferenceVisible = visible;
+  repaint();
+}
+
+std::pair<double, double> PianoRollComponent::getMidiReferenceSpan() const
+{
+  const auto& audio = project->getAudioData();
+  double origin = audio.timelineOffsetSeconds;
+  double end = audio.getDuration();
+  if (!audio.playbackRegionRanges.empty())
+  {
+    // A trimmed ARA region begins inside its audio modification.
+    origin = audio.playbackRegionRanges.front().first;
+    end = std::min(end, audio.playbackRegionRanges.front().second);
+  }
+  return {origin, end};
+}
+
+float PianoRollComponent::getDoubleClickSnapTarget(const Note& note) const
+{
+  const float pitch = note.getAdjustedMidiNote();
+  switch (project->getDoubleClickSnapMode())
+  {
+    case DoubleClickSnapMode::Scale:
+      return ScaleUtils::snapMidiToScale(pitch, project->getPreferredScaleMode(),
+                                       project->getScaleRootNote(), pitchReferenceHz);
+    case DoubleClickSnapMode::MidiReference:
+    {
+      const auto [origin, end] = getMidiReferenceSpan();
+      const double startSeconds = std::max<double>(origin, framesToSeconds(note.getStartFrame()));
+      const double endSeconds = std::min<double>(end, framesToSeconds(note.getEndFrame()));
+      const auto target = MidiReference::findPitchWithGreatestOverlap(
+          midiReferenceNotes, startSeconds - origin, endSeconds - origin);
+      return target ? static_cast<float>(*target) + ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz)
+                    : pitch;
+    }
+    case DoubleClickSnapMode::PitchCenter:
+      return ScaleUtils::snapMidiToSemitone(pitch, pitchReferenceHz);
+  }
+  return pitch;
+}
+
+void PianoRollComponent::drawMidiReference(juce::Graphics &g) const
+{
+  if (!midiReferenceVisible || midiReferenceNotes.empty() || project == nullptr)
+    return;
+
+  const auto [origin, end] = getMidiReferenceSpan();
+  const auto clip = g.getClipBounds();
+  const double visibleStart = std::max(origin, xToTime(static_cast<float>(clip.getX())));
+  const double visibleEnd = std::min(end, xToTime(static_cast<float>(clip.getRight())));
+  const float referenceOffset = ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
+  const auto fillColour = juce::Colour(0xFF232323u);
+  const auto borderColour = juce::Colour(0xFF3A3A3Au);
+  constexpr float borderWidth = 1.0f;
+  for (const auto& note : midiReferenceNotes)
+  {
+    const double start = origin + note.startSeconds;
+    const double stop = std::min(end, origin + note.endSeconds);
+    if (stop <= visibleStart || start >= visibleEnd || stop <= start)
+      continue;
+
+    const float x = timeToX(start);
+    const float y = midiToY(static_cast<float>(note.midiPitch) + referenceOffset);
+    const juce::Rectangle<float> bounds(x, y, timeToX(stop) - x, pixelsPerSemitone);
+    if (!clip.toFloat().intersects(bounds))
+      continue;
+
+    const float cornerRadius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
+    g.setColour(borderColour);
+    g.fillRoundedRectangle(bounds, cornerRadius);
+
+    const auto interior = bounds.reduced(borderWidth);
+    if (!interior.isEmpty())
+    {
+      g.setColour(fillColour);
+      g.fillRoundedRectangle(interior, cornerRadius - borderWidth);
+    }
+  }
 }
 
 void PianoRollComponent::drawBreathNotes(juce::Graphics &g)

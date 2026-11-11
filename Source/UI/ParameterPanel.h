@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Audio/SynthesisEngineType.h"
+#include "../Audio/IO/MidiReference.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
@@ -70,6 +71,7 @@ public:
     std::function<void(ScaleMode)> onScaleModeChanged;
     std::function<void(bool)> onSnapToSemitonesChanged;
     std::function<void(DragSnapMode)> onDragSnapModeChanged;
+    std::function<void()> onDoubleClickSnapModeChanged;
     std::function<void(int)> onPitchReferenceChanged;
     std::function<void(TimelineDisplayMode)> onTimelineDisplayModeChanged;
     std::function<void(int, int)> onTimelineBeatSignatureChanged;
@@ -85,6 +87,9 @@ public:
     // .mid file and hands it to the OS as a file drag; a click saves instead.
     std::function<juce::File()> onCreateMidiDragFile;
     std::function<void()> onExportMidiClicked;
+    std::function<void()> onOpenMidiReference;
+    std::function<void(const std::vector<MidiReference::Note>&, bool)> onMidiReferenceChanged;
+    void setMidiReference(juce::String filename, std::vector<MidiReference::Track> tracks);
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -92,8 +97,12 @@ private:
     void refreshLanguageButtonText();
     void applyLanguageSelection(const juce::String& languageCode);
     void showDragSnapModeMenu();
+    void showDoubleClickSnapModeMenu();
     void showTimelineBeatMenu();
     void showTimelineGridMenu();
+    void showMidiReferenceTrackMenu();
+    void refreshMidiReferenceControls();
+    void publishMidiReference();
 
     void setScaleRootInternal(int rootNote, bool notify);
     void setScaleModeInternal(ScaleMode mode, bool notify);
@@ -129,6 +138,15 @@ private:
     juce::Label uiSectionLabel;
     juce::Rectangle<int> uiCardBounds;
     MidiDragButton midiDragButton;
+    juce::Rectangle<int> midiReferenceCardBounds;
+    juce::Label midiReferenceSectionLabel;
+    MidiFileButton midiReferenceFileButton;
+    ComboSelectionButton midiReferenceTrackButton;
+    StyledToggleButton midiReferenceVisibilityToggle;
+    juce::String midiReferenceFilename;
+    std::vector<MidiReference::Track> midiReferenceTracks;
+    int midiReferenceTrackIndex = 0;
+    unsigned midiReferenceRevision = 0;
 
     // Interface language. "auto" follows the system language; anything else is
     // an explicit choice. The selector is a button that opens a ticked
@@ -159,6 +177,8 @@ private:
 
     StyledToggleButton snapToSemitonesToggle;
     CompactSelectionButton dragSnapModeButton;
+    juce::Label doubleClickSnapLabel;
+    CompactSelectionButton doubleClickSnapBox;
 
     RadioButton beatsTimelineToggle;
     RadioButton timeTimelineToggle;

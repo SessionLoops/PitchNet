@@ -1,10 +1,16 @@
 #include "MidiExporter.h"
 #include "../../Utils/Constants.h"
+#include <algorithm>
+
+bool MidiExporter::hasExportableNotes(const std::vector<Note>& notes) {
+    return std::any_of(notes.begin(), notes.end(),
+                       [](const Note& note) { return !note.isRest(); });
+}
 
 bool MidiExporter::exportToFile(const std::vector<Note>& notes,
                                 const juce::File& file,
                                 const ExportOptions& options) {
-    if (notes.empty())
+    if (!hasExportableNotes(notes))
         return false;
 
     auto midiFile = createMidiFile(notes, options);

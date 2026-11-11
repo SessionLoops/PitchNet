@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/IO/MidiReference.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
 #include "../Utils/Localization.h"
@@ -63,6 +64,7 @@ public:
   ~PianoRollComponent() override;
 
   void paint(juce::Graphics &g) override;
+  void setMidiReferenceNotes(const std::vector<MidiReference::Note>& notes, bool visible = true);
   void resized() override;
   void mouseDown(const juce::MouseEvent &e) override;
   void mouseDrag(const juce::MouseEvent &e) override;
@@ -319,6 +321,9 @@ private:
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawBreathNotes(juce::Graphics &g);
+  void drawMidiReference(juce::Graphics &g) const;
+  std::pair<double, double> getMidiReferenceSpan() const;
+  float getDoubleClickSnapTarget(const Note& note) const;
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
   void updatePitchDrawingConfirmationPopup();
@@ -376,6 +381,8 @@ private:
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
 
   Project *project = nullptr;
+  std::vector<MidiReference::Note> midiReferenceNotes;
+  bool midiReferenceVisible = false;
   PitchUndoManager *undoManager = nullptr;
 
   // New modular components

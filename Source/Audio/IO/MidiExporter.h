@@ -25,6 +25,8 @@ class MidiExporter {
 public:
   using ExportOptions = MidiExportOptions;
 
+  static bool hasExportableNotes(const std::vector<Note> &notes);
+
   /**
    * Export notes to a MIDI file.
    *

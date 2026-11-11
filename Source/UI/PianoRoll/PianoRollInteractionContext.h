@@ -65,6 +65,7 @@ public:
   bool isCanvasPoint(const juce::MouseEvent &e) const;
 
   Note *findNoteAt(float x, float y);
+  float getDoubleClickSnapTarget(const Note& note) const;
   std::vector<Note *> getSelectedNotes() const;
   int findBreathAt(float x, float y) const;
   void beginBreathDrag(int key, float worldY);

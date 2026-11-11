@@ -1,4 +1,5 @@
 #include "ParameterPanel.h"
+#include "../Audio/IO/MidiExporter.h"
 #include "../Utils/Localization.h"
 #include <array>
 #include <cmath>
@@ -30,7 +31,8 @@ constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kLanguageRowHeight = 26;          // language selector row
-constexpr int kMidiButtonHeight = 28;           // drag-to-DAW button, below the cards
+constexpr int kMidiButtonHeight = 28;
+constexpr int kMidiExportRowGap = kRowGap + 1;
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
@@ -43,20 +45,20 @@ constexpr int kTimeCardHeight =
     (kRowGap + 1) + kControlRowHeight + kRowGap + kControlRowHeight + kInnerPadY;
 constexpr int kPitchCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
-    (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight + kInnerPadY;
+    ((kRowGap + 1) + kControlRowHeight) * 3 + kInnerPadY;
 constexpr int kUiCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap +
     kControlRowHeight * 2 + kRowGap + kInnerPadY;
 constexpr int kLanguageCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
+constexpr int kMidiReferenceCardHeight =
+    kInnerPadY * 2 + kSectionLabelHeight + kSectionLabelGap +
+    kMidiButtonHeight * 2 + kControlRowHeight + kMidiExportRowGap + kRowGap;
 
-// Five cards are always present - Rendering, Language, Time, Pitch and UI,
-// so four gaps sit between them. The MIDI drag button follows
-// the last card, after one more gap.
+// Six cards with a gap between each.
 constexpr int kPreferredPanelHeight =
-    kCardPadY * 2 + kCardGap * 4 + kSynthesisCardHeight + kLanguageCardHeight +
-    kTimeCardHeight + kPitchCardHeight + kUiCardHeight +
-    kCardGap + kMidiButtonHeight;
+    kCardPadY * 2 + kCardGap * 5 + kSynthesisCardHeight + kLanguageCardHeight +
+    kTimeCardHeight + kPitchCardHeight + kMidiReferenceCardHeight + kUiCardHeight;
 
 // "System default" sits above the real languages in the picker.
 constexpr int kLanguageMenuAutoId = 7601;
@@ -126,6 +128,25 @@ juce::String getTimelineGridLabel(TimelineGridDivision division)
 juce::String getDragSnapModeLabel(DragSnapMode mode)
 {
     return mode == DragSnapMode::Scale ? TR("param.scale") : TR("param.chromatic");
+}
+
+juce::String getDoubleClickSnapModeLabel(DoubleClickSnapMode mode)
+{
+    switch (mode)
+    {
+        case DoubleClickSnapMode::PitchCenter: return TR("quantize.pitch_center");
+        case DoubleClickSnapMode::Scale: return TR("param.scale");
+        case DoubleClickSnapMode::MidiReference: return TR("param.midi_ref");
+    }
+    return {};
+}
+
+juce::String getMidiReferenceTrackLabel(const MidiReference::Track& track)
+{
+    auto label = TR("param.midi_reference_track") + " " + juce::String(track.number);
+    if (track.name.isNotEmpty())
+        label += "  " + track.name;
+    return label;
 }
 
 // Device names arrive provider-tagged ("Radeon RX 7900 XT (DirectML)") because
@@ -247,6 +268,13 @@ ParameterPanel::ParameterPanel()
     addAndMakeVisible(pitchSectionLabel);
     pitchSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     pitchSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(doubleClickSnapLabel);
+    doubleClickSnapLabel.setFont(AppFont::getFont(14.0f));
+    doubleClickSnapLabel.setBorderSize({1, 5, 1, 0});
+    doubleClickSnapLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
+    addAndMakeVisible(doubleClickSnapBox);
+    doubleClickSnapBox.setEnabled(false);
+    doubleClickSnapBox.onClick = [this] { showDoubleClickSnapModeMenu(); };
     addAndMakeVisible(timeSectionLabel);
     timeSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     timeSectionLabel.setFont(AppFont::getBoldFont(16.0f));
@@ -258,8 +286,24 @@ ParameterPanel::ParameterPanel()
                              juce::Colour(0xFF9B9B9Bu));
     uiSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
+    addAndMakeVisible(midiReferenceSectionLabel);
+    midiReferenceSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    midiReferenceSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(midiReferenceFileButton);
+    midiReferenceFileButton.onClick = [this]
+    {
+        if (onOpenMidiReference)
+            onOpenMidiReference();
+    };
+    addAndMakeVisible(midiReferenceTrackButton);
+    midiReferenceTrackButton.onClick = [this] { showMidiReferenceTrackMenu(); };
+    addAndMakeVisible(midiReferenceVisibilityToggle);
+    midiReferenceVisibilityToggle.setClickingTogglesState(true);
+    midiReferenceVisibilityToggle.onClick = [this] { publishMidiReference(); };
+
     // MIDI button: drag the notes straight into the DAW, or click to save.
     addAndMakeVisible(midiDragButton);
+    midiDragButton.setEnabled(false);
     midiDragButton.onCreateDragFile = [this]
     {
         return onCreateMidiDragFile ? onCreateMidiDragFile() : juce::File{};
@@ -413,10 +457,10 @@ ParameterPanel::ParameterPanel()
     dragSnapModeButton.setEnabled(snapToSemitones);
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
 
-    const std::array<juce::Component*, 7> pitchComponents {{
+    const std::array<juce::Component*, 9> pitchComponents {{
         &pitchSectionLabel, &chromaticToggle, &scaleToggle,
         &referenceLabel, &referenceSlider,
-        &snapToSemitonesToggle, &dragSnapModeButton
+        &snapToSemitonesToggle, &dragSnapModeButton, &doubleClickSnapLabel, &doubleClickSnapBox
     }};
     for (auto* component : pitchComponents)
         component->setVisible(kShowPitchCard);
@@ -490,6 +534,15 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.fillRoundedRectangle(uiRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
         g.drawRoundedRectangle(uiRect.reduced(0.5f), radius, 0.75f);
+    }
+
+    if (!midiReferenceCardBounds.isEmpty())
+    {
+        const auto rect = midiReferenceCardBounds.toFloat();
+        g.setColour(juce::Colour(0xFF171717u));
+        g.fillRoundedRectangle(rect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(rect.reduced(0.5f), radius, 0.75f);
     }
 }
 
@@ -645,16 +698,23 @@ void ParameterPanel::resized()
 
     bounds.removeFromTop(rowGap + 1);
 
+    constexpr int pitchLabelWidth = 120;
+    constexpr int pitchControlOffsetX = 1;
+
     // Reference row
     auto referenceRow = bounds.removeFromTop(kControlRowHeight);
-    referenceLabel.setBounds(referenceRow.removeFromLeft(110));
-    referenceSlider.setBounds(referenceRow.removeFromLeft(70).reduced(0, 2));
+    referenceLabel.setBounds(referenceRow.removeFromLeft(pitchLabelWidth));
+    referenceSlider.setBounds(referenceRow.translated(pitchControlOffsetX, 0).reduced(0, 2));
 
     bounds.removeFromTop(rowGap + 1);
     auto dragSnapRow = bounds.removeFromTop(kControlRowHeight);
-    snapToSemitonesToggle.setBounds(dragSnapRow.removeFromLeft(110));
-    dragSnapRow.removeFromLeft(columnGap);
-    dragSnapModeButton.setBounds(dragSnapRow.translated(-4, 0));
+    snapToSemitonesToggle.setBounds(dragSnapRow.removeFromLeft(pitchLabelWidth));
+    dragSnapModeButton.setBounds(dragSnapRow.translated(pitchControlOffsetX, 0));
+
+    bounds.removeFromTop(rowGap + 1);
+    auto doubleClickRow = bounds.removeFromTop(kControlRowHeight);
+    doubleClickSnapLabel.setBounds(doubleClickRow.removeFromLeft(pitchLabelWidth));
+    doubleClickSnapBox.setBounds(doubleClickRow.translated(pitchControlOffsetX, 0));
 
     const int pitchCardBottom = bounds.getY() + innerPadY;
     pitchCardBounds = kShowPitchCard
@@ -662,10 +722,29 @@ void ParameterPanel::resized()
                                cardArea.getWidth(), pitchCardBottom - pitchCardStart)
         : juce::Rectangle<int>();
 
+    const int midiReferenceTop = pitchCardBottom + cardGap;
+    midiReferenceCardBounds = {cardArea.getX(), midiReferenceTop,
+                               cardArea.getWidth(), kMidiReferenceCardHeight};
+    bounds = midiReferenceCardBounds.reduced(innerPadX, innerPadY);
+    midiReferenceSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
+
+    midiDragButton.setBounds(bounds.removeFromTop(kMidiButtonHeight));
+    bounds.removeFromTop(kMidiExportRowGap);
+
+    auto midiFileRow = bounds.removeFromTop(kMidiButtonHeight);
+    const int importWidth = (midiFileRow.getWidth() - columnGap) * 3 / 5;
+    midiReferenceFileButton.setBounds(midiFileRow.removeFromLeft(importWidth));
+    midiFileRow.removeFromLeft(columnGap);
+    midiReferenceTrackButton.setBounds(midiFileRow);
+
+    bounds.removeFromTop(rowGap);
+    midiReferenceVisibilityToggle.setBounds(bounds.removeFromTop(kControlRowHeight));
+
     // =========================================================================
     // UI CARD
     // =========================================================================
-    const int uiCardStart = pitchCardBottom + cardGap;
+    const int uiCardStart = midiReferenceCardBounds.getBottom() + cardGap;
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
                                   uiCardStart + innerPadY,
                                   cardArea.getWidth() - innerPadX * 2,
@@ -690,14 +769,6 @@ void ParameterPanel::resized()
         cardArea.getX(), uiCardStart, cardArea.getWidth(),
         uiCardBottom - uiCardStart);
 
-    // =========================================================================
-    // MIDI DRAG BUTTON (last, no card)
-    // =========================================================================
-    const int midiButtonTop = uiCardBottom + cardGap;
-    midiDragButton.setBounds(cardArea.getX(), midiButtonTop,
-                             cardArea.getWidth(), kMidiButtonHeight);
-    const int midiButtonBottom = midiButtonTop + kMidiButtonHeight;
-
     // The stack is laid out at fixed sizes, so given at least the height it
     // asks for its bottom edge must land exactly where getPreferredHeight()
     // says it will - that value is what the hosting panel scrolls against. A
@@ -705,7 +776,7 @@ void ParameterPanel::resized()
     // out, which is the very case the scrolling exists to avoid.
     const int preferredHeight = getPreferredHeight();
     jassert(outerBounds.getHeight() < preferredHeight ||
-            midiButtonBottom + cardPadY - outerBounds.getY() ==
+            uiCardBottom + cardPadY - outerBounds.getY() ==
                 preferredHeight);
     juce::ignoreUnused(preferredHeight);
 }
@@ -839,6 +910,7 @@ void ParameterPanel::setProject(Project* proj)
 {
     project = proj;
     updateGlobalSliders();
+    updateFromNote();
     if (onProjectBound)
         onProjectBound(project);
 }
@@ -857,6 +929,9 @@ void ParameterPanel::refreshLocalisedText()
     showBreathsAndSibilanceToggle.setButtonText(TR("param.show_breaths_and_sibilance"));
     midiDragButton.setButtonText(TR("param.midi_drag"));
     midiDragButton.setTooltip(TR("tooltip.midi_drag"));
+    midiReferenceSectionLabel.setText(TR("panel.midi"), juce::dontSendNotification);
+    midiReferenceVisibilityToggle.setButtonText(TR("param.show_midi_reference"));
+    refreshMidiReferenceControls();
 
     chromaticToggle.setButtonText(TR("param.chromatic"));
     scaleToggle.setButtonText(TR("param.scale"));
@@ -884,9 +959,84 @@ void ParameterPanel::refreshLocalisedText()
 
     // Values whose text is itself a translated word.
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
+    const auto doubleClickSnapText = TR("param.double_click_snap");
+    doubleClickSnapLabel.setText(doubleClickSnapText, juce::dontSendNotification);
+    doubleClickSnapBox.setTitle(doubleClickSnapText);
+    doubleClickSnapBox.setButtonText(getDoubleClickSnapModeLabel(
+        project ? project->getDoubleClickSnapMode() : DoubleClickSnapMode::PitchCenter));
     refreshRenderDeviceRow();
     if (!getLocalBounds().isEmpty())
         resized();
+}
+
+void ParameterPanel::setMidiReference(juce::String filename,
+                                      std::vector<MidiReference::Track> tracks)
+{
+    midiReferenceFilename = std::move(filename);
+    midiReferenceTracks = std::move(tracks);
+    midiReferenceTrackIndex = 0;
+    ++midiReferenceRevision;
+    midiReferenceVisibilityToggle.setToggleState(!midiReferenceTracks.empty(),
+                                                  juce::dontSendNotification);
+    refreshMidiReferenceControls();
+    publishMidiReference();
+}
+
+void ParameterPanel::refreshMidiReferenceControls()
+{
+    const bool loaded = !midiReferenceTracks.empty();
+    midiReferenceFileButton.setButtonText(
+        loaded ? midiReferenceFilename : TR("param.midi_reference_import"));
+    midiReferenceFileButton.setTooltip(midiReferenceFileButton.getButtonText());
+    midiReferenceTrackButton.setEnabled(loaded);
+    midiReferenceVisibilityToggle.setEnabled(loaded);
+
+    const auto trackName = loaded
+        ? getMidiReferenceTrackLabel(midiReferenceTracks[static_cast<size_t>(midiReferenceTrackIndex)])
+        : juce::String{};
+    midiReferenceTrackButton.setButtonText(trackName);
+    midiReferenceTrackButton.setTooltip(trackName);
+}
+
+void ParameterPanel::publishMidiReference()
+{
+    if (!onMidiReferenceChanged)
+        return;
+
+    if (!midiReferenceTracks.empty())
+        onMidiReferenceChanged(
+            midiReferenceTracks[static_cast<size_t>(midiReferenceTrackIndex)].notes,
+            midiReferenceVisibilityToggle.getToggleState());
+    else
+        onMidiReferenceChanged({}, false);
+}
+
+void ParameterPanel::showMidiReferenceTrackMenu()
+{
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+    for (size_t index = 0; index < midiReferenceTracks.size(); ++index)
+    {
+        const auto label = getMidiReferenceTrackLabel(midiReferenceTracks[index]);
+        menu.addCustomItem(static_cast<int>(index) + 1,
+                           std::make_unique<HoverMenuItemComponent>(
+                               label, static_cast<int>(index) == midiReferenceTrackIndex),
+                           nullptr, label);
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options()
+                           .withTargetComponent(&midiReferenceTrackButton)
+                           .withMinimumWidth(midiReferenceTrackButton.getWidth()),
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this),
+         revision = midiReferenceRevision](int result)
+        {
+            if (!safeThis || revision != safeThis->midiReferenceRevision ||
+                !juce::isPositiveAndBelow(result - 1, static_cast<int>(safeThis->midiReferenceTracks.size())))
+                return;
+
+            safeThis->midiReferenceTrackIndex = result - 1;
+            safeThis->refreshMidiReferenceControls();
+            safeThis->publishMidiReference();
+        });
 }
 
 void ParameterPanel::refreshLanguageButtonText()
@@ -1004,12 +1154,16 @@ void ParameterPanel::setSelectedNote(Note* note)
 
 void ParameterPanel::updateFromNote()
 {
-    juce::ignoreUnused(selectedNote);
+    midiDragButton.setEnabled(project != nullptr &&
+                              MidiExporter::hasExportableNotes(project->getNotes()));
 }
 
 void ParameterPanel::updateGlobalSliders()
 {
     isUpdating = true;
+    doubleClickSnapBox.setEnabled(project != nullptr);
+    doubleClickSnapBox.setButtonText(getDoubleClickSnapModeLabel(
+        project ? project->getDoubleClickSnapMode() : DoubleClickSnapMode::PitchCenter));
     lastNonChromaticMode = ScaleMode::Major;
 
     if (project != nullptr)
@@ -1381,6 +1535,47 @@ void ParameterPanel::showDragSnapModeMenu()
                     DragSnapMode::Chromatic, true);
             else if (result == 7302)
                 safeThis->setDragSnapModeInternal(DragSnapMode::Scale, true);
+        });
+}
+
+void ParameterPanel::showDoubleClickSnapModeMenu()
+{
+    if (project == nullptr)
+        return;
+
+    constexpr std::array modes{ DoubleClickSnapMode::PitchCenter, DoubleClickSnapMode::Scale,
+                                DoubleClickSnapMode::MidiReference };
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+    const auto selectedMode = project->getDoubleClickSnapMode();
+    for (size_t index = 0; index < modes.size(); ++index)
+    {
+        const auto text = getDoubleClickSnapModeLabel(modes[index]);
+        menu.addCustomItem(static_cast<int>(index) + 1,
+                           std::make_unique<HoverMenuItemComponent>(text, modes[index] == selectedMode),
+                           nullptr, text);
+    }
+
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetComponent(&doubleClickSnapBox)
+            .withParentComponent(this)
+            .withMinimumWidth(doubleClickSnapBox.getWidth()),
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this),
+         openedProject = project, modes](int result)
+        {
+            if (!safeThis || safeThis->project != openedProject ||
+                !juce::isPositiveAndBelow(result - 1, static_cast<int>(modes.size())))
+                return;
+
+            const auto mode = modes[static_cast<size_t>(result - 1)];
+            if (openedProject->getDoubleClickSnapMode() == mode)
+                return;
+
+            openedProject->setDoubleClickSnapMode(mode);
+            safeThis->doubleClickSnapBox.setButtonText(getDoubleClickSnapModeLabel(mode));
+            if (safeThis->onDoubleClickSnapModeChanged)
+                safeThis->onDoubleClickSnapModeChanged();
         });
 }
 

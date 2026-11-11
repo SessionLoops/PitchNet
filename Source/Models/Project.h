@@ -118,6 +118,13 @@ enum class DragSnapMode : int
     Scale
 };
 
+enum class DoubleClickSnapMode : int
+{
+    PitchCenter = 0,
+    Scale,
+    MidiReference
+};
+
 /**
  * Timeline ruler mode.
  */
@@ -149,6 +156,7 @@ struct MacroParameters
     int pitchReferenceHz = 440;
     bool snapToSemitones = false;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
+    DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
     TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
     int timelineBeatNumerator = 4;
     int timelineBeatDenominator = 4;
@@ -291,6 +299,8 @@ public:
     void setSnapToSemitones(bool enabled);
     DragSnapMode getDragSnapMode() const { return macroParameters->dragSnapMode; }
     void setDragSnapMode(DragSnapMode mode);
+    DoubleClickSnapMode getDoubleClickSnapMode() const { return macroParameters->doubleClickSnapMode; }
+    void setDoubleClickSnapMode(DoubleClickSnapMode mode);
 
     // Timeline/grid settings
     TimelineDisplayMode getTimelineDisplayMode() const { return macroParameters->timelineDisplayMode; }

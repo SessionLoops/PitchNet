@@ -388,6 +388,15 @@ void Project::setDragSnapMode(DragSnapMode mode)
     modified = true;
 }
 
+void Project::setDoubleClickSnapMode(DoubleClickSnapMode mode)
+{
+    if (macroParameters->doubleClickSnapMode == mode)
+        return;
+
+    macroParameters->doubleClickSnapMode = mode;
+    modified = true;
+}
+
 void Project::setTimelineDisplayMode(TimelineDisplayMode mode)
 {
     if (macroParameters->timelineDisplayMode == mode)

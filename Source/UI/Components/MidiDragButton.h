@@ -3,6 +3,13 @@
 #include "../../JuceHeader.h"
 #include <functional>
 
+class MidiFileButton : public juce::TextButton
+{
+public:
+    MidiFileButton();
+    void paintButton(juce::Graphics& g, bool highlighted, bool down) override;
+};
+
 /**
  * A button that hands the current notes to the host as a MIDI file.
  *
@@ -24,6 +31,7 @@ public:
     void setButtonText(const juce::String& text);
 
     void paint(juce::Graphics& g) override;
+    void enablementChanged() override;
     void mouseEnter(const juce::MouseEvent& e) override;
     void mouseExit(const juce::MouseEvent& e) override;
     void mouseDown(const juce::MouseEvent& e) override;
@@ -36,8 +44,6 @@ public:
     std::function<void()> onClick;
 
 private:
-    void paintIcon(juce::Graphics& g, juce::Rectangle<float> area) const;
-
     juce::String buttonText;
     bool hovered = false;
     bool pressed = false;

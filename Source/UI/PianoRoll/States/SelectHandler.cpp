@@ -1,7 +1,6 @@
 #include "SelectHandler.h"
 #include "../../PianoRollComponent.h"
 #include "../../../Utils/PitchCurveProcessor.h"
-#include "../../../Utils/ScaleUtils.h"
 #include "../../../Utils/BasePitchPreview.h"
 #include "../../../Utils/TransformParams.h"
 #include "../../../Undo/PitchToolAction.h"
@@ -1056,14 +1055,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
   // Check if double-clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
-  if (note)
+  if (note && !note->isRest())
   {
-    auto snapForDoubleClick = [&owner_ = owner_](float midi)
-    {
-      return ScaleUtils::snapMidiToSemitone(
-          midi, owner_.pitchReferenceHz);
-    };
-
     if (note->isSelected())
     {
       auto selectedNotes = project->getSelectedNotes();
@@ -1087,7 +1080,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           float oldMidi = selected->getMidiNote();
           float oldOffset = selected->getPitchOffset();
           float adjustedMidi = oldMidi + oldOffset;
-          float snappedMidi = snapForDoubleClick(adjustedMidi);
+          float snappedMidi = owner_.getDoubleClickSnapTarget(*selected);
 
           if (std::abs(snappedMidi - adjustedMidi) <= 0.001f)
             continue;
@@ -1129,7 +1122,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
     float oldMidi = note->getMidiNote();
     float oldOffset = note->getPitchOffset();
     float adjustedMidi = oldMidi + oldOffset;
-    float snappedMidi = snapForDoubleClick(adjustedMidi);
+    float snappedMidi = owner_.getDoubleClickSnapTarget(*note);
 
     if (std::abs(snappedMidi - adjustedMidi) > 0.001f)
     {

@@ -870,6 +870,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   parameterPanel.onCreateMidiDragFile = [this]() { return createMidiDragFile(); };
   parameterPanel.onExportMidiClicked = [this]() { exportMidiFile(); };
+  parameterPanel.onOpenMidiReference = [this] { openMidiReference(); };
+  parameterPanel.onMidiReferenceChanged = [this](const auto& notes, bool visible)
+  { pianoRoll.setMidiReferenceNotes(notes, visible); };
   parameterPanel.onLanguageChanged = [this](const juce::String &languageCode)
   {
     // The panel has already switched the language; this only records it.
@@ -1146,6 +1149,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     pianoRoll.setDragSnapMode(mode);
     notifyProjectDataChanged();
   };
+  parameterPanel.onDoubleClickSnapModeChanged = [this] { notifyProjectDataChanged(); };
   parameterPanel.onPitchReferenceChanged = [this](int hz)
   {
     pianoRoll.setPitchReferenceHz(hz);
@@ -2030,6 +2034,40 @@ void MainComponent::openFile()
         } });
 }
 
+void MainComponent::openMidiReference()
+{
+  if (fileChooser != nullptr)
+    return;
+
+  fileChooser = std::make_unique<juce::FileChooser>(
+      TR("dialog.open_midi_reference"), juce::File{}, "*.mid;*.midi");
+  const auto flags = juce::FileBrowserComponent::openMode |
+                     juce::FileBrowserComponent::canSelectFiles;
+  fileChooser->launchAsync(flags,
+      [safeThis = juce::Component::SafePointer<MainComponent>(this)](const juce::FileChooser& chooser)
+      {
+        if (!safeThis)
+          return;
+
+        const auto file = chooser.getResult();
+        safeThis->fileChooser.reset();
+        if (file == juce::File{})
+          return;
+
+        juce::FileInputStream input(file);
+        auto tracks = input.openedOk() ? MidiReference::readTracks(input)
+                                      : std::vector<MidiReference::Track>{};
+        if (tracks.empty())
+        {
+          StyledMessageBox::show(safeThis.getComponent(), TR("dialog.open_failed"),
+              TR("dialog.midi_reference_read_failed"), StyledMessageBox::WarningIcon);
+          return;
+        }
+
+        safeThis->parameterPanel.setMidiReference(file.getFileName(), std::move(tracks));
+      });
+}
+
 void MainComponent::refreshRecentFilesMenu()
 {
   if (menuHandler)
@@ -2401,7 +2439,7 @@ void MainComponent::exportMidiFile()
     return;
 
   const auto &notes = project->getNotes();
-  if (notes.empty())
+  if (!MidiExporter::hasExportableNotes(notes))
   {
     StyledMessageBox::show(this, TR("dialog.export_failed"),
                            TR("dialog.no_notes_to_export"),
@@ -2522,7 +2560,7 @@ void MainComponent::exportMidiFile()
 juce::File MainComponent::createMidiDragFile()
 {
   auto *project = getProject();
-  if (project == nullptr || project->getNotes().empty())
+  if (project == nullptr || !MidiExporter::hasExportableNotes(project->getNotes()))
     return {};
 
   // Name the clip after the source so it reads sensibly in the DAW.
@@ -3189,6 +3227,7 @@ void MainComponent::segmentIntoNotes()
           return;
         safeThis->pianoRoll.setProject(&projectRef);
         safeThis->pianoRollView.setProject(&projectRef);
+        safeThis->parameterPanel.updateFromNote();
       },
       [safeThis]()
       {
