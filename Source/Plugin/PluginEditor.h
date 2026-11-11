@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 #include "PluginProcessor.h"
 
@@ -97,6 +98,13 @@ private:
     bool hasSyncedHostPlayhead = false;
 #if JucePlugin_Enable_ARA
     juce::String lastPublishedRegionSignature;
+    // The region (and its span) the canvas was last scrolled to for a host
+    // selection. Pro Tools re-sends an unchanged selection during stop
+    // cleanup, and refocusing on it threw the viewport back to the region
+    // start after every stop (#30).
+    juce::String lastFocusedSelectionSelector;
+    std::pair<double, double> lastFocusedSelectionSpan { 0.0, 0.0 };
+    void focusActiveRegionForSelection(bool force);
     bool regionListPublished = false;
     struct RegionPreviewCacheEntry {
         const Project* project = nullptr;

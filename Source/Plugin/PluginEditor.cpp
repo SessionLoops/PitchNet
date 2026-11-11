@@ -1359,17 +1359,32 @@ void PitchNetAudioProcessorEditor::activateAraRegion(
   }
 
   audioProcessor.setActiveAraRegion(target);
-  if (focusView) {
-    // The canvas is in modification time; the region's host position is not.
-    const auto span = audioProcessor.activeRegionSpanInModificationTime();
-    mainView->focusTimelineRange(span.first, span.second);
-  }
+  if (focusView)
+    focusActiveRegionForSelection(true);
 
   // The active key just changed. Publish now rather than on the next poll so
   // the canvas never shows the new region twice (as project and as preview)
   // or the old one not at all.
   lastPublishedRegionSignature.clear();
   refreshAraRegionList();
+}
+
+void PitchNetAudioProcessorEditor::focusActiveRegionForSelection(bool force) {
+  // The canvas is in modification time; the region's host position is not.
+  const auto selector = audioProcessor.getActiveAraRegionSelector();
+  const auto span = audioProcessor.activeRegionSpanInModificationTime();
+  const bool sameRegion =
+      selector.isNotEmpty() && selector == lastFocusedSelectionSelector &&
+      std::abs(span.first - lastFocusedSelectionSpan.first) < 1.0e-6 &&
+      std::abs(span.second - lastFocusedSelectionSpan.second) < 1.0e-6;
+
+  lastFocusedSelectionSelector = selector;
+  lastFocusedSelectionSpan = span;
+
+  if (sameRegion && !force)
+    return;
+
+  mainView->focusTimelineRange(span.first, span.second);
 }
 
 void PitchNetAudioProcessorEditor::onNewSelection(
@@ -1453,9 +1468,10 @@ void PitchNetAudioProcessorEditor::onNewSelection(
       }
     }
     audioProcessor.setActiveAraRegion(target);
-    // The canvas is in modification time; the region's host position is not.
-    const auto span = audioProcessor.activeRegionSpanInModificationTime();
-    mainView->focusTimelineRange(span.first, span.second);
+    // Only scroll when the selection names a different region (or the same
+    // region with a different span). Re-selecting what is already shown must
+    // leave the viewport alone.
+    focusActiveRegionForSelection(false);
   }
 
   // The selection is also what tells us which track's regions to list, so
