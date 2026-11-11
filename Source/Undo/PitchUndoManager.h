@@ -16,6 +16,8 @@ public:
     
     void addAction(std::unique_ptr<UndoableAction> action)
     {
+        if (action && noteStorage)
+            action->bindNoteStorage(noteStorage);
         if (decorateAction) action = decorateAction(std::move(action));
         if (!action) return;
         // Clear redo stack when new action is added
@@ -45,7 +47,7 @@ public:
         undoStack.pop_back();
         
         const bool requiresResynthesis = action->requiresAudioResynthesis();
-        action->undo();
+        action->performUndo();
         redoStack.push_back(std::move(action));
         
         if (onHistoryChanged)
@@ -62,7 +64,7 @@ public:
         redoStack.pop_back();
         
         const bool requiresResynthesis = action->requiresAudioResynthesis();
-        action->redo();
+        action->performRedo();
         undoStack.push_back(std::move(action));
         
         if (onHistoryChanged)
@@ -102,6 +104,9 @@ public:
         remove(redoStack);
         if (onHistoryChanged) onHistoryChanged();
     }
+
+    // The current project's notes; actions store note indices against it.
+    std::function<std::vector<Note> *()> noteStorage;
     std::function<std::unique_ptr<UndoableAction>(std::unique_ptr<UndoableAction>)> decorateAction;
     std::function<void()> onHistoryChanged;
     

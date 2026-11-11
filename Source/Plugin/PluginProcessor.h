@@ -472,6 +472,8 @@ private:
   struct ModificationRenderState {
     std::unique_ptr<EditorController> controller;
     std::atomic<bool> pending{false};
+    // Changed ranges of requests folded into a rerun (message thread only).
+    std::vector<juce::Range<int>> queuedRanges;
   };
   std::map<juce::String, ModificationRenderState> modificationRenders;
 
@@ -529,7 +531,6 @@ private:
   int trackAnalysisFinished = 0;
   int trackAnalysisFailed = 0;
 
-  std::atomic<bool> regionCanvasRenderPendingRerun{false};
 
   // Non-ARA capture (Stage 2A): decoupled controller
   std::shared_ptr<NonAraCaptureController> captureController =

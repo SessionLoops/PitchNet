@@ -214,6 +214,13 @@ namespace
     void undo() override { if (timing) timing->undo(); apply(before); }
     void redo() override { apply(after); if (timing) timing->redo(); }
     juce::String getName() const override { return name; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+      for (auto &note : notes)
+        out.push_back(&note);
+      if (timing)
+        timing->collectNotePointers(out);
+    }
 
   private:
     void apply(const std::vector<NoteEditState>& states)

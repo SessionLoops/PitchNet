@@ -39,6 +39,11 @@ public:
     }
 
     juce::String getName() const override { return "Apply Pitch Tool"; }
+    void collectNotePointers(std::vector<Note **> &out) override
+    {
+        for (auto &note : notes)
+            out.push_back(&note);
+    }
 
 private:
     void applyParams(const std::vector<TransformParams> &params)
