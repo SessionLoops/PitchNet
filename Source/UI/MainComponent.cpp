@@ -3079,8 +3079,30 @@ void MainComponent::onNoteSelected(Note *note)
 void MainComponent::onPitchEdited()
 {
   pianoRoll.repaint();
-  pianoRollView.refreshOverview();
   parameterPanel.updateFromNote();
+
+  // Drags call this every mouse move; rebuilding the whole-take overview each
+  // time made long takes laggy. Refresh at most ~8 times a second, plus once
+  // after the last change so the final state is always drawn.
+  const auto now = juce::Time::getMillisecondCounter();
+  if (now - lastOverviewRefreshMs >= 120)
+  {
+    lastOverviewRefreshMs = now;
+    pianoRollView.refreshOverview();
+  }
+  if (!overviewRefreshScheduled)
+  {
+    overviewRefreshScheduled = true;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::Timer::callAfterDelay(150, [safeThis]()
+    {
+      if (safeThis == nullptr)
+        return;
+      safeThis->overviewRefreshScheduled = false;
+      safeThis->lastOverviewRefreshMs = juce::Time::getMillisecondCounter();
+      safeThis->pianoRollView.refreshOverview();
+    });
+  }
 }
 
 void MainComponent::onZoomChanged(float pixelsPerSecond)
@@ -3130,6 +3152,8 @@ void MainComponent::redo()
 
 void MainComponent::afterHistoryChange(bool requiresResynthesis)
 {
+  pianoRoll.forgetNotePointers();
+  parameterPanel.setSelectedNote(nullptr);
   parameterPanel.updateFromNote();
   pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
   pianoRoll.repaint();

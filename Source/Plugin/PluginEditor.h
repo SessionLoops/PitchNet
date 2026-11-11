@@ -97,6 +97,7 @@ private:
     bool hasSyncedHostPlayhead = false;
 #if JucePlugin_Enable_ARA
     juce::String lastPublishedRegionSignature;
+    bool projectPublishPending = false;
     bool regionListPublished = false;
     struct RegionPreviewCacheEntry {
         const Project* project = nullptr;

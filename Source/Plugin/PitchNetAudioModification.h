@@ -106,15 +106,22 @@ public:
   void setProcessedAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRateIn,
                          juce::int64 startSampleInModificationIn) {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    if (processedAudio == nullptr)
-      processedAudio = std::make_unique<ProcessedRegionData>();
-    processedAudio->setAudio(buffer, sampleRateIn, startSampleInModificationIn);
+    // Copy and build the thumbnail before taking the lock, then swap: the
+    // renderer only try-locks it and plays the dry source when it fails, so a
+    // whole-take copy under the lock made playback flip to the original.
+    auto fresh = std::make_unique<ProcessedRegionData>();
+    fresh->setAudio(buffer, sampleRateIn, startSampleInModificationIn);
+    {
+      const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+      std::swap(processedAudio, fresh);
+    }
+    // The old data is freed here, outside the lock.
   }
 
   void clearProcessedAudio() {
+    std::unique_ptr<ProcessedRegionData> old;
     const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    processedAudio.reset();
+    std::swap(processedAudio, old);
   }
 
   void setProjectArchive(const void *data, size_t sizeInBytes) const {
