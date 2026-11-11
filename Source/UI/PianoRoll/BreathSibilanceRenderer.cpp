@@ -277,12 +277,19 @@ void drawNoise(juce::Graphics &g, const juce::Path &shape, juce::Colour colour)
   g.strokePath(shape, juce::PathStrokeType(1.0f));
 }
 
+// How far above and below its row a breath note answers the pointer: enough
+// to grab a thin one, a third of a semitone row at most.
+float breathReach(const CoordinateMapper &mapper)
+{
+  return std::clamp(rowHeight(mapper) * 0.3f, 3.0f, 5.0f);
+}
+
 // The whole area of a breath note: its shape, and the band around its row
 // that answers the pointer even where a quiet breath is thin.
 juce::Rectangle<float> breathArea(const BreathBody &body,
                                   const CoordinateMapper &mapper)
 {
-  const float reach = std::max(6.0f, rowHeight(mapper) * 0.5f);
+  const float reach = breathReach(mapper);
   return juce::Rectangle<float>(body.left, body.centreY - reach,
                                 std::max(1.0f, body.right - body.left),
                                 reach * 2.0f)
@@ -348,7 +355,8 @@ void drawOutsideNotes(juce::Graphics &g, const Project &project,
     if (hovered)
     {
       g.setColour(juce::Colours::white.withAlpha(0.08f));
-      g.fillRoundedRectangle(breathArea(body, mapper).expanded(2.0f), 3.0f);
+      g.fillRoundedRectangle(breathArea(body, mapper).expanded(2.0f, 1.0f),
+                             3.0f);
     }
     drawNoise(g, shape,
               view.noteColour ? view.noteColour(*placement.anchor)
@@ -364,7 +372,7 @@ int breathAt(const Project &project, const CoordinateMapper &mapper,
   const float pixelsPerSecond = mapper.getPixelsPerSecond();
   // Anywhere in the area its highlight covers (breathArea): on its row - a
   // quiet breath is thin - or on its shape.
-  const float reach = std::max(6.0f, rowHeight(mapper) * 0.5f);
+  const float reach = breathReach(mapper);
   const auto &audioData = project.getAudioData();
   for (const auto &placement : breathnotes::place(project))
   {
