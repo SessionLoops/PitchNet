@@ -43,6 +43,7 @@ public:
   void setBoxSelector(BoxSelector *b) { boxSelector = b; }
   void setHoveredNote(Note *note) { hoveredNote = note; }
   void setShowNoteFramesDebug(bool show) { showNoteFramesDebug = show; }
+  void setNoiseVisibility(bool show) { showBreathsAndSibilance = show; }
   // Inactive regions in Track mode: note bodies use a grey ramp (light along
   // the centre line, dark at the edges) instead of the pitch-accuracy colours.
   void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
@@ -75,6 +76,7 @@ private:
   BoxSelector *boxSelector = nullptr;
   Note *hoveredNote = nullptr;
   bool showNoteFramesDebug = false;
+  bool showBreathsAndSibilance = true;
   bool greyscale = false;
   std::optional<juce::Colour> outlineColour;
   bool fillBodies = true;

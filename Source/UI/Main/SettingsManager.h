@@ -88,6 +88,8 @@ public:
   {
     uiBrightnessPercent = juce::jlimit(75.0, 200.0, percent);
   }
+  bool getShowBreathsAndSibilance() const { return showBreathsAndSibilance; }
+  void setNoiseVisibility(bool show) { showBreathsAndSibilance = show; }
   bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
   bool getFollowPlayback() const { return followPlayback; }
@@ -174,6 +176,7 @@ private:
   juce::String audioDeviceState;
   juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
+  bool showBreathsAndSibilance = true;
   bool liveAuditionEnabled = false;
   bool followPlayback = true;
 

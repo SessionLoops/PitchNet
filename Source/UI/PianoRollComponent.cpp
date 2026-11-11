@@ -585,7 +585,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     }
 
     drawGameChunksDebugOverlay(g);
-    drawBreathSibilance(g);
+    drawBreathNotes(g);
     drawNotes(g, NoteRenderPass::Body);
     drawNotes(g, NoteRenderPass::HoverShadow);
     drawNotes(g, NoteRenderPass::HoveredBody);
@@ -1206,9 +1206,24 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
   g.fillRect(startX, 0.0f, endX - startX, height);
 }
 
-void PianoRollComponent::drawBreathSibilance(juce::Graphics &g)
+void PianoRollComponent::setNoiseVisibility(bool show)
 {
-  if (!project || !coordMapper || pixelsPerSecond <= 0.0f)
+  showBreathsAndSibilance = show;
+  if (!showBreathsAndSibilance && hoveredBreath >= 0)
+  {
+    hoveredBreath = -1;
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+  }
+  noteRenderer->setNoiseVisibility(show);
+  previewNoteRenderer->setNoiseVisibility(show);
+  inactiveLayer = {};
+  pinnedLayer = {};
+  repaint();
+}
+
+void PianoRollComponent::drawBreathNotes(juce::Graphics &g)
+{
+  if (!showBreathsAndSibilance || !project || !coordMapper || pixelsPerSecond <= 0.0f)
     return;
 
   const double visibleStartSeconds = scrollX / pixelsPerSecond;
@@ -1239,7 +1254,7 @@ void PianoRollComponent::drawBreathSibilance(juce::Graphics &g)
 
 int PianoRollComponent::findBreathAt(float x, float y) const
 {
-  if (!project || !coordMapper || editMode != EditMode::Select)
+  if (!showBreathsAndSibilance || !project || !coordMapper || editMode != EditMode::Select)
     return -1;
   return BreathSibilanceRenderer::breathAt(*project, *coordMapper, x, y);
 }

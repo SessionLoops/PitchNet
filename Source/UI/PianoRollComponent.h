@@ -188,6 +188,7 @@ public:
   void cancelPitchDrawingPreview();
 
   // View settings
+  void setNoiseVisibility(bool show);
   void setShowDeltaPitch(bool show)
   {
     showDeltaPitch = show;
@@ -317,8 +318,7 @@ private:
   bool prepareTrackPointer(juce::Point<float>, bool notesOnly = false);
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
-  // Breaths and sibilants outside notes (inside notes, NoteRenderer hatches).
-  void drawBreathSibilance(juce::Graphics &g);
+  void drawBreathNotes(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
   void updatePitchDrawingConfirmationPopup();
@@ -463,6 +463,7 @@ private:
     float startDb = 0.0f;
     float db = 0.0f;
   };
+  bool showBreathsAndSibilance = true;
   int hoveredBreath = -1;
   // While a breath's level is dragged: the gain the drag will apply to the
   // rendered audio, per sample, for the background waveform (worked out once

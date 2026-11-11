@@ -842,6 +842,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.setPluginMode(isPluginMode());
   parameterPanel.setUiBrightness(settingsManager->getUiBrightnessPercent());
   applyUiBrightness(settingsManager->getUiBrightnessPercent());
+  const bool showBreathsAndSibilance = settingsManager->getShowBreathsAndSibilance();
+  parameterPanel.setNoiseVisibility(showBreathsAndSibilance);
+  pianoRoll.setNoiseVisibility(showBreathsAndSibilance);
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
@@ -858,6 +861,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     settingsManager->setUiBrightnessPercent(brightnessPercent);
     applyUiBrightness(brightnessPercent);
+  };
+  parameterPanel.onNoiseVisibilityChanged = [this](bool show)
+  {
+    settingsManager->setNoiseVisibility(show);
+    pianoRoll.setNoiseVisibility(show);
+    settingsManager->saveConfig();
   };
   parameterPanel.onCreateMidiDragFile = [this]() { return createMidiDragFile(); };
   parameterPanel.onExportMidiClicked = [this]() { exportMidiFile(); };

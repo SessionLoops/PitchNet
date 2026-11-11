@@ -534,8 +534,9 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           // thicker than the note's own loudest part.
           const float noiseBandHeight =
               std::min(1.0f, waveformPath.getBounds().getHeight());
-          waveformPath.addPath(BreathSibilanceRenderer::noiseBands(
-              audioData, note, x, renderedWidth, centerY, noiseBandHeight));
+          if (showBreathsAndSibilance)
+            waveformPath.addPath(BreathSibilanceRenderer::noiseBands(
+                audioData, note, x, renderedWidth, centerY, noiseBandHeight));
           noteVisualBounds = waveformPath.getBounds();
           bodyShape = waveformPath;
 
@@ -600,7 +601,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       }
 
       // Hatch the unpitched parts (sibilants, breaths) of the body.
-      if (fillBodies)
+      if (fillBodies && showBreathsAndSibilance)
         BreathSibilanceRenderer::hatchNoteBody(g, audioData, note, bodyShape,
                                                x, renderedWidth);
 

@@ -13,67 +13,6 @@
 #include <limits>
 #include <memory>
 
-void PianoRollWorkspaceView::FloatingZoomSliderLookAndFeel::drawLinearSlider(
-    juce::Graphics &g,
-    int x,
-    int y,
-    int width,
-    int height,
-    float sliderPos,
-    float minSliderPos,
-    float maxSliderPos,
-    const juce::Slider::SliderStyle style,
-    juce::Slider &slider)
-{
-  juce::ignoreUnused(minSliderPos, maxSliderPos, slider);
-
-  const auto bounds = juce::Rectangle<float>(static_cast<float>(x),
-                                             static_cast<float>(y),
-                                             static_cast<float>(width),
-                                             static_cast<float>(height));
-  const auto thumbRadius = 4.5f;
-  const auto trackHeight = 2.0f;
-
-  if (style == juce::Slider::LinearVertical)
-  {
-    const auto track = juce::Rectangle<float>(
-        bounds.getCentreX() - trackHeight * 0.5f,
-        bounds.getY(),
-        trackHeight,
-        juce::jmax(0.0f, bounds.getHeight()));
-
-    g.setColour(juce::Colour(0xFF494949));
-    g.fillRoundedRectangle(track, trackHeight * 0.5f);
-
-    const auto clampedSliderPos = juce::jlimit(track.getY() + thumbRadius,
-                                               track.getBottom() - thumbRadius,
-                                               sliderPos);
-    g.setColour(juce::Colour(0xFF9B9B9B));
-    g.fillEllipse(bounds.getCentreX() - thumbRadius,
-                  clampedSliderPos - thumbRadius,
-                  thumbRadius * 2.0f,
-                  thumbRadius * 2.0f);
-    return;
-  }
-
-  const auto track = juce::Rectangle<float>(bounds.getX(),
-                                           bounds.getCentreY() - trackHeight * 0.5f,
-                                           juce::jmax(0.0f, bounds.getWidth()),
-                                           trackHeight);
-
-  g.setColour(juce::Colour(0xFF494949));
-  g.fillRoundedRectangle(track, trackHeight * 0.5f);
-
-  const auto clampedSliderPos = juce::jlimit(track.getX() + thumbRadius,
-                                             track.getRight() - thumbRadius,
-                                             sliderPos);
-  g.setColour(juce::Colour(0xFF9B9B9B));
-  g.fillEllipse(clampedSliderPos - thumbRadius,
-                bounds.getCentreY() - thumbRadius,
-                thumbRadius * 2.0f,
-                thumbRadius * 2.0f);
-}
-
 void PianoRollWorkspaceView::FloatingControlBackground::paint(juce::Graphics &g)
 {
   g.setColour(juce::Colour(0xFF0D0B0B));

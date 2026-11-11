@@ -35,6 +35,7 @@ public:
     void refreshLocalisedText();
 
     void setUiBrightness(double brightnessPercent);
+    void setNoiseVisibility(bool show);
     void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
@@ -53,7 +54,7 @@ public:
     void updateGlobalSliders();
     std::function<void(Project*)> onProjectBound;
 
-    // Height the four cards need at full size. The hosting panel scrolls the
+    // Height the cards need at full size. The hosting panel scrolls the
     // content when it has less room than this instead of squeezing the cards.
     int getPreferredHeight() const override;
 
@@ -76,6 +77,7 @@ public:
     std::function<void(TimelineGridDivision)> onTimelineGridDivisionChanged;
     std::function<void(bool)> onTimelineSnapCycleChanged;
     std::function<void(double)> onUiBrightnessChanged;
+    std::function<void(bool)> onNoiseVisibilityChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
 
@@ -124,8 +126,8 @@ private:
     juce::Rectangle<int> synthesisCardBounds;
     juce::Label languageSectionLabel;
     juce::Rectangle<int> languageCardBounds;
-    juce::Label brightnessSectionLabel;
-    juce::Rectangle<int> brightnessCardBounds;
+    juce::Label uiSectionLabel;
+    juce::Rectangle<int> uiCardBounds;
     MidiDragButton midiDragButton;
 
     // Interface language. "auto" follows the system language; anything else is
@@ -167,7 +169,10 @@ private:
     juce::Label timelineGridLabel;
     CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle;
-    MacroSlider brightnessSlider;
+    juce::Label brightnessLabel;
+    FloatingZoomSliderLookAndFeel brightnessSliderLookAndFeel;
+    juce::Slider brightnessSlider;
+    StyledToggleButton showBreathsAndSibilanceToggle;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;

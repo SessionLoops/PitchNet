@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Sliders.h"
+
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
 #include "../Utils/Localization.h"
@@ -36,21 +38,6 @@ public:
   std::function<void()> onAutoZoomRequested;
 
 private:
-  class FloatingZoomSliderLookAndFeel final : public juce::LookAndFeel_V4
-  {
-  public:
-    void drawLinearSlider(juce::Graphics &g,
-                          int x,
-                          int y,
-                          int width,
-                          int height,
-                          float sliderPos,
-                          float minSliderPos,
-                          float maxSliderPos,
-                          const juce::Slider::SliderStyle style,
-                          juce::Slider &slider) override;
-  };
-
   class FloatingControlBackground final : public juce::Component
   {
   public:

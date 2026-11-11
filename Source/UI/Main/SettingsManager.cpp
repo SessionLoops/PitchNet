@@ -244,6 +244,13 @@ void SettingsManager::loadConfig()
           uiBrightnessPercent = juce::jlimit(
               75.0, 200.0,
               static_cast<double>(configObj->getProperty("uiBrightnessPercent")));
+        if (configObj->hasProperty("showBreathsAndSibilance"))
+          showBreathsAndSibilance =
+              static_cast<bool>(configObj->getProperty("showBreathsAndSibilance"));
+        else
+          showBreathsAndSibilance =
+              static_cast<bool>(config.getProperty("showBreaths", true)) &&
+              static_cast<bool>(config.getProperty("showSibilance", true));
         if (configObj->hasProperty("overviewVisible"))
           overviewVisible =
               static_cast<bool>(configObj->getProperty("overviewVisible"));
@@ -310,6 +317,7 @@ void SettingsManager::saveConfig()
   config->setProperty("audioDeviceState", audioDeviceState);
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
+  config->setProperty("showBreathsAndSibilance", showBreathsAndSibilance);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
   config->setProperty("followPlayback", followPlayback);
 

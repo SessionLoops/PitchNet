@@ -29,7 +29,6 @@ constexpr int kSectionLabelGap = kRowGap + 2;
 constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
-constexpr int kBrightnessRowHeight = 28;
 constexpr int kLanguageRowHeight = 26;          // language selector row
 constexpr int kMidiButtonHeight = 28;           // drag-to-DAW button, below the cards
 
@@ -45,17 +44,18 @@ constexpr int kTimeCardHeight =
 constexpr int kPitchCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
     (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight + kInnerPadY;
-constexpr int kBrightnessCardHeight =
-    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kBrightnessRowHeight + kInnerPadY;
+constexpr int kUiCardHeight =
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap +
+    kControlRowHeight * 2 + kRowGap + kInnerPadY;
 constexpr int kLanguageCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
 
-// Five cards are always present - Rendering, Language, Time, Pitch and UI
-// Brightness - so four gaps sit between them. The MIDI drag button follows
+// Five cards are always present - Rendering, Language, Time, Pitch and UI,
+// so four gaps sit between them. The MIDI drag button follows
 // the last card, after one more gap.
 constexpr int kPreferredPanelHeight =
     kCardPadY * 2 + kCardGap * 4 + kSynthesisCardHeight + kLanguageCardHeight +
-    kTimeCardHeight + kPitchCardHeight + kBrightnessCardHeight +
+    kTimeCardHeight + kPitchCardHeight + kUiCardHeight +
     kCardGap + kMidiButtonHeight;
 
 // "System default" sits above the real languages in the picker.
@@ -253,10 +253,10 @@ ParameterPanel::ParameterPanel()
     addAndMakeVisible(synthesisSectionLabel);
     synthesisSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     synthesisSectionLabel.setFont(AppFont::getBoldFont(16.0f));
-    addAndMakeVisible(brightnessSectionLabel);
-    brightnessSectionLabel.setColour(juce::Label::textColourId,
-                                     juce::Colour(0xFF9B9B9Bu));
-    brightnessSectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    addAndMakeVisible(uiSectionLabel);
+    uiSectionLabel.setColour(juce::Label::textColourId,
+                             juce::Colour(0xFF9B9B9Bu));
+    uiSectionLabel.setFont(AppFont::getBoldFont(16.0f));
 
     // MIDI button: drag the notes straight into the DAW, or click to save.
     addAndMakeVisible(midiDragButton);
@@ -310,14 +310,14 @@ ParameterPanel::ParameterPanel()
     renderDeviceButton.addListener(this);
 
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
-                         &timelineTempoLabel, &timelineGridLabel })
+                         &timelineTempoLabel, &timelineGridLabel, &brightnessLabel })
     {
         addAndMakeVisible(label);
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     }
 
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
-                         &timelineTempoLabel, &timelineGridLabel })
+                         &timelineTempoLabel, &timelineGridLabel, &brightnessLabel })
     {
         label->setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
         label->setFont(AppFont::getFont(16.0f));
@@ -383,6 +383,10 @@ ParameterPanel::ParameterPanel()
     brightnessSlider.setValue(uiBrightnessPercent, juce::dontSendNotification);
     brightnessSlider.setNumDecimalPlacesToDisplay(0);
     brightnessSlider.setTextValueSuffix(" %");
+    brightnessSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    brightnessSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    brightnessSlider.setLookAndFeel(&brightnessSliderLookAndFeel);
+    brightnessSlider.setDoubleClickReturnValue(true, 100.0);
     brightnessSlider.onValueChange = [this]()
     {
         if (isUpdating)
@@ -393,6 +397,15 @@ ParameterPanel::ParameterPanel()
             onUiBrightnessChanged(uiBrightnessPercent);
     };
     addAndMakeVisible(brightnessSlider);
+
+    addAndMakeVisible(showBreathsAndSibilanceToggle);
+    showBreathsAndSibilanceToggle.setClickingTogglesState(true);
+    showBreathsAndSibilanceToggle.setToggleState(true, juce::dontSendNotification);
+    showBreathsAndSibilanceToggle.onClick = [this]()
+    {
+        if (onNoiseVisibilityChanged)
+            onNoiseVisibilityChanged(showBreathsAndSibilanceToggle.getToggleState());
+    };
 
     timelineBeatButton.setButtonText(getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
@@ -418,6 +431,7 @@ ParameterPanel::ParameterPanel()
 
 ParameterPanel::~ParameterPanel()
 {
+    brightnessSlider.setLookAndFeel(nullptr);
 }
 
 void ParameterPanel::setupTextButton(juce::TextButton& button)
@@ -469,13 +483,13 @@ void ParameterPanel::paint(juce::Graphics& g)
         g.drawRoundedRectangle(languageRect.reduced(0.5f), radius, 0.75f);
     }
 
-    if (!brightnessCardBounds.isEmpty())
+    if (!uiCardBounds.isEmpty())
     {
-        auto brightnessRect = brightnessCardBounds.toFloat();
+        auto uiRect = uiCardBounds.toFloat();
         g.setColour(juce::Colour(0xFF171717u));
-        g.fillRoundedRectangle(brightnessRect, radius);
+        g.fillRoundedRectangle(uiRect, radius);
         g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
-        g.drawRoundedRectangle(brightnessRect.reduced(0.5f), radius, 0.75f);
+        g.drawRoundedRectangle(uiRect.reduced(0.5f), radius, 0.75f);
     }
 }
 
@@ -649,27 +663,37 @@ void ParameterPanel::resized()
         : juce::Rectangle<int>();
 
     // =========================================================================
-    // UI BRIGHTNESS CARD
+    // UI CARD
     // =========================================================================
-    const int brightnessCardStart = pitchCardBottom + cardGap;
+    const int uiCardStart = pitchCardBottom + cardGap;
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
-                                  brightnessCardStart + innerPadY,
+                                  uiCardStart + innerPadY,
                                   cardArea.getWidth() - innerPadX * 2,
-                                  cardArea.getBottom() - brightnessCardStart - innerPadY * 2);
+                                  cardArea.getBottom() - uiCardStart - innerPadY * 2);
 
-    brightnessSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    uiSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
     bounds.removeFromTop(kSectionLabelGap);
-    brightnessSlider.setBounds(bounds.removeFromTop(kBrightnessRowHeight));
+    showBreathsAndSibilanceToggle.setBounds(bounds.removeFromTop(kControlRowHeight));
+    bounds.removeFromTop(rowGap);
 
-    const int brightnessCardBottom = bounds.getY() + innerPadY;
-    brightnessCardBounds = juce::Rectangle<int>(
-        cardArea.getX(), brightnessCardStart, cardArea.getWidth(),
-        brightnessCardBottom - brightnessCardStart);
+    auto brightnessRow = bounds.removeFromTop(kControlRowHeight);
+    constexpr int minBrightnessSliderWidth = 64;
+    const int brightnessLabelWidth = juce::GlyphArrangement::getStringWidthInt(
+        brightnessLabel.getFont(), brightnessLabel.getText()) + 12;
+    const int labelSpace = juce::jmax(0, brightnessRow.getWidth() - minBrightnessSliderWidth);
+    brightnessLabel.setBounds(brightnessRow.removeFromLeft(
+        juce::jmin(brightnessLabelWidth, labelSpace)));
+    brightnessSlider.setBounds(brightnessRow.reduced(0, 2));
+
+    const int uiCardBottom = bounds.getY() + innerPadY;
+    uiCardBounds = juce::Rectangle<int>(
+        cardArea.getX(), uiCardStart, cardArea.getWidth(),
+        uiCardBottom - uiCardStart);
 
     // =========================================================================
     // MIDI DRAG BUTTON (last, no card)
     // =========================================================================
-    const int midiButtonTop = brightnessCardBottom + cardGap;
+    const int midiButtonTop = uiCardBottom + cardGap;
     midiDragButton.setBounds(cardArea.getX(), midiButtonTop,
                              cardArea.getWidth(), kMidiButtonHeight);
     const int midiButtonBottom = midiButtonTop + kMidiButtonHeight;
@@ -827,8 +851,10 @@ void ParameterPanel::refreshLocalisedText()
     pitchSectionLabel.setText(TR("panel.pitch"), juce::dontSendNotification);
     timeSectionLabel.setText(TR("panel.time"), juce::dontSendNotification);
     synthesisSectionLabel.setText(TR("panel.rendering"), juce::dontSendNotification);
-    brightnessSectionLabel.setText(TR("panel.ui_brightness"),
-                                   juce::dontSendNotification);
+    uiSectionLabel.setText(TR("panel.ui"), juce::dontSendNotification);
+    brightnessLabel.setText(TR("param.brightness"), juce::dontSendNotification);
+    brightnessSlider.setName(TR("param.brightness"));
+    showBreathsAndSibilanceToggle.setButtonText(TR("param.show_breaths_and_sibilance"));
     midiDragButton.setButtonText(TR("param.midi_drag"));
     midiDragButton.setTooltip(TR("tooltip.midi_drag"));
 
@@ -859,6 +885,8 @@ void ParameterPanel::refreshLocalisedText()
     // Values whose text is itself a translated word.
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
     refreshRenderDeviceRow();
+    if (!getLocalBounds().isEmpty())
+        resized();
 }
 
 void ParameterPanel::refreshLanguageButtonText()
@@ -955,6 +983,11 @@ void ParameterPanel::setUiBrightness(double brightnessPercent)
 {
     uiBrightnessPercent = juce::jlimit(75.0, 200.0, brightnessPercent);
     brightnessSlider.setValue(uiBrightnessPercent, juce::dontSendNotification);
+}
+
+void ParameterPanel::setNoiseVisibility(bool show)
+{
+    showBreathsAndSibilanceToggle.setToggleState(show, juce::dontSendNotification);
 }
 
 void ParameterPanel::setHostTimelineState(double bpm, int numerator, int denominator)
