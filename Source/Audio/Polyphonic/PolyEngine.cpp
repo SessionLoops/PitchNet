@@ -43,6 +43,8 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
         (c.probability >= params.activationThreshold ? active : inactive).push_back(c);
     active = mergeFragments(ctx, std::move(active));
     refineOnsets(ctx, active);
+    // refined onsets change starts and pitch curves: join notes of one pitch that still overlap
+    active = mergeFragments(ctx, std::move(active), true);
     std::stable_sort(active.begin(), active.end(), [](const Candidate& a, const Candidate& b) {
         return a.start != b.start ? a.start < b.start : a.midi() < b.midi();
     });

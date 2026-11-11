@@ -4,6 +4,7 @@
 
 #include "PolyInternal.h"
 
+#include <limits>
 #include <numeric>
 
 namespace polyphonic
@@ -755,62 +756,88 @@ bool partialsRiseTogether(const std::vector<std::vector<float>>& partials, int i
     return present > 0 && rising >= minShare * present;
 }
 
-std::vector<Candidate> splitReattacks(const Context& ctx, const std::vector<Candidate>& cands)
+namespace
 {
-    std::vector<Candidate> out;
-    for (const auto& n : cands)
+// Repeated-note evidence along a candidate, from its own partials only. A repeated note shows up as
+// their energy rising again, all of them together, by much more than the note's own amplitude
+// modulation (beating, vibrato, bow pressure) moves it, and staying up. Another note entering on
+// one shared partial lifts only some of the partials.
+struct ReattackTest
+{
+    std::vector<float> env, rise, peakSoFar;
+    std::vector<uint8_t> valid;
+    std::vector<std::vector<float>> partials;
+    float envMax = 0.0f;
+    int len = 0;
+
+    ReattackTest(const Context& ctx, const Candidate& n)
+        : env(harmonicEnvelope(ctx, n, 8, n.start, n.end)), partials(partialEnvelopes(ctx, n, 8, n.start, n.end))
     {
-        // Only the candidate's own partials are consulted. A repeated note shows up as their energy
-        // rising again, all of them together, by much more than the note's own amplitude modulation
-        // (beating, vibrato, bow pressure) moves it, and staying up. Another note entering on one
-        // shared partial lifts only some of the partials.
-        const auto env = harmonicEnvelope(ctx, n, 8, n.start, n.end);
-        const auto partials = partialEnvelopes(ctx, n, 8, n.start, n.end);
-        const int len = static_cast<int>(env.size());
-        const auto meanOf = [&](int a, int b) {        // mean of env over [a, b] clipped to the candidate
-            a = std::max(a, 0);
-            b = std::min(b, len - 1);
-            double s = 0.0;
-            for (int j = a; j <= b; ++j)
-                s += env[static_cast<size_t>(j)];
-            return b >= a ? s / (b - a + 1) : 0.0;
-        };
+        len = static_cast<int>(env.size());
         // local rise: level of the next 4 frames over the previous 6, in log units
-        std::vector<float> rise(static_cast<size_t>(len), 0.0f);
-        std::vector<uint8_t> valid(static_cast<size_t>(len), 0);
+        rise.assign(static_cast<size_t>(len), 0.0f);
+        valid.assign(static_cast<size_t>(len), 0);
         for (int i = 3; i + 3 <= len; ++i)
         {
             rise[static_cast<size_t>(i)] = static_cast<float>(std::log((meanOf(i, i + 3) + 1e-12) / (meanOf(i - 6, i - 1) + 1e-12)));
             valid[static_cast<size_t>(i)] = 1;
         }
-        std::vector<float> around;
-        const auto standsOut = [&](int i) {
-            around.clear();
-            for (int j = i - 18; j <= i + 18; ++j)
-                if (std::abs(j - i) > 6 && j >= 0 && j < len && valid[static_cast<size_t>(j)])
-                    around.push_back(std::fabs(rise[static_cast<size_t>(j)]));
-            float typical = 0.0f;
-            if (!around.empty())
-            {
-                std::nth_element(around.begin(), around.begin() + static_cast<std::ptrdiff_t>(around.size() / 2), around.end());
-                typical = around[around.size() / 2];
-            }
-            return rise[static_cast<size_t>(i)] >= kReattackStandOut * typical;
-        };
         // running maximum, for "the note had been louder before it dipped"
-        std::vector<float> peakSoFar(static_cast<size_t>(len), 0.0f);
+        peakSoFar.assign(static_cast<size_t>(len), 0.0f);
         for (int i = 0; i < len; ++i)
             peakSoFar[static_cast<size_t>(i)] = std::max(i > 0 ? peakSoFar[static_cast<size_t>(i - 1)] : 0.0f, env[static_cast<size_t>(i)]);
-        const float envMax = len > 0 ? peakSoFar.back() : 0.0f;
-        const auto dipped = [&](int i) { return i >= 4 && meanOf(i - 6, i - 1) <= kReattackDip * peakSoFar[static_cast<size_t>(i - 4)]; };
-        const auto qualifies = [&](int i) {
-            return isReattack(env, i, 2.0f, 0.1f, envMax) && dipped(i) && meanOf(i + 1, i + 12) >= 1.5 * meanOf(i - 12, i - 1) && standsOut(i) &&
-                   partialsRiseTogether(partials, i, kReattackShare);
-        };
+        envMax = len > 0 ? peakSoFar.back() : 0.0f;
+    }
+
+    double meanOf(int a, int b) const        // mean of env over [a, b] clipped to the candidate
+    {
+        a = std::max(a, 0);
+        b = std::min(b, len - 1);
+        double s = 0.0;
+        for (int j = a; j <= b; ++j)
+            s += env[static_cast<size_t>(j)];
+        return b >= a ? s / (b - a + 1) : 0.0;
+    }
+
+    bool standsOut(int i) const
+    {
+        std::vector<float> around;
+        for (int j = i - 18; j <= i + 18; ++j)
+            if (std::abs(j - i) > 6 && j >= 0 && j < len && valid[static_cast<size_t>(j)])
+                around.push_back(std::fabs(rise[static_cast<size_t>(j)]));
+        float typical = 0.0f;
+        if (!around.empty())
+        {
+            std::nth_element(around.begin(), around.begin() + static_cast<std::ptrdiff_t>(around.size() / 2), around.end());
+            typical = around[around.size() / 2];
+        }
+        return rise[static_cast<size_t>(i)] >= kReattackStandOut * typical;
+    }
+
+    bool dipped(int i) const { return i >= 4 && meanOf(i - 6, i - 1) <= kReattackDip * peakSoFar[static_cast<size_t>(i - 4)]; }
+
+    // the level rises after a dip and stays up
+    bool risesAndStays(int i) const
+    {
+        return isReattack(env, i, 2.0f, 0.1f, envMax) && dipped(i) && meanOf(i + 1, i + 12) >= 1.5 * meanOf(i - 12, i - 1);
+    }
+
+    // ... and by more than the note's own modulation, with its partials together: a repeated note
+    bool qualifies(int i) const { return risesAndStays(i) && standsOut(i) && partialsRiseTogether(partials, i, kReattackShare); }
+};
+} // namespace
+
+std::vector<Candidate> splitReattacks(const Context& ctx, const std::vector<Candidate>& cands)
+{
+    std::vector<Candidate> out;
+    for (const auto& n : cands)
+    {
+        const ReattackTest test(ctx, n);
+        const int len = test.len;
         std::vector<int> cuts;
         for (int i = 4; i <= len - 5;)
         {
-            if (!qualifies(i))
+            if (!test.qualifies(i))
             {
                 ++i;
                 continue;
@@ -818,8 +845,8 @@ std::vector<Candidate> splitReattacks(const Context& ctx, const std::vector<Cand
             // within a run of frames that qualify, cut where the level steps up most (the next 4
             // frames over the previous 6, which peaks at the onset); cuts stay 6 frames (~70 ms) apart
             int best = i, j = i;
-            for (; j <= len - 5 && qualifies(j); ++j)
-                if (rise[static_cast<size_t>(j)] > rise[static_cast<size_t>(best)])
+            for (; j <= len - 5 && test.qualifies(j); ++j)
+                if (test.rise[static_cast<size_t>(j)] > test.rise[static_cast<size_t>(best)])
                     best = j;
             if (cuts.empty() || n.start + best - cuts.back() >= 6)
                 cuts.push_back(n.start + best);
@@ -854,7 +881,8 @@ std::vector<Candidate> splitReattacks(const Context& ctx, const std::vector<Cand
 }
 
 // A note whose pitch coincides with a partial of an earlier note tends to be tracked back into that
-// partial. Move its start to where its own (unshared) partials actually begin to rise.
+// partial. Move its start to where its own (unshared) partials actually begin to rise, when that is at
+// least one analysis window later: closer than that, the frames still see the note's own attack.
 void refineOnsets(const Context& ctx, std::vector<Candidate>& notes)
 {
     const Params& p = ctx.p;
@@ -888,21 +916,23 @@ void refineOnsets(const Context& ctx, std::vector<Candidate>& notes)
         }
         if (unique.empty())
             continue;
-        std::vector<float> env(static_cast<size_t>(t1 - n.start + 4), 0.0f);
-        for (int t = n.start; t < n.start + static_cast<int>(env.size()) && t < ctx.numFrames; ++t)
-        {
-            if (pk.begin(t) == pk.end(t))
-                continue;
+        // level of the given partials of n at frame t
+        auto partialsLevel = [&](int t, const std::vector<int>& harmonics) {
+            if (t >= ctx.numFrames || pk.begin(t) == pk.end(t))
+                return 0.0f;
             double s = 0.0;
-            for (int h : unique)
+            for (int h : harmonics)
             {
                 const float fh = static_cast<float>(n.f0At(t) * h * std::sqrt(1.0 + n.B * h * h));
                 const int j = pk.nearest(t, fh / binHz);
                 if (std::fabs(pk.fbin[static_cast<size_t>(j)] * binHz - fh) < std::max(1.2f * binHz, 0.012f * fh))
                     s += static_cast<double>(pk.amp[static_cast<size_t>(j)]) * pk.amp[static_cast<size_t>(j)];
             }
-            env[static_cast<size_t>(t - n.start)] = static_cast<float>(std::sqrt(s));
-        }
+            return static_cast<float>(std::sqrt(s));
+        };
+        std::vector<float> env(static_cast<size_t>(t1 - n.start + 4), 0.0f);
+        for (int t = n.start; t < n.start + static_cast<int>(env.size()); ++t)
+            env[static_cast<size_t>(t - n.start)] = partialsLevel(t, unique);
         // steepest rise of the unshared partials (works for closely spaced onsets too)
         int bestI = -1;
         double bestRise = 0.0;
@@ -940,7 +970,46 @@ void refineOnsets(const Context& ctx, std::vector<Candidate>& notes)
                        env[static_cast<size_t>(bestI - 1)] > 0.1 * level)
                     --bestI;
             }
-            if (pre < 0.3 * bestRise && bestI > 2)
+            // A rise within one analysis window of the start is that window still sliding over the
+            // note's own attack, not an onset further on.
+            const int window = std::max(3, p.fftSize / p.hop);
+            bool move = pre < 0.3 * bestRise && bestI >= window;
+            std::vector<float> whole;   // the note's whole level (its first eight partials), when needed
+            auto wholeLevel = [&]() -> const std::vector<float>& {
+                static const std::vector<int> all{ 1, 2, 3, 4, 5, 6, 7, 8 };
+                if (whole.empty())
+                    for (int j = 0; j < static_cast<int>(env.size()); ++j)
+                        whole.push_back(partialsLevel(n.start + j, all));
+                return whole;
+            };
+            // with its lower partials all shared, the rise is seen only in weak upper ones, where noise and
+            // other notes can fake it: then the note's whole level must rise there too
+            if (move && unique.front() > 4)
+            {
+                const auto& w = wholeLevel();
+                const int to = std::min(static_cast<int>(w.size()), bestI + 4);
+                double before = 0.0, after = 0.0;
+                for (int j = 0; j < bestI; ++j)
+                    before += w[static_cast<size_t>(j)];
+                for (int j = bestI; j < to; ++j)
+                    after += w[static_cast<size_t>(j)];
+                move = after / std::max(1, to - bestI) >= 1.5 * before / bestI;
+            }
+            // if nothing sounds at the note's partials before the rise, no other note's partial held its
+            // start back: that is a slow attack, unless the rise comes well over a window later
+            if (move && bestI < window + window / 4)
+            {
+                const auto& w = wholeLevel();
+                double before = 0.0, peak = 0.0;
+                for (int j = 0; j < static_cast<int>(w.size()); ++j)
+                {
+                    if (j < bestI)
+                        before += w[static_cast<size_t>(j)];
+                    peak = std::max(peak, static_cast<double>(w[static_cast<size_t>(j)]));
+                }
+                move = before / bestI >= 0.05 * peak;
+            }
+            if (move)
             {
                 n.start += bestI;
                 n.cents.erase(n.cents.begin(), n.cents.begin() + bestI);
@@ -951,58 +1020,220 @@ void refineOnsets(const Context& ctx, std::vector<Candidate>& notes)
     }
 }
 
-std::vector<Candidate> mergeFragments(const Context& ctx, std::vector<Candidate> notes)
+// Notes of one pitch that overlap or nearly touch form a lane, which becomes one note per stroke.
+// A note starting where the lane's sound so far ends starts a new note if its level rises again
+// there. One starting inside the lane's sound starts a new note only if its level rises and stays
+// up (as a repeated note's does, unlike a swell from beating or vibrato); if its level only rises
+// but it goes on past the lane's sound so far, it begins where that sound ends. Otherwise it is the
+// same note found twice and is merged in. A resulting note follows the member it starts with where
+// that member's pitch stays within 25 cents of the lane's (the member nearest the lane's typical
+// pitch at each frame), and is that member as it was if it matches it. With `overlapsOnly`, notes
+// that do not overlap are left apart.
+std::vector<Candidate> mergeFragments(const Context& ctx, std::vector<Candidate> notes, bool overlapsOnly)
 {
     const int maxGap = 4;
     const float maxCents = 40.0f;
+    const int minApart = 12;   // a start inside a note within ~140 ms of the last one is that same attack
+    const int minLen = static_cast<int>(std::lround(ctx.p.minNoteSeconds * ctx.p.sampleRate / ctx.p.hop));
     std::stable_sort(notes.begin(), notes.end(), [](const Candidate& a, const Candidate& b) { return a.start < b.start; });
-    std::vector<Candidate> out;
-    for (auto& n : notes)
+    struct Lane
     {
-        bool merged = false;
-        for (auto& m : out)
+        std::vector<size_t> members;           // by start
+        int start = 0, end = 0;
+    };
+    std::vector<Lane> lanes;
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+        const auto& c = notes[i];
+        const float hz = medianOf(c.f0);
+        // the lane it overlaps most, among those with a member of its pitch that it touches
+        int best = -1, bestOverlap = std::numeric_limits<int>::min();
+        for (size_t l = 0; l < lanes.size(); ++l)
         {
-            if (n.start > m.end + maxGap || n.end < m.start - maxGap)
+            const auto& lane = lanes[l];
+            if (c.start > lane.end + maxGap || c.end < lane.start - maxGap)
                 continue;
-            if (std::fabs(1200.0f * std::log2(medianOf(n.f0) / medianOf(m.f0))) > maxCents)
-                continue;
-            if (n.start > m.start + 3)
+            const bool near = std::any_of(lane.members.begin(), lane.members.end(), [&](size_t k) {
+                const auto& m = notes[k];
+                return c.start <= m.end + maxGap && c.end >= m.start - maxGap &&
+                       std::fabs(1200.0f * std::log2(hz / medianOf(m.f0))) <= maxCents;
+            });
+            const int overlap = std::min(c.end, lane.end) - std::max(c.start, lane.start);
+            if (near && overlap > bestOverlap)
             {
-                const auto env = harmonicEnvelope(ctx, n, 8, n.start - 6, n.start + 3);
-                if (isReattack(env, 6))
-                    continue;
+                bestOverlap = overlap;
+                best = static_cast<int>(l);
             }
-            const int lo = std::min(m.start, n.start), hi = std::max(m.end, n.end);
-            std::vector<float> f0(static_cast<size_t>(hi - lo + 1), 0.0f);
-            std::vector<uint8_t> known(f0.size(), 0);
+        }
+        if (best < 0)
+        {
+            lanes.push_back({ { i }, c.start, c.end });
+            continue;
+        }
+        auto& lane = lanes[static_cast<size_t>(best)];
+        lane.members.push_back(i);
+        lane.end = std::max(lane.end, c.end);
+    }
+    std::vector<Candidate> out;
+    for (const auto& lane : lanes)
+    {
+        if (lane.members.size() == 1)
+        {
+            out.push_back(std::move(notes[lane.members.front()]));
+            continue;
+        }
+        // the lane as one candidate: at each frame the pitch of the member nearest the lane's typical
+        // pitch there (a member can wander onto a neighbouring note's partials)
+        std::vector<float> pooled;
+        for (size_t k : lane.members)
+            for (float hz : notes[k].f0)
+                pooled.push_back(hz);
+        const float typical = medianOf(pooled);
+        Candidate whole;
+        whole.start = lane.start;
+        whole.end = lane.end;
+        whole.f0.assign(static_cast<size_t>(lane.end - lane.start + 1), 0.0f);
+        std::vector<float> off(whole.f0.size(), std::numeric_limits<float>::max());
+        std::vector<uint8_t> known(whole.f0.size(), 0);
+        for (size_t k : lane.members)
+        {
+            const auto& m = notes[k];
             for (int t = m.start; t <= m.end; ++t)
             {
-                f0[static_cast<size_t>(t - lo)] = m.f0[static_cast<size_t>(t - m.start)];
-                known[static_cast<size_t>(t - lo)] = 1;
-            }
-            for (int t = n.start; t <= n.end; ++t)
-                if (!known[static_cast<size_t>(t - lo)])
+                const size_t q = static_cast<size_t>(t - lane.start);
+                const float hz = m.f0[static_cast<size_t>(t - m.start)];
+                const float d = std::fabs(std::log2(hz / typical));
+                if (d < off[q])
                 {
-                    f0[static_cast<size_t>(t - lo)] = n.f0[static_cast<size_t>(t - n.start)];
-                    known[static_cast<size_t>(t - lo)] = 1;
+                    off[q] = d;
+                    whole.f0[q] = hz;
+                    known[q] = 1;
                 }
-            fillGaps(f0, known);
-            m.start = lo;
-            m.end = hi;
-            m.cents.resize(f0.size());
-            for (size_t i = 0; i < f0.size(); ++i)
-                m.cents[i] = hzToField(f0[i], ctx.p);
-            m.f0 = std::move(f0);
-            m.strength.assign(m.cents.size(), 1.0f);
-            m.energy += n.energy;
-            m.B = std::max(m.B, n.B);
-            m.probability = std::max(m.probability, n.probability);
-            merged = true;
-            break;
+            }
+            whole.B = std::max(whole.B, m.B);
         }
-        if (!merged)
-            out.push_back(std::move(n));
+        fillGaps(whole.f0, known);
+        std::unique_ptr<ReattackTest> test;
+        std::vector<int> bounds{ lane.start };
+        int cover = notes[lane.members.front()].end;
+        for (size_t k = 1; k < lane.members.size(); ++k)
+        {
+            const auto& c = notes[lane.members[k]];
+            bool split = false;
+            if (c.start >= cover - maxGap)
+            {
+                if (overlapsOnly)
+                    split = c.start > bounds.back();
+                else if (c.start > bounds.back() + 3)
+                {
+                    const auto env = harmonicEnvelope(ctx, c, 8, c.start - 6, c.start + 3);
+                    split = isReattack(env, 6);
+                }
+            }
+            else if (c.start - bounds.back() >= minApart)
+            {
+                const auto env = harmonicEnvelope(ctx, c, 8, c.start - 6, c.start + 3);
+                if (isReattack(env, 6))
+                {
+                    if (!test)
+                        test = std::make_unique<ReattackTest>(ctx, whole);
+                    for (int i = c.start - 3 - lane.start; i <= c.start + 3 - lane.start && !split; ++i)
+                        split = i >= 4 && i <= test->len - 5 && test->risesAndStays(i);
+                    if (!split && c.end > cover + maxGap && cover + 1 - bounds.back() >= minApart)
+                    {
+                        // it goes on past the lane's sound so far and started like a new note: it begins where that sound ends
+                        bounds.push_back(cover + 1);
+                        cover = std::max(cover, c.end);
+                        continue;
+                    }
+                }
+            }
+            if (split)
+                bounds.push_back(c.start);
+            cover = std::max(cover, c.end);
+        }
+        // no note shorter than a note can be
+        for (size_t q = 1; q < bounds.size();)
+        {
+            const int next = q + 1 < bounds.size() ? bounds[q + 1] : lane.end + 1;
+            if (next - bounds[q] < minLen || bounds[q] - bounds[q - 1] < minLen)
+                bounds.erase(bounds.begin() + static_cast<std::ptrdiff_t>(q));
+            else
+                ++q;
+        }
+        bounds.push_back(lane.end + 1);
+        for (size_t q = 0; q + 1 < bounds.size(); ++q)
+        {
+            const int from = bounds[q];
+            int to = bounds[q + 1] - 1;
+            // up to where its members reach (a note left apart keeps its own end)
+            int reach = from;
+            for (size_t k : lane.members)
+                if (notes[k].start <= to && notes[k].end >= from)
+                    reach = std::max(reach, notes[k].end);
+            to = std::min(to, reach);
+            // its own member: the one starting there (else the one covering most of it)
+            int own = -1, ownScore = -1;
+            for (size_t k : lane.members)
+            {
+                const auto& m = notes[k];
+                const int overlap = std::min(m.end, to) - std::max(m.start, from) + 1;
+                if (overlap <= 0)
+                    continue;
+                const int score = (m.start == from ? 1 << 20 : 0) + overlap;
+                if (score > ownScore)
+                {
+                    ownScore = score;
+                    own = static_cast<int>(k);
+                }
+            }
+            if (own < 0)
+                continue;
+            const auto& self = notes[static_cast<size_t>(own)];
+            // its own member's pitch where that agrees with the lane's, the lane's elsewhere
+            Candidate note;
+            note.start = from;
+            note.end = to;
+            note.f0.resize(static_cast<size_t>(to - from + 1));
+            bool agrees = true;
+            for (int t = from; t <= to; ++t)
+            {
+                float hz = whole.f0[static_cast<size_t>(t - lane.start)];
+                if (t >= self.start && t <= self.end)
+                {
+                    const float ownHz = self.f0[static_cast<size_t>(t - self.start)];
+                    if (std::fabs(1200.0f * std::log2(ownHz / hz)) <= 25.0f)
+                        hz = ownHz;
+                    else
+                        agrees = false;
+                }
+                note.f0[static_cast<size_t>(t - from)] = hz;
+            }
+            if (agrees && self.start == from && self.end == to)
+            {
+                out.push_back(self);   // a member as it was, the rest merged into it
+                continue;
+            }
+            note.cents.resize(note.f0.size());
+            for (size_t i = 0; i < note.f0.size(); ++i)
+                note.cents[i] = hzToField(note.f0[i], ctx.p);
+            note.strength.assign(note.cents.size(), 1.0f);
+            note.B = whole.B;
+            note.probability = 0.0f;
+            for (size_t k : lane.members)
+            {
+                const auto& m = notes[k];
+                const int overlap = std::min(m.end, note.end) - std::max(m.start, note.start) + 1;
+                if (overlap <= 0)
+                    continue;
+                note.energy += m.energy * overlap / std::max(1, m.length());
+                note.probability = std::max(note.probability, m.probability);
+                note.hits = std::max(note.hits, m.hits);
+            }
+            out.push_back(std::move(note));
+        }
     }
+    std::stable_sort(out.begin(), out.end(), [](const Candidate& a, const Candidate& b) { return a.start < b.start; });
     return out;
 }
 

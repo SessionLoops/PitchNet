@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <complex>
 #include <cstdint>
@@ -100,6 +101,7 @@ struct Params
 
     // ---- rendering ----
     float stretchAttackSeconds = 0.08f; // a stretched note's first part keeps its speed
+    float cutFadeSeconds = 0.15f;      // a shortened note fades out over this long before its new end
 
     // ---- diagnostics ----
     bool exportFeatures = false;       // fill Analysis::candidateFeatures (purifier training)
@@ -199,10 +201,14 @@ struct NoteEdit
     bool mute = false;
     bool preserveFormants = false;     // instrument partial patterns are not formants; see docs
     double timeOffsetSeconds = 0.0;    // move the note
-    float stretch = 1.0f;              // length ratio (> 1 longer, < 1 shorter, 0.25..4); the attack keeps its speed
+    // Length ratio, 0..4. Longer (> 1): the part after the attack is that many times as long and
+    // slows down; the attack keeps its speed. Shorter (< 1): the note keeps that share of its length;
+    // it plays as recorded and is cut, fading out just before its new end.
+    float stretch = 1.0f;
     // Experimental: the note also owns a part of what no note owns (the background around its
     // harmonics, the noise at its start, its decay for up to 2 s; see render()). A mute removes that
-    // part too, and a move, pitch or gain change takes it along (a stretch does not).
+    // part too, and a move, pitch or gain change takes it along; a shortened note cuts it with the note
+    // (a lengthened one leaves it in place).
     bool takeBackground = false;
     bool isIdentity() const
     {
@@ -211,15 +217,29 @@ struct NoteEdit
 };
 
 /**
- * Where a stretched note's frames go, in analysis frames before any move: frames up to `anchor`
- * (the attack) keep their speed, later frames are spaced `ratio` times as far apart.
+ * Where a stretched note's frames go, in analysis frames before any move. Lengthened (ratio > 1):
+ * frames up to `anchor` (the attack) keep their speed, later frames are spaced `ratio` times as far
+ * apart. Shortened (ratio < 1): every frame keeps its place and the note ends at `end`, `ratio` of
+ * the way from its first frame to its last; later frames are cut.
  */
 struct StretchMap
 {
     double anchor = 0.0;
     double ratio = 1.0;
-    double outputFrame(double sourceFrame) const { return sourceFrame <= anchor ? sourceFrame : anchor + (sourceFrame - anchor) * ratio; }
-    double sourceFrame(double outputFrame) const { return outputFrame <= anchor ? outputFrame : anchor + (outputFrame - anchor) / ratio; }
+    double end = 0.0;                  // last frame played when shortened
+    bool cuts() const { return ratio < 1.0; }
+    double outputFrame(double sourceFrame) const
+    {
+        if (cuts())
+            return std::min(sourceFrame, end);
+        return sourceFrame <= anchor ? sourceFrame : anchor + (sourceFrame - anchor) * ratio;
+    }
+    double sourceFrame(double outputFrame) const
+    {
+        if (cuts())
+            return outputFrame;
+        return outputFrame <= anchor ? outputFrame : anchor + (outputFrame - anchor) / ratio;
+    }
 };
 
 /** The time map render() uses for `note` under `edit` (ratio 1 when the note is not stretched). */
@@ -245,7 +265,8 @@ Analysis analyze(const float* mono, int numSamples, const Params& params,
  * owns, in place.
  * Experimental (NoteEdit::takeBackground): what no note owns is split among the notes
  * sounding in each frame (by level and spectral shape; at an onset what is new goes to
- * the notes starting there; a claim fades out over 2 s after a note ends). A muted note
+ * the notes starting there, in proportion to each one's own spectrum; a claim fades out
+ * over 2 s after a note ends). A muted note
  * removes its part, and a moved, re-pitched or re-gained note takes it along, each
  * partial's band moving with that partial. Muting every note then silences the frames
  * their claims cover.

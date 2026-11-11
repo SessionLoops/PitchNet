@@ -11,12 +11,15 @@
 //   formant optional: partial amplitudes follow the note's smoothed spectral envelope;
 //   gain    a scalar; mute removes the share;
 //   time    whole hops plus a fractional linear-phase delay;
-//   stretch the note's first Params::stretchAttackSeconds play as recorded; after that, output frame
-//           u plays source time tau(u) (StretchMap). Each partial's region is taken from frame
-//           floor(tau), its level interpolated towards the next frame, and the whole region rotated
-//           so that its peak continues the phase the partial had in the previous output frame
-//           (phase propagation with identity phase locking, Laroche & Dolson 1999), also at the
-//           frame centre, since the peak changes bin as the partial wanders.
+//   stretch lengthened: the note's first Params::stretchAttackSeconds play as recorded; after that,
+//           output frame u plays source time tau(u) (StretchMap). Each partial's region is taken
+//           from frame floor(tau), its level interpolated towards the next frame, and the whole
+//           region rotated so that its peak continues the phase the partial had in the previous
+//           output frame (phase propagation with identity phase locking, Laroche & Dolson 1999),
+//           also at the frame centre, since the peak changes bin as the partial wanders.
+//           Shortened: the note plays as recorded up to its new end, fading out over the
+//           Params::cutFadeSeconds before it (raised cosine, not into the attack), and nothing
+//           of it after.
 // Only a note's own share moves. Unpitched sound (a hammer, a pick, breath) is not assigned to
 // notes and stays where it was in the remainder of the recording. (The experimental
 // NoteEdit::takeBackground gives an edited note a part of everything no note owns; see
@@ -160,9 +163,11 @@ struct EditState
     bool moves = false;
     int touchLo = 0;           // output frames this edit can change (inclusive, conservative)
     int touchHi = -1;
-    // stretching
+    // stretching (lengthened) or cutting (shortened)
     StretchMap map;
     bool stretches = false;
+    bool cuts = false;
+    double fadeFrames = 1.0;
     int maskHi = -1;           // last frame of the note's masks
     struct Track { int frame = -1; double phase = 0.0; };
     std::map<std::pair<int, int>, Track> track;  // (harmonic, channel) -> output frame and peak phase
@@ -250,9 +255,12 @@ std::pair<int, int> claimSpan(const Analysis& A, int note, int numFrames)
  * elsewhere (so that what lies far from every note is shared by level). In its attack a note also
  * takes what is new: the part of each bin by which the input has grown since just before the note
  * (its onset noise, its first partials), while what was sounding already stays with the notes that
- * own it. After its last frame the claim keeps that frame's shape and decays; it fades in over a
- * short lead-in before the onset and out over the second half of the tail. Frames must be
- * prepared in increasing order.
+ * own it. Notes starting together share what is new in proportion to their own spectra in that
+ * frame (each partial's amplitude over a few bins, plus a floor in proportion to the note's
+ * level), so a note keeps the onset sound around its partials even beside a louder note, and what
+ * lies far from every partial is shared by level. After its last frame the claim keeps that
+ * frame's shape and decays; it fades in over a short lead-in before the onset and out over the
+ * second half of the tail. Frames must be prepared in increasing order.
  */
 class BackgroundShares
 {
@@ -304,7 +312,7 @@ public:
         byStart.resize(owners.size());
         std::iota(byStart.begin(), byStart.end(), 0);
         std::sort(byStart.begin(), byStart.end(), [&](int a, int b) { return owners[static_cast<size_t>(a)].lo < owners[static_cast<size_t>(b)].lo; });
-        for (auto* v : { &rest, &total, &shape, &current, &fresh, &freshTotal, &scratch })
+        for (auto* v : { &rest, &total, &shape, &onset, &current, &fresh, &freshTotal, &scratch })
             v->resize(static_cast<size_t>(K));
     }
 
@@ -347,6 +355,9 @@ private:
     static constexpr double kTailDecaySeconds = 0.3;   // decay of the claim's level in the tail
     static constexpr float kFloor = 0.05f;             // claim far from the note's partials
     static constexpr double kMinWidthBins = 2.0;       // narrowest widening of a partial
+    static constexpr double kFillWidth = 0.5;          // claim: partials widened by this much of their spacing
+    static constexpr double kOnsetWidth = 0.05;        // onset: partials widened by this much of their spacing
+    static constexpr double kOnsetFloor = 0.1;         // onset: claim far from the partials, relative to the level
     static constexpr int kSmoothBins = 2;              // magnitudes compared over +-2 bins
 
     struct Owner
@@ -434,13 +445,13 @@ private:
             coverage = std::max(coverage, static_cast<float>(fade));
             // its share of what was sounding: level times the shape of its spectrum
             const int at = std::clamp(u, o.maskLo, o.maskHi);
-            double level = 0.0;
-            if (u >= o.maskLo)
+            double atLevel = 0.0;   // level at `at` (before the mask starts: its first frame)
             {
                 const auto [b, e] = partialsAt(nm, at);
                 for (size_t q = b; q < e; ++q)
-                    level += nm.partials[q].amplitude;
+                    atLevel += nm.partials[q].amplitude;
             }
+            double level = u >= o.maskLo ? atLevel : 0.0;
             if (u > o.maskHi)
                 level = o.last * std::exp(-(u - o.maskHi) / decayFrames);
             level = fade * std::max(level, 1e-3 * o.peak);
@@ -452,7 +463,9 @@ private:
                 c[static_cast<size_t>(k)] = static_cast<float>(level) * shape[static_cast<size_t>(k)];
                 total[static_cast<size_t>(k)] += c[static_cast<size_t>(k)];
             }
-            // in its attack, what is new since just before the note
+            // in its attack, what is new since just before the note, in proportion to the note's own
+            // spectrum in this frame (its partials over a few bins, plus a floor in proportion to its
+            // level), so notes starting together each keep the onset sound around their partials
             auto& n = newClaims[j];
             if (u > o.attackHi)
             {
@@ -468,12 +481,14 @@ private:
                 magnitude(u, current);
                 haveCurrent = true;
             }
+            partialSpectrum(nm, at, kOnsetWidth, onset);
+            const double onsetFloor = kOnsetFloor * std::max(atLevel, 1e-3 * o.peak);
             n.resize(static_cast<size_t>(K));
             for (int k = 0; k < K; ++k)
             {
                 const size_t q = static_cast<size_t>(k);
                 const float grown = current[q] > 0.0f ? std::clamp(1.0f - o.before[q] / current[q], 0.0f, 1.0f) : 0.0f;
-                n[q] = static_cast<float>(fade * o.peak) * grown;
+                n[q] = static_cast<float>(fade * (onset[q] + onsetFloor)) * grown;
                 fresh[q] = std::max(fresh[q], static_cast<float>(fade) * grown);
                 freshTotal[q] += n[q];
             }
@@ -482,27 +497,35 @@ private:
             r = std::clamp(r, 0.0f, 1.0f);
     }
 
+    /**
+     * out: the note's partials at frame t (none when t < 0), each its amplitude times a Gaussian
+     * over max(kMinWidthBins, widthFraction x the spacing of its harmonics) bins.
+     */
+    void partialSpectrum(const NoteMasks& nm, int t, double widthFraction, std::vector<float>& out) const
+    {
+        std::fill(out.begin(), out.end(), 0.0f);
+        if (t < 0)
+            return;
+        const auto [b, e] = partialsAt(nm, t);
+        for (size_t q = b; q < e; ++q)
+        {
+            const auto& pm = nm.partials[q];
+            const double kc = pm.freqHz / binHz;
+            const double width = std::max(kMinWidthBins, widthFraction * pm.freqHz / std::max(1, pm.harmonic) / binHz);
+            const int k0 = std::max(1, static_cast<int>(std::floor(kc - 3.0 * width)));
+            const int k1 = std::min(K - 2, static_cast<int>(std::ceil(kc + 3.0 * width)));
+            for (int k = k0; k <= k1; ++k)
+            {
+                const double d = (k - kc) / width;
+                out[static_cast<size_t>(k)] += static_cast<float>(pm.amplitude * std::exp(-0.5 * d * d));
+            }
+        }
+    }
+
     /** shape: the note's partials at frame t widened to fill the gaps between them, peak 1, floor kFloor. */
     void spectrumShape(const NoteMasks& nm, int t)
     {
-        std::fill(shape.begin(), shape.end(), 0.0f);
-        if (t >= 0)
-        {
-            const auto [b, e] = partialsAt(nm, t);
-            for (size_t q = b; q < e; ++q)
-            {
-                const auto& pm = nm.partials[q];
-                const double kc = pm.freqHz / binHz;
-                const double width = std::max(kMinWidthBins, 0.5 * pm.freqHz / std::max(1, pm.harmonic) / binHz);
-                const int k0 = std::max(1, static_cast<int>(std::floor(kc - 3.0 * width)));
-                const int k1 = std::min(K - 2, static_cast<int>(std::ceil(kc + 3.0 * width)));
-                for (int k = k0; k <= k1; ++k)
-                {
-                    const double d = (k - kc) / width;
-                    shape[static_cast<size_t>(k)] += static_cast<float>(pm.amplitude * std::exp(-0.5 * d * d));
-                }
-            }
-        }
+        partialSpectrum(nm, t, kFillWidth, shape);
         const float peak = *std::max_element(shape.begin(), shape.end());
         for (auto& s : shape)
             s = std::max(kFloor, peak > 0.0f ? s / peak : 0.0f);
@@ -521,7 +544,7 @@ private:
     std::vector<int> present;          // owners with a claim at the prepared frame
     int preparedFrame = std::numeric_limits<int>::min();
     std::vector<std::vector<float>> claims, newClaims;
-    std::vector<float> rest, total, shape, current, fresh, freshTotal, scratch;
+    std::vector<float> rest, total, shape, onset, current, fresh, freshTotal, scratch;
     float coverage = 0.0f;             // the strongest (least faded) claim at the prepared frame
 };
 
@@ -594,7 +617,10 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         s.delta = offset - static_cast<double>(s.D) * H;
         s.moves = offset != 0.0;
         s.map = stretchMap(A, ni, ed);
-        s.stretches = s.map.ratio != 1.0;
+        s.stretches = s.map.ratio > 1.0;
+        s.cuts = s.map.cuts();
+        // the fade ends at the cut and never reaches into the attack
+        s.fadeFrames = std::max(1.0, std::min(static_cast<double>(p.cutFadeSeconds) * p.sampleRate / H, s.map.end - s.map.anchor));
         // removal touches the note's own frames; the transformed copy lands D frames later (and,
         // when stretched, ends where the time map puts the note's last frame)
         const auto [lo, hi] = noteFrameRange(A, ni);
@@ -608,7 +634,8 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             s.touchHi = std::max(hi, outHi + s.D);
         }
         // with its background, the note's part of what no note owns goes too: removed over its
-        // claim and, unless muted, added back D frames later (not for a stretched note)
+        // claim and, unless muted, added back D frames later (up to its new end when shortened; not
+        // for a lengthened note)
         if (ed.takeBackground && (ed.mute || !s.stretches))
         {
             const auto [blo, bhi] = backgroundAt(0).span(ni);
@@ -852,6 +879,16 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             const int s = uo;
             if (s < 0 || s >= T)
                 continue;
+            // a shortened note fades out before its new end, and nothing of it plays after that
+            float cutGain = 1.0f;
+            if (st.cuts)
+            {
+                const double left = st.map.end - s;
+                if (left <= 0.0)
+                    continue;
+                if (left < st.fadeFrames)
+                    cutGain = static_cast<float>(std::pow(std::sin(0.5 * kPi * left / st.fadeFrames), 2.0));
+            }
             const auto [b, e] = partialsAt(nm, s);
             for (size_t q = b; q < e; ++q)
             {
@@ -862,7 +899,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                 const double r = std::pow(2.0, semis / 12.0);
                 double phase = 0.0;
                 int shift = 0;
-                float g = st.gain;
+                float g = st.gain * cutGain;
                 if (st.shifts)
                 {
                     // A curve returning to zero keeps the phase accumulated by its earlier
@@ -948,7 +985,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                         const int kk = k + bandShift[static_cast<size_t>(k)];
                         if (kk < 1 || kk > K - 2)
                             continue;
-                        y[static_cast<size_t>(kk)] += st.gain * part[static_cast<size_t>(k)] * bandRot[static_cast<size_t>(k)] * fracDelay(st.delta, kk);
+                        y[static_cast<size_t>(kk)] += st.gain * cutGain * part[static_cast<size_t>(k)] * bandRot[static_cast<size_t>(k)] * fracDelay(st.delta, kk);
                     }
                 }
             }
@@ -982,8 +1019,12 @@ StretchMap stretchMap(const Analysis& A, int note, const NoteEdit& edit)
         return m;
     const Params& p = A.params;
     const double hopSeconds = p.hop / p.sampleRate;
-    m.anchor = A.notes[static_cast<size_t>(note)].startFrame + std::max(0.0, std::round(p.stretchAttackSeconds / hopSeconds));
-    m.ratio = std::clamp(static_cast<double>(edit.stretch), 0.25, 4.0);
+    const Note& n = A.notes[static_cast<size_t>(note)];
+    m.anchor = n.startFrame + std::max(0.0, std::round(p.stretchAttackSeconds / hopSeconds));
+    m.ratio = std::clamp(static_cast<double>(edit.stretch), 0.0, 4.0);
+    // shortened, the note keeps that share of its length: nothing is sped up, so the cut may fall
+    // anywhere, inside the attack too
+    m.end = n.startFrame + std::max(0, n.endFrame - n.startFrame) * std::min(1.0, m.ratio);
     return m;
 }
 
@@ -1025,7 +1066,7 @@ AudioSpan renderNotes(const Analysis& A, const std::vector<std::vector<float>>& 
             continue;
         const auto it = edits.find(ni);
         const auto map = it != edits.end() ? stretchMap(A, ni, it->second) : StretchMap{};
-        if (it != edits.end() && it->second.takeBackground && (it->second.mute || map.ratio == 1.0))
+        if (it != edits.end() && it->second.takeBackground && (it->second.mute || map.ratio <= 1.0))
         {
             const auto [ca, cb] = claimSpan(A, ni, numFrames);
             a = std::min(a, ca);

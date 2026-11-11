@@ -5,7 +5,8 @@ same mixture in which that note was played longer or shorter.
 
 The target note (1.0 s, starting at 0.1 s) is stretched to 0.6, 1.5 and 2.0 times its length, alone and
 over one or two sustained notes of other instruments. The stretch ratio is chosen so that the note ends
-where the longer (or shorter) recording ends; its first Params::stretchAttackSeconds keep their speed.
+where the longer (or shorter) recording ends: shortened, it is the share of its length the note keeps;
+lengthened, the note's first Params::stretchAttackSeconds keep their speed.
 Score: spectral SNR against the played-longer mixture ("doing nothing" is the unedited mixture).
 For sustained instruments this is the natural target; for piano and harp a stretched note decays
 more slowly instead of ringing on, so their scores mostly measure that difference.
@@ -81,9 +82,9 @@ def main():
                     if not found:
                         continue
                     idx, n = max(found, key=lambda c: c[1]['end'] - c[1]['start'])
-                    # the ratio that makes the note end where the longer recording ends
+                    # the ratio that makes the note end where the longer (or shorter) recording ends
                     anchor = n['start'] + round(0.08 * FS / hop)
-                    r = (n['start'] + ratio * (n['end'] - n['start']) - anchor) / max(1, n['end'] - anchor)
+                    r = ratio if ratio < 1 else (n['start'] + ratio * (n['end'] - n['start']) - anchor) / max(1, n['end'] - anchor)
                     cli(tag + '.wav', '--stretch', f'{idx}:{r:.4f}', '--out', tag + '_out.wav')
                     y = sf.read(tag + '_out.wav')[0][:len(mix)]
                     rows.append(dict(inst=inst, ratio=ratio, chord=chord, stretched=magsnr(target, y), nothing=magsnr(target, mix)))

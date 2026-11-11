@@ -2,6 +2,7 @@
 // Self-contained: synthetic harmonic tones, no model files, DSP-only purification.
 
 #include "../Source/Audio/Polyphonic/PolyEngine.h"
+#include "../Source/Audio/Polyphonic/PolyInternal.h"   // test 15 calls the fragment merge directly
 #include "TestAssert.h"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <complex>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
@@ -434,14 +436,34 @@ int main()
         CHECK(at(y, fA * std::pow(2.0, 1.0 / 12.0), 1.3, 1.7) < at(y, fA, 1.3, 1.7) - 25.0);
         CHECK(std::fabs(at(y, fF, 0.3, 1.0) - at(x, fF, 0.3, 1.0)) < 0.5);
 
+        // shortened: played as recorded up to its new end, then cut (no faster playback)
         polyphonic::NoteEdit shorter;
         shorter.stretch = 0.5f;
         const auto z = polyphonic::render(A, {x}, {{a3, shorter}})[0];
-        std::printf("stretch x0.5: A3 at 0.3-0.5 s %.1f dB (was %.1f), at 0.8-1.0 s %.1f dB (was %.1f); F4 %.2f -> %.2f dB\n",
-                    at(z, fA, 0.3, 0.5), at(x, fA, 0.3, 0.5), at(z, fA, 0.8, 1.0), at(x, fA, 0.8, 1.0), at(x, fF, 0.3, 1.0), at(z, fF, 0.3, 1.0));
-        CHECK(at(z, fA, 0.3, 0.5) > at(x, fA, 0.3, 0.5) - 6.0);
-        CHECK(at(z, fA, 0.8, 1.0) < at(x, fA, 0.8, 1.0) - 20.0);
+        const double cutEnd = polyphonic::stretchMap(A, a3, shorter).end * hopS;
+        const double body = cutEnd - params.cutFadeSeconds - 0.05;   // before the fade
+        std::printf("stretch x0.5: ends at %.2f s; A3 at 0.25-%.2f s %.1f dB (was %.1f), after the end %.1f dB (was %.1f); F4 %.2f -> %.2f dB\n",
+                    cutEnd, body, at(z, fA, 0.25, body), at(x, fA, 0.25, body), at(z, fA, cutEnd + 0.05, cutEnd + 0.25),
+                    at(x, fA, cutEnd + 0.05, cutEnd + 0.25), at(x, fF, 0.3, 1.0), at(z, fF, 0.3, 1.0));
+        CHECK(std::fabs(at(z, fA, 0.25, body) - at(x, fA, 0.25, body)) < 0.5);
+        CHECK(at(z, fA, cutEnd + 0.05, cutEnd + 0.25) < at(x, fA, cutEnd + 0.05, cutEnd + 0.25) - 20.0);
         CHECK(std::fabs(at(z, fF, 0.3, 1.0) - at(x, fF, 0.3, 1.0)) < 0.5);
+
+        // shortened to 5 % of its length, which ends inside the attack: the onset stays, the rest goes
+        polyphonic::NoteEdit stub;
+        stub.stretch = 0.05f;
+        const auto w = polyphonic::render(A, {x}, {{a3, stub}})[0];
+        const double stubEnd = polyphonic::stretchMap(A, a3, stub).end * hopS;
+        const double expected = (A.notes[static_cast<size_t>(a3)].startFrame
+                                 + 0.05 * (A.notes[static_cast<size_t>(a3)].endFrame - A.notes[static_cast<size_t>(a3)].startFrame)) * hopS;
+        std::printf("stretch x0.05: ends at %.3f s; A3 at 0.10-0.14 s %.1f dB (was %.1f), from 0.3 s %.1f dB (was %.1f); F4 %.2f -> %.2f dB\n",
+                    stubEnd, at(w, fA, 0.10, 0.14), at(x, fA, 0.10, 0.14), at(w, fA, 0.3, 1.0), at(x, fA, 0.3, 1.0),
+                    at(x, fF, 0.3, 1.0), at(w, fF, 0.3, 1.0));
+        CHECK(std::fabs(stubEnd - expected) < 1e-9);
+        CHECK(stubEnd < polyphonic::stretchMap(A, a3, stub).anchor * hopS);
+        CHECK(at(w, fA, 0.10, 0.14) > at(x, fA, 0.10, 0.14) - 6.0);
+        CHECK(at(w, fA, 0.3, 1.0) < at(x, fA, 0.3, 1.0) - 20.0);
+        CHECK(std::fabs(at(w, fF, 0.3, 1.0) - at(x, fF, 0.3, 1.0)) < 0.5);
     }
 
     // ---- 9. vibrato: partials keep their phase when they move between bins ----
@@ -473,9 +495,11 @@ int main()
             const auto z = polyphonic::render(B, {v}, {{n, e}})[0];
             const auto map = polyphonic::stretchMap(B, n, e);
             const double hopS = static_cast<double>(params.hop) / kRate;
-            const double t0 = map.outputFrame(0.4 / hopS) * hopS, t1 = map.outputFrame(0.9 / hopS) * hopS;
-            std::printf("vibrato C5 stretched x%.1f: body %.2f dB (source %.2f dB)\n", ratio, rmsDb(z, t0, t1), rmsDb(v, 0.4, 0.9));
-            CHECK(std::fabs(rmsDb(z, t0, t1) - rmsDb(v, 0.4, 0.9)) < 1.0);
+            // lengthened, source 0.4-0.9 s plays later and slower; shortened, it plays as recorded up to the fade
+            const double s1 = map.cuts() ? std::min(0.9, map.end * hopS - params.cutFadeSeconds - 0.05) : 0.9;
+            const double t0 = map.outputFrame(0.4 / hopS) * hopS, t1 = map.outputFrame(s1 / hopS) * hopS;
+            std::printf("vibrato C5 stretched x%.1f: body %.2f dB (source %.2f dB)\n", ratio, rmsDb(z, t0, t1), rmsDb(v, 0.4, s1));
+            CHECK(std::fabs(rmsDb(z, t0, t1) - rmsDb(v, 0.4, s1)) < 1.0);
         }
     }
 
@@ -745,6 +769,113 @@ int main()
         std::printf("own background: moved note on its own differs from the full render's share by %.1e, Solo from the mute by %.1e\n",
                     aloneErr, soloErr);
         CHECK(aloneErr < 1e-4 && soloErr < 1e-4);
+    }
+
+    // ---- 14. notes starting together share what is new by their own spectra: a quiet note keeps the
+    //      onset noise around its partials beside a louder note ----
+    {
+        std::vector<float> x(static_cast<size_t>(2.2 * kRate), 0.0f);
+        uint32_t seed = 777u;
+        auto uniform = [&seed]() {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<double>(seed >> 8) / 16777216.0;
+        };
+        // a 30 ms burst of noise around the quiet E5's fundamental, between the loud D3's 4th and 5th partials
+        const double on = 0.4;
+        const int burst = static_cast<int>(0.03 * kRate);
+        for (double hz = 620.0; hz <= 700.0; hz += 2.0)
+        {
+            const double phase = 2 * kPi * uniform();
+            for (int i = 0; i < burst; ++i)
+                x[static_cast<size_t>(on * kRate) + static_cast<size_t>(i)] +=
+                    static_cast<float>(0.06 * (1.0 - static_cast<double>(i) / burst) * std::sin(2 * kPi * hz * i / kRate + phase));
+        }
+        addTone(x, midiToHz(50), on, 1.4, 0.3);
+        addTone(x, midiToHz(76), on, 1.4, 0.1);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int d3 = findNote(A, 50), e5 = findNote(A, 76);
+        CHECK(d3 >= 0 && e5 >= 0);
+        auto onsetBand = [&](const std::vector<float>& y) {
+            double e = 0.0;
+            for (double hz = 624.0; hz <= 696.0; hz += 4.0)
+                e += std::pow(toneAmplitude(y, hz, static_cast<int>((on - 0.005) * kRate), static_cast<int>((on + 0.035) * kRate)), 2.0);
+            return 10.0 * std::log10(e + 1e-30);
+        };
+        const double orig = onsetBand(x);
+        const double quiet = onsetBand(polyphonic::extractNotes(A, {x}, {e5}, nullptr, true)[0]) - orig;
+        const double loud = onsetBand(polyphonic::extractNotes(A, {x}, {d3}, nullptr, true)[0]) - orig;
+        std::printf("onset shared by spectra: 620-700 Hz at the onset with the quiet E5 %.1f dB, with the loud D3 %.1f dB\n",
+                    quiet, loud);
+        CHECK(quiet > loud + 5.0);
+    }
+
+    // ---- 15. one note found twice stays one note; a note struck twice is two, one after the other ----
+    {
+        using polyphonic::detail::Candidate;
+        const double hopS = static_cast<double>(params.hop) / kRate;
+        const double hz = midiToHz(81);
+        const auto frame = [&](double s) { return static_cast<int>(std::lround(s / hopS)); };
+        const auto found = [&](double from, double to) {      // the detector's track of that pitch
+            Candidate c;
+            c.start = frame(from);
+            c.end = frame(to);
+            c.f0.assign(static_cast<size_t>(c.end - c.start + 1), static_cast<float>(hz));
+            c.cents.assign(c.f0.size(), polyphonic::detail::hzToField(static_cast<float>(hz), params));
+            c.strength.assign(c.f0.size(), 1.0f);
+            return c;
+        };
+        for (int twice = 0; twice < 2; ++twice)
+        {
+            // beating: the level dips and swells 1.4 times a second as the note decays; struck twice:
+            // the note is struck again at 1.2 s. Either is found once whole and once from 1.37 / 1.2 s.
+            std::vector<float> x(static_cast<size_t>(2.4 * kRate), 0.0f);
+            for (int i = static_cast<int>(0.2 * kRate); i < static_cast<int>(2.3 * kRate); ++i)
+            {
+                const double t = i / static_cast<double>(kRate) - 0.2;
+                double a = std::exp(-t / 0.8) * (0.55 + 0.45 * std::cos(2 * kPi * 1.4 * t));
+                if (twice)
+                    a = t < 1.0 ? std::exp(-t / 0.5)
+                                : std::exp(-(t - 1.0) / 0.5) * std::min(1.0, (t - 1.0) / 0.003) + std::exp(-t / 0.5) * std::max(0.0, 1.0 - (t - 1.0) / 0.01);
+                for (int h = 1; h <= 6; ++h)
+                    x[static_cast<size_t>(i)] += static_cast<float>(0.3 / h * a * std::min(1.0, t / 0.003) * std::sin(2 * kPi * hz * h * t));
+            }
+            polyphonic::detail::Context ctx;
+            ctx.p = params;
+            ctx.audio = x.data();
+            ctx.numSamples = static_cast<int>(x.size());
+            polyphonic::detail::analyzeSpectra(ctx, nullptr);
+            const double second = twice ? 1.2 : 1.37;
+            const auto notes = polyphonic::detail::mergeFragments(ctx, { found(0.2, 2.2), found(second, 2.2) });
+            std::printf("%s, found twice: %zu note(s)", twice ? "struck twice" : "beating", notes.size());
+            for (const auto& n : notes)
+                std::printf(" %.2f-%.2f s", n.start * hopS, n.end * hopS);
+            std::printf("\n");
+            if (twice)
+                CHECK(notes.size() == 2 && notes[0].end < notes[1].start && std::abs(notes[1].start - frame(1.2)) <= 3);
+            else
+                CHECK(notes.size() == 1 && notes[0].start == frame(0.2) && notes[0].end == frame(2.2));
+        }
+    }
+
+    // ---- 16. a slow attack keeps its start: its partials rising within one analysis window of it is
+    //      the window still sliding over the attack, not a later onset ----
+    {
+        std::vector<float> x(static_cast<size_t>(2.4 * kRate), 0.0f);
+        addTone(x, midiToHz(60), 0.2, 2.0, 0.3);
+        // G4 swelling in over 0.2 s with the C4, then held
+        const int s0 = static_cast<int>(0.2 * kRate), len = static_cast<int>(2.0 * kRate);
+        for (int h = 1; h <= 8; ++h)
+            for (int i = 0; i < len; ++i)
+            {
+                const double t = static_cast<double>(i) / kRate;
+                const double env = std::pow(std::min(1.0, t / 0.2), 3.0) * std::min(1.0, (2.0 - t) / 0.02);
+                x[static_cast<size_t>(s0 + i)] += static_cast<float>(0.2 / h * env * std::sin(2 * kPi * h * midiToHz(67) * t + 0.37 * h * h));
+            }
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int g = findNote(A, 67);
+        const double start = g >= 0 ? A.frameToSeconds(A.notes[static_cast<size_t>(g)].startFrame) : -1.0;
+        std::printf("slow attack: G4 starts at %.3f s (played from 0.200 s)\n", start);
+        CHECK(g >= 0 && std::fabs(start - 0.2) < 0.04);
     }
 
     std::printf("PolyphonicTests passed\n");

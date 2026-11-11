@@ -791,7 +791,8 @@ public:
         }
         if (drag == Drag::stretch)
         {
-            // Only the part after the attack stretches; the attack keeps its speed either way.
+            // Made longer, only the part after the attack stretches (the attack keeps its speed); made
+            // shorter, the note keeps that share of its length and is cut, down to a single frame.
             const auto& n = analysis->notes[static_cast<size_t>(stretchNote)];
             const auto base = snapshot[stretchNote];
             const auto map = polyphonic::stretchMap(*analysis, stretchNote, base);
@@ -799,6 +800,8 @@ public:
             const double span = n.endFrame - map.anchor;
             if (span < 2.0)
                 return;
+            const double whole = n.endFrame - n.startFrame;
+            const double shortest = std::ceil(100.0 / whole) / 100.0;   // one frame
             const double dt = xToTime(e.position.x) - xToTime(dragStart.x);   // the end moves as far as the mouse
             const double end = playedAt(stretchNote, base, n.endFrame);
             double ratio = 1.0;
@@ -806,24 +809,28 @@ public:
             if (stretchFromStart)
             {
                 // The left end: the note still ends where it did and its start, attack included, follows
-                // the mouse. ratioFor(t) is the stretch that makes the note start at t.
+                // the mouse. framesAt(r) is how long the note lasts at stretch r, ratioFor(t) the stretch
+                // that makes it start at t.
+                const auto framesAt = [&](double r) { return r < 1.0 ? r * whole : (map.anchor - n.startFrame) + r * span; };
                 const auto ratioFor = [&](double start) {
-                    return ((end - start) * framesPerSecond - (map.anchor - n.startFrame)) / span;
+                    const double frames = (end - start) * framesPerSecond;
+                    return frames < whole ? frames / whole : (frames - (map.anchor - n.startFrame)) / span;
                 };
-                ratio = std::round(juce::jlimit(0.25, 4.0, ratioFor(playedAt(stretchNote, base, n.startFrame) + dt)) * 100.0) / 100.0;
-                ratio = std::max(0.25, std::min(ratio, std::floor(ratioFor(0.0) * 100.0) / 100.0));   // stay inside the take
+                ratio = std::round(juce::jlimit(shortest, 4.0, ratioFor(playedAt(stretchNote, base, n.startFrame) + dt)) * 100.0) / 100.0;
+                ratio = std::max(shortest, std::min(ratio, std::floor(ratioFor(0.0) * 100.0) / 100.0));   // stay inside the take
                 // Whatever the stretch adds to the length comes off the start (exactly the old offset when the
                 // stretch is unchanged, so pressing the end without dragging it edits nothing).
                 const double stored = static_cast<float>(ratio);   // the edit keeps it as a float
-                offset = clampOffset(stretchNote, base.timeOffsetSeconds - span * (stored - map.ratio) / framesPerSecond);
+                offset = clampOffset(stretchNote, base.timeOffsetSeconds - (framesAt(stored) - framesAt(map.ratio)) / framesPerSecond);
             }
             else
             {
                 // The right end: the start stays put.
                 const double endFrame = (end + dt - base.timeOffsetSeconds) * framesPerSecond;
                 const double lastFrame = (duration - 0.05 - base.timeOffsetSeconds) * framesPerSecond;  // stay inside the take
-                ratio = std::min((endFrame - map.anchor) / span, (lastFrame - map.anchor) / span);
-                ratio = std::round(juce::jlimit(0.25, 4.0, ratio) * 100.0) / 100.0;
+                ratio = endFrame < n.endFrame ? (endFrame - n.startFrame) / whole
+                                              : std::min((endFrame - map.anchor) / span, (lastFrame - map.anchor) / span);
+                ratio = std::round(juce::jlimit(shortest, 4.0, ratio) * 100.0) / 100.0;
             }
             auto& ed = edits[stretchNote];
             if (static_cast<float>(ratio) != ed.stretch || offset != ed.timeOffsetSeconds)
@@ -1204,8 +1211,10 @@ private:
         const double hopSeconds = analysis->params.hop / analysis->params.sampleRate;
         const int stride = std::max(1, static_cast<int>(std::floor(2.0 / std::max(1e-9, hopSeconds * pxPerSecond))));
         const float maxHalf = 0.5f * noteThickness();
+        // a shortened note is drawn up to where it is cut
+        const int last = map.cuts() ? juce::jlimit(0, frames - 1, static_cast<int>(std::floor(map.end)) - n.startFrame) : frames - 1;
         std::vector<juce::Point<float>> top, bottom;
-        for (int k = 0;; k = std::min(frames - 1, k + stride))
+        for (int k = 0;; k = std::min(last, k + stride))
         {
             const float x = timeToX(analysis->frameToSeconds(map.outputFrame(n.startFrame + k)) + offset);
             const float y = midiToY(midiAt(i, k) + semis);
@@ -1217,7 +1226,7 @@ private:
                 s.curve.startNewSubPath(x, y);
             else
                 s.curve.lineTo(x, y);
-            if (k == frames - 1)
+            if (k == last)
                 break;
         }
         if (top.size() == 1)

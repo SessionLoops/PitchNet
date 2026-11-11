@@ -131,7 +131,8 @@ constexpr float kReattackDip = 0.7f;
 constexpr float kReattackStandOut = 2.5f;   // rise over the note's typical frame-to-frame change
 /** Split candidates where their own partials are struck again (repeated notes at one pitch). */
 std::vector<Candidate> splitReattacks(const Context& ctx, const std::vector<Candidate>& cands);
-std::vector<Candidate> mergeFragments(const Context& ctx, std::vector<Candidate> notes);
+/** One note per stroke from overlapping or touching notes of one pitch (see PolyExtraction.cpp). */
+std::vector<Candidate> mergeFragments(const Context& ctx, std::vector<Candidate> notes, bool overlapsOnly = false);
 void refineOnsets(const Context& ctx, std::vector<Candidate>& notes);
 
 // ---- PolyPurifier.cpp ----
