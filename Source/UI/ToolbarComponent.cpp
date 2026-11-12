@@ -170,7 +170,7 @@ juce::String ToolbarComponent::getTooltip()
 #elif defined(PITCHNET_VERSION_STRING)
     const juce::String version = PITCHNET_VERSION_STRING;
 #else
-    const juce::String version = "0.8.0";
+    const juce::String version = "0.8.1";
 #endif
     return "PitchNet v" + version;
 }
