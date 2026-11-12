@@ -142,6 +142,7 @@ public:
   juce::String serializeProjectJson() const override;
   bool restoreProjectJson(const juce::String &json) override;
   bool restoreProjectSnapshot(const Project &project) override;
+  void refreshMidiReference() override { parameterPanel.refreshMidiReference(); }
   void setStatusMessage(const juce::String &message) override {
     toolbar.setStatusMessage(message);
   }
@@ -336,8 +337,9 @@ private:
   void skipUpdateVersion(const juce::String &version);
   void showAboutPopup();
 
-  void loadAudioFile(const juce::File &file);
-  void clearProjectForNewLoad();
+  void loadAudioFile(const juce::File &file,
+                     std::optional<MidiReference::State> reference = std::nullopt);
+  void clearProjectForNewLoad(std::optional<MidiReference::State> reference = std::nullopt);
   void openProjectFile(const juce::File &file);
   void analyzeAudio();
   void analyzeAudio(

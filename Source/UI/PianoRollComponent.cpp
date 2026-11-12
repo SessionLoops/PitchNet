@@ -1278,8 +1278,9 @@ void PianoRollComponent::drawMidiReference(juce::Graphics &g) const
   const double visibleStart = std::max(origin, xToTime(static_cast<float>(clip.getX())));
   const double visibleEnd = std::min(end, xToTime(static_cast<float>(clip.getRight())));
   const float referenceOffset = ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
-  const auto fillColour = juce::Colour(0xFF232323u);
-  const auto borderColour = juce::Colour(0xFF3A3A3Au);
+  const auto referenceColour = juce::Colour(0xFF73D3E8u);
+  const auto fillColour = referenceColour.withAlpha(0.13f);
+  const auto borderColour = referenceColour.withAlpha(0.85f);
   constexpr float borderWidth = 1.0f;
   for (const auto& note : midiReferenceNotes)
   {
@@ -1295,14 +1296,13 @@ void PianoRollComponent::drawMidiReference(juce::Graphics &g) const
       continue;
 
     const float cornerRadius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    g.setColour(borderColour);
+    const auto outline = bounds.reduced(borderWidth * 0.5f);
+    g.setColour(outline.isEmpty() ? borderColour : fillColour);
     g.fillRoundedRectangle(bounds, cornerRadius);
-
-    const auto interior = bounds.reduced(borderWidth);
-    if (!interior.isEmpty())
+    if (!outline.isEmpty())
     {
-      g.setColour(fillColour);
-      g.fillRoundedRectangle(interior, cornerRadius - borderWidth);
+      g.setColour(borderColour);
+      g.drawRoundedRectangle(outline, cornerRadius - borderWidth * 0.5f, borderWidth);
     }
   }
 }

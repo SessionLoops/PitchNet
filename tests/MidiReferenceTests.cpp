@@ -1,4 +1,5 @@
 #include "../Source/Audio/IO/MidiReference.h"
+#include "../Source/Models/ProjectSerializer.h"
 #include "TestAssert.h"
 #include <cmath>
 
@@ -22,6 +23,25 @@ std::vector<MidiReference::Track> read(const juce::MidiFile& file, int format)
     CHECK(file.writeTo(output, format));
     juce::MemoryInputStream input(output.getData(), output.getDataSize(), false);
     return MidiReference::readTracks(input);
+}
+
+void checkRestoredReference(const Project& project, bool visible)
+{
+    const auto& state = project.getMidiReference();
+    CHECK(state.guide != nullptr);
+    CHECK(state.guide->filename == "Missing Guide.mid");
+    CHECK(state.guide->tracks.size() == 2);
+    CHECK(state.selectedTrack == 1);
+    CHECK(state.visible == visible);
+    const auto& lead = state.guide->tracks[0];
+    CHECK(lead.number == 2 && lead.name == "Lead");
+    CHECK(lead.notes.size() == 1 && lead.notes[0].midiPitch == 64);
+    CHECK(std::abs(lead.notes[0].startSeconds - 0.25) < 1e-8);
+    CHECK(std::abs(lead.notes[0].endSeconds - 1.50) < 1e-8);
+    const auto& selected = state.guide->tracks[state.selectedTrack];
+    CHECK(selected.number == 3 && selected.notes.size() == 1);
+    CHECK(MidiReference::findPitchWithGreatestOverlap(selected.notes, 0.0, 0.5) == 67);
+    CHECK(project.getDoubleClickSnapMode() == DoubleClickSnapMode::MidiReference);
 }
 }
 
@@ -51,6 +71,33 @@ int main()
     CHECK(std::abs(tracks[0].notes[0].startSeconds - 0.25) < 1e-8);
     CHECK(std::abs(tracks[0].notes[0].endSeconds - 1.50) < 1e-8);
     CHECK(tracks[1].number == 3 && tracks[1].notes[0].midiPitch == 67);
+
+    Project saved;
+    const auto midiGuide = std::make_shared<MidiReference::Guide>(
+        MidiReference::Guide{ "Missing Guide.mid", tracks });
+    CHECK(saved.setMidiReference({ midiGuide, 1, true }));
+    saved.setDoubleClickSnapMode(DoubleClickSnapMode::MidiReference);
+
+    Project reopened;
+    const auto json = juce::JSON::toString(ProjectSerializer::toJson(saved));
+    CHECK(ProjectSerializer::fromJson(reopened, juce::JSON::parse(json)));
+    checkRestoredReference(reopened, true);
+
+    CHECK(saved.setMidiReference({ midiGuide, 1, false }));
+    using ArchiveMode = ProjectSerializer::BinaryArchiveMode;
+    for (const auto mode : { ArchiveMode::selfContained, ArchiveMode::hostBackedARA })
+    {
+        juce::MemoryBlock archive;
+        CHECK(ProjectSerializer::toBinaryArchive(saved, archive, mode));
+        Project restored;
+        CHECK(ProjectSerializer::fromBinaryArchive(restored, archive.getData(), archive.getSize()));
+        checkRestoredReference(restored, false);
+    }
+
+    // Older project state has no guide and must clear one in a reused Project.
+    CHECK(ProjectSerializer::fromJson(reopened, ProjectSerializer::toJson(Project{})));
+    CHECK(!reopened.getMidiReference().guide);
+    CHECK(!reopened.getMidiReference().visible);
 
     juce::MidiFile independent;
     independent.setTicksPerQuarterNote(480);

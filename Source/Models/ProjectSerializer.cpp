@@ -18,6 +18,87 @@ constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
 
+juce::var writeMidiReference(const MidiReference::State& state)
+{
+    auto* guide = new juce::DynamicObject();
+    guide->setProperty("filename", state.guide->filename);
+    guide->setProperty("visible", state.visible);
+    guide->setProperty("selectedTrack", state.guide->tracks[state.selectedTrack].number);
+
+    juce::Array<juce::var> tracks;
+    for (const auto& track : state.guide->tracks)
+    {
+        auto* trackObject = new juce::DynamicObject();
+        trackObject->setProperty("number", track.number);
+        trackObject->setProperty("name", track.name);
+        juce::Array<juce::var> notes;
+        for (const auto& note : track.notes)
+            notes.add(juce::Array<juce::var>{ note.startSeconds, note.endSeconds, note.midiPitch });
+        trackObject->setProperty("notes", std::move(notes));
+        tracks.add(trackObject);
+    }
+    guide->setProperty("tracks", std::move(tracks));
+    return guide;
+}
+
+MidiReference::State readMidiReference(const juce::var& value)
+{
+    const auto tracks = value.getProperty("tracks", {});
+    const auto* trackArray = tracks.getArray();
+    if (!trackArray)
+        return {};
+
+    auto guide = std::make_shared<MidiReference::Guide>();
+    guide->filename = value.getProperty("filename", {}).toString();
+    const int selectedNumber = value.getProperty("selectedTrack", 0);
+    size_t selectedTrack = 0;
+    for (const auto& trackValue : *trackArray)
+    {
+        const int number = trackValue.getProperty("number", 0);
+        const auto notes = trackValue.getProperty("notes", {});
+        const auto* noteArray = notes.getArray();
+        if (number <= 0 || !noteArray)
+            continue;
+
+        MidiReference::Track track{ number, trackValue.getProperty("name", {}).toString(), {} };
+        track.notes.reserve(static_cast<size_t>(noteArray->size()));
+        for (const auto& noteValue : *noteArray)
+        {
+            const auto* fields = noteValue.getArray();
+            if (!fields || fields->size() != 3)
+                continue;
+
+            const auto isNumber = [](const juce::var& field)
+            {
+                return field.isInt() || field.isInt64() || field.isDouble();
+            };
+            const auto& startField = fields->getReference(0);
+            const auto& endField = fields->getReference(1);
+            const auto& pitchField = fields->getReference(2);
+            if (!isNumber(startField) || !isNumber(endField) || !pitchField.isInt())
+                continue;
+
+            const double start = startField;
+            const double end = endField;
+            const int pitch = pitchField;
+            if (std::isfinite(start) && std::isfinite(end) && start >= 0.0 && end > start
+                && juce::isPositiveAndBelow(pitch, 128))
+                track.notes.push_back({ start, end, pitch });
+        }
+
+        if (track.notes.empty())
+            continue;
+        if (number == selectedNumber)
+            selectedTrack = guide->tracks.size();
+        guide->tracks.push_back(std::move(track));
+    }
+
+    if (guide->tracks.empty())
+        return {};
+
+    return { std::move(guide), selectedTrack, static_cast<bool>(value.getProperty("visible", false)) };
+}
+
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
     const auto bytes = text.getNumBytesAsUTF8();
@@ -228,6 +309,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
                      static_cast<int>(project.getDragSnapMode()));
     obj->setProperty("doubleClickSnapMode",
                      static_cast<int>(project.getDoubleClickSnapMode()));
+    if (const auto& reference = project.getMidiReference(); reference.guide)
+        obj->setProperty("midiReference", writeMidiReference(reference));
     obj->setProperty("timelineDisplayMode",
                      static_cast<int>(project.getTimelineDisplayMode()));
     obj->setProperty("timelineBeatNumerator", project.getTimelineBeatNumerator());
@@ -413,6 +496,7 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         else
             project.setDoubleClickSnapMode(DoubleClickSnapMode::PitchCenter);
     }
+    project.setMidiReference(readMidiReference(json.getProperty("midiReference", {})));
     {
         const int modeValue = static_cast<int>(json.getProperty(
             "timelineDisplayMode", static_cast<int>(TimelineDisplayMode::Beats)));

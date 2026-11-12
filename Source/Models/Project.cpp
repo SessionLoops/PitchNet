@@ -397,6 +397,23 @@ void Project::setDoubleClickSnapMode(DoubleClickSnapMode mode)
     modified = true;
 }
 
+bool Project::setMidiReference(MidiReference::State state)
+{
+    if (!state.guide || state.guide->tracks.empty())
+        state = {};
+    else if (state.selectedTrack >= state.guide->tracks.size())
+        state.selectedTrack = 0;
+
+    auto& current = macroParameters->midiReference;
+    if (current.guide == state.guide && current.selectedTrack == state.selectedTrack
+        && current.visible == state.visible)
+        return false;
+
+    current = std::move(state);
+    modified = true;
+    return true;
+}
+
 void Project::setTimelineDisplayMode(TimelineDisplayMode mode)
 {
     if (macroParameters->timelineDisplayMode == mode)

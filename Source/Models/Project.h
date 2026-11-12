@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/IO/MidiReference.h"
 #include "Note.h"
 #include <cstdint>
 #include <vector>
@@ -157,6 +158,7 @@ struct MacroParameters
     bool snapToSemitones = false;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
+    MidiReference::State midiReference;
     TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
     int timelineBeatNumerator = 4;
     int timelineBeatDenominator = 4;
@@ -301,6 +303,8 @@ public:
     void setDragSnapMode(DragSnapMode mode);
     DoubleClickSnapMode getDoubleClickSnapMode() const { return macroParameters->doubleClickSnapMode; }
     void setDoubleClickSnapMode(DoubleClickSnapMode mode);
+    const MidiReference::State& getMidiReference() const { return macroParameters->midiReference; }
+    bool setMidiReference(MidiReference::State state);
 
     // Timeline/grid settings
     TimelineDisplayMode getTimelineDisplayMode() const { return macroParameters->timelineDisplayMode; }

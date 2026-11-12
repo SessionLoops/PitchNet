@@ -299,7 +299,14 @@ ParameterPanel::ParameterPanel()
     midiReferenceTrackButton.onClick = [this] { showMidiReferenceTrackMenu(); };
     addAndMakeVisible(midiReferenceVisibilityToggle);
     midiReferenceVisibilityToggle.setClickingTogglesState(true);
-    midiReferenceVisibilityToggle.onClick = [this] { publishMidiReference(); };
+    midiReferenceVisibilityToggle.onClick = [this]
+    {
+        if (!project)
+            return;
+        auto state = project->getMidiReference();
+        state.visible = midiReferenceVisibilityToggle.getToggleState();
+        editMidiReference(std::move(state));
+    };
 
     // MIDI button: drag the notes straight into the DAW, or click to save.
     addAndMakeVisible(midiDragButton);
@@ -909,6 +916,7 @@ void ParameterPanel::buttonClicked(juce::Button* button)
 void ParameterPanel::setProject(Project* proj)
 {
     project = proj;
+    refreshMidiReference();
     updateGlobalSliders();
     updateFromNote();
     if (onProjectBound)
@@ -972,55 +980,68 @@ void ParameterPanel::refreshLocalisedText()
 void ParameterPanel::setMidiReference(juce::String filename,
                                       std::vector<MidiReference::Track> tracks)
 {
-    midiReferenceFilename = std::move(filename);
-    midiReferenceTracks = std::move(tracks);
-    midiReferenceTrackIndex = 0;
-    ++midiReferenceRevision;
-    midiReferenceVisibilityToggle.setToggleState(!midiReferenceTracks.empty(),
-                                                  juce::dontSendNotification);
-    refreshMidiReferenceControls();
-    publishMidiReference();
+    auto guide = std::make_shared<MidiReference::Guide>(
+        MidiReference::Guide{ std::move(filename), std::move(tracks) });
+    editMidiReference({ std::move(guide), 0, true });
+}
+
+void ParameterPanel::editMidiReference(MidiReference::State state)
+{
+    if (!project || !project->setMidiReference(std::move(state)))
+        return;
+
+    refreshMidiReference();
+    if (onMidiReferenceEdited)
+        onMidiReferenceEdited();
 }
 
 void ParameterPanel::refreshMidiReferenceControls()
 {
-    const bool loaded = !midiReferenceTracks.empty();
+    const auto state = project ? project->getMidiReference() : MidiReference::State{};
+    const bool loaded = state.guide != nullptr;
+    midiReferenceFileButton.setEnabled(project != nullptr);
     midiReferenceFileButton.setButtonText(
-        loaded ? midiReferenceFilename : TR("param.midi_reference_import"));
+        loaded ? state.guide->filename : TR("param.midi_reference_import"));
     midiReferenceFileButton.setTooltip(midiReferenceFileButton.getButtonText());
     midiReferenceTrackButton.setEnabled(loaded);
     midiReferenceVisibilityToggle.setEnabled(loaded);
+    midiReferenceVisibilityToggle.setToggleState(state.visible, juce::dontSendNotification);
 
     const auto trackName = loaded
-        ? getMidiReferenceTrackLabel(midiReferenceTracks[static_cast<size_t>(midiReferenceTrackIndex)])
+        ? getMidiReferenceTrackLabel(state.guide->tracks[state.selectedTrack])
         : juce::String{};
     midiReferenceTrackButton.setButtonText(trackName);
     midiReferenceTrackButton.setTooltip(trackName);
 }
 
-void ParameterPanel::publishMidiReference()
+void ParameterPanel::refreshMidiReference()
 {
+    ++midiReferenceRevision;
+    refreshMidiReferenceControls();
     if (!onMidiReferenceChanged)
         return;
 
-    if (!midiReferenceTracks.empty())
-        onMidiReferenceChanged(
-            midiReferenceTracks[static_cast<size_t>(midiReferenceTrackIndex)].notes,
-            midiReferenceVisibilityToggle.getToggleState());
+    const auto state = project ? project->getMidiReference() : MidiReference::State{};
+    if (state.guide)
+        onMidiReferenceChanged(state.guide->tracks[state.selectedTrack].notes, state.visible);
     else
         onMidiReferenceChanged({}, false);
 }
 
 void ParameterPanel::showMidiReferenceTrackMenu()
 {
+    const auto state = project ? project->getMidiReference() : MidiReference::State{};
+    if (!state.guide)
+        return;
+
     juce::PopupMenu menu;
     menu.setLookAndFeel(&getPitchPopupLookAndFeel());
-    for (size_t index = 0; index < midiReferenceTracks.size(); ++index)
+    for (size_t index = 0; index < state.guide->tracks.size(); ++index)
     {
-        const auto label = getMidiReferenceTrackLabel(midiReferenceTracks[index]);
+        const auto label = getMidiReferenceTrackLabel(state.guide->tracks[index]);
         menu.addCustomItem(static_cast<int>(index) + 1,
                            std::make_unique<HoverMenuItemComponent>(
-                               label, static_cast<int>(index) == midiReferenceTrackIndex),
+                               label, index == state.selectedTrack),
                            nullptr, label);
     }
     menu.showMenuAsync(juce::PopupMenu::Options()
@@ -1029,13 +1050,16 @@ void ParameterPanel::showMidiReferenceTrackMenu()
         [safeThis = juce::Component::SafePointer<ParameterPanel>(this),
          revision = midiReferenceRevision](int result)
         {
-            if (!safeThis || revision != safeThis->midiReferenceRevision ||
-                !juce::isPositiveAndBelow(result - 1, static_cast<int>(safeThis->midiReferenceTracks.size())))
+            if (!safeThis || revision != safeThis->midiReferenceRevision || result <= 0)
                 return;
 
-            safeThis->midiReferenceTrackIndex = result - 1;
-            safeThis->refreshMidiReferenceControls();
-            safeThis->publishMidiReference();
+            auto selection = safeThis->project->getMidiReference();
+            const auto trackIndex = static_cast<size_t>(result - 1);
+            if (!selection.guide || trackIndex >= selection.guide->tracks.size())
+                return;
+
+            selection.selectedTrack = trackIndex;
+            safeThis->editMidiReference(std::move(selection));
         });
 }
 

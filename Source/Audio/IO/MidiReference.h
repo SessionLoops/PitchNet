@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -18,6 +19,19 @@ struct Track
     int number;
     juce::String name;
     std::vector<Note> notes;
+};
+
+struct Guide
+{
+    juce::String filename;
+    std::vector<Track> tracks;
+};
+
+struct State
+{
+    std::shared_ptr<const Guide> guide;
+    size_t selectedTrack = 0;
+    bool visible = false;
 };
 
 // Track numbers are one-based file indices. Tracks without notes are omitted.

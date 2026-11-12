@@ -76,6 +76,7 @@ public:
   virtual juce::String serializeProjectJson() const = 0;
   virtual bool restoreProjectJson(const juce::String &json) = 0;
   virtual bool restoreProjectSnapshot(const Project &project) = 0;
+  virtual void refreshMidiReference() {}
   virtual void setStatusMessage(const juce::String &message) = 0;
   virtual void showAnalysisProgress(double progress) = 0;
   virtual void hideAnalysisProgress() = 0;

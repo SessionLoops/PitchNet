@@ -2307,6 +2307,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
         adoptMacroParameters(*project);
       else
         attachMacroParameters(*project);
+      mc->refreshMidiReference();
 
       const float po = pitchOffsetParamValue->load();
       const float fs = formantShiftParamValue->load();
@@ -3565,6 +3566,11 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
   auto installRestoredProject = [this, &regionKey](
                                     std::unique_ptr<Project> project) {
+    if (!macroParameters->midiReference.guide && project->getMidiReference().guide) {
+      macroParameters->midiReference = project->getMidiReference();
+      if (mainComponent != nullptr)
+        mainComponent->refreshMidiReference();
+    }
     attachMacroParameters(*project);
 
     // Restored state is filed under the live key by the document controller, so

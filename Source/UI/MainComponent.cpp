@@ -873,6 +873,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onOpenMidiReference = [this] { openMidiReference(); };
   parameterPanel.onMidiReferenceChanged = [this](const auto& notes, bool visible)
   { pianoRoll.setMidiReferenceNotes(notes, visible); };
+  parameterPanel.onMidiReferenceEdited = [this] { notifyProjectDataChanged(); };
   parameterPanel.onLanguageChanged = [this](const juce::String &languageCode)
   {
     // The panel has already switched the language; this only records it.
@@ -3874,7 +3875,10 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
         isPluginMode() ? project->getMacroParameters() : nullptr;
     *project = snapshot;
     if (macroParameters)
+    {
+      macroParameters->midiReference = snapshot.getMidiReference();
       project->setMacroParameters(macroParameters);
+    }
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
     restoreProjectPresentation();

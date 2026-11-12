@@ -93,7 +93,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
     auto proceedWithProject =
         [this, loadedProject, audioFile, currentAudioSha](bool reanalyze) {
           if (reanalyze) {
-            loadAudioFile(audioFile);
+            loadAudioFile(audioFile, loadedProject->getMidiReference());
             return;
           }
 
@@ -346,7 +346,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
   continueOpenWithAudio(audioFile);
 }
 
-void MainComponent::loadAudioFile(const juce::File &file) {
+void MainComponent::loadAudioFile(const juce::File &file,
+                                  std::optional<MidiReference::State> reference) {
   if (isLoadingAudio.load())
     return;
   addRecentFile(file);
@@ -358,7 +359,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
     loadingMessage = TR("progress.loading_audio");
   }
   toolbar.hideProgress();
-  clearProjectForNewLoad();
+  clearProjectForNewLoad(std::move(reference));
   showAnalysisProgress(0.0);
 
   juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -367,6 +368,8 @@ void MainComponent::loadAudioFile(const juce::File &file) {
     return;
   }
 
+  const auto *loadingProject = getProject();
+  const auto loadingParameters = loadingProject ? loadingProject->getMacroParameters() : nullptr;
   editorController->loadAudioFileAsync(
       file,
       [safeThis](double p, const juce::String &msg) {
@@ -376,7 +379,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
         const juce::ScopedLock sl(safeThis->loadingMessageLock);
         safeThis->loadingMessage = msg;
       },
-      [safeThis](const juce::AudioBuffer<float> &original) {
+      [safeThis, loadingParameters](const juce::AudioBuffer<float> &original) {
         if (safeThis == nullptr)
           return;
 
@@ -387,6 +390,8 @@ void MainComponent::loadAudioFile(const juce::File &file) {
         auto *project = safeThis->getProject();
         if (!project)
           return;
+        if (loadingParameters)
+          project->setMidiReference(loadingParameters->midiReference);
         if (!safeThis->isPluginMode())
           project->setTimelineDisplayMode(TimelineDisplayMode::Time);
 
@@ -456,7 +461,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
       });
 }
 
-void MainComponent::clearProjectForNewLoad() {
+void MainComponent::clearProjectForNewLoad(std::optional<MidiReference::State> reference) {
   isPlaying = false;
   pendingCursorTime.store(0.0);
   hasPendingCursorUpdate.store(false);
@@ -472,6 +477,10 @@ void MainComponent::clearProjectForNewLoad() {
 
   if (editorController) {
     auto emptyProject = std::make_unique<Project>();
+    if (!reference && getProject())
+      reference = getProject()->getMidiReference();
+    if (reference)
+      emptyProject->setMidiReference(std::move(*reference));
     if (!isPluginMode())
       emptyProject->setTimelineDisplayMode(TimelineDisplayMode::Time);
     editorController->setProject(std::move(emptyProject));

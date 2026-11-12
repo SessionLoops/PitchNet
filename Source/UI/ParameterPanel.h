@@ -89,7 +89,9 @@ public:
     std::function<void()> onExportMidiClicked;
     std::function<void()> onOpenMidiReference;
     std::function<void(const std::vector<MidiReference::Note>&, bool)> onMidiReferenceChanged;
+    std::function<void()> onMidiReferenceEdited;
     void setMidiReference(juce::String filename, std::vector<MidiReference::Track> tracks);
+    void refreshMidiReference();
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -102,7 +104,7 @@ private:
     void showTimelineGridMenu();
     void showMidiReferenceTrackMenu();
     void refreshMidiReferenceControls();
-    void publishMidiReference();
+    void editMidiReference(MidiReference::State state);
 
     void setScaleRootInternal(int rootNote, bool notify);
     void setScaleModeInternal(ScaleMode mode, bool notify);
@@ -143,9 +145,6 @@ private:
     MidiFileButton midiReferenceFileButton;
     ComboSelectionButton midiReferenceTrackButton;
     StyledToggleButton midiReferenceVisibilityToggle;
-    juce::String midiReferenceFilename;
-    std::vector<MidiReference::Track> midiReferenceTracks;
-    int midiReferenceTrackIndex = 0;
     unsigned midiReferenceRevision = 0;
 
     // Interface language. "auto" follows the system language; anything else is
