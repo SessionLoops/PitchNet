@@ -63,7 +63,7 @@ public:
   /** Whether a point lies inside a handle row, including gaps within that row. */
   bool containsLayoutPoint(float worldX, float worldY) const;
 
-  /** Bounding box of the full six-control layout. */
+  /** Bounding box of all handles. */
   juce::Rectangle<float> getLayoutBounds() const;
 
   /**

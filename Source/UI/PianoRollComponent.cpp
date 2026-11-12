@@ -4231,7 +4231,6 @@ void PianoRollComponent::showResetMenu(Note &note)
     menu.addItem(std::move(item));
   };
   addItem(1, TR("restore.pitch"), pitchChanged);
-  addItem(3, TR("restore.formant"), formantChanged);
   addItem(4, TR("restore.amplitude"), amplitudeChanged);
   addItem(2, TR("restore.timing"), timingChanged);
   menu.addSeparator();
@@ -4253,8 +4252,6 @@ void PianoRollComponent::showResetMenu(Note &note)
       safeThis->resetNoteEdits(*notePtr);
     else if (result == 2)
       safeThis->resetNoteTiming(*notePtr);
-    else if (result == 3)
-      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);
     else if (result == 4)
       safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Amplitude);
     else if (result == 5)

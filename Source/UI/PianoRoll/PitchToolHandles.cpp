@@ -87,11 +87,9 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   addButtonHandle(HandleType::TiltLeft, 0, groupTop);
   addButtonHandle(HandleType::Vibrato, 1, groupTop);
   addButtonHandle(HandleType::TiltRight, 2, groupTop);
-  // Sibilant Balance takes the slot Pitch Drift had; drift stays in the
-  // pitch macro popup.
-  addButtonHandle(HandleType::SibilantBalance, 0, bottomRowY);
+  addButtonHandle(HandleType::PitchDrift, 0, bottomRowY);
   addButtonHandle(HandleType::Amplitude, 1, bottomRowY);
-  addButtonHandle(HandleType::Formant, 2, bottomRowY);
+  addButtonHandle(HandleType::SibilantBalance, 2, bottomRowY);
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
