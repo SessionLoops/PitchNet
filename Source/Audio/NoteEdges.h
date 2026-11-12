@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 /**
@@ -290,6 +291,106 @@ inline std::vector<Span> attachConsonants(std::vector<Span> notes,
       span.start = start;
       span.end = end;
     }
+  }
+  return out;
+}
+
+/** Spans after mergeSibilantOnly: `kept[i]` is false where span i joined a
+ *  neighbour, which now covers it. */
+struct Merged
+{
+  std::vector<Span> spans;
+  std::vector<bool> kept;
+};
+
+/**
+ * A note on a sibilant alone - no voiced frame, a third or more of it
+ * labelled sibilance, and more sibilance than breath - is no sung note: it
+ * joins a neighbour in the same region, which grows over it. The note it
+ * leads into comes first, as with any onset, within maxOnsetFrames; else the
+ * note before it, within maxCodaFrames. A note never joins across a breath
+ * or another sung note; with no neighbour in reach it stays as it is.
+ *
+ * @param regions  the take's regions [start, end) in frames
+ *                 (AudioData::segmentChunkRanges); empty for one region. A
+ *                 span is in the region holding its midpoint.
+ */
+inline Merged mergeSibilantOnly(const std::vector<Span> &notes,
+                                const std::vector<bool> &voiced,
+                                const std::vector<std::uint8_t> &labels,
+                                const std::vector<std::pair<int, int>> &regions,
+                                const Config &config = {})
+{
+  const size_t count = notes.size();
+  std::vector<bool> sibilantOnly(count, false);
+  for (size_t i = 0; i < count; ++i)
+  {
+    int voicedFrames = 0;
+    int sibilance = 0;
+    int breath = 0;
+    for (int f = notes[i].start; f < notes[i].end; ++f)
+    {
+      if (f >= 0 && f < static_cast<int>(voiced.size()) &&
+          voiced[static_cast<size_t>(f)])
+        ++voicedFrames;
+      const auto label = breathsibilance::labelAt(labels, f);
+      sibilance += label == breathsibilance::Sibilance ? 1 : 0;
+      breath += label == breathsibilance::Breath ? 1 : 0;
+    }
+    const int length = notes[i].end - notes[i].start;
+    sibilantOnly[i] = length > 0 && voicedFrames == 0 && sibilance * 3 >= length &&
+                      sibilance > breath;
+  }
+
+  const auto regionOf = [&regions](const Span &span)
+  {
+    const int middle = span.start + (span.end - span.start) / 2;
+    for (size_t r = 0; r < regions.size(); ++r)
+      if (middle >= regions[r].first && middle < regions[r].second)
+        return static_cast<int>(r);
+    return -1;
+  };
+  const auto noBreath = [&labels](int from, int to)
+  {
+    for (int f = from; f < to; ++f)
+      if (breathsibilance::labelAt(labels, f) == breathsibilance::Breath)
+        return false;
+    return true;
+  };
+
+  Merged out{notes, std::vector<bool>(count, true)};
+  for (size_t i = 0; i < count; ++i)
+  {
+    if (!sibilantOnly[i])
+      continue;
+    const int region = regionOf(notes[i]);
+    int target = -1;
+    // The nearest sung note after it, then before it; sibilant-only notes in
+    // between join the same one.
+    for (size_t j = i + 1; j < count; ++j)
+      if (!sibilantOnly[j])
+      {
+        if (regionOf(notes[j]) == region &&
+            notes[j].start - notes[i].end <= config.maxOnsetFrames &&
+            noBreath(notes[i].end, notes[j].start))
+          target = static_cast<int>(j);
+        break;
+      }
+    for (size_t j = i; target < 0 && j-- > 0;)
+      if (!sibilantOnly[j])
+      {
+        if (regionOf(notes[j]) == region &&
+            notes[i].start - notes[j].end <= config.maxCodaFrames &&
+            noBreath(notes[j].end, notes[i].start))
+          target = static_cast<int>(j);
+        break;
+      }
+    if (target < 0)
+      continue;
+    out.kept[i] = false;
+    auto &grown = out.spans[static_cast<size_t>(target)];
+    grown.start = std::min(grown.start, notes[i].start);
+    grown.end = std::max(grown.end, notes[i].end);
   }
   return out;
 }

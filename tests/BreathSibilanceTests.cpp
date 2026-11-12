@@ -231,6 +231,49 @@ bool sameSpans(const std::vector<noteedges::Span> &actual,
   return same;
 }
 
+std::vector<noteedges::Span>
+mergedSpans(const EdgeFrames &frames, std::vector<noteedges::Span> notes,
+            std::vector<std::pair<int, int>> regions = {})
+{
+  const auto merged = noteedges::mergeSibilantOnly(notes, frames.voiced,
+                                                   frames.labels, regions);
+  std::vector<noteedges::Span> kept;
+  for (size_t i = 0; i < merged.spans.size(); ++i)
+    if (merged.kept[i])
+      kept.push_back(merged.spans[i]);
+  return kept;
+}
+
+void sibilantOnlyTests()
+{
+  // A note on an "s" alone joins the note it leads into...
+  const auto s = EdgeFrames(100).vowel(10, 30).sibilant(34, 40).vowel(42, 70);
+  CHECK(sameSpans(mergedSpans(s, {{10, 30}, {34, 40}, {42, 70}}),
+                  {{10, 30}, {34, 70}}));
+  // ...or, with none in reach, the note before it.
+  const auto coda = EdgeFrames(120).vowel(10, 30).sibilant(32, 38).vowel(90, 110);
+  CHECK(sameSpans(mergedSpans(coda, {{10, 30}, {32, 38}, {90, 110}}),
+                  {{10, 38}, {90, 110}}));
+  // Not into another region: the next note is in the next region, so it
+  // joins the one before.
+  CHECK(sameSpans(mergedSpans(s, {{10, 30}, {34, 40}, {42, 70}},
+                              {{0, 41}, {41, 100}}),
+                  {{10, 40}, {42, 70}}));
+  // Never across a breath; alone in its region it stays.
+  const auto breathy =
+      EdgeFrames(100).vowel(10, 30).breath(30, 34).sibilant(34, 40).breath(40, 42).vowel(42, 70);
+  CHECK(sameSpans(mergedSpans(breathy, {{10, 30}, {34, 40}, {42, 70}}),
+                  {{10, 30}, {34, 40}, {42, 70}}));
+  // A note with voice in it is sung: it stays.
+  const auto voicedS = EdgeFrames(100).vowel(10, 30).sibilant(34, 38).vowel(38, 40).vowel(42, 70);
+  CHECK(sameSpans(mergedSpans(voicedS, {{10, 30}, {34, 40}, {42, 70}}),
+                  {{10, 30}, {34, 40}, {42, 70}}));
+  // Two in a row both join the same note.
+  const auto two = EdgeFrames(100).vowel(10, 30).sibilant(32, 36).sibilant(37, 41).vowel(42, 70);
+  CHECK(sameSpans(mergedSpans(two, {{10, 30}, {32, 36}, {37, 41}, {42, 70}}),
+                  {{10, 30}, {32, 70}}));
+}
+
 void noteEdgeTests()
 {
   // An "s" between two vowels that GAME left at the end of the first note
@@ -1076,6 +1119,7 @@ int main()
   }
 
   noteEdgeTests();
+  sibilantOnlyTests();
   timeMapTests();
   gainTests();
 

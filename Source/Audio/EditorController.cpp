@@ -1639,18 +1639,29 @@ void EditorController::segmentIntoNotesImpl(Project &targetProject,
           std::move(spans), audioData.voicedMask, audioData.vadMask,
           audioData.breathSibilance, f0Size);
 
+      // A note on a sibilant alone joins its neighbour in the region.
+      const auto merged = noteedges::mergeSibilantOnly(
+          spans, audioData.voicedMask, audioData.breathSibilance,
+          audioData.segmentChunkRanges);
+
+      std::vector<Note> kept;
+      kept.reserve(notes.size());
       for (size_t i = 0; i < notes.size(); ++i)
       {
-        auto &note = notes[i];
-        const int newStart = std::clamp(spans[i].start, 0, f0Size - 1);
-        const int newEnd = std::clamp(spans[i].end, newStart + 1, f0Size);
+        if (!merged.kept[i])
+          continue;
+        auto note = notes[i];
+        const int newStart = std::clamp(merged.spans[i].start, 0, f0Size - 1);
+        const int newEnd = std::clamp(merged.spans[i].end, newStart + 1, f0Size);
         note.setStartFrame(newStart);
         note.setEndFrame(newEnd);
         note.setSrcStartFrame(newStart);
         note.setSrcEndFrame(newEnd);
         note.setF0Values(std::vector<float>(audioData.f0.begin() + newStart,
                                             audioData.f0.begin() + newEnd));
+        kept.push_back(std::move(note));
       }
+      notes = std::move(kept);
     }
 
     const auto isBreathFrame = [&audioData](int frame)
