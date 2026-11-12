@@ -900,6 +900,9 @@ target_compile_definitions(pitchnet_core PUBLIC
     JUCE_MODAL_LOOPS_PERMITTED=1
     PITCHNET_PROJECT_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Resources")
 
+target_compile_definitions(pitchnet_ui PRIVATE
+    PITCHNET_VERSION_STRING="${PROJECT_VERSION}")
+
 target_compile_definitions(pitchnet_ui PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0

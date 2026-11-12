@@ -148,6 +148,33 @@ ToolbarComponent::~ToolbarComponent()
     progressBar.setLookAndFeel(nullptr);
 }
 
+juce::Rectangle<int> ToolbarComponent::getLogoBounds() const
+{
+    if (!logoImage.isValid())
+        return {};
+
+    const int logoW = (logoImage.getWidth() + 1) / 2;
+    const int logoH = (logoImage.getHeight() + 1) / 2;
+    return {17, (getHeight() - logoH) / 2, logoW, logoH};
+}
+
+juce::String ToolbarComponent::getTooltip()
+{
+    if (!getLogoBounds().contains(getMouseXYRelative()))
+        return {};
+
+#if defined(JUCE_APPLICATION_VERSION_STRING)
+    const juce::String version = JUCE_APPLICATION_VERSION_STRING;
+#elif defined(JucePlugin_VersionString)
+    const juce::String version = JucePlugin_VersionString;
+#elif defined(PITCHNET_VERSION_STRING)
+    const juce::String version = PITCHNET_VERSION_STRING;
+#else
+    const juce::String version = "0.8.0";
+#endif
+    return "PitchNet v" + version;
+}
+
 void ToolbarComponent::paint(juce::Graphics &g)
 {
     auto bounds = getLocalBounds().toFloat();
@@ -158,11 +185,9 @@ void ToolbarComponent::paint(juce::Graphics &g)
 
     if (logoImage.isValid())
     {
-        const int logoW = (logoImage.getWidth() + 1) / 2;
-        const int logoH = (logoImage.getHeight() + 1) / 2;
-        const int logoX = 17;
-        const int logoY = (getHeight() - logoH) / 2;
-        g.drawImage(logoImage, logoX, logoY, logoW, logoH,
+        const auto logo = getLogoBounds();
+        g.drawImage(logoImage, logo.getX(), logo.getY(),
+                    logo.getWidth(), logo.getHeight(),
                     0, 0, logoImage.getWidth(), logoImage.getHeight());
     }
 

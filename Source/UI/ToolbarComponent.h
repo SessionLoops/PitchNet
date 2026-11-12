@@ -56,7 +56,8 @@ private:
 
 class ToolbarComponent : public juce::Component,
                          public juce::Button::Listener,
-                         public juce::Slider::Listener
+                         public juce::Slider::Listener,
+                         public juce::TooltipClient
 {
 public:
     ToolbarComponent();
@@ -73,6 +74,9 @@ public:
     /** Re-applies every tooltip and caption after a language change. */
     void refreshLocalisedText();
     void sliderValueChanged(juce::Slider *slider) override;
+
+    /** Shows the app version while the mouse is over the logo. */
+    juce::String getTooltip() override;
 
     void setPlaying(bool playing);
     void setTransportEnabled(bool enabled);
@@ -143,6 +147,7 @@ private:
     Button stopButton;
     ToggleButton loopButton;
     juce::Image logoImage;
+    juce::Rectangle<int> getLogoBounds() const;
 
     bool pluginMode = false;
     bool hostTransportAvailable = true;
