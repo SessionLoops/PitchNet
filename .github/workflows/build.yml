@@ -186,7 +186,7 @@ jobs:
   # macOS Build (Apple Silicon)
   # ===========================================
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-15
     name: macOS (ARM64)
 
     steps:
