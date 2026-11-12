@@ -2747,6 +2747,7 @@ juce::String PianoRollComponent::getTooltip()
     case PitchToolHandles::HandleType::TiltLeft: return TR("handle.tilt_left");
     case PitchToolHandles::HandleType::Vibrato: return TR("handle.vibrato");
     case PitchToolHandles::HandleType::PitchDrift: return TR("handle.pitch_drift");
+    case PitchToolHandles::HandleType::FinePitch: return TR("handle.fine_pitch");
     case PitchToolHandles::HandleType::SibilantBalance: return TR("handle.sibilant_balance");
     case PitchToolHandles::HandleType::Amplitude: return TR("handle.amplitude");
     case PitchToolHandles::HandleType::Formant: return TR("handle.formant");
@@ -2806,16 +2807,19 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
       pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
 
-  // The sibilant balance handle and breath notes have double-click actions
-  // of their own: mute or restore the sibilants (as in Melodyne), and reset
-  // a breath's level.
+  // The sibilant balance and fine pitch handles and breath notes have
+  // double-click actions of their own: mute or restore the sibilants (as in
+  // Melodyne), centre the note on its semitone, and reset a breath's level.
   if (editMode == EditMode::Select && currentHandler_)
   {
     const int handle =
         pitchToolHandles ? pitchToolHandles->hitTest(adjustedX, adjustedY) : -1;
+    const auto handleType = handle >= 0
+        ? pitchToolHandles->getHandle(handle).type
+        : PitchToolHandles::HandleType::None;
     const bool sibilantHandle =
-        handle >= 0 && pitchToolHandles->getHandle(handle).type ==
-                           PitchToolHandles::HandleType::SibilantBalance;
+        handleType == PitchToolHandles::HandleType::SibilantBalance ||
+        handleType == PitchToolHandles::HandleType::FinePitch;
     if (sibilantHandle || (!findNoteAt(adjustedX, adjustedY) &&
                            findBreathAt(adjustedX, adjustedY) >= 0))
     {
@@ -4231,6 +4235,7 @@ void PianoRollComponent::showResetMenu(Note &note)
     menu.addItem(std::move(item));
   };
   addItem(1, TR("restore.pitch"), pitchChanged);
+  addItem(3, TR("restore.formant"), formantChanged);
   addItem(4, TR("restore.amplitude"), amplitudeChanged);
   addItem(2, TR("restore.timing"), timingChanged);
   menu.addSeparator();
@@ -4252,6 +4257,8 @@ void PianoRollComponent::showResetMenu(Note &note)
       safeThis->resetNoteEdits(*notePtr);
     else if (result == 2)
       safeThis->resetNoteTiming(*notePtr);
+    else if (result == 3)
+      safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);
     else if (result == 4)
       safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Amplitude);
     else if (result == 5)

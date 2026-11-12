@@ -19,6 +19,7 @@ PitchToolHandles::PitchToolHandles()
     : leftTiltIcon(loadIcon("ltilt_png")),
       vibratoIcon(loadIcon("vibrato_png")),
       driftIcon(loadIcon("drift_png")),
+      centIcon(loadIcon("cent_png")),
       formantIcon(loadIcon("formant_png")),
       amplitudeIcon(loadIcon("amplitude_png")),
       sibilantIcon(loadIcon("sibilant_png")),
@@ -84,12 +85,13 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
     handles.back().bounds = {x, y, slotWidth, buttonHeight};
   };
 
-  addButtonHandle(HandleType::TiltLeft, 0, groupTop);
+  // Pitch above the note, level and tone below it.
+  addButtonHandle(HandleType::PitchDrift, 0, groupTop);
   addButtonHandle(HandleType::Vibrato, 1, groupTop);
-  addButtonHandle(HandleType::TiltRight, 2, groupTop);
-  addButtonHandle(HandleType::PitchDrift, 0, bottomRowY);
+  addButtonHandle(HandleType::FinePitch, 2, groupTop);
+  addButtonHandle(HandleType::SibilantBalance, 0, bottomRowY);
   addButtonHandle(HandleType::Amplitude, 1, bottomRowY);
-  addButtonHandle(HandleType::SibilantBalance, 2, bottomRowY);
+  addButtonHandle(HandleType::Formant, 2, bottomRowY);
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
@@ -123,6 +125,8 @@ PitchToolHandles::getIconForType(HandleType type) const {
       return leftTiltIcon;
     case HandleType::PitchDrift:
       return driftIcon;
+    case HandleType::FinePitch:
+      return centIcon;
     case HandleType::Vibrato:
       return vibratoIcon;
     case HandleType::Formant:
@@ -191,6 +195,7 @@ juce::Colour PitchToolHandles::getColorForType(HandleType type) const {
       return juce::Colours::orange;
       
     case HandleType::PitchDrift:
+    case HandleType::FinePitch:
     case HandleType::Vibrato:
       return juce::Colours::mediumpurple;
       

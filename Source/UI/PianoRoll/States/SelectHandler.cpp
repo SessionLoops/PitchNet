@@ -3,6 +3,7 @@
 #include "../../../Utils/PitchCurveProcessor.h"
 #include "../../../Utils/BasePitchPreview.h"
 #include "../../../Utils/TransformParams.h"
+#include "../../../Utils/ScaleUtils.h"
 #include "../../../Undo/PitchToolAction.h"
 #include "../../../Undo/GainEditAction.h"
 
@@ -43,6 +44,37 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   if (!project)
     return false;
 
+  // The fine pitch handle drags the note's pitch like dragging the note
+  // itself (same preview, audition, undo), in cents and without snapping.
+  if (owner_.pitchToolHandles)
+  {
+    const int hitIndex = owner_.pitchToolHandles->hitTest(worldX, worldY);
+    if (hitIndex >= 0 &&
+        owner_.pitchToolHandles->getHandle(hitIndex).type ==
+            PitchToolHandles::HandleType::FinePitch)
+    {
+      Note *note = owner_.pitchToolHandles->getHandle(hitIndex).note;
+      if (note && !note->isRest())
+      {
+        auto selectedNotes = project->getSelectedNotes();
+        if (note->isSelected() && selectedNotes.size() > 1)
+        {
+          owner_.pitchEditor->startMultiNoteDrag(selectedNotes, worldY, note,
+                                                 true);
+          if (owner_.onNoteDragAudition)
+            owner_.onNoteDragAudition(*note);
+        }
+        else
+        {
+          startSingleNoteDrag(note, worldY, true);
+        }
+        owner_.updatePitchToolHandlesFromSelection();
+        owner_.repaint();
+      }
+      return true;
+    }
+  }
+
   // Pitch tool controller interaction
   if (owner_.pitchToolController && owner_.pitchToolHandles)
   {
@@ -79,50 +111,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     }
     else
     {
-      // Edit the note without changing the box selection.
-      // Capture delta slice from global dense deltaPitch for this note
-      auto &audioData = project->getAudioData();
-      int startFrame = note->getStartFrame();
-      int endFrame = note->getEndFrame();
-      int numFrames = endFrame - startFrame;
-
-      std::vector<float> delta(numFrames, 0.0f);
-      for (int i = 0; i < numFrames; ++i)
-      {
-        int globalFrame = startFrame + i;
-        if (globalFrame >= 0 &&
-            globalFrame <
-                static_cast<int>(audioData.deltaPitch.size()))
-          delta[i] =
-              audioData.deltaPitch[static_cast<size_t>(globalFrame)];
-      }
-      note->setDeltaPitch(std::move(delta));
-
-      // Start single note dragging
-      isDragging = true;
-      draggedNote = note;
-      owner_.updatePitchToolHandlesFromSelection();
-      dragStartY = worldY;
-      originalPitchOffset = note->getPitchOffset();
-      originalMidiNote = note->getMidiNote();
-
-      // Save boundary F0 values and original F0 for undo
-      int f0Size = static_cast<int>(audioData.f0.size());
-
-      boundaryF0Start = (startFrame > 0 && startFrame - 1 < f0Size)
-                            ? audioData.f0[startFrame - 1]
-                            : 0.0f;
-      boundaryF0End =
-          (endFrame < f0Size) ? audioData.f0[endFrame] : 0.0f;
-
-      // Save original F0 values for undo
-      originalF0Values.clear();
-      for (int i = startFrame; i < endFrame && i < f0Size; ++i)
-        originalF0Values.push_back(audioData.f0[i]);
-
-      prepareDragBasePreview();
-      if (owner_.onNoteDragAudition)
-        owner_.onNoteDragAudition(*draggedNote);
+      startSingleNoteDrag(note, worldY, false);
     }
 
     owner_.repaint();
@@ -143,6 +132,59 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   }
 
   return true;
+}
+
+void SelectHandler::startSingleNoteDrag(Note *note, float worldY, bool fine)
+{
+  auto *project = owner_.project;
+  if (!project || !note)
+    return;
+  // Edit the note without changing the box selection.
+  // Capture delta slice from global dense deltaPitch for this note
+  auto &audioData = project->getAudioData();
+  int startFrame = note->getStartFrame();
+  int endFrame = note->getEndFrame();
+  int numFrames = endFrame - startFrame;
+
+  std::vector<float> delta(numFrames, 0.0f);
+  for (int i = 0; i < numFrames; ++i)
+  {
+    int globalFrame = startFrame + i;
+    if (globalFrame >= 0 &&
+        globalFrame <
+            static_cast<int>(audioData.deltaPitch.size()))
+      delta[i] =
+          audioData.deltaPitch[static_cast<size_t>(globalFrame)];
+  }
+  note->setDeltaPitch(std::move(delta));
+
+  // Start single note dragging
+  isDragging = true;
+  draggedNote = note;
+  owner_.updatePitchToolHandlesFromSelection();
+  dragStartY = worldY;
+  originalPitchOffset = note->getPitchOffset();
+  originalMidiNote = note->getMidiNote();
+
+  // Save boundary F0 values and original F0 for undo
+  int f0Size = static_cast<int>(audioData.f0.size());
+
+  boundaryF0Start = (startFrame > 0 && startFrame - 1 < f0Size)
+                        ? audioData.f0[startFrame - 1]
+                        : 0.0f;
+  boundaryF0End =
+      (endFrame < f0Size) ? audioData.f0[endFrame] : 0.0f;
+
+  // Save original F0 values for undo
+  originalF0Values.clear();
+  for (int i = startFrame; i < endFrame && i < f0Size; ++i)
+    originalF0Values.push_back(audioData.f0[i]);
+
+  fineDrag = fine;
+
+  prepareDragBasePreview();
+  if (owner_.onNoteDragAudition)
+    owner_.onNoteDragAudition(*draggedNote);
 }
 
 bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
@@ -351,7 +393,10 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   {
     float deltaY = dragStartY - worldY;
     float deltaSemitones = deltaY / owner_.pixelsPerSemitone;
-    if (owner_.snapToSemitoneDrag != e.mods.isAltDown())
+    if (fineDrag)
+      deltaSemitones = ScaleUtils::finePitchDragOffset(
+          deltaY, originalMidiNote, project->getPitchReferenceHz());
+    else if (owner_.snapToSemitoneDrag != e.mods.isAltDown())
       deltaSemitones = owner_.pitchEditor->getSnappedDragOffset(
           deltaSemitones, originalMidiNote);
 
@@ -696,6 +741,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   }
 
   isDragging = false;
+  fineDrag = false;
   draggedNote = nullptr;
   owner_.updatePitchToolHandlesFromSelection();
   if (owner_.onNoteDragAuditionFinished)
@@ -778,6 +824,59 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         action->redo();
         if (owner_.undoManager)
           owner_.undoManager->addAction(std::move(action));
+      }
+      owner_.updatePitchToolHandlesFromSelection();
+      owner_.repaint();
+      return;
+    }
+  }
+
+  // Fine pitch: double-click puts the note back on its nearest semitone
+  // (0 cents). It acts on the handle's note, or the whole selection when that
+  // note is in it.
+  if (owner_.pitchToolHandles)
+  {
+    const int hitIndex = owner_.pitchToolHandles->hitTest(worldX, worldY);
+    if (hitIndex >= 0 &&
+        owner_.pitchToolHandles->getHandle(hitIndex).type ==
+            PitchToolHandles::HandleType::FinePitch)
+    {
+      Note *handleNote = owner_.pitchToolHandles->getHandle(hitIndex).note;
+      auto targets = project->getSelectedNotes();
+      if (handleNote &&
+          std::find(targets.begin(), targets.end(), handleNote) == targets.end())
+        targets = {handleNote};
+      std::vector<Note *> notesToSnap;
+      std::vector<float> oldMidis, oldOffsets, newMidis;
+      for (auto *note : targets)
+      {
+        if (!note || note->isRest())
+          continue;
+        const float pitch = note->getAdjustedMidiNote();
+        const float snapped = ScaleUtils::snapMidiToSemitone(
+            pitch, project->getPitchReferenceHz());
+        if (std::abs(snapped - pitch) <= 0.001f)
+          continue;
+        notesToSnap.push_back(note);
+        oldMidis.push_back(note->getMidiNote());
+        oldOffsets.push_back(note->getPitchOffset());
+        newMidis.push_back(snapped);
+      }
+      if (!notesToSnap.empty())
+      {
+        if (owner_.undoManager)
+          owner_.undoManager->addAction(
+              std::make_unique<MultiNoteSnapToSemitoneAction>(
+                  notesToSnap, oldMidis, oldOffsets, newMidis,
+                  [project](const std::vector<Note *> &notes)
+                  { rebuildProjectForNotes(project, notes); }));
+        for (size_t i = 0; i < notesToSnap.size(); ++i)
+        {
+          notesToSnap[i]->setMidiNote(newMidis[i]);
+          notesToSnap[i]->setPitchOffset(0.0f);
+          notesToSnap[i]->markDirty();
+        }
+        rebuildAndNotify();
       }
       owner_.updatePitchToolHandlesFromSelection();
       owner_.repaint();
@@ -1160,6 +1259,7 @@ void SelectHandler::cancel()
     restoreDragBasePreview();
     draggedNote->setPitchOffset(0.0f);
     isDragging = false;
+    fineDrag = false;
     draggedNote = nullptr;
     dragPreviewStartFrame = -1;
     dragPreviewEndFrame = -1;

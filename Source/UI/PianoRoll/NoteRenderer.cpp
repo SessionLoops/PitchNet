@@ -646,10 +646,30 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const bool isSibilantDragged = pitchToolController &&
         pitchToolController->isDraggingSibilantBalance() &&
         pitchToolController->getActiveHandleNote() == &note;
+    // A note drag from the fine pitch handle shows the note and cents.
+    const bool isFinePitchDragged = shouldShowPitchTip &&
+        ((isSingleDragged && selectHandler->isFinePitchDragging()) ||
+         (isMultiDragged && pitchEditor->isFineMultiDragging()));
     if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged || isAmplitudeDragged || isSibilantDragged))
     {
       juce::String label;
-      if (isSibilantDragged)
+      if (isFinePitchDragged)
+      {
+        // Nearest note and the cents from it, e.g. "C#4 +12 ct".
+        static const char *names[] = {"C", "C#", "D", "D#", "E", "F",
+                                      "F#", "G", "G#", "A", "A#", "B"};
+        const float pitch = note.getAdjustedMidiNote() -
+            ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
+        const int totalCents = static_cast<int>(std::lround(pitch * 100.0f));
+        const int nearest = static_cast<int>(
+            std::floor((totalCents + 50) / 100.0));
+        const int cents = totalCents - nearest * 100;
+        const int pitchClass = ((nearest % 12) + 12) % 12;
+        const int octave = static_cast<int>(std::floor(nearest / 12.0)) - 1;
+        label = juce::String(names[pitchClass]) + juce::String(octave) + " " +
+                (cents >= 0 ? "+" : "") + juce::String(cents) + " ct";
+      }
+      else if (isSibilantDragged)
       {
         const int percent =
             static_cast<int>(std::lround(note.getSibilantBalance() * 100.0f));

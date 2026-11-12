@@ -114,6 +114,7 @@
   "fourier.lowpass": "ローパス (Hz):",
   "fourier.title": "フーリエピッチフィルター",
   "handle.amplitude": "振幅",
+  "handle.fine_pitch": "ピッチ微調整（セント）",
   "handle.formant": "フォルマントシフト",
   "handle.pitch_drift": "ピッチドリフト",
   "handle.sibilant_balance": "歯擦音バランス",

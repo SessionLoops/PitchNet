@@ -172,6 +172,22 @@ inline float snapMidiToSemitone(float midi, int referenceHz = static_cast<int>(F
     return std::round(midi - offset) + offset;
 }
 
+/**
+ * A fine-pitch drag's offset: one cent per pixel, landing `anchorMidi` on
+ * whole cents of the reference's semitone grid. No semitone snapping.
+ */
+inline float finePitchDragOffset(float deltaYPixels, float anchorMidi,
+                                 int referenceHz)
+{
+    // Until the pointer has moved a whole pixel the note stays exactly where
+    // it was, so a click alone changes nothing.
+    if (std::abs(deltaYPixels) < 1.0f)
+        return 0.0f;
+    const float reference = getReferenceOffsetSemitones(referenceHz);
+    const float cents = std::round((anchorMidi - reference) * 100.0f + deltaYPixels);
+    return cents / 100.0f + reference - anchorMidi;
+}
+
 inline float snapMidiToScale(float midi,
                              ScaleMode mode,
                              int rootNote,

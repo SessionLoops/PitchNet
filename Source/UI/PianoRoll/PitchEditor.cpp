@@ -253,7 +253,7 @@ void PitchEditor::snapNoteToSemitone(Note *note)
 }
 
 void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
-                                     float y, Note *hoveredNote)
+                                     float y, Note *hoveredNote, bool fine)
 {
   if (notes.empty() || !project)
     return;
@@ -263,6 +263,7 @@ void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
   originalMidiNotes.clear();
   originalF0ValuesMulti.clear();
   dragStartY = y;
+  multiDragFine = fine;
   multiDragSnapAnchorMidi = hoveredNote != nullptr
                                 ? hoveredNote->getMidiNote()
                                 : notes.front()->getMidiNote();
@@ -308,7 +309,10 @@ void PitchEditor::updateMultiNoteDrag(float x, float y, bool invertSnap)
 
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
-  if (snapToSemitoneDragEnabled != invertSnap)
+  if (multiDragFine)
+    deltaSemitones = ScaleUtils::finePitchDragOffset(
+        deltaY, multiDragSnapAnchorMidi, pitchReferenceHz);
+  else if (snapToSemitoneDragEnabled != invertSnap)
     deltaSemitones =
         getSnappedDragOffset(deltaSemitones, multiDragSnapAnchorMidi);
 
@@ -318,7 +322,9 @@ void PitchEditor::updateMultiNoteDrag(float x, float y, bool invertSnap)
     note->markDirty();
   }
 
-  hoveredMultiDragNote = findDraggedNoteAt(x, y);
+  // The fine pitch handle sits off the note: keep its note as the hovered one.
+  if (!multiDragFine)
+    hoveredMultiDragNote = findDraggedNoteAt(x, y);
   applyDragBasePreview(deltaSemitones);
 }
 
@@ -327,6 +333,8 @@ void PitchEditor::endMultiNoteDrag()
   if (!isMultiDragging || draggedNotes.empty() || !project)
   {
     isMultiDragging = false;
+  multiDragFine = false;
+    multiDragFine = false;
     draggedNotes.clear();
     hoveredMultiDragNote = nullptr;
     originalMidiNotes.clear();
@@ -425,6 +433,7 @@ void PitchEditor::endMultiNoteDrag()
   }
 
   isMultiDragging = false;
+  multiDragFine = false;
   draggedNotes.clear();
   hoveredMultiDragNote = nullptr;
   originalMidiNotes.clear();

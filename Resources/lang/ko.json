@@ -114,6 +114,7 @@
   "fourier.lowpass": "로우패스 (Hz):",
   "fourier.title": "푸리에 피치 필터",
   "handle.amplitude": "진폭",
+  "handle.fine_pitch": "피치 미세 조정 (센트)",
   "handle.formant": "포먼트 시프트",
   "handle.pitch_drift": "피치 드리프트",
   "handle.sibilant_balance": "치찰음 밸런스",

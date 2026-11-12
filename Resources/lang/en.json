@@ -116,6 +116,7 @@
   "fourier.lowpass": "Lowpass (Hz):",
   "fourier.title": "Fourier Pitch Filter",
   "handle.amplitude": "Amplitude",
+  "handle.fine_pitch": "Fine Pitch (cents)",
   "handle.formant": "Formant Shift",
   "handle.pitch_drift": "Pitch Drift",
   "handle.sibilant_balance": "Sibilant Balance",

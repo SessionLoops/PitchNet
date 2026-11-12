@@ -15,6 +15,7 @@ public:
     TiltRight,
     Vibrato,
     PitchDrift,
+    FinePitch,
     SibilantBalance,
     Formant,
     Amplitude,
@@ -100,6 +101,7 @@ private:
   juce::Image leftTiltIcon;
   juce::Image vibratoIcon;
   juce::Image driftIcon;
+  juce::Image centIcon;
   juce::Image formantIcon;
   juce::Image amplitudeIcon;
   juce::Image sibilantIcon;

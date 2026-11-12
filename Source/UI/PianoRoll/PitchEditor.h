@@ -35,11 +35,14 @@ public:
     Note* getDraggedNote() const { return draggedNote; }
 
     // Multi-note dragging
+    /** fine: the fine pitch handle's drag - cents, no snapping, and the
+        hovered note stays the one whose handle was grabbed. */
     void startMultiNoteDrag(const std::vector<Note*>& notes, float y,
-                            Note* hoveredNote);
+                            Note* hoveredNote, bool fine = false);
     void updateMultiNoteDrag(float x, float y, bool invertSnap = false);
     void endMultiNoteDrag();
     bool isDraggingMultiNotes() const { return isMultiDragging; }
+    bool isFineMultiDragging() const { return isMultiDragging && multiDragFine; }
     const std::vector<Note*>& getDraggedNotes() const { return draggedNotes; }
     Note* getHoveredMultiDragNote() const { return hoveredMultiDragNote; }
 
@@ -83,6 +86,7 @@ private:
     std::vector<Note*> draggedNotes;
     Note* hoveredMultiDragNote = nullptr;
     float multiDragSnapAnchorMidi = 60.0f;
+    bool multiDragFine = false;
     std::vector<float> originalMidiNotes;
     std::vector<std::vector<float>> originalF0ValuesMulti;
     bool snapToSemitoneDragEnabled = false;

@@ -116,6 +116,7 @@
   "fourier.lowpass": "Passa-baixas (Hz):",
   "fourier.title": "Filtro de afinação de Fourier",
   "handle.amplitude": "Amplitude",
+  "handle.fine_pitch": "Afinação fina (cents)",
   "handle.formant": "Deslocamento de formante",
   "handle.pitch_drift": "Deriva de afinação",
   "handle.sibilant_balance": "Equilíbrio de sibilantes",

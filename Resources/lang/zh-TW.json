@@ -114,6 +114,7 @@
   "fourier.lowpass": "低通 (Hz)：",
   "fourier.title": "傅立葉音高濾波器",
   "handle.amplitude": "振幅",
+  "handle.fine_pitch": "音高微調（音分）",
   "handle.formant": "共振峰偏移",
   "handle.pitch_drift": "音高漂移",
   "handle.sibilant_balance": "齒音平衡",

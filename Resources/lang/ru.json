@@ -116,6 +116,7 @@
   "fourier.lowpass": "ФНЧ (Гц):",
   "fourier.title": "Фурье-фильтр высоты тона",
   "handle.amplitude": "Амплитуда",
+  "handle.fine_pitch": "Точная высота (центы)",
   "handle.formant": "Сдвиг форманты",
   "handle.pitch_drift": "Дрейф высоты",
   "handle.sibilant_balance": "Баланс сибилянтов",

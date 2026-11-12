@@ -44,6 +44,8 @@ public:
   float getDeltaOffsetSemitones() const { return deltaOffsetSemitones; }
 
   bool isSingleNoteDragging() const { return isDragging; }
+  /** A note drag started from the fine pitch handle (cents, no snapping). */
+  bool isFinePitchDragging() const { return isDragging && fineDrag; }
   Note *getDraggedNote() const { return draggedNote; }
 
 private:
@@ -59,12 +61,16 @@ private:
                      int &minFrameOut,
                      int &maxFrameOut);
 
+  /** Start dragging one note's pitch, as from a click on the note. */
+  void startSingleNoteDrag(Note *note, float worldY, bool fine);
+
   void prepareDragBasePreview();
   void applyDragBasePreview(float pitchOffsetSemitones);
   void restoreDragBasePreview();
 
   // Single note drag state
   bool isDragging = false;
+  bool fineDrag = false;
   Note *draggedNote = nullptr;
   float dragStartY = 0.0f;
   float originalPitchOffset = 0.0f;
