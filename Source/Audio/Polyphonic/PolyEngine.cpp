@@ -39,8 +39,9 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
     report(0.6f);
 
     std::vector<Candidate> active, inactive;
+    const float threshold = params.activationThresholdFor(ctx.p.detectionMode);
     for (auto& c : cands)
-        (c.probability >= params.activationThreshold ? active : inactive).push_back(c);
+        (c.probability >= threshold ? active : inactive).push_back(c);
     active = mergeFragments(ctx, std::move(active));
     refineOnsets(ctx, active);
     // refined onsets change starts and pitch curves: join notes of one pitch that still overlap

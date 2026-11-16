@@ -88,7 +88,14 @@ struct Params
     float minNoteSeconds = 0.07f;
     float minRelativeStrength = 0.02f;
     int mergeGapFrames = 3;
-    float activationThreshold = 0.5f;  // purifier probability for an active note
+    float activationThreshold = 0.5f;  // purifier probability for an active note (harmonic detector)
+    // The guided detector has its own classifier; validation F1 is flat from 0.60 to 0.80
+    // and 0.60 separates best (docs/testing/polyphonic-detector-research.md, threshold tuning).
+    float guidedActivationThreshold = 0.6f;
+    float activationThresholdFor(DetectionMode mode) const
+    {
+        return mode == DetectionMode::NeuralGuided ? guidedActivationThreshold : activationThreshold;
+    }
 
     // ---- sound model / masks ----
     int nmfIterations = 40;

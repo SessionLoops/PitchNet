@@ -385,3 +385,45 @@ complete pitch region and make **continuation, relocation of an existing
 boundary, and creation of a new event** compete in one objective. Its training
 loss must penalize duplicate events throughout the onset neighborhood. This is
 a research direction, not an implemented or validated improvement.
+
+## Activation threshold tuning
+
+The purifier threshold had been fixed at 0.5 for every detector. It was swept
+from 0.10 to 0.85 through the full pipeline (fragment merging, onset refinement
+and masks all run after the threshold) on `vcorpus`, using
+`polyphonic_cli --threshold`. The selection rule was fixed before any test set
+was run: among thresholds within 0.002 overlap F1 of the best, take the one
+with the highest mean separation SDR.
+
+| Detector | Overlap F1 at 0.50 | Plateau | Selected |
+|---|---:|---|---:|
+| Harmonic, with evidence (default) | 0.8814 | 0.35–0.55, peak 0.8817 | 0.50 (unchanged) |
+| Guided | 0.8920 | 0.60–0.80, about 0.899 | **0.60** |
+| DSP-only | 0.7754 | 0.30–0.50, peak 0.7776 | 0.35 (not adopted) |
+
+Held-out check, paired against 0.50 on `tcorpus`, `hcorpus`, `ocorpus`,
+`qcorpus` and `pcorpus` pooled (312 mixtures; 2,000 mixture bootstrap draws,
+seed 20261102):
+
+| Change | Overlap F1 | Onset-50 F1 | Mean SDR | Precision / recall |
+|---|---|---|---|---|
+| Guided 0.50 → 0.60 | +0.0038 [−0.0009, +0.0084] | +0.0035 [−0.0012, +0.0083] | −0.03 dB [−0.15, +0.06] | +0.018 / −0.011 |
+| DSP 0.50 → 0.35 | −0.0030 [−0.0150, +0.0086] | +0.0047 [−0.0083, +0.0173] | +0.49 dB [+0.31, +0.67] | −0.074 / +0.073 |
+
+Guided 0.60 improves `hcorpus`, `ocorpus` and `qcorpus` (`qcorpus` +0.0175
+[+0.0036, +0.0338]) and is slightly worse on `tcorpus` and `pcorpus`. On the
+recorded examples it removes the harp's C4 ghost and loses no expected pitch;
+Brahms falls from 256 to 236 active notes, which has no reference. It is adopted
+as `Params::guidedActivationThreshold` as a small precision gain, not a
+demonstrated F1 improvement. DSP-only 0.35 was not adopted: its separation gain
+comes with about 7 points lower precision, and on the recorded examples it finds
+the strings C5 and organ E4 but adds ghosts at C2, C4, C5, E5 and B5.
+
+No threshold recovers the woodwind G5 or the octave example's G4, or removes the
+bassoon's C5 ghost: the score distributions of real notes and ghosts overlap, so
+the threshold moves along the precision/recall curve rather than improving it.
+
+These runs used Linux x86-64 with ONNX Runtime 1.29. There, 0.50 gives the same
+overlap matches as the macOS figures above (harmonic 275, guided 285 of 311) but
+fewer detections (harmonic 313 versus 325), so absolute scores differ slightly;
+every comparison here is within that one environment.

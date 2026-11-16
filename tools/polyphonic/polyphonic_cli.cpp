@@ -55,6 +55,7 @@ int main(int argc, char** argv)
     bool printCandidates = false;
     bool takeBackground = false;
     double padSeconds = 0.0;
+    float activationThreshold = -1.0f;   // < 0: engine default
 #if defined(POLYPHONIC_GUIDED_DEFAULT) && POLYPHONIC_GUIDED_DEFAULT
     auto detectionMode = polyphonic::DetectionMode::NeuralGuided;
 #else
@@ -79,6 +80,7 @@ int main(int argc, char** argv)
                 return 2;
             }
         }
+        else if (a == "--threshold") activationThreshold = static_cast<float>(std::atof(next().c_str()));
         else if (a == "--dump-evidence") dumpEvidence = next();
         else if (a == "--dump-features") dumpFeatures = next();
         else if (a == "--candidates") printCandidates = true;
@@ -166,6 +168,8 @@ int main(int argc, char** argv)
     }
     auto params = polyphonic::Params::forSampleRate(in.sampleRate);
     params.detectionMode = detectionMode;
+    if (activationThreshold >= 0.0f)
+        params.activationThreshold = params.guidedActivationThreshold = activationThreshold;
     params.exportFeatures = !dumpFeatures.empty();
     const char* detectorName = detectionMode == polyphonic::DetectionMode::NeuralGuided ? "guided" : "harmonic";
     if (detectionMode == polyphonic::DetectionMode::NeuralGuided)
