@@ -23,14 +23,7 @@
 #include <thread>
 
 struct SharedInferenceModels;
-namespace polyphonic
-{
-class BasicPitchEvidence;
-}
-namespace inputtype
-{
-class YamnetVoiceTagger;
-}
+struct ClassifierModels;
 
 class EditorController
 {
@@ -161,9 +154,8 @@ private:
   std::shared_ptr<RMVPEPitchDetector> rmvpePitchDetector;
   std::shared_ptr<SwiftF0PitchDetector> swiftF0PitchDetector;
   std::shared_ptr<GAMEDetector> gameDetector;
-  // Input-type classifier models (CPU, optional), from the same set.
-  std::shared_ptr<polyphonic::BasicPitchEvidence> basicPitchEvidence;
-  std::shared_ptr<inputtype::YamnetVoiceTagger> yamnetTagger;
+  // Input-type classifier models (CPU, optional, one instance per process).
+  std::shared_ptr<ClassifierModels> classifierModels;
   // Generation of the installed set; an older load never replaces a newer one.
   std::uint64_t installedGeneration = 0;
   std::atomic<std::uint64_t> reloadGeneration{0};

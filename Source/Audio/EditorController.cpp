@@ -25,6 +25,31 @@
 #include <mutex>
 #include <utility>
 
+// The input-type classifier's models (and, from M2, the polyphonic engine's
+// note evidence): small, CPU-only and optional. One instance serves the whole
+// process - every controller, whatever its device - held weakly like the GPU
+// sets so the sessions die with the last controller. Each model's mutex
+// covers both loading and inference.
+struct ClassifierModels
+{
+  std::mutex basicPitchMutex;
+  std::mutex yamnetMutex;
+  polyphonic::BasicPitchEvidence basicPitch;
+  inputtype::YamnetVoiceTagger yamnet;
+};
+
+static std::shared_ptr<ClassifierModels> acquireClassifierModels()
+{
+  static std::mutex mutex;
+  static std::weak_ptr<ClassifierModels> shared;
+  const std::lock_guard<std::mutex> lock(mutex);
+  if (auto existing = shared.lock())
+    return existing;
+  auto created = std::make_shared<ClassifierModels>();
+  shared = created;
+  return created;
+}
+
 // Analysis models for one device. GPU sets are shared by every controller in
 // the process on that device; each CPU controller gets its own set so CPU
 // analysis of several tracks still runs in parallel. Detectors keep per-call
@@ -37,20 +62,13 @@ struct SharedInferenceModels
   std::mutex rmvpeMutex;
   std::mutex swiftF0Mutex;
   std::mutex gameMutex;
-  std::mutex basicPitchMutex;
-  std::mutex yamnetMutex;
   std::shared_ptr<FCPEPitchDetector> fcpe = std::make_shared<FCPEPitchDetector>();
   std::shared_ptr<RMVPEPitchDetector> rmvpe = std::make_shared<RMVPEPitchDetector>();
   // SwiftF0 always runs on the CPU (it is tiny), whatever the set's device.
   std::shared_ptr<SwiftF0PitchDetector> swiftF0 = std::make_shared<SwiftF0PitchDetector>();
   std::shared_ptr<GAMEDetector> game = std::make_shared<GAMEDetector>();
-  // The input-type classifier's models (and, from M2, the polyphonic engine's
-  // note evidence). Both are small and always run on the CPU, like SwiftF0.
-  // Optional: without them the classifier skips the check they serve.
-  std::shared_ptr<polyphonic::BasicPitchEvidence> basicPitch =
-      std::make_shared<polyphonic::BasicPitchEvidence>();
-  std::shared_ptr<inputtype::YamnetVoiceTagger> yamnet =
-      std::make_shared<inputtype::YamnetVoiceTagger>();
+  // Process-wide, shared by every set (see ClassifierModels).
+  std::shared_ptr<ClassifierModels> classifier = acquireClassifierModels();
 };
 
 namespace
@@ -65,11 +83,14 @@ std::filesystem::path toFsPath(const juce::File &file)
 #endif
 }
 
-// Loads one optional CPU model of the input-type classifier; logs, never fails.
+// Loads one optional CPU model of the input-type classifier once per process
+// (under its own mutex); logs, never fails.
 template <typename Model>
-void loadOptionalModel(Model &model, const juce::File &file, const char *name)
+void loadOptionalModel(Model &model, std::mutex &mutex, const juce::File &file,
+                       const char *name)
 {
   juce::ignoreUnused(name); // only logged; LOG may be compiled out
+  const std::lock_guard<std::mutex> lock(mutex);
   if (model.isLoaded())
     return;
   if (!file.existsAsFile())
@@ -269,11 +290,15 @@ void EditorController::reloadInferenceModels(bool async)
       }
     }
 
-    // The input-type classifier's CPU models, inline for the same reason.
-    if (models->basicPitch)
-      loadOptionalModel(*models->basicPitch, basicPitchPath, "Basic Pitch");
-    if (models->yamnet)
-      loadOptionalModel(*models->yamnet, yamnetPath, "YAMNet");
+    // The input-type classifier's CPU models, inline for the same reason
+    // (loaded once per process; later calls return at once).
+    if (auto &classifier = models->classifier)
+    {
+      loadOptionalModel(classifier->basicPitch, classifier->basicPitchMutex,
+                        basicPitchPath, "Basic Pitch");
+      loadOptionalModel(classifier->yamnet, classifier->yamnetMutex, yamnetPath,
+                        "YAMNet");
+    }
 
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
     // multiple sessions for the same device are created concurrently. This is
@@ -463,8 +488,7 @@ void EditorController::reloadInferenceModels(bool async)
     self->rmvpePitchDetector = models->rmvpe;
     self->swiftF0PitchDetector = models->swiftF0;
     self->gameDetector = models->game;
-    self->basicPitchEvidence = models->basicPitch;
-    self->yamnetTagger = models->yamnet;
+    self->classifierModels = models->classifier;
   };
 
   if (!async)
@@ -981,14 +1005,12 @@ void EditorController::classifyInputType(Project &targetProject)
 
   std::shared_ptr<SharedInferenceModels> models;
   std::shared_ptr<SwiftF0PitchDetector> swiftF0Model;
-  std::shared_ptr<polyphonic::BasicPitchEvidence> basicPitch;
-  std::shared_ptr<inputtype::YamnetVoiceTagger> yamnet;
+  std::shared_ptr<ClassifierModels> classifier;
   {
     const std::lock_guard<std::mutex> lock(modelPtrMutex);
     models = sharedModels;
     swiftF0Model = swiftF0PitchDetector;
-    basicPitch = basicPitchEvidence;
-    yamnet = yamnetTagger;
+    classifier = classifierModels;
   }
 
   // SwiftF0 on the excerpt itself: classify() reads the pitch track against
@@ -1012,21 +1034,25 @@ void EditorController::classifyInputType(Project &targetProject)
     track = {f0.data(), confidence.data(), static_cast<int>(f0.size())};
 
   inputtype::Decision decision;
+  if (classifier)
   {
-    // Fixed order (Basic Pitch, then YAMNet) wherever both are held.
-    const auto basicPitchLock =
-        lockModel(models, basicPitch, &SharedInferenceModels::basicPitch,
-                  &SharedInferenceModels::basicPitchMutex, shuttingDown);
-    const auto yamnetLock =
-        lockModel(models, yamnet, &SharedInferenceModels::yamnet,
-                  &SharedInferenceModels::yamnetMutex, shuttingDown);
+    // Process-wide models: another track's classification may hold them for a
+    // moment. Fixed order (Basic Pitch, then YAMNet) wherever both are held.
+    const auto basicPitchLock = lockShared(classifier->basicPitchMutex, shuttingDown);
+    const auto yamnetLock = lockShared(classifier->yamnetMutex, shuttingDown);
     if (shuttingDown.load())
       return;
     decision = inputtype::classify(
         excerpt.data(), static_cast<int>(excerpt.size()), sampleRate, track,
-        basicPitch && basicPitch->isLoaded() ? basicPitch.get() : nullptr,
-        yamnet && yamnet->isLoaded() ? yamnet.get() : nullptr,
+        classifier->basicPitch.isLoaded() ? &classifier->basicPitch : nullptr,
+        classifier->yamnet.isLoaded() ? &classifier->yamnet : nullptr,
         inputtype::Config{}, &shuttingDown);
+  }
+  else
+  {
+    decision = inputtype::classify(
+        excerpt.data(), static_cast<int>(excerpt.size()), sampleRate, track,
+        nullptr, nullptr, inputtype::Config{}, &shuttingDown);
   }
   if (shuttingDown.load())
     return;

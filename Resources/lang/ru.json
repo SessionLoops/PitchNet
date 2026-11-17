@@ -157,6 +157,7 @@
   "param.device": "Устройство",
   "param.input_type": "Вход",
   "param.input_type_none": "Не проанализировано",
+  "param.input_auto": "Авто",
   "param.input_vocal": "Вокал",
   "param.input_polyphonic": "Полифония",
   "param.drag_snap": "Привязка при перетаскивании",

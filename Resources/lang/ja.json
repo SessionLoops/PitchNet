@@ -155,6 +155,7 @@
   "param.device": "デバイス",
   "param.input_type": "入力",
   "param.input_type_none": "未解析",
+  "param.input_auto": "自動",
   "param.input_vocal": "ボーカル",
   "param.input_polyphonic": "ポリフォニック",
   "param.drag_snap": "ドラッグスナップ",

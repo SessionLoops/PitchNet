@@ -155,6 +155,7 @@
   "param.device": "裝置",
   "param.input_type": "輸入",
   "param.input_type_none": "未分析",
+  "param.input_auto": "自動",
   "param.input_vocal": "人聲",
   "param.input_polyphonic": "複音",
   "param.drag_snap": "拖曳吸附",

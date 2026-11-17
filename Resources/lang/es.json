@@ -155,6 +155,7 @@
   "param.device": "Dispositivo",
   "param.input_type": "Entrada",
   "param.input_type_none": "Sin analizar",
+  "param.input_auto": "Automático",
   "param.input_vocal": "Vocal",
   "param.input_polyphonic": "Polifónico",
   "param.drag_snap": "Ajuste al arrastrar",

@@ -66,6 +66,9 @@ constexpr int kPreferredPanelHeight =
 constexpr int kLanguageMenuAutoId = 7601;
 constexpr int kLanguageMenuBaseId = 7602;
 constexpr int kRenderDeviceMenuBaseId = 7501;
+constexpr int kAnalysisModeMenuAutoId = 7701;
+constexpr int kAnalysisModeMenuVocalId = 7702;
+constexpr int kAnalysisModeMenuPolyphonicId = 7703;
 
 
 
@@ -365,10 +368,8 @@ ParameterPanel::ParameterPanel()
     addAndMakeVisible(analysisModeLabel);
     analysisModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
     analysisModeLabel.setFont(AppFont::getFont(15.0f));
-    addAndMakeVisible(analysisModeValue);
-    analysisModeValue.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
-    analysisModeValue.setFont(AppFont::getFont(15.0f));
-    analysisModeValue.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(analysisModeButton);
+    analysisModeButton.addListener(this);
 
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel, &brightnessLabel })
@@ -625,7 +626,7 @@ void ParameterPanel::resized()
         analysisModeLabel.setBounds(inputRow.removeFromLeft(
             juce::jmax(52, juce::GlyphArrangement::getStringWidthInt(
                                AppFont::getFont(15.0f), analysisModeLabel.getText()) + 8)));
-        analysisModeValue.setBounds(inputRow);
+        analysisModeButton.setBounds(inputRow.reduced(0, 2));
     }
 
     if (renderDeviceRowVisible)
@@ -841,6 +842,11 @@ void ParameterPanel::buttonClicked(juce::Button* button)
     if (button == &renderDeviceButton)
     {
         showRenderDeviceMenu();
+        return;
+    }
+    if (button == &analysisModeButton)
+    {
+        showAnalysisModeMenu();
         return;
     }
     if (button == &timelineSnapCycleToggle)
@@ -1319,22 +1325,25 @@ void ParameterPanel::setRenderDeviceOptions(const juce::StringArray& deviceNames
 
 void ParameterPanel::refreshAnalysisModeRow()
 {
-    if (project == nullptr || !project->getAnalysisMode().classified)
+    const bool classified = project != nullptr && project->getAnalysisMode().classified;
+    analysisModeButton.setEnabled(classified);
+    if (!classified)
     {
-        analysisModeValue.setText(TR("param.input_type_none"), juce::dontSendNotification);
-        analysisModeValue.setTooltip({});
+        analysisModeButton.setButtonText(TR("param.input_type_none"));
+        analysisModeButton.setTooltip({});
         return;
     }
 
     const auto& state = project->getAnalysisMode();
-    analysisModeValue.setText(TR(state.mode == AnalysisMode::Polyphonic ? "param.input_polyphonic"
-                                                                        : "param.input_vocal"),
-                              juce::dontSendNotification);
+    analysisModeButton.setButtonText(TR(state.mode == AnalysisMode::Polyphonic
+                                            ? "param.input_polyphonic"
+                                            : "param.input_vocal"));
 
     // Diagnostic detail while the classifier is being tested (English, like
     // the log line in EditorController::classifyInputType).
     juce::String detail;
-    detail << "Detected " << analysismode::id(state.detected) << ": "
+    detail << (state.userChosen ? "Chosen by the user. " : "Automatic. ")
+           << "Detected " << analysismode::id(state.detected) << ": "
            << inputtype::toString(state.reason)
            << (state.confident ? "" : " (not confident)");
     if (state.poly2 >= 0.0f)
@@ -1343,9 +1352,65 @@ void ParameterPanel::refreshAnalysisModeRow()
         detail << "\nVoice " << juce::String(state.voiceScore, 3) << " (voice above 0.10)";
     if (state.audibleSeconds >= 0.0)
         detail << "\nAudible " << juce::String(state.audibleSeconds, 1) << " s classified";
-    if (state.userChosen)
-        detail << "\nChosen by the user";
-    analysisModeValue.setTooltip(detail);
+    analysisModeButton.setTooltip(detail);
+}
+
+void ParameterPanel::showAnalysisModeMenu()
+{
+    if (project == nullptr || !project->getAnalysisMode().classified)
+        return;
+
+    const auto& state = project->getAnalysisMode();
+    const auto modeName = [](AnalysisMode mode) {
+        return TR(mode == AnalysisMode::Polyphonic ? "param.input_polyphonic"
+                                                   : "param.input_vocal");
+    };
+
+    juce::PopupMenu menu;
+    menu.setLookAndFeel(&getPitchPopupLookAndFeel());
+    const auto addItem = [&menu](int id, const juce::String& text, bool selected) {
+        menu.addCustomItem(id, std::make_unique<HoverMenuItemComponent>(text, selected),
+                           nullptr, text);
+    };
+    addItem(kAnalysisModeMenuAutoId,
+            TR("param.input_auto") + " (" + modeName(state.detected) + ")",
+            !state.userChosen);
+    addItem(kAnalysisModeMenuVocalId, modeName(AnalysisMode::Vocal),
+            state.userChosen && state.mode == AnalysisMode::Vocal);
+    addItem(kAnalysisModeMenuPolyphonicId, modeName(AnalysisMode::Polyphonic),
+            state.userChosen && state.mode == AnalysisMode::Polyphonic);
+
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetComponent(&analysisModeButton)
+            .withParentComponent(this)
+            .withMinimumWidth(analysisModeButton.getWidth()),
+        [safeThis = juce::Component::SafePointer<ParameterPanel>(this)](int result)
+        {
+            if (safeThis == nullptr || safeThis->project == nullptr)
+                return;
+            auto next = safeThis->project->getAnalysisMode();
+            if (result == kAnalysisModeMenuAutoId)
+            {
+                next.userChosen = false;
+                next.mode = next.detected;
+            }
+            else if (result == kAnalysisModeMenuVocalId ||
+                     result == kAnalysisModeMenuPolyphonicId)
+            {
+                next.userChosen = true;
+                next.mode = result == kAnalysisModeMenuVocalId ? AnalysisMode::Vocal
+                                                               : AnalysisMode::Polyphonic;
+            }
+            else
+            {
+                return;
+            }
+            // M2: a changed mode re-analyses the take (edits discarded after a
+            // confirmation). Until then only the stored mode changes.
+            safeThis->project->setAnalysisMode(next);
+            safeThis->refreshAnalysisModeRow();
+        });
 }
 
 void ParameterPanel::refreshRenderDeviceRow()
