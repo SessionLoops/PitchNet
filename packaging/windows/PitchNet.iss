@@ -29,6 +29,16 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 InfoBeforeFile=THIRD_PARTY_NOTICES.txt
+; Code signing. Setup must be signed by the compiler itself, not added to
+; the finished .exe afterwards: Setup unpacks and runs an inner <name>.tmp program
+; and an uninstaller, and only compile-time signing covers those. Signing just the
+; outer .exe leaves the .tmp unsigned, and Smart App Control blocks it (Error 4551,
+; CodeIntegrity Event 3077).
+; Define the "pitchnet" sign tool when compiling, for example:
+;   ISCC /S"pitchnet=signtool.exe sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /sha1 <thumbprint> $f" packaging\windows\PitchNet.iss
+; (or Tools > Configure Sign Tools in the IDE). Compiling without it fails on purpose.
+SignTool=pitchnet
+SignedUninstaller=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -42,9 +52,12 @@ Name: "vst3"; Description: "VST3"; Types: custom
 Name: "aax"; Description: "AAX"; Types: custom
 
 [Files]
-Source: "build\PitchNet_artefacts\Release\PitchNet.exe"; DestDir: "{app}"; Components: main; Flags: ignoreversion
+Source: "build\PitchNet_artefacts\Release\PitchNet.exe"; DestDir: "{app}"; Components: main; Flags: ignoreversion signonce
 Source: "build\PitchNet_artefacts\Release\onnxruntime.dll"; DestDir: "{app}"; Components: main; Flags: ignoreversion
-Source: "build\PitchNetPlugin_artefacts\Release\VST3\PitchNet.vst3\*"; DestDir: "{code:getPreVST64Path}"; Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "build\PitchNetPlugin_artefacts\Release\VST3\PitchNet.vst3\*"; Excludes: "\Contents\x86_64-win\PitchNet.vst3"; DestDir: "{code:getPreVST64Path}"; Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
+; The plugin binary is listed separately so it can be signed (the bundle also holds non-PE files signtool cannot sign).
+Source: "build\PitchNetPlugin_artefacts\Release\VST3\PitchNet.vst3\Contents\x86_64-win\PitchNet.vst3"; DestDir: "{code:getPreVST64Path}\Contents\x86_64-win"; Components: vst3; Flags: ignoreversion signonce
+; AAX is signed by PACE wraptool before packaging; do not re-sign it here.
 Source: "build\PitchNetPlugin_artefacts\Release\AAX\PitchNet.aaxplugin\*"; DestDir: "{code:getPreAAXPath}"; Components: aax; Flags: ignoreversion recursesubdirs createallsubdirs
 ; FCPE and its tables are debug-only; release builds use SwiftF0 (swift_f0.onnx).
 Source: "Resources\models\*"; Excludes: "fcpe.onnx,mel_filterbank.bin,cent_table.bin"; DestDir: "{commonappdata}\{#MyAppPublisher}\{#MyAppName}\models"; Components: main; Flags: ignoreversion recursesubdirs createallsubdirs
