@@ -253,6 +253,11 @@ checks; each milestone still ends in its own commits and tests.
 1. **M1 — Mode only (master).** Classifier in `analyzeAudioImpl`,
    `AnalysisModeState` saved and shown, override in the menu — but every take is
    still analysed as vocal. Lets the classifier meet real sessions with no risk.
+   *Done 2026-11-17 for the standalone app (branch `polyphonic-m1`). In the
+   plugin each clip is classified and shown on its own; the track-level mode
+   (majority, sticky, track-wide override) moves to M5, together with the
+   classify-before-analysing pre-pass that gives "majority at first analysis"
+   a defined moment.*
 2. **M2 — Polyphonic analysis, read-only (branch).** Polyphonic takes get a
    `PolyphonicTake` (stereo source, Basic Pitch in `SharedInferenceModels`);
    notes drawn in the piano roll in the current look; playback is the original.
@@ -261,7 +266,10 @@ checks; each milestone still ends in its own commits and tests.
    audition, `takeBackground` on.
 4. **M4 — Saving (branch).** Format 6, notes + edits, background mask rebuild,
    load tests.
-5. **M5 — Plugin (branch → master).** ARA publish, archive, memory policy,
+5. **M5 — Plugin (branch → master).** Track-level mode (pre-pass that
+   classifies a track's clips before analysing them, duration-weighted majority,
+   sticky, track-wide override written to every clip's stored project), ARA
+   publish, archive, memory policy,
    non-ARA capture, Track mode overlays; the track-analysis-queue checks in a
    DAW; then merge.
 6. **After the first release.** Note assignment, and whatever the feature
