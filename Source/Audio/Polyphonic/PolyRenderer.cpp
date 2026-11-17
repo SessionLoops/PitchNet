@@ -169,11 +169,136 @@ struct EditState
     bool cuts = false;
     double fadeFrames = 1.0;
     int maskHi = -1;           // last frame of the note's masks
+    // natural-decay continuation of a lengthened decaying note (Params::naturalDecaySlopeDb):
+    // frames up to holdFrame play as recorded, the next holdLen frames hold holdFrame's partials
+    // at their own decay rates (dB per frame by harmonic), then the release plays holdLen later
+    bool continues = false;
+    int holdFrame = 0;
+    int holdLen = 0;
+    std::map<int, double> decayDb;
     struct Track { int frame = -1; double phase = 0.0; };
     std::map<std::pair<int, int>, Track> track;  // (harmonic, channel) -> output frame and peak phase
     // NoteEdit::takeBackground: frames of its claim on what no note owns (none when bgHi < bgLo)
     int bgLo = 0, bgHi = -1;
 };
+
+/** Least-squares slope of y over x. */
+double fitSlope(const std::vector<double>& x, const std::vector<double>& y)
+{
+    const size_t n = x.size();
+    if (n < 2)
+        return 0.0;
+    double mx = 0.0, my = 0.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        mx += x[i];
+        my += y[i];
+    }
+    mx /= static_cast<double>(n);
+    my /= static_cast<double>(n);
+    double sxy = 0.0, sxx = 0.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        sxy += (x[i] - mx) * (y[i] - my);
+        sxx += (x[i] - mx) * (x[i] - mx);
+    }
+    return sxx > 0.0 ? sxy / sxx : 0.0;
+}
+
+/**
+ * Natural-decay continuation for a lengthened note (see EditState::continues): decides whether the
+ * note decays, where its release starts and each partial's decay rate, from the note's own partial
+ * amplitudes. Leaves `st` untouched when the note does not decay or there is nothing to add.
+ */
+void planNaturalDecay(const Analysis& A, int ni, const Params& p, EditState& st)
+{
+    if (p.naturalDecaySlopeDb >= 0.0f || !st.stretches)
+        return;
+    const auto& n = A.notes[static_cast<size_t>(ni)];
+    const auto& nm = A.masks[static_cast<size_t>(ni)];
+    const int body0 = static_cast<int>(std::ceil(st.map.anchor));
+    const int body1 = n.endFrame;
+    if (body1 - body0 < 8)
+        return;
+
+    // the note's level per frame (its partials' summed squared amplitudes), in dB
+    std::vector<double> level(static_cast<size_t>(body1 - body0 + 1), 0.0);
+    for (const auto& pm : nm.partials)
+        if (pm.frame >= body0 && pm.frame <= body1)
+            level[static_cast<size_t>(pm.frame - body0)] += static_cast<double>(pm.amplitude) * pm.amplitude;
+    double peak = 0.0;
+    for (double e : level)
+        peak = std::max(peak, e);
+    if (peak <= 0.0)
+        return;
+    std::vector<double> db(level.size());
+    for (size_t i = 0; i < level.size(); ++i)
+        db[i] = 10.0 * std::log10(std::max(level[i], peak * 1e-9));
+
+    const double peakDb = 10.0 * std::log10(peak);
+    auto lineFit = [&](int from, int to, double& slope, double& intercept) {
+        std::vector<double> xs, ys;
+        for (int t = from; t <= to; ++t)
+            if (db[static_cast<size_t>(t - body0)] > peakDb - 60.0)
+            {
+                xs.push_back(t);
+                ys.push_back(db[static_cast<size_t>(t - body0)]);
+            }
+        slope = fitSlope(xs, ys);
+        double mx = 0.0, my = 0.0;
+        for (size_t i = 0; i < xs.size(); ++i)
+        {
+            mx += xs[i];
+            my += ys[i];
+        }
+        intercept = xs.empty() ? 0.0 : (my - slope * mx) / static_cast<double>(xs.size());
+        return xs.size() >= 6;
+    };
+
+    // Decaying or sustained, judged on the first half second after the attack, where a piano note
+    // is already falling and a bowed or blown one holds its level. Later frames can belong to
+    // something else (a note's masks may run on into its own release, or another note's tail),
+    // so the decay line is fitted here and only extended beyond.
+    const int early = std::min(body1, body0 + static_cast<int>(std::lround(0.5 * p.sampleRate / p.hop)));
+    double slope = 0.0, intercept = 0.0;
+    int hold = body1;
+    if (!lineFit(body0, early, slope, intercept) || slope >= p.naturalDecaySlopeDb)
+        return;
+
+    // the release: the frames at the end that fall clearly below the decay line
+    while (hold > body0 + 4 && db[static_cast<size_t>(hold - body0)] < intercept + slope * hold - p.releaseDropDb)
+        --hold;
+    // hold a frame whose whole window lies before the release: a frame spans fftSize samples, so
+    // the half-window's worth of frames before the release already contain some of it
+    hold = std::max(body0 + 4, hold - (p.fftSize / 2 + p.hop - 1) / p.hop);
+    // a note that dies away before its end (a high piano note) holds where it is still audible and
+    // decays on from there: lengthening it changes little, as lengthening the real note would
+    while (hold > body0 + 4 && db[static_cast<size_t>(hold - body0)] < peakDb - 40.0)
+        --hold;
+
+    // the extra length the stretch asks for: the note still ends where the time map puts its end
+    const int extra = static_cast<int>(std::lround(st.map.outputFrame(n.endFrame) - n.endFrame));
+    if (extra <= 0)
+        return;
+
+    // each partial's own decay rate over the same frames (no growth; the note's rate when unsure)
+    std::map<int, std::pair<std::vector<double>, std::vector<double>>> perHarmonic;
+    for (const auto& pm : nm.partials)
+        if (pm.frame >= body0 && pm.frame <= hold && pm.amplitude > 0.0f)
+        {
+            auto& [xs, ys] = perHarmonic[pm.harmonic];
+            xs.push_back(pm.frame);
+            ys.push_back(20.0 * std::log10(static_cast<double>(pm.amplitude)));
+        }
+    for (const auto& [h, pts] : perHarmonic)
+    {
+        const double s = pts.first.size() >= 6 ? fitSlope(pts.first, pts.second) : slope;
+        st.decayDb[h] = std::clamp(s, -1.5, 0.0);
+    }
+    st.continues = true;
+    st.holdFrame = hold;
+    st.holdLen = extra;
+}
 
 /** Index of the strongest bin of a partial's share in one frame. */
 int peakBin(const NoteMasks& nm, const PartialMask& pm, const std::complex<float>* x)
@@ -619,6 +744,8 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         s.map = stretchMap(A, ni, ed);
         s.stretches = s.map.ratio > 1.0;
         s.cuts = s.map.cuts();
+        if (s.stretches && !ed.mute)
+            planNaturalDecay(A, ni, p, s);
         // the fade ends at the cut and never reaches into the attack
         s.fadeFrames = std::max(1.0, std::min(static_cast<double>(p.cutFadeSeconds) * p.sampleRate / H, s.map.end - s.map.anchor));
         // removal touches the note's own frames; the transformed copy lands D frames later (and,
@@ -815,10 +942,22 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             if (ed.mute)
                 continue;
             const int uo = u - st.D;                    // output frame before the move
-            if (st.stretches && uo > st.map.anchor)
+            // 2b) lengthened part, read at source time tau: a time-stretched note after its attack,
+            // or a decaying note's natural continuation (holding holdFrame while it decays, then its
+            // release holdLen frames late); decayFrames is how long each partial has decayed for
+            double tau = -1.0;
+            int decayFrames = 0;
+            if (st.continues && uo > st.holdFrame)
             {
-                // 2b) stretched part: source time tau, partial regions from frame floor(tau)
-                const double tau = st.map.sourceFrame(uo);
+                decayFrames = std::min(uo - st.holdFrame, st.holdLen);
+                tau = uo <= st.holdFrame + st.holdLen ? st.holdFrame : uo - st.holdLen;
+            }
+            else if (!st.continues && st.stretches && uo > st.map.anchor)
+            {
+                tau = st.map.sourceFrame(uo);
+            }
+            if (tau >= 0.0 || (st.continues && uo > st.holdFrame))
+            {
                 if (tau > st.maskHi || tau < 0.0)
                     continue;
                 const int a = static_cast<int>(std::floor(tau));
@@ -845,6 +984,12 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                         level += mu * (pa.amplitude > 0.0f ? std::clamp(static_cast<double>(pb->amplitude / pa.amplitude), 0.0, 4.0) : 1.0);
                     const int shift = r != 1.0 ? static_cast<int>(std::nearbyint((r - 1.0) * f / binHz)) : 0;
                     float g = st.gain * static_cast<float>(level) * fractionalShiftGain((r - 1.0) * f / binHz, pa.count);
+                    if (decayFrames > 0)
+                    {
+                        const auto d = st.decayDb.find(pa.harmonic);
+                        if (d != st.decayDb.end())
+                            g *= static_cast<float>(std::pow(10.0, d->second * decayFrames / 20.0));
+                    }
                     if (r != 1.0 && st.env.valid())
                     {
                         const double l0 = std::log(std::max(1.0, f)), l1 = std::log(std::max(1.0, f * r));

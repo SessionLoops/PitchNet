@@ -12,6 +12,7 @@
 //     --stretch INDEX:RATIO              (repeatable) lengthen (> 1) or shorten (< 1) a note
 //     --pad SECONDS                      append silence first (room for lengthened notes)
 //     --take-background                  edited and muted notes also take their part of what no note owns (experimental)
+//     --no-natural-decay                 lengthened decaying notes are time-stretched too (Params::naturalDecaySlopeDb = 0)
 //     --out out.wav                      render with the edits (32-bit float WAV)
 //     --solo INDEX solo.wav              one note's separated signal
 //     --solo-all DIR                     every active note's separated signal
@@ -54,6 +55,7 @@ int main(int argc, char** argv)
     int soloIndex = -1;
     bool printCandidates = false;
     bool takeBackground = false;
+    bool naturalDecay = true;
     double padSeconds = 0.0;
     float activationThreshold = -1.0f;   // < 0: engine default
 #if defined(POLYPHONIC_GUIDED_DEFAULT) && POLYPHONIC_GUIDED_DEFAULT
@@ -85,6 +87,7 @@ int main(int argc, char** argv)
         else if (a == "--dump-features") dumpFeatures = next();
         else if (a == "--candidates") printCandidates = true;
         else if (a == "--take-background") takeBackground = true;
+        else if (a == "--no-natural-decay") naturalDecay = false;
         else if (a == "--solo") { soloIndex = std::atoi(next().c_str()); soloPath = next(); }
         else if (a == "--solo-all") soloDir = next();
         else if (a == "--pad") padSeconds = std::atof(next().c_str());
@@ -171,6 +174,8 @@ int main(int argc, char** argv)
     if (activationThreshold >= 0.0f)
         params.activationThreshold = params.guidedActivationThreshold = activationThreshold;
     params.exportFeatures = !dumpFeatures.empty();
+    if (!naturalDecay)
+        params.naturalDecaySlopeDb = 0.0f;
     const char* detectorName = detectionMode == polyphonic::DetectionMode::NeuralGuided ? "guided" : "harmonic";
     if (detectionMode == polyphonic::DetectionMode::NeuralGuided)
         std::fprintf(stderr, "detector: guided%s\n", ev.empty() ? " (harmonic fallback: no neural evidence)" : "");

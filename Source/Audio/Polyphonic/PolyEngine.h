@@ -109,6 +109,12 @@ struct Params
     // ---- rendering ----
     float stretchAttackSeconds = 0.08f; // a stretched note's first part keeps its speed
     float cutFadeSeconds = 0.15f;      // a shortened note fades out over this long before its new end
+    // Lengthening a DECAYING note (piano, harp): its level falls faster than this after the attack
+    // (dB per analysis frame, from its own partials), so instead of being slowed down it plays as
+    // recorded up to its release, rings on at each partial's own decay rate for the extra length,
+    // then plays its release. 0 turns this off (every lengthened note is time-stretched).
+    float naturalDecaySlopeDb = -0.05f;
+    float releaseDropDb = 3.0f;        // frames this far below the note's decay line are its release
 
     // ---- diagnostics ----
     bool exportFeatures = false;       // fill Analysis::candidateFeatures (purifier training)

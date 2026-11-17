@@ -421,8 +421,23 @@ int main()
         const double fA = midiToHz(57), fF = midiToHz(65);
         polyphonic::NoteEdit longer;
         longer.stretch = 2.0f;
-        const auto y = polyphonic::render(A, {x}, {{a3, longer}})[0];
-        const auto map = polyphonic::stretchMap(A, a3, longer);
+        // The tone decays (piano-like), so by default it is not slowed down but rings on at its own
+        // decay rate (Params::naturalDecaySlopeDb): compare it with the same tone played longer.
+        {
+            const auto yNatural = polyphonic::render(A, {x}, {{a3, longer}})[0];
+            std::vector<float> played(x.size(), 0.0f);
+            addTone(played, fA, 0.1, 2.5, 0.3);
+            std::printf("lengthen a decaying note x2: A3 at 1.3-1.7 s %.1f dB, played longer %.1f dB; attack %.2f -> %.2f dB\n",
+                        at(yNatural, fA, 1.3, 1.7), at(played, fA, 1.3, 1.7), rms(x, 0.09, 0.16), rms(yNatural, 0.09, 0.16));
+            CHECK(std::fabs(at(yNatural, fA, 1.3, 1.7) - at(played, fA, 1.3, 1.7)) < 2.0);
+            CHECK(std::fabs(rms(yNatural, 0.09, 0.16) - rms(x, 0.09, 0.16)) < 0.5);
+            CHECK(std::fabs(at(yNatural, fF, 0.3, 1.0) - at(x, fF, 0.3, 1.0)) < 0.5);
+        }
+        // With natural decay off the note is time-stretched after its attack.
+        auto stretchedA = A;
+        stretchedA.params.naturalDecaySlopeDb = 0.0f;
+        const auto y = polyphonic::render(stretchedA, {x}, {{a3, longer}})[0];
+        const auto map = polyphonic::stretchMap(stretchedA, a3, longer);
         // output 1.3..1.7 s plays source time tau(1.3..1.7 s)
         const double hopS = static_cast<double>(params.hop) / kRate;
         const double s0 = map.sourceFrame(1.3 / hopS) * hopS, s1 = map.sourceFrame(1.7 / hopS) * hopS;

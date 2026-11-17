@@ -72,7 +72,7 @@ render: input spectrum − edited notes' shares + their transformed shares ─�
 | Note filter | gradient-boosted trees over 19 DSP features (+2 from Basic Pitch) trained on real-instrument mixtures | see below |
 | Sound model | pitch-informed harmonic NMF (Ewert & Müller 2012), KL divergence, 0.5 s templates | +4.6 dB SDR over a fixed harmonic model with the same notes (below) |
 | Note processing | partial regions moved in the STFT with accumulated phase (Laroche & Dolson 1999) | edits the mixture's spectrum directly: no separate signal per note, pitch curves per frame |
-| Stretching | after the attack, each partial region is read at a stretched source time and re-phased to continue its own phase (phase locking per partial) | the attack keeps its speed; nothing else in the recording moves |
+| Stretching | after the attack, each partial region is read at a stretched source time and re-phased to continue its own phase (phase locking per partial); a lengthened DECAYING note instead plays as recorded up to its release, rings on at each partial's own decay rate, then plays its release | the attack keeps its speed; nothing else in the recording moves; a piano note made longer rings on instead of slowing down |
 
 **Instantaneous frequency and peaks.** Peaks are local maxima at least 4 dB
 above a 41-bin running median, refined by phase-advance frequency (fallback:
@@ -189,6 +189,31 @@ per-bin phase vocoder. The note's original share is removed as for any edit, so
 shortening a note simply ends it earlier; only its pitched share stretches,
 while its attack noise and everything else stay where they were.
 
+**Lengthening a decaying note (natural-decay continuation).** A piano or harp
+note made longer should ring on, as it would if the key were held longer, not
+play its whole decay in slow motion. The renderer decides from the note's own
+partials (`planNaturalDecay` in `PolyRenderer.cpp`): a line fitted to its
+level over the first 0.5 s after the attack falling faster than
+`Params::naturalDecaySlopeDb` (−0.05 dB per frame, about −4.3 dB/s) marks a
+decaying note. Judged that early because later frames can belong to something
+else: a note's masks may run on into its own release or another note's tail.
+On recorded single notes every piano and harp note falls faster than that and
+every bowed or blown note slower, apart from a clarinet (−0.044) and a bassoon
+(−0.034) that are nearly flat either way. The note's release is where its
+level drops `Params::releaseDropDb` (3 dB) below that line extended; the held
+frame lies half a window (`fftSize / 2`) before it, so its window contains none
+of the release, and never where the note has fallen 40 dB below its peak (a
+high piano note that has died away holds where it is still audible). Output
+frames up to the held frame play as recorded. For the extra length the stretch
+asks for, each partial region of the held frame is added again with its phase
+continued (as in the stretched part) and its level falling at that partial's
+own rate, fitted over the same frames (clamped to [−1.5, 0] dB per frame).
+Then the note's release plays that many frames later, from the decayed level.
+The note ends exactly where the time map puts it, so `stretch` keeps its
+meaning. Notes that do not decay are time-stretched as before;
+`naturalDecaySlopeDb = 0` (`polyphonic_cli --no-natural-decay`) time-stretches
+every note.
+
 Formant preservation is
 available but off by default: estimated from one note's own partials it follows
 odd/even partial patterns (a clarinet's) that are not formants, and it made
@@ -268,7 +293,28 @@ the longer recording is not a fair target: a piano note held longer rings on at
 its natural decay, which the unedited note matches for its whole length, while
 a stretched note decays more slowly. In 6 of the 14 sustained chord mixtures
 the note was not found as a note of its own, so it could not be stretched;
-those are left out.
+those are left out. *(These were measured before natural-decay continuation;
+see below.)*
+
+**Natural-decay continuation** (2026-11-17, `evaluate_stretch.py` with Basic
+Pitch; Linux ARM64 build, ONNX Runtime 1.19.2). Before (`--no-natural-decay`)
+→ after, doing nothing in brackets; shortening and sustained notes are
+unchanged:
+
+| | ×1.5 | ×2 |
+|---|---|---|
+| piano and harp, alone | 10.6 → **23.9 dB** (19.5) | 6.1 → **21.5 dB** (17.7) |
+| piano and harp, in a chord | 19.5 → **30.2 dB** (27.5) | 15.5 → **28.2 dB** (25.7) |
+| held-out recordings, alone | 12.0 → **23.9 dB** (13.6) | 7.6 → **19.8 dB** (11.6) |
+| held-out recordings, in a chord | 17.0 → **25.1 dB** (16.7) | 12.5 → **21.1 dB** (14.7) |
+
+Case by case, 16 of 93 primary and 20 of 93 held-out cases improve and none
+gets worse (by more than 0.05 dB). Lengthened piano and harp notes now beat
+doing nothing in 14 of 16 primary cases (the other two, a high piano note that
+has died away before its end, tie it) and in all 14 held-out cases; before, they
+were 8–12 dB worse than doing nothing. The held-out recordings
+(`fetch_holdout_samples.py`: another piano velocity layer and other VSCO
+recordings) were not used to choose the thresholds.
 
 **Separation method, same (true) notes** (Python prototype, hand-made pieces):
 a fixed harmonic model that splits each spectral peak in proportion to
@@ -326,11 +372,13 @@ instrument-family or source-recording holdout.
   again after a dip; a fast repetition that never decays in between (common
   with the sustain pedal), a re-tongued wind note or a legato bow change stays
   one note. In dense piano music this is the main source of missed notes.
-- **Stretching slows the note down.** Like any time-stretch, a lengthened note's
-  vibrato and decay are stretched with it: a piano note made longer decays more
-  slowly instead of ringing on as a later key release would. A stretched note
-  is also only as clean as its separation, so partials it shares with other
-  notes smear a little.
+- **Stretching slows a sustained note down.** Like any time-stretch, a
+  lengthened bowed or blown note's vibrato is stretched with it (slower
+  vibrato). Decaying notes (piano, harp) ring on at their natural decay instead
+  (natural-decay continuation), but the continuation holds one frame's partials,
+  so beating between a piano note's unison strings freezes over the added
+  length. A stretched note is also only as clean as its separation, so partials
+  it shares with other notes smear a little.
 - **Onsets.** On the held-out chords the median onset error is +13 ms and
   82 % of found notes start within 50 ms of the truth; slow attacks and notes
   that enter on another note's partial are the outliers. Masks start 3 frames

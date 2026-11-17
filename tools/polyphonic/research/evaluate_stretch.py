@@ -44,12 +44,14 @@ def main():
     ap.add_argument('--work', required=True)
     ap.add_argument('--cli', required=True)
     ap.add_argument('--model')
+    ap.add_argument('--no-natural-decay', action='store_true',
+                    help='time-stretch lengthened decaying notes too (the behaviour before natural-decay continuation)')
     a = ap.parse_args()
     tmp = f'{a.work}/eval/stretch'
     os.makedirs(tmp, exist_ok=True)
     notes = mc.Notes(a.work)
     R = notes.ranges
-    extra = ['--model', a.model] if a.model else []
+    extra = (['--model', a.model] if a.model else []) + (['--no-natural-decay'] if a.no_natural_decay else [])
 
     def cli(*args):
         subprocess.run([a.cli] + [str(x) for x in args] + extra, check=True, capture_output=True)
@@ -89,7 +91,8 @@ def main():
                     y = sf.read(tag + '_out.wav')[0][:len(mix)]
                     rows.append(dict(inst=inst, ratio=ratio, chord=chord, stretched=magsnr(target, y), nothing=magsnr(target, mix)))
     json.dump(rows, open(f'{tmp}/results.json', 'w'), indent=1)
-    print(f'note stretching ({"with" if a.model else "without"} Basic Pitch evidence): spectral SNR against the note played '
+    print(f'note stretching ({"with" if a.model else "without"} Basic Pitch evidence'
+          f'{", natural decay off" if a.no_natural_decay else ""}): spectral SNR against the note played '
           'longer/shorter, mean over instruments (doing nothing in brackets)')
     for fam, members in (('sustained', SUSTAINED), ('piano and harp', {'piano', 'harp'})):
         for chord in (False, True):
