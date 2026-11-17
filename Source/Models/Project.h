@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Audio/IO/MidiReference.h"
+#include "AnalysisMode.h"
 #include "Note.h"
 #include <cstdint>
 #include <vector>
@@ -233,6 +234,19 @@ public:
         }
     }
 
+    // Vocal pipeline or polyphonic engine (AnalysisMode.h). Until M2 every
+    // take is still analysed as vocal; the state records the classification
+    // and the mode that will apply.
+    const AnalysisModeState &getAnalysisMode() const { return analysisMode; }
+    void setAnalysisMode(const AnalysisModeState &state)
+    {
+        if (state != analysisMode)
+        {
+            analysisMode = state;
+            modified = true;
+        }
+    }
+
     // Get adjusted F0 with all modifications applied
     std::vector<float> getAdjustedF0() const;
 
@@ -338,6 +352,7 @@ private:
     float formantShift = 0.0f;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
+    AnalysisModeState analysisMode;
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;

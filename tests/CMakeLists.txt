@@ -13,6 +13,7 @@
 #   ctest --test-dir build --output-on-failure
 
 set(PITCHNET_TEST_SOURCES
+    AnalysisModeSerializationTests.cpp
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
     AraTempoMapTests.cpp
@@ -66,6 +67,11 @@ add_executable(BasicPitchEvidenceTests BasicPitchEvidenceTests.cpp)
 target_link_libraries(BasicPitchEvidenceTests PRIVATE pitchnet_core)
 target_compile_features(BasicPitchEvidenceTests PRIVATE cxx_std_17)
 add_test(NAME BasicPitchEvidenceTests COMMAND BasicPitchEvidenceTests)
+
+add_executable(AnalysisModeTests AnalysisModeTests.cpp)
+target_link_libraries(AnalysisModeTests PRIVATE pitchnet_core)
+target_compile_features(AnalysisModeTests PRIVATE cxx_std_17)
+add_test(NAME AnalysisModeTests COMMAND AnalysisModeTests)
 
 add_executable(InputTypeClassifierTests InputTypeClassifierTests.cpp)
 target_link_libraries(InputTypeClassifierTests PRIVATE pitchnet_core)

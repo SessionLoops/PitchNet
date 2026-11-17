@@ -319,6 +319,7 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("timelineGridDivision",
                      static_cast<int>(project.getTimelineGridDivision()));
     obj->setProperty("timelineSnapCycle", project.getTimelineSnapCycle());
+    obj->setProperty("analysisMode", analysisModeToJson(project.getAnalysisMode()));
 
     // Loop range
     const auto& loopRange = project.getLoopRange();
@@ -531,6 +532,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     }
     project.setTimelineSnapCycle(static_cast<bool>(
         json.getProperty("timelineSnapCycle", false)));
+    // Absent in files written before the input-type classifier: vocal, unclassified.
+    project.setAnalysisMode(analysisModeFromJson(json.getProperty("analysisMode", {})));
 
     // Loop range
     auto loopVar = json.getProperty("loop", juce::var());
@@ -1104,6 +1107,41 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));
 
     return true;
+}
+
+juce::var ProjectSerializer::analysisModeToJson(const AnalysisModeState& state) {
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("mode", analysismode::id(state.mode));
+    obj->setProperty("userChosen", state.userChosen);
+    obj->setProperty("classified", state.classified);
+    obj->setProperty("detected", analysismode::id(state.detected));
+    obj->setProperty("reason", analysismode::id(state.reason));
+    obj->setProperty("confident", state.confident);
+    obj->setProperty("voiceScore", static_cast<double>(state.voiceScore));
+    obj->setProperty("poly2", static_cast<double>(state.poly2));
+    obj->setProperty("audibleSeconds", state.audibleSeconds);
+    obj->setProperty("detector", analysismode::id(state.detector));
+    return juce::var(obj);
+}
+
+AnalysisModeState ProjectSerializer::analysisModeFromJson(const juce::var& json) {
+    AnalysisModeState state;
+    if (!json.isObject())
+        return state;
+    const auto text = [&json](const char* key) {
+        return json.getProperty(key, {}).toString();
+    };
+    analysismode::parse(text("mode").toRawUTF8(), state.mode);
+    analysismode::parse(text("detected").toRawUTF8(), state.detected);
+    analysismode::parse(text("reason").toRawUTF8(), state.reason);
+    analysismode::parse(text("detector").toRawUTF8(), state.detector);
+    state.userChosen = static_cast<bool>(json.getProperty("userChosen", false));
+    state.classified = static_cast<bool>(json.getProperty("classified", false));
+    state.confident = static_cast<bool>(json.getProperty("confident", false));
+    state.voiceScore = static_cast<float>(static_cast<double>(json.getProperty("voiceScore", -1.0)));
+    state.poly2 = static_cast<float>(static_cast<double>(json.getProperty("poly2", -1.0)));
+    state.audibleSeconds = static_cast<double>(json.getProperty("audibleSeconds", -1.0));
+    return state;
 }
 
 juce::var ProjectSerializer::pitchDataToJson(const AudioData& audioData) {

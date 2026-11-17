@@ -75,6 +75,12 @@ public:
     static bool fromBinaryArchive(Project& project, const void* data,
                                   size_t sizeInBytes);
 
+    // Analysis mode (AnalysisMode.h): an object of stable string identifiers and
+    // numbers. A missing or malformed value reads as the default state (vocal,
+    // unclassified); unknown identifiers keep their defaults.
+    static juce::var analysisModeToJson(const AnalysisModeState& state);
+    static AnalysisModeState analysisModeFromJson(const juce::var& json);
+
 private:
     // Note serialization
     static juce::var noteToJson(const Note& note, bool includeAnalysisCache,

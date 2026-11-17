@@ -12,11 +12,15 @@
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/PlatformPaths.h"
 #include "../Utils/OnnxRuntime.h"
+#include "Analysis/InputTypeClassifier.h"
+#include "Analysis/YamnetVoiceTagger.h"
+#include "Polyphonic/BasicPitchEvidence.h"
 
 #include <algorithm>
 #include <chrono>
 #include <climits>
 #include <cmath>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <utility>
@@ -33,15 +37,53 @@ struct SharedInferenceModels
   std::mutex rmvpeMutex;
   std::mutex swiftF0Mutex;
   std::mutex gameMutex;
+  std::mutex basicPitchMutex;
+  std::mutex yamnetMutex;
   std::shared_ptr<FCPEPitchDetector> fcpe = std::make_shared<FCPEPitchDetector>();
   std::shared_ptr<RMVPEPitchDetector> rmvpe = std::make_shared<RMVPEPitchDetector>();
   // SwiftF0 always runs on the CPU (it is tiny), whatever the set's device.
   std::shared_ptr<SwiftF0PitchDetector> swiftF0 = std::make_shared<SwiftF0PitchDetector>();
   std::shared_ptr<GAMEDetector> game = std::make_shared<GAMEDetector>();
+  // The input-type classifier's models (and, from M2, the polyphonic engine's
+  // note evidence). Both are small and always run on the CPU, like SwiftF0.
+  // Optional: without them the classifier skips the check they serve.
+  std::shared_ptr<polyphonic::BasicPitchEvidence> basicPitch =
+      std::make_shared<polyphonic::BasicPitchEvidence>();
+  std::shared_ptr<inputtype::YamnetVoiceTagger> yamnet =
+      std::make_shared<inputtype::YamnetVoiceTagger>();
 };
 
 namespace
 {
+std::filesystem::path toFsPath(const juce::File &file)
+{
+#if JUCE_WINDOWS
+  // Wide characters, so non-ASCII paths survive.
+  return std::filesystem::path(file.getFullPathName().toWideCharPointer());
+#else
+  return std::filesystem::path(file.getFullPathName().toStdString());
+#endif
+}
+
+// Loads one optional CPU model of the input-type classifier; logs, never fails.
+template <typename Model>
+void loadOptionalModel(Model &model, const juce::File &file, const char *name)
+{
+  juce::ignoreUnused(name); // only logged; LOG may be compiled out
+  if (model.isLoaded())
+    return;
+  if (!file.existsAsFile())
+  {
+    LOG(juce::String(name) + " model not found at: " + file.getFullPathName() +
+        " (the input-type classifier runs without it)");
+    return;
+  }
+  if (model.load(toFsPath(file)))
+    LOG(juce::String(name) + " model loaded");
+  else
+    LOG("Failed to load " + juce::String(name) + " model");
+}
+
 // Held weakly so the ORT sessions die with the last controller, never during
 // static destruction at DLL unload.
 std::shared_ptr<SharedInferenceModels> acquireSharedModels(
@@ -118,6 +160,8 @@ EditorController::EditorController(bool enableAudioDevice)
   centTablePath = PlatformPaths::getModelFile("cent_table.bin");
   rmvpeModelPath = PlatformPaths::getModelFile("rmvpe.onnx");
   swiftF0ModelPath = PlatformPaths::getModelFile("swift_f0.onnx");
+  basicPitchModelPath = PlatformPaths::getModelFile("basic_pitch_nmp.onnx");
+  yamnetModelPath = PlatformPaths::getModelFile("yamnet.onnx");
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
 
   incrementalSynth->setVocoder(vocoder.get());
@@ -189,6 +233,8 @@ void EditorController::reloadInferenceModels(bool async)
   auto centPath = centTablePath;
   auto rmvpePath = rmvpeModelPath;
   auto swiftF0Path = swiftF0ModelPath;
+  auto basicPitchPath = basicPitchModelPath;
+  auto yamnetPath = yamnetModelPath;
   auto gamePath = gameModelDir;
   auto loadTask = [device = device,
                      provider,
@@ -198,6 +244,8 @@ void EditorController::reloadInferenceModels(bool async)
                      centPath,
                      rmvpePath,
                      swiftF0Path,
+                     basicPitchPath,
+                     yamnetPath,
                      gamePath,
                      models](EditorController *self)
   {
@@ -220,6 +268,12 @@ void EditorController::reloadInferenceModels(bool async)
         LOG("SwiftF0 model not found at: " + swiftF0Path.getFullPathName());
       }
     }
+
+    // The input-type classifier's CPU models, inline for the same reason.
+    if (models->basicPitch)
+      loadOptionalModel(*models->basicPitch, basicPitchPath, "Basic Pitch");
+    if (models->yamnet)
+      loadOptionalModel(*models->yamnet, yamnetPath, "YAMNet");
 
     // ONNX Runtime DirectML 1.18/1.19 can crash inside the GPU driver when
     // multiple sessions for the same device are created concurrently. This is
@@ -409,6 +463,8 @@ void EditorController::reloadInferenceModels(bool async)
     self->rmvpePitchDetector = models->rmvpe;
     self->swiftF0PitchDetector = models->swiftF0;
     self->gameDetector = models->game;
+    self->basicPitchEvidence = models->basicPitch;
+    self->yamnetTagger = models->yamnet;
   };
 
   if (!async)
@@ -905,6 +961,97 @@ void EditorController::analyzeAudio(
   }
 }
 
+void EditorController::classifyInputType(Project &targetProject)
+{
+  auto state = targetProject.getAnalysisMode();
+  if (state.classified)
+    return;
+
+  const auto &audioData = targetProject.getAudioData();
+  const int numSamples = audioData.waveform.getNumSamples();
+  if (numSamples == 0 || audioData.sampleRate <= 0)
+    return;
+  const double sampleRate = static_cast<double>(audioData.sampleRate);
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // Channel 0 is the analysis signal, as for the rest of the analysis (the
+  // file loader stores mono; the host path keeps the host's channels).
+  const auto excerpt = inputtype::selectExcerpt(
+      audioData.waveform.getReadPointer(0), numSamples, sampleRate);
+
+  std::shared_ptr<SharedInferenceModels> models;
+  std::shared_ptr<SwiftF0PitchDetector> swiftF0Model;
+  std::shared_ptr<polyphonic::BasicPitchEvidence> basicPitch;
+  std::shared_ptr<inputtype::YamnetVoiceTagger> yamnet;
+  {
+    const std::lock_guard<std::mutex> lock(modelPtrMutex);
+    models = sharedModels;
+    swiftF0Model = swiftF0PitchDetector;
+    basicPitch = basicPitchEvidence;
+    yamnet = yamnetTagger;
+  }
+
+  // SwiftF0 on the excerpt itself: classify() reads the pitch track against
+  // the excerpt's samples, frame for frame. Too short to classify: skip it.
+  std::vector<float> f0, confidence;
+  const bool longEnough = static_cast<double>(excerpt.size()) / sampleRate + 1e-3 >=
+                          inputtype::Config{}.minAudibleSeconds;
+  if (longEnough && swiftF0Model && swiftF0Model->isLoaded())
+  {
+    const auto modelLock =
+        lockModel(models, swiftF0Model, &SharedInferenceModels::swiftF0,
+                  &SharedInferenceModels::swiftF0Mutex, shuttingDown);
+    if (shuttingDown.load())
+      return;
+    f0 = swiftF0Model->extractF0(excerpt.data(), static_cast<int>(excerpt.size()),
+                                 audioData.sampleRate);
+    confidence = swiftF0Model->getLastConfidence();
+  }
+  inputtype::PitchTrack track;
+  if (!f0.empty() && f0.size() == confidence.size())
+    track = {f0.data(), confidence.data(), static_cast<int>(f0.size())};
+
+  inputtype::Decision decision;
+  {
+    // Fixed order (Basic Pitch, then YAMNet) wherever both are held.
+    const auto basicPitchLock =
+        lockModel(models, basicPitch, &SharedInferenceModels::basicPitch,
+                  &SharedInferenceModels::basicPitchMutex, shuttingDown);
+    const auto yamnetLock =
+        lockModel(models, yamnet, &SharedInferenceModels::yamnet,
+                  &SharedInferenceModels::yamnetMutex, shuttingDown);
+    if (shuttingDown.load())
+      return;
+    decision = inputtype::classify(
+        excerpt.data(), static_cast<int>(excerpt.size()), sampleRate, track,
+        basicPitch && basicPitch->isLoaded() ? basicPitch.get() : nullptr,
+        yamnet && yamnet->isLoaded() ? yamnet.get() : nullptr,
+        inputtype::Config{}, &shuttingDown);
+  }
+  if (shuttingDown.load())
+    return;
+
+  analysismode::recordDecision(state, decision);
+  targetProject.setAnalysisMode(state);
+
+  const auto &f = decision.features;
+  LOG("Input type: " + juce::String(inputtype::toString(decision.pipeline)) +
+      " (" + juce::String(inputtype::toString(decision.reason)) +
+      (decision.confident() ? "" : ", not confident") + "); audible " +
+      juce::String(f.audibleSeconds, 1) + " s, poly2 " +
+      (f.polyphonyMeasured ? juce::String(f.polyphony.poly2, 3) : juce::String("-")) +
+      ", voice " + (f.voiceScore >= 0.0f ? juce::String(f.voiceScore, 3) : juce::String("-")) +
+      ", pitch cues " + juce::String(f.cues.offgridCents, 1) + " c / " +
+      juce::String(f.cues.glide, 3) + "; mode " + analysismode::id(state.mode) +
+      (state.userChosen ? " (user)" : "") + "; " +
+      juce::String(std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - t0)
+                       .count(),
+                   0) +
+      " ms");
+  juce::ignoreUnused(t0, f); // only logged; LOG may be compiled out
+}
+
 void EditorController::analyzeAudioImpl(
     Project &targetProject,
     const std::function<void(double, const juce::String &)> &onProgress,
@@ -915,6 +1062,10 @@ void EditorController::analyzeAudioImpl(
 
   auto &audioData = targetProject.getAudioData();
   if (audioData.waveform.getNumSamples() == 0)
+    return;
+
+  classifyInputType(targetProject);
+  if (shuttingDown.load())
     return;
 
   auto showMissingModelAndAbort = [](const juce::String &modelName,
@@ -1378,6 +1529,7 @@ void EditorController::analyzeAudioAsync(
           projectCopy->getAudioData().basePitch;
       project->getAudioData().deltaPitch =
           projectCopy->getAudioData().deltaPitch;
+      project->setAnalysisMode(projectCopy->getAnalysisMode());
       if (onProjectReady)
         onProjectReady(*project);
       if (onProjectChanged)

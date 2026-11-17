@@ -171,6 +171,13 @@ private:
     juce::Label renderDeviceLabel;
     ComboSelectionButton renderDeviceButton;
 
+    // Read-only for now: what the input-type classifier decided for the
+    // project's take (Vocal / Polyphonic), details in the tooltip. Becomes the
+    // per-track override later in M1.
+    juce::Label analysisModeLabel;
+    juce::Label analysisModeValue;
+    void refreshAnalysisModeRow();
+
     juce::Label referenceLabel;
     SliderBox referenceSlider { "Pitch Reference" };
 

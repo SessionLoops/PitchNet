@@ -35,7 +35,9 @@ constexpr int kMidiButtonHeight = 28;
 constexpr int kMidiExportRowGap = kRowGap + 1;
 
 constexpr int kSynthesisCardHeight =
-    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
+    (kRowGap + 1) + kControlRowHeight + // Input (classifier result)
+    kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
 // only while it is showing.
@@ -360,6 +362,14 @@ ParameterPanel::ParameterPanel()
     addChildComponent(renderDeviceButton);
     renderDeviceButton.addListener(this);
 
+    addAndMakeVisible(analysisModeLabel);
+    analysisModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
+    analysisModeLabel.setFont(AppFont::getFont(15.0f));
+    addAndMakeVisible(analysisModeValue);
+    analysisModeValue.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
+    analysisModeValue.setFont(AppFont::getFont(15.0f));
+    analysisModeValue.setJustificationType(juce::Justification::centredRight);
+
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel, &brightnessLabel })
     {
@@ -608,6 +618,15 @@ void ParameterPanel::resized()
     engineRow.removeFromLeft(columnGap);
     vocoderEngineToggle.setBounds(vocoderArea);
     psolaEngineToggle.setBounds(engineRow);
+
+    bounds.removeFromTop(rowGap + 1);
+    {
+        auto inputRow = bounds.removeFromTop(kControlRowHeight);
+        analysisModeLabel.setBounds(inputRow.removeFromLeft(
+            juce::jmax(52, juce::GlyphArrangement::getStringWidthInt(
+                               AppFont::getFont(15.0f), analysisModeLabel.getText()) + 8)));
+        analysisModeValue.setBounds(inputRow);
+    }
 
     if (renderDeviceRowVisible)
     {
@@ -916,6 +935,7 @@ void ParameterPanel::buttonClicked(juce::Button* button)
 void ParameterPanel::setProject(Project* proj)
 {
     project = proj;
+    refreshAnalysisModeRow();
     refreshMidiReference();
     updateGlobalSliders();
     updateFromNote();
@@ -951,6 +971,8 @@ void ParameterPanel::refreshLocalisedText()
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
+    analysisModeLabel.setText(TR("param.input_type"), juce::dontSendNotification);
+    refreshAnalysisModeRow();
 
     referenceLabel.setText(TR("param.reference_a4"), juce::dontSendNotification);
     referenceSlider.setName(TR("param.pitch_reference"));
@@ -1293,6 +1315,37 @@ void ParameterPanel::setRenderDeviceOptions(const juce::StringArray& deviceNames
     renderDeviceIndex = juce::jlimit(0, juce::jmax(0, renderDeviceNames.size() - 1),
                                      selectedIndex);
     refreshRenderDeviceRow();
+}
+
+void ParameterPanel::refreshAnalysisModeRow()
+{
+    if (project == nullptr || !project->getAnalysisMode().classified)
+    {
+        analysisModeValue.setText(TR("param.input_type_none"), juce::dontSendNotification);
+        analysisModeValue.setTooltip({});
+        return;
+    }
+
+    const auto& state = project->getAnalysisMode();
+    analysisModeValue.setText(TR(state.mode == AnalysisMode::Polyphonic ? "param.input_polyphonic"
+                                                                        : "param.input_vocal"),
+                              juce::dontSendNotification);
+
+    // Diagnostic detail while the classifier is being tested (English, like
+    // the log line in EditorController::classifyInputType).
+    juce::String detail;
+    detail << "Detected " << analysismode::id(state.detected) << ": "
+           << inputtype::toString(state.reason)
+           << (state.confident ? "" : " (not confident)");
+    if (state.poly2 >= 0.0f)
+        detail << "\nPolyphony " << juce::String(state.poly2, 3) << " (polyphonic at 0.15)";
+    if (state.voiceScore >= 0.0f)
+        detail << "\nVoice " << juce::String(state.voiceScore, 3) << " (voice above 0.10)";
+    if (state.audibleSeconds >= 0.0)
+        detail << "\nAudible " << juce::String(state.audibleSeconds, 1) << " s classified";
+    if (state.userChosen)
+        detail << "\nChosen by the user";
+    analysisModeValue.setTooltip(detail);
 }
 
 void ParameterPanel::refreshRenderDeviceRow()

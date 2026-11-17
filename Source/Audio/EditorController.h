@@ -23,6 +23,14 @@
 #include <thread>
 
 struct SharedInferenceModels;
+namespace polyphonic
+{
+class BasicPitchEvidence;
+}
+namespace inputtype
+{
+class YamnetVoiceTagger;
+}
 
 class EditorController
 {
@@ -135,6 +143,10 @@ private:
   void segmentIntoNotesImpl(Project &targetProject,
                             std::function<void()> onStreamingUpdate,
                             std::function<void(double)> onProgress);
+  // Classifies the take (vocal pipeline or polyphonic engine) and records the
+  // decision in its AnalysisModeState, unless it is already classified. Until
+  // M2 the analysis that follows is vocal whatever the decision.
+  void classifyInputType(Project &targetProject);
   static void reportAnalysisException(const juce::String &where,
                                       const juce::String &what);
   GPUProvider getProviderFromDevice(const juce::String &device) const;
@@ -149,6 +161,9 @@ private:
   std::shared_ptr<RMVPEPitchDetector> rmvpePitchDetector;
   std::shared_ptr<SwiftF0PitchDetector> swiftF0PitchDetector;
   std::shared_ptr<GAMEDetector> gameDetector;
+  // Input-type classifier models (CPU, optional), from the same set.
+  std::shared_ptr<polyphonic::BasicPitchEvidence> basicPitchEvidence;
+  std::shared_ptr<inputtype::YamnetVoiceTagger> yamnetTagger;
   // Generation of the installed set; an older load never replaces a newer one.
   std::uint64_t installedGeneration = 0;
   std::atomic<std::uint64_t> reloadGeneration{0};
@@ -161,6 +176,8 @@ private:
   juce::File centTablePath;
   juce::File rmvpeModelPath;
   juce::File swiftF0ModelPath;
+  juce::File basicPitchModelPath;
+  juce::File yamnetModelPath;
   juce::File gameModelDir;
   PitchDetectorType pitchDetectorType = PitchDetectorType::SwiftF0;
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
