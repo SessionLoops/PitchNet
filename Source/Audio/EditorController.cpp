@@ -594,10 +594,15 @@ void EditorController::loadAudioFileAsync(
     const int srcSampleRate = static_cast<int>(reader->sampleRate);
 
     juce::AudioBuffer<float> buffer(1, numSamples);
+    // The file's own channels, kept for the polyphonic engine until the take
+    // is classified (stereo matters for a piano or a string section).
+    auto pendingTake = std::make_shared<PolyphonicTake>();
+    pendingTake->sourceRate = static_cast<double>(srcSampleRate);
 
     updateProgress(0.08, TR("progress.reading_audio"));
     if (reader->numChannels == 1) {
       reader->read(&buffer, 0, numSamples, 0, true, false);
+      pendingTake->source.makeCopyOf(buffer);
     } else {
       juce::AudioBuffer<float> stereoBuffer(2, numSamples);
       reader->read(&stereoBuffer, 0, numSamples, 0, true, true);
@@ -608,6 +613,7 @@ void EditorController::loadAudioFileAsync(
 
       for (int i = 0; i < numSamples; ++i)
         mono[i] = (left[i] + right[i]) * 0.5f;
+      pendingTake->source = std::move(stereoBuffer);
     }
 
     if (cancelLoadingFlag.load()) {
@@ -648,6 +654,7 @@ void EditorController::loadAudioFileAsync(
     auto &audioData = newProject->getAudioData();
     audioData.waveform = std::move(buffer);
     audioData.sampleRate = SAMPLE_RATE;
+    newProject->setPolyphonicTake(std::move(pendingTake));
 
     if (cancelLoadingFlag.load()) {
       isLoadingAudio = false;
@@ -1078,6 +1085,125 @@ void EditorController::classifyInputType(Project &targetProject)
   juce::ignoreUnused(t0, f); // only logged; LOG may be compiled out
 }
 
+bool EditorController::analyzePolyphonicTake(
+    Project &targetProject,
+    const std::function<void(double, const juce::String &)> &onProgress)
+{
+  auto &audioData = targetProject.getAudioData();
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // The take's own channels (kept by the file loader) at the project rate, with
+  // r8brain; otherwise the project's waveform. At most two channels.
+  juce::AudioBuffer<float> source;
+  double sourceRate = static_cast<double>(audioData.sampleRate);
+  if (const auto pending = targetProject.getPolyphonicTake();
+      pending && pending->source.getNumSamples() > 0 && pending->sourceRate > 0.0)
+  {
+    source.makeCopyOf(pending->source);
+    sourceRate = pending->sourceRate;
+  }
+  else
+  {
+    source.makeCopyOf(audioData.waveform);
+  }
+  if (source.getNumChannels() > 2)
+    source.setSize(2, source.getNumSamples(), true);
+  if (std::abs(sourceRate - static_cast<double>(SAMPLE_RATE)) > 1e-6)
+  {
+    onProgress(0.18, TR("progress.resampling"));
+    source = AudioResampler::resample(source, sourceRate,
+                                      static_cast<double>(SAMPLE_RATE));
+  }
+  const int numSamples = source.getNumSamples();
+  if (numSamples <= 0 || shuttingDown.load())
+    return false;
+
+  std::vector<float> mono(static_cast<size_t>(numSamples), 0.0f);
+  const float channelGain = 1.0f / static_cast<float>(source.getNumChannels());
+  for (int ch = 0; ch < source.getNumChannels(); ++ch)
+    juce::FloatVectorOperations::addWithMultiply(mono.data(), source.getReadPointer(ch),
+                                                 channelGain, numSamples);
+
+  std::shared_ptr<ClassifierModels> classifier;
+  {
+    const std::lock_guard<std::mutex> lock(modelPtrMutex);
+    classifier = classifierModels;
+  }
+
+  // Basic Pitch note evidence for the note filter (and, for Guided, the search).
+  onProgress(0.20, TR("progress.detecting_notes"));
+  polyphonic::NoteEvidence evidence;
+  if (classifier)
+  {
+    const auto lock = lockShared(classifier->basicPitchMutex, shuttingDown);
+    if (shuttingDown.load())
+      return false;
+    if (classifier->basicPitch.isLoaded())
+      evidence = classifier->basicPitch.compute(mono.data(), numSamples,
+                                                static_cast<double>(SAMPLE_RATE),
+                                                &shuttingDown);
+  }
+  if (shuttingDown.load())
+    return false;
+
+  auto params = polyphonic::Params::forSampleRate(static_cast<double>(SAMPLE_RATE));
+  const bool guided = targetProject.getAnalysisMode().detector == PolyphonicDetector::Guided;
+  params.detectionMode = guided && !evidence.empty()
+                             ? polyphonic::DetectionMode::NeuralGuided
+                             : polyphonic::DetectionMode::Harmonic;
+  auto analysis = polyphonic::analyze(
+      mono.data(), numSamples, params, evidence.empty() ? nullptr : &evidence,
+      &shuttingDown, [&onProgress](float p) {
+        onProgress(0.25 + 0.70 * juce::jlimit(0.0, 1.0, static_cast<double>(p)),
+                   TR("progress.detecting_notes"));
+      });
+  if (shuttingDown.load())
+    return false;
+
+  auto take = std::make_shared<PolyphonicTake>();
+  take->analysis = std::make_shared<const polyphonic::Analysis>(std::move(analysis));
+  take->source = std::move(source);
+  take->sourceRate = static_cast<double>(SAMPLE_RATE);
+  int activeNotes = 0;
+  for (const auto &note : take->analysis->notes)
+    activeNotes += note.active ? 1 : 0;
+  targetProject.setPolyphonicTake(take);
+
+  // The waveform is the mono mix of what the engine analysed, so the display
+  // and playback match it; nothing of the vocal analysis applies.
+  audioData.waveform.setSize(1, numSamples, false, false, true);
+  audioData.waveform.copyFrom(0, 0, mono.data(), numSamples);
+  audioData.sampleRate = SAMPLE_RATE;
+  audioData.melSpectrogram.clear();
+  audioData.rawF0.clear();
+  audioData.cleanedF0.clear();
+  audioData.denseF0.clear();
+  audioData.f0.clear();
+  audioData.basePitch.clear();
+  audioData.deltaPitch.clear();
+  audioData.voicedMask.clear();
+  audioData.vadMask.clear();
+  audioData.breathSibilance.clear();
+  audioData.breathGainDb.clear();
+  audioData.baseF0.clear();
+  audioData.segmentDebugChunks.clear();
+  targetProject.clearNotes();
+
+  LOG("Polyphonic analysis: " + juce::String(activeNotes) + " notes (" +
+      juce::String(static_cast<int>(take->analysis->notes.size()) - activeNotes) +
+      " candidates), " + juce::String(take->source.getNumChannels()) + " ch, " +
+      (params.detectionMode == polyphonic::DetectionMode::NeuralGuided ? "guided"
+                                                                        : "harmonic") +
+      (evidence.empty() ? ", no Basic Pitch" : "") + ", " +
+      juce::String(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                       .count(),
+                   1) +
+      " s");
+  juce::ignoreUnused(t0, activeNotes);
+  onProgress(1.0, TR("progress.detecting_notes"));
+  return true;
+}
+
 void EditorController::analyzeAudioImpl(
     Project &targetProject,
     const std::function<void(double, const juce::String &)> &onProgress,
@@ -1093,6 +1219,16 @@ void EditorController::analyzeAudioImpl(
   classifyInputType(targetProject);
   if (shuttingDown.load())
     return;
+
+  if (polyphonicAnalysisEnabled &&
+      targetProject.getAnalysisMode().mode == AnalysisMode::Polyphonic)
+  {
+    if (analyzePolyphonicTake(targetProject, onProgress) && onComplete)
+      onComplete();
+    return;
+  }
+  // A vocal take: drop the channels the loader kept for the polyphonic engine.
+  targetProject.setPolyphonicTake(nullptr);
 
   auto showMissingModelAndAbort = [](const juce::String &modelName,
                                      const juce::File &path)
@@ -1556,6 +1692,7 @@ void EditorController::analyzeAudioAsync(
       project->getAudioData().deltaPitch =
           projectCopy->getAudioData().deltaPitch;
       project->setAnalysisMode(projectCopy->getAnalysisMode());
+      project->setPolyphonicTake(projectCopy->getPolyphonicTake());
       if (onProjectReady)
         onProjectReady(*project);
       if (onProjectChanged)

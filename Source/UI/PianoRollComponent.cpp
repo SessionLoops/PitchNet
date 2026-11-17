@@ -314,6 +314,7 @@ PianoRollComponent::PianoRollComponent()
   noteRenderer->setPitchToolController(pitchToolController.get());
   noteRenderer->setBoxSelector(boxSelector.get());
   pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
+  polyphonicLayer->setCoordinateMapper(coordMapper.get());
   previewNoteRenderer->setCoordinateMapper(coordMapper.get());
   previewCurveRenderer->setCoordinateMapper(coordMapper.get());
   pitchCurveRenderer->setSelectHandler(selectHandler_.get());
@@ -584,23 +585,31 @@ void PianoRollComponent::paint(juce::Graphics &g)
                              .getSmallestIntegerContainer());
     }
 
-    drawGameChunksDebugOverlay(g);
     drawMidiReference(g);
-    drawBreathNotes(g);
-    drawNotes(g, NoteRenderPass::Body);
-    drawNotes(g, NoteRenderPass::HoverShadow);
-    drawNotes(g, NoteRenderPass::HoveredBody);
-    drawPitchCurves(g);
-    if (currentHandler_)
-      currentHandler_->draw(g);
-    drawNotes(g, NoteRenderPass::Overlay);
-    drawGameValuesDebugOverlay(g);
-    drawSelectionRect(g);
-
-    // Draw pitch tool handles in world space (transform applied by g.setOrigin above)
-    if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty())
+    if (isPolyphonicActive())
     {
-      pitchToolHandles->draw(g);
+      // A polyphonic take: its own notes; no vocal tools or handles (#4-#12).
+      polyphonicLayer->draw(g, getWidth());
+    }
+    else
+    {
+      drawGameChunksDebugOverlay(g);
+      drawBreathNotes(g);
+      drawNotes(g, NoteRenderPass::Body);
+      drawNotes(g, NoteRenderPass::HoverShadow);
+      drawNotes(g, NoteRenderPass::HoveredBody);
+      drawPitchCurves(g);
+      if (currentHandler_)
+        currentHandler_->draw(g);
+      drawNotes(g, NoteRenderPass::Overlay);
+      drawGameValuesDebugOverlay(g);
+      drawSelectionRect(g);
+
+      // Draw pitch tool handles in world space (transform applied by g.setOrigin above)
+      if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty())
+      {
+        pitchToolHandles->draw(g);
+      }
     }
   }
 
@@ -2193,6 +2202,11 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  // The canvas menu's entries (vocal tools, vocal Select All) do not apply to a
+  // polyphonic take; its Restore Original menu comes with editing (M3).
+  if (e.mods.isPopupMenu() && isCanvasPoint(e) && isPolyphonicActive())
+    return;
+
   if (e.mods.isPopupMenu() && isCanvasPoint(e))
   {
     juce::PopupMenu menu;
@@ -2321,6 +2335,19 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   // Ignore clicks outside main area
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
+
+  // A polyphonic take: click selects the note under the pointer (Shift or
+  // Cmd adds/toggles), elsewhere clears. Read-only until M3.
+  if (isPolyphonicActive())
+  {
+    if (e.mods.isLeftButtonDown())
+    {
+      polyphonicLayer->select(polyphonicLayer->noteAt(adjustedX, adjustedY),
+                              e.mods.isShiftDown() || e.mods.isCommandDown());
+      repaint();
+    }
+    return;
+  }
 
   if (beginTrackGesture(e)) return;
 
@@ -2512,6 +2539,16 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       e.x - pianoKeysWidth + static_cast<float>(scrollX);
   const float adjustedY =
       e.y - headerHeight + static_cast<float>(scrollY);
+
+  if (isPolyphonicActive())
+  {
+    loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
+    setMouseCursor(showZoomCursor ? getMouseCursor()
+                   : loopDragHandler_->isHoveringHandle()
+                       ? juce::MouseCursor::LeftRightResizeCursor
+                       : juce::MouseCursor::NormalCursor);
+    return;
+  }
 
   Note *noteAtPointer = nullptr;
   if (e.y >= headerHeight && e.x >= pianoKeysWidth)
@@ -3079,6 +3116,7 @@ void PianoRollComponent::setProject(Project *proj)
   waveformBackgroundRenderer->setProject(proj); // also clears its cache
   noteRenderer->setProject(proj);
   pitchCurveRenderer->setProject(proj); // also clears its cache
+  polyphonicLayer->setProject(proj);
   scrollZoomController->setProject(proj);
   pitchEditor->setProject(proj);
   pitchEditor->setSnapToSemitoneDragEnabled(snapToSemitoneDrag);

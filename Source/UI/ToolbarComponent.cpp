@@ -207,7 +207,7 @@ void ToolbarComponent::paint(juce::Graphics &g)
     }
 
     // Edit tools form their own capsule, matching the transport group.
-    if (!toolContainerBounds.isEmpty())
+    if (!toolContainerBounds.isEmpty() && editToolsVisible)
     {
         g.setColour(juce::Colour(0xFF191818u));
         g.fillRoundedRectangle(toolContainerBounds.toFloat(), 8.0f);
@@ -295,22 +295,22 @@ void ToolbarComponent::resized()
                            editToolGroupWidth, editToolGroupHeight};
     int editToolX = toolContainerBounds.getX() + editToolPad;
 
-    selectModeButton.setVisible(true);
+    selectModeButton.setVisible(editToolsVisible);
     selectModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                                editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
-    splitModeButton.setVisible(true);
+    splitModeButton.setVisible(editToolsVisible);
     splitModeButton.setBounds(editToolX,
                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                               editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
-    pitchDrawingModeButton.setVisible(true);
+    pitchDrawingModeButton.setVisible(editToolsVisible);
     pitchDrawingModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                                editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
-    timingModeButton.setVisible(true);
+    timingModeButton.setVisible(editToolsVisible);
     timingModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                                editToolSlotSize, editToolSlotSize);
@@ -565,6 +565,14 @@ void ToolbarComponent::setProject(Project* project)
         project->setUseProjectKey(true);
     scaleSelectionButton.setProjectKeyScope(!pluginMode || trackViewButton.getToggleState());
     scaleSelectionButton.setProject(project);
+
+    const bool showEditTools = project == nullptr || !project->isPolyphonic();
+    if (showEditTools != editToolsVisible)
+    {
+        editToolsVisible = showEditTools;
+        resized();
+        repaint();
+    }
 }
 
 void ToolbarComponent::setCurrentTime(double time)

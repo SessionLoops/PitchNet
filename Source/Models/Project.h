@@ -3,6 +3,7 @@
 #include "../JuceHeader.h"
 #include "../Audio/IO/MidiReference.h"
 #include "AnalysisMode.h"
+#include "PolyphonicTake.h"
 #include "Note.h"
 #include <cstdint>
 #include <vector>
@@ -247,6 +248,12 @@ public:
         }
     }
 
+    // The polyphonic engine's take (PolyphonicTake.h); null for vocal takes.
+    // Shared between copies of the Project: replace, never mutate in place.
+    std::shared_ptr<const PolyphonicTake> getPolyphonicTake() const { return polyphonicTake; }
+    void setPolyphonicTake(std::shared_ptr<const PolyphonicTake> take) { polyphonicTake = std::move(take); }
+    bool isPolyphonic() const { return polyphonicTake != nullptr && polyphonicTake->hasAnalysis(); }
+
     // Get adjusted F0 with all modifications applied
     std::vector<float> getAdjustedF0() const;
 
@@ -353,6 +360,7 @@ private:
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
     AnalysisModeState analysisMode;
+    std::shared_ptr<const PolyphonicTake> polyphonicTake;
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;

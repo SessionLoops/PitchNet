@@ -12,6 +12,7 @@
 #include "PianoRoll/CoordinateMapper.h"
 #include "PianoRoll/GridRenderer.h"
 #include "PianoRoll/NoteRenderer.h"
+#include "PianoRoll/PolyphonicNoteLayer.h"
 #include "PianoRoll/NoteSplitter.h"
 #include "PianoRoll/PianoKeysRenderer.h"
 #include "PianoRoll/PitchCurveRenderer.h"
@@ -395,6 +396,25 @@ private:
   double hostTimelineEndSeconds = 0.0;
   double liveRecordingSampleRate = 0.0;
   std::unique_ptr<NoteRenderer> noteRenderer;
+  // A polyphonic take's notes (docs/polyphonic-integration-plan.md); when it
+  // is active it replaces the vocal notes, pitch curve, breath notes, tools
+  // and handles on the canvas.
+  std::unique_ptr<PolyphonicNoteLayer> polyphonicLayer =
+      std::make_unique<PolyphonicNoteLayer>();
+
+public:
+  bool isPolyphonicActive() const
+  {
+    return polyphonicLayer != nullptr && polyphonicLayer->isActive();
+  }
+  /** Select All for a polyphonic take (its notes are not Project notes). */
+  void selectAllPolyphonicNotes()
+  {
+    polyphonicLayer->selectAll();
+    repaint();
+  }
+
+private:
   std::unique_ptr<PitchCurveRenderer> pitchCurveRenderer;
   std::unique_ptr<NoteRenderer> previewNoteRenderer;
   std::unique_ptr<PitchCurveRenderer> previewCurveRenderer;

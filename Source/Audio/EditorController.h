@@ -70,6 +70,14 @@ public:
   // from the AI vocoder to classic (PSOLA), so the UI can follow.
   std::function<void(SynthesisEngineType)> onSynthesisEngineFallback;
 
+  // Polyphonic takes run the polyphonic engine instead of the vocal pipeline.
+  // Off by default; the standalone app turns it on. The plug-in follows in M5
+  // (docs/polyphonic-integration-plan.md), until then it analyses as vocal.
+  void setPolyphonicAnalysisEnabled(bool enabled)
+  {
+    polyphonicAnalysisEnabled = enabled;
+  }
+
   void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
   {
     device = deviceName;
@@ -140,6 +148,11 @@ private:
   // decision in its AnalysisModeState, unless it is already classified. Until
   // M2 the analysis that follows is vocal whatever the decision.
   void classifyInputType(Project &targetProject);
+  // Builds the take's PolyphonicTake (Basic Pitch evidence + polyphonic::analyze)
+  // and clears the vocal analysis. False when cancelled.
+  bool analyzePolyphonicTake(
+      Project &targetProject,
+      const std::function<void(double, const juce::String &)> &onProgress);
   static void reportAnalysisException(const juce::String &where,
                                       const juce::String &what);
   GPUProvider getProviderFromDevice(const juce::String &device) const;
@@ -177,6 +190,7 @@ private:
   int deviceId = 0;
 
   std::atomic<bool> shuttingDown{false};
+  bool polyphonicAnalysisEnabled = false;
   std::atomic<bool> isReloadingModels{false};
   std::mutex modelLoadMutex;
   std::mutex reloadRequestMutex;

@@ -1,58 +1,15 @@
 #include "OverviewPanel.h"
+#include "NoteColours.h"
 #include "VisualWaveformEnvelope.h"
 #include "../../Utils/ScaleUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
+using namespace notecolours;
+
 namespace {
 const juce::Colour thumbnailBackground(0xFF191717u);
-
-struct NoteGradientColours {
-  juce::Colour centre;
-  juce::Colour side;
-};
-
-float getPitchCenterAmount(float midi, int pitchReferenceHz) {
-  const float pitchCenter =
-      ScaleUtils::snapMidiToSemitone(midi, pitchReferenceHz);
-  const float distanceFromCenter = std::abs(midi - pitchCenter);
-
-  return juce::jlimit(0.0f, 1.0f, distanceFromCenter / 0.5f);
-}
-
-juce::Colour interpolateLayeredColour(juce::Colour first,
-                                      juce::Colour second,
-                                      juce::Colour third,
-                                      juce::Colour fourth,
-                                      float amount) {
-  if (amount < 1.0f / 3.0f)
-    return first.interpolatedWith(second, amount * 3.0f);
-
-  if (amount < 2.0f / 3.0f)
-    return second.interpolatedWith(third, amount * 3.0f - 1.0f);
-
-  return third.interpolatedWith(fourth, amount * 3.0f - 2.0f);
-}
-
-NoteGradientColours getNoteGradientColours(float midi, int pitchReferenceHz) {
-  static const juce::Colour inTuneCentre(0xFF1983E0u);
-  static const juce::Colour inTuneSide(0xFF0021E2u);
-  static const juce::Colour firstLayerCentre(0xFFD66CFFu);
-  static const juce::Colour firstLayerSide(0xFF971CFFu);
-  static const juce::Colour secondLayerCentre(0xFFFF90EDu);
-  static const juce::Colour secondLayerSide(0xFFF624B7u);
-  static const juce::Colour outOfTuneCentre(0xFFF95D5Du);
-  static const juce::Colour outOfTuneSide(0xFFFF0000u);
-
-  const float amount = getPitchCenterAmount(midi, pitchReferenceHz);
-
-  return {
-      interpolateLayeredColour(inTuneCentre, firstLayerCentre,
-                               secondLayerCentre, outOfTuneCentre, amount),
-      interpolateLayeredColour(inTuneSide, firstLayerSide, secondLayerSide,
-                               outOfTuneSide, amount)};
-}
 
 float noteRangeY(float midi, float minPitch, float maxPitch,
                  const juce::Rectangle<float> &content) {
@@ -324,6 +281,22 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       }
     }
   }
+  // A polyphonic take's notes are not Project notes: one line each, at its
+  // median pitch, so chords show as stacked lines.
+  const auto polyTake = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  const auto polyAnalysis = polyTake != nullptr ? polyTake->analysis : nullptr;
+  if (polyAnalysis) {
+    for (const auto &note : polyAnalysis->notes) {
+      if (!note.active ||
+          !inActiveSpan(polyAnalysis->frameToSeconds(note.startFrame),
+                        polyAnalysis->frameToSeconds(note.endFrame + 1)))
+        continue;
+      const float midi = note.medianMidi();
+      minPitch = std::min(minPitch, midi);
+      maxPitch = std::max(maxPitch, midi);
+      hasNotePitch = true;
+    }
+  }
   if (hasPreviews) {
     for (const auto &region : *regionPreviews) {
       if (region.active)
@@ -397,6 +370,21 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       const float y = noteRangeY(midi, minPitch, maxPitch, content);
       g.setColour(noteColour.withAlpha(0.9f));
       g.drawLine(x1, y, x2, y, thickness);
+    }
+  }
+
+  if (polyAnalysis) {
+    for (const auto &note : polyAnalysis->notes) {
+      if (!note.active)
+        continue;
+      const double startTime = polyAnalysis->frameToSeconds(note.startFrame);
+      const double endTime = polyAnalysis->frameToSeconds(note.endFrame + 1);
+      if (endTime <= startTime || !inActiveSpan(startTime, endTime))
+        continue;
+      const float midi = note.medianMidi();
+      const float y = noteRangeY(midi, minPitch, maxPitch, content);
+      g.setColour(getNoteGradientColours(midi, pitchReferenceHz).side.withAlpha(0.9f));
+      g.drawLine(timeToOverviewX(startTime), y, timeToOverviewX(endTime), y, thickness);
     }
   }
 }

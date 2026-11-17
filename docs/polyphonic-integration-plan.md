@@ -278,16 +278,15 @@ checks; each milestone still ends in its own commits and tests.
 ## Feature review
 
 Same look as the vocal editor: amplitude-shaped blobs on the semitone grid,
-the pitch line drawn through each blob, the waveform behind, the overview strip
-below, the same panels. What changes is that notes overlap in time and there is
-no continuous pitch line between notes. Each existing feature is reviewed one
-by one; the "Proposal" column is a starting point, "Decision" is filled in as we
-go.
+the waveform behind, the overview strip below, the same panels. What changes is
+that notes overlap in time and no pitch line is drawn (#2). Each existing
+feature is reviewed one by one; the "Proposal" column is a starting point,
+"Decision" is filled in as we go.
 
 | # | Feature | What it does for a voice | Proposal for polyphonic | Decision |
 |---|---|---|---|---|
-| 1 | Note blobs | width follows the loudness of the mix; colour shows tuning (blue in tune → purple → pink → red) | width from the note's own level (its mask amplitudes per frame), not the mix | **Own level; same tuning colours** (median pitch + edit). With the mix's level every note sounding at once would get the same width, a held bass would swell with the melody, and a gain edit would hardly show. |
-| 2 | Pitch line | continuous F0 line, also between notes | each note's own f0 inside its blob; nothing between notes | **Display only, on selected and hovered notes**: the engine's own per-note pitch (`Note::f0`), shifted, moved and stretched with the edit; nothing between notes. Showing it on every note would clutter dense chords, and it is not editable in the first release (see #6, #10). |
+| 1 | Note blobs | width follows the loudness of the mix; colour shows tuning (blue in tune → purple → pink → red) | width from the note's own level (its mask amplitudes per frame), not the mix | **Own level; same tuning colours** (median pitch + edit). With the mix's level every note sounding at once would get the same width, a held bass would swell with the melody, and a gain edit would hardly show. **No hover state; a selected note gets a white outline that follows its shape**, not a box and not a colour change: colour already means tuning, and a box around each note's bounding rectangle runs into its neighbours in a chord. |
+| 2 | Pitch line | continuous F0 line, also between notes | each note's own f0 inside its blob; nothing between notes | **Not shown for polyphonic takes.** Notes are edited as whole units (SampLab-style: position, pitch, length, level), with no handles or curve tools, so a pitch line has nothing to act on; the blob's colour already shows tuning. `Note::f0` stays in the engine for analysis and a possible later curve editor (#6, #10). |
 | 3 | Waveform background, overview strip | the take's loudness centred behind the notes (not tied to pitch); overview of the take with notes as short coloured lines | keep | **Keep both unchanged**: the background from the take's mono mix; chords show as stacked lines in the overview. |
 | 4 | Main tool (1) | select, box select, drag a note up/down for pitch, double-click snap, the note handles | — | **Vocal only.** The four toolbar tools (#4–#7) stay with the vocal editor and are hidden for polyphonic takes, which use the Lab's single interaction instead (section 5). |
 | 5 | Note Separation tool (2) | split a note | — | **Vocal only** (see #4); the engine edits whole notes. |
@@ -310,6 +309,10 @@ go.
 | 22 | Vertical auto-zoom, blob height, follow, loop | view | — | **Keep all unchanged.** Auto-zoom fits a wider range on polyphonic material (thinner semitone rows); Blob Height (shared with vocal) keeps tall blobs in neighbouring rows from overlapping. |
 | 23 | Track mode pinned tracks | other tracks' notes as overlay | — | **One mode per track**: the duration-weighted majority of its clips' classifications at the track's first analysis, then sticky (new clips follow it; only the user's override changes it, re-analysing the track's clips after a confirmation). Track mode therefore never mixes vocal and polyphonic clips. Pinned polyphonic tracks draw their blobs outlined in the track colour, like pinned vocal tracks. See section 1. |
 | 24 | Select All, undo/redo, rendering after edits | | — | **Keep.** There is no Render button any more (removed: edits render automatically); polyphonic edits render automatically too (`renderPolyphonicAsync`, coalesced), with undo through `PolyphonicEditAction`. Select All selects the active notes. |
+
+Not planned for now: per-note pan and note slicing (both in SampLab). Pan needs
+new engine work (`NoteEdit` has no pan); slicing would split one note's masks
+into two notes.
 
 ## Risks
 

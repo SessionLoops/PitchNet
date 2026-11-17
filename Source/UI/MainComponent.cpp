@@ -633,6 +633,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     ownedEditorController = std::make_unique<EditorController>(true);
     editorController = ownedEditorController.get();
+    editorController->setPolyphonicAnalysisEnabled(true);
     if (auto *project = editorController->getProject())
       project->setTimelineDisplayMode(TimelineDisplayMode::Time);
 
@@ -2223,6 +2224,20 @@ void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 
     minMidi = std::min(minMidi, midi);
     maxMidi = std::max(maxMidi, midi);
+  }
+
+  if (const auto take = project.getPolyphonicTake(); take && take->hasAnalysis())
+  {
+    for (const auto &note : take->analysis->notes)
+    {
+      if (!note.active)
+        continue;
+      const float midi = note.medianMidi();
+      if (!std::isfinite(midi))
+        continue;
+      minMidi = std::min(minMidi, midi);
+      maxMidi = std::max(maxMidi, midi);
+    }
   }
 
   if (minMidi == std::numeric_limits<float>::max())
@@ -3816,7 +3831,9 @@ bool MainComponent::hasAnalyzedProject() const
   if (auto *project = getProject())
   {
     auto &audioData = project->getAudioData();
-    return audioData.waveform.getNumSamples() > 0 && !audioData.f0.empty();
+    // A polyphonic take has no pitch curve: its analysis is the engine's.
+    return audioData.waveform.getNumSamples() > 0 &&
+           (!audioData.f0.empty() || project->isPolyphonic());
   }
   return false;
 }
@@ -4268,7 +4285,9 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     return true;
 
   case CommandIDs::selectAll:
-    if (auto *project = getProject())
+    if (pianoRoll.isPolyphonicActive())
+      pianoRoll.selectAllPolyphonicNotes();
+    else if (auto *project = getProject())
     {
       project->selectAllNotes();
       pianoRoll.repaint();

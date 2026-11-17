@@ -159,6 +159,9 @@ private:
     ToggleButton splitModeButton;
     ToggleButton pitchDrawingModeButton;
     ToggleButton timingModeButton;
+    // The four edit tools are vocal-only: hidden while a polyphonic take is
+    // shown (docs/polyphonic-integration-plan.md, feature review #4-#7).
+    bool editToolsVisible = true;
     ToggleButton followButton;
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;
