@@ -161,6 +161,18 @@ Licensed under the MIT License.
 Source/Audio/SwiftF0PitchDetector.cpp ports the windowing, silence gate and
 voicing threshold from swift_f0/core.py.
 
+YAMNet audio event model (Resources/models/yamnet.onnx)
+Source: https://github.com/tensorflow/models/tree/master/research/audioset/yamnet
+Copyright Google LLC (TensorFlow Model Garden authors)
+Licensed under the Apache License, Version 2.0; you may obtain a copy at
+http://www.apache.org/licenses/LICENSE-2.0
+Modified: the Keras model and Google's yamnet.h5 weights were rebuilt as plain
+TensorFlow operations with the upstream features.py frontend and converted to
+ONNX with tf2onnx (opset 17); weights are unchanged
+(tools/polyphonic/research/export/export_yamnet.py).
+Source/Audio/Analysis/YamnetVoiceTagger.cpp uses the class indices of the
+upstream yamnet_class_map.csv.
+
 Bundled fonts and machine-learning model files retain their respective
 upstream licenses and attribution requirements. Their licenses must be
 reviewed for each release before distributing new or changed assets.

@@ -67,6 +67,11 @@ target_link_libraries(BasicPitchEvidenceTests PRIVATE pitchnet_core)
 target_compile_features(BasicPitchEvidenceTests PRIVATE cxx_std_17)
 add_test(NAME BasicPitchEvidenceTests COMMAND BasicPitchEvidenceTests)
 
+add_executable(InputTypeClassifierTests InputTypeClassifierTests.cpp)
+target_link_libraries(InputTypeClassifierTests PRIVATE pitchnet_core)
+target_compile_features(InputTypeClassifierTests PRIVATE cxx_std_17)
+add_test(NAME InputTypeClassifierTests COMMAND InputTypeClassifierTests)
+
 add_executable(PitchMacroScopeTests PitchMacroScopeTests.cpp)
 target_link_libraries(PitchMacroScopeTests PRIVATE pitchnet_core)
 target_compile_features(PitchMacroScopeTests PRIVATE cxx_std_17)

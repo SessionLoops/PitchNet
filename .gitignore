@@ -35,6 +35,7 @@ dist/
 
 **/__pycache__/
 Resources/models/*
+Resources/tools/*.onnx
 
 tempcalude-*
 .claude

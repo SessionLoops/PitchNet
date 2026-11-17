@@ -992,6 +992,51 @@ if(GAME_MODELS_MISSING)
     message(STATUS "GAME models downloaded and extracted to ${GAME_DIR}")
 endif()
 
+# Optional models, fetched from this repository's "models" release when missing:
+# Basic Pitch (polyphonic note evidence; the input-type classifier's polyphony check)
+# and YAMNet (the input-type classifier's voice check). The features that use them
+# fall back without them, so a failed download is a warning, not an error. Each is
+# pinned by SHA-256; a different local file is kept, with a warning.
+set(PITCHNET_MODELS_RELEASE_URL "https://github.com/SessionLoops/PitchNet/releases/download/models"
+    CACHE STRING "Base URL of the release holding PitchNet's own model assets")
+set(OPTIONAL_MODELS
+    "basic_pitch_nmp.onnx|2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec"
+    "yamnet.onnx|132d6cf2a92bd6e2b2f52ef228a52bede42194d1aa9639cdf0bda34e90056a1f"
+)
+foreach(OPT_ENTRY ${OPTIONAL_MODELS})
+    string(REPLACE "|" ";" OPT_PARTS "${OPT_ENTRY}")
+    list(GET OPT_PARTS 0 OPT_NAME)
+    list(GET OPT_PARTS 1 OPT_SHA256)
+    set(OPT_PATH "${MODELS_DIR}/${OPT_NAME}")
+    if(EXISTS "${OPT_PATH}")
+        file(SHA256 "${OPT_PATH}" OPT_HAVE)
+        if(NOT OPT_HAVE STREQUAL OPT_SHA256)
+            message(WARNING "${OPT_NAME} is not the pinned version (SHA-256 ${OPT_HAVE}); keeping the local file")
+        endif()
+        continue()
+    endif()
+    message(STATUS "Downloading optional model ${OPT_NAME}...")
+    # The hash is checked after the download rather than with EXPECTED_HASH, which
+    # would make a mismatch a fatal configure error.
+    file(DOWNLOAD "${PITCHNET_MODELS_RELEASE_URL}/${OPT_NAME}" "${OPT_PATH}.part" STATUS OPT_STATUS)
+    list(GET OPT_STATUS 0 OPT_CODE)
+    set(OPT_HAVE "")
+    if(OPT_CODE EQUAL 0)
+        file(SHA256 "${OPT_PATH}.part" OPT_HAVE)
+    endif()
+    if(OPT_CODE EQUAL 0 AND OPT_HAVE STREQUAL OPT_SHA256)
+        file(RENAME "${OPT_PATH}.part" "${OPT_PATH}")
+        message(STATUS "Downloaded ${OPT_NAME}")
+    else()
+        file(REMOVE "${OPT_PATH}.part")
+        if(OPT_CODE EQUAL 0)
+            message(WARNING "Downloaded ${OPT_NAME} has SHA-256 ${OPT_HAVE}, expected ${OPT_SHA256}; not installed")
+        else()
+            message(WARNING "Could not download optional model ${OPT_NAME}: ${OPT_STATUS}")
+        endif()
+    endif()
+endforeach()
+
 # Check required models
 foreach(MODEL ${REQUIRED_MODELS})
     if(NOT EXISTS "${MODELS_DIR}/${MODEL}")

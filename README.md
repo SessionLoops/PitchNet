@@ -68,6 +68,13 @@ The build expects required model files in `Resources/models` and will fail if an
 - `cent_table.bin`
 - `mel_filterbank.bin`
 
+Optional models, downloaded by CMake from this repository's `models` release
+when missing (pinned by SHA-256; the features that use them fall back without
+them):
+
+- `basic_pitch_nmp.onnx` (polyphonic note evidence)
+- `yamnet.onnx` (input-type classifier: is the input a voice?)
+
 Other runtime assets live in `Resources/lang` and `Resources/fonts`.
 
 ## Build

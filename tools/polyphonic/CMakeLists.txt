@@ -53,3 +53,36 @@ set(POLYPHONIC_BASIC_PITCH_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/../../Resources/mo
 if(ONNXRUNTIME_DIR AND EXISTS "${POLYPHONIC_BASIC_PITCH_MODEL}")
     add_test(NAME BasicPitchEvidenceModelTests COMMAND BasicPitchEvidenceTests "${POLYPHONIC_BASIC_PITCH_MODEL}")
 endif()
+
+# Input-type classifier (vocal pipeline or polyphonic engine), Source/Audio/Analysis.
+file(GLOB INPUTTYPE_SOURCES CONFIGURE_DEPENDS "${POLYPHONIC_DIR}/../Analysis/*.cpp" "${POLYPHONIC_DIR}/../Analysis/*.h")
+add_library(inputtype STATIC ${INPUTTYPE_SOURCES})
+target_link_libraries(inputtype PUBLIC polyphonic)
+
+add_executable(InputTypeClassifierTests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/InputTypeClassifierTests.cpp")
+target_link_libraries(InputTypeClassifierTests PRIVATE inputtype)
+add_test(NAME InputTypeClassifierTests COMMAND InputTypeClassifierTests)
+
+# With ONNX Runtime and the models: YAMNet and Basic Pitch on a few labelled files.
+set(INPUTTYPE_YAMNET_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/../../Resources/models/yamnet.onnx"
+    CACHE FILEPATH "Optional YAMNet model for input-type classifier tests")
+if(ONNXRUNTIME_DIR AND EXISTS "${INPUTTYPE_YAMNET_MODEL}" AND EXISTS "${POLYPHONIC_BASIC_PITCH_MODEL}")
+    # Only files with at least 3 s of sound: shorter ones are not classified (minAudibleSeconds).
+    set(_audio "${CMAKE_CURRENT_SOURCE_DIR}/test-audio")
+    set(_cases
+        "polyphonic=${_audio}/01-piano-triad-C-major.wav"
+        "polyphonic=${_audio}/03-strings-vibrato.wav"
+        "polyphonic=${_audio}/04-woodwind-quartet.wav"
+        "polyphonic=${_audio}/08-brahms-hungarian-dance-5-strings.wav"
+        # Basic Pitch sees one note at a time here, so the tagger must reject it (3.0 s of sound).
+        "polyphonic=${_audio}/missed-notes/01-clarinet-flute-violins-missed-Cs5.wav")
+    # Solo singing from vocadito (tools/f0_compare/README.md), unzipped into test-audio/vocadito
+    # when available: 37 and 17 have the lowest YAMNet voice scores in the corpus.
+    foreach(_n 1 17 37)
+        if(EXISTS "${_audio}/vocadito/vocadito_${_n}.wav")
+            list(APPEND _cases "vocal=${_audio}/vocadito/vocadito_${_n}.wav")
+        endif()
+    endforeach()
+    add_test(NAME InputTypeClassifierModelTests COMMAND InputTypeClassifierTests
+        "${INPUTTYPE_YAMNET_MODEL}" "${POLYPHONIC_BASIC_PITCH_MODEL}" ${_cases})
+endif()

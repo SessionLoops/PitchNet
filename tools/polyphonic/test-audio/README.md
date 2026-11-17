@@ -25,6 +25,10 @@ For 01–07, edit scores measured against the same edit made on the isolated not
 (5.6), strings 24.7 (11.4), woodwinds 22.0 (8.1), organ 15.9 (5.7), harp 11.4
 (9.0), octave 4.2 (3.5).
 
+`vocadito/` holds three solo-singing clips (1, 17, 37) unzipped from
+`tools/f0_compare/vocadito.zip` for the input-type classifier's model test
+(`InputTypeClassifierModelTests`); the test skips them when they are absent.
+
 Muting or moving a note takes its pitched sound only: the hammer or pluck noise
 of its attack stays where it was, which you can hear when you mute a piano or
 harp note.
