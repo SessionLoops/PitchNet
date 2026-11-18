@@ -208,7 +208,10 @@ int main()
         CHECK(err < 1e-4);
 
         // pitch shift +3 semitones: the energy moves to the new fundamental
+        // These checks measure plain shares (NoteEdit::takeBackground off); the default
+        // with the background is covered on its own further down.
         polyphonic::NoteEdit up;
+        up.takeBackground = false;
         up.semitones = 3.0f;
         const auto shifted = polyphonic::render(A, {x}, {{ni, up}})[0];
         const int a = static_cast<int>(0.3 * kRate), b = static_cast<int>(1.2 * kRate);
@@ -223,6 +226,7 @@ int main()
 
         // gain edit: -6 dB on the fundamental
         polyphonic::NoteEdit quieter;
+        quieter.takeBackground = false;
         quieter.gainDb = -6.0f;
         const auto q = polyphonic::render(A, {x}, {{ni, quieter}})[0];
         const double d = db(toneAmplitude(q, oldF, a, b)) - before;
@@ -243,6 +247,7 @@ int main()
 
         const int a = static_cast<int>(0.4 * kRate), b = static_cast<int>(1.4 * kRate);
         polyphonic::NoteEdit mute;
+        mute.takeBackground = false;
         mute.mute = true;
         const auto m = polyphonic::render(A, {x}, {{fs4, mute}})[0];
         const double fsBefore = db(toneAmplitude(x, midiToHz(66), a, b)), fsAfter = db(toneAmplitude(m, midiToHz(66), a, b));
@@ -253,6 +258,7 @@ int main()
 
         // "major to minor": move the middle note down a semitone, others untouched
         polyphonic::NoteEdit down;
+        down.takeBackground = false;
         down.semitones = -1.0f;
         const auto e = polyphonic::render(A, {x}, {{fs4, down}})[0];
         const double fNew = db(toneAmplitude(e, midiToHz(65), a, b)), fOld = db(toneAmplitude(e, midiToHz(66), a, b));
@@ -302,6 +308,7 @@ int main()
         const int e4 = findNote(A, 64);
         CHECK(e4 >= 0);
         polyphonic::NoteEdit later;
+        later.takeBackground = false;
         later.timeOffsetSeconds = 0.5;
         const auto y = polyphonic::render(A, {x}, {{e4, later}})[0];
         const double early = db(toneAmplitude(y, midiToHz(64), static_cast<int>(0.15 * kRate), static_cast<int>(0.5 * kRate)));
@@ -334,6 +341,7 @@ int main()
         const int d4 = findNote(A, 62);
         CHECK(d4 >= 0);
         polyphonic::NoteEdit up;
+        up.takeBackground = false;
         up.semitones = 2.0f;
         const auto y = polyphonic::render(A, {x}, {{d4, up}})[0];
         double far = 0.0;
@@ -380,6 +388,7 @@ int main()
         CHECK(c4 >= 0);
         CHECK(countActive(A) == 1);
         polyphonic::NoteEdit mute;
+        mute.takeBackground = false;
         mute.mute = true;
         const auto y = polyphonic::render(A, {x}, {{c4, mute}})[0];
         // energy of the burst above the note's partials (12-18 kHz), before and after the mute
@@ -420,6 +429,7 @@ int main()
         };
         const double fA = midiToHz(57), fF = midiToHz(65);
         polyphonic::NoteEdit longer;
+        longer.takeBackground = false;
         longer.stretch = 2.0f;
         // The tone decays (piano-like), so by default it is not slowed down but rings on at its own
         // decay rate (Params::naturalDecaySlopeDb): compare it with the same tone played longer.
@@ -453,6 +463,7 @@ int main()
 
         // shortened: played as recorded up to its new end, then cut (no faster playback)
         polyphonic::NoteEdit shorter;
+        shorter.takeBackground = false;
         shorter.stretch = 0.5f;
         const auto z = polyphonic::render(A, {x}, {{a3, shorter}})[0];
         const double cutEnd = polyphonic::stretchMap(A, a3, shorter).end * hopS;
@@ -466,6 +477,7 @@ int main()
 
         // shortened to 5 % of its length, which ends inside the attack: the onset stays, the rest goes
         polyphonic::NoteEdit stub;
+        stub.takeBackground = false;
         stub.stretch = 0.05f;
         const auto w = polyphonic::render(A, {x}, {{a3, stub}})[0];
         const double stubEnd = polyphonic::stretchMap(A, a3, stub).end * hopS;
@@ -491,6 +503,7 @@ int main()
         const int c5 = findNote(A, 72);
         CHECK(c5 >= 0);
         polyphonic::NoteEdit down;
+        down.takeBackground = false;
         down.semitones = -1.0f;
         const auto y = polyphonic::render(A, {x}, {{c5, down}})[0];
         const double shifted = spectralSnr(ref, y), untouched = spectralSnr(ref, x);
@@ -506,6 +519,7 @@ int main()
         for (float ratio : {0.6f, 1.5f})
         {
             polyphonic::NoteEdit e;
+            e.takeBackground = false;
             e.stretch = ratio;
             const auto z = polyphonic::render(B, {v}, {{n, e}})[0];
             const auto map = polyphonic::stretchMap(B, n, e);
@@ -553,6 +567,7 @@ int main()
             A.masks[0].weights.insert(A.masks[0].weights.end(), 3, 1.0f);
         }
         polyphonic::NoteEdit curve;
+        curve.takeBackground = false;
         curve.pitchCurve.assign(static_cast<size_t>(A.numFrames), 0.0f);
         const float offset = static_cast<float>(12.0 * std::log2(1.0 + kRate / (2.0 * raisedFrames * params.hop * f)));
         std::fill(curve.pitchCurve.begin(), curve.pitchCurve.begin() + raisedFrames, offset);
@@ -626,6 +641,7 @@ int main()
             for (const double shift : shifts)
             {
                 polyphonic::NoteEdit edit;
+                edit.takeBackground = false;
                 edit.semitones = static_cast<float>(offBin ? shift : 12.0 * std::log2(1.0 + shift / bin));
                 const double target = f * std::pow(2.0, static_cast<double>(edit.semitones) / 12.0);
                 const auto output = polyphonic::render(A, {left, right}, {{0, edit}});
@@ -662,6 +678,7 @@ int main()
         CHECK(c4 >= 0 && fs4 >= 0 && b4 >= 0);
         const int a = static_cast<int>(0.4 * kRate), b = static_cast<int>(1.4 * kRate);
         polyphonic::NoteEdit muted;
+        muted.takeBackground = false;
         muted.mute = true;
         // the span as a whole-length signal, for comparison with full renders
         auto placed = [&](const polyphonic::AudioSpan& s) {
@@ -673,6 +690,8 @@ int main()
         // render(edit) - render(mute) is exactly the edited note's contribution, and nothing is
         // left out of the span
         polyphonic::NoteEdit down, warped;
+        down.takeBackground = false;
+        warped.takeBackground = false;
         down.semitones = -1.0f;
         warped.semitones = -1.0f;
         warped.stretch = 1.5f;
@@ -708,7 +727,7 @@ int main()
         CHECK(silent.channels.size() == 1 && silent.channels[0].empty());
     }
 
-    // ---- 13. a note taking its background (experimental): a muted note removes its part of what no
+    // ---- 13. a note taking its background (the default): a muted note removes its part of what no
     //      note owns, a moved one takes it along, and on its own it is what the full render adds ----
     {
         // a tone whose onset comes with a noise burst (its attack), over a quiet noise floor
@@ -732,7 +751,9 @@ int main()
         flagOnly.takeBackground = true;               // with no other change the flag changes nothing
         ownMute.mute = true;
         ownMute.takeBackground = true;
+        CHECK(polyphonic::NoteEdit{}.takeBackground);  // the default, as the editor uses it
         plainMove.timeOffsetSeconds = 0.3;
+        plainMove.takeBackground = false;
         ownMove = plainMove;
         ownMove.takeBackground = true;
         const auto same = polyphonic::render(A, {x}, {{e4, flagOnly}})[0];
@@ -891,6 +912,33 @@ int main()
         const double start = g >= 0 ? A.frameToSeconds(A.notes[static_cast<size_t>(g)].startFrame) : -1.0;
         std::printf("slow attack: G4 starts at %.3f s (played from 0.200 s)\n", start);
         CHECK(g >= 0 && std::fabs(start - 0.2) < 0.04);
+    }
+
+    // ---- 17. a note lengthened past the end of the recording: with the input padded with
+    //      silence (as the editor does), the render carries on past the old end, and the
+    //      recording before the edit's reach is untouched ----
+    {
+        std::vector<float> x(static_cast<size_t>(1.2 * kRate), 0.0f);
+        addTone(x, midiToHz(64), 0.3, 0.9, 0.3);   // rings to the end of the recording
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int e4 = findNote(A, 64);
+        CHECK(e4 >= 0);
+        std::vector<float> padded = x;
+        padded.resize(static_cast<size_t>(2.4 * kRate), 0.0f);
+        polyphonic::NoteEdit longer;
+        longer.stretch = 2.0f;
+        const auto y = polyphonic::render(A, {padded}, {{e4, longer}})[0];
+        CHECK(y.size() == padded.size());
+        const auto at = [](double t) { return static_cast<int>(t * kRate); };
+        const double inside = db(toneAmplitude(x, midiToHz(64), at(0.6), at(0.9)));
+        const double past = db(toneAmplitude(y, midiToHz(64), at(1.3), at(1.6)));
+        double before = 0.0;
+        for (int i = 0; i < at(0.2); ++i)
+            before = std::max(before, static_cast<double>(std::fabs(y[static_cast<size_t>(i)] - x[static_cast<size_t>(i)])));
+        std::printf("past the end: E4 %.1f dB after the old end (%.1f dB inside it), before the note max error %.2e\n",
+                    past, inside, before);
+        CHECK(past > inside - 20.0);
+        CHECK(before < 1e-4);
     }
 
     std::printf("PolyphonicTests passed\n");

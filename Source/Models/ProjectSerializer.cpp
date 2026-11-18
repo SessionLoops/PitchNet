@@ -304,7 +304,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("projectKeyMode", static_cast<int>(project.getProjectKeyMode()));
     obj->setProperty("projectKeyInitialized", project.getMacroParameters()->projectKeyInitialized);
     obj->setProperty("pitchReferenceHz", project.getPitchReferenceHz());
-    obj->setProperty("snapToSemitones", project.getSnapToSemitones());
+    obj->setProperty("snapToSemitones", project.getSnapToSemitonesFor(false));
+    obj->setProperty("snapToSemitonesPolyphonic", project.getSnapToSemitonesFor(true));
     obj->setProperty("dragSnapMode",
                      static_cast<int>(project.getDragSnapMode()));
     obj->setProperty("doubleClickSnapMode",
@@ -477,8 +478,10 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
             ? static_cast<ScaleMode>(detectedMode) : ScaleMode::Major);
     project.setUseProjectKey(static_cast<bool>(json.getProperty("useProjectKey", true)));
     project.setPitchReferenceHz(static_cast<int>(json.getProperty("pitchReferenceHz", 440)));
-    project.setSnapToSemitones(static_cast<bool>(
+    project.setSnapToSemitonesFor(false, static_cast<bool>(
         json.getProperty("snapToSemitones", false)));
+    project.setSnapToSemitonesFor(true, static_cast<bool>(
+        json.getProperty("snapToSemitonesPolyphonic", true)));
     {
         const int dragSnapModeValue = static_cast<int>(json.getProperty(
             "dragSnapMode", static_cast<int>(DragSnapMode::Chromatic)));

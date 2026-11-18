@@ -19,6 +19,7 @@ python evaluate.py --work $WORK --cli $WORK/build/polyphonic_cli --model $MODEL 
 python evaluate.py --work $WORK --cli $WORK/build/polyphonic_cli --model $MODEL --corpus tcorpus --purpose test
 python evaluate.py --work $WORK --cli $WORK/build/polyphonic_cli --model $MODEL --corpus pcorpus --purpose validation
 python evaluate_stretch.py --work $WORK --cli $WORK/build/polyphonic_cli --model $MODEL   # lengthening and shortening notes
+python evaluate_attack_move.py --cli $WORK/build/polyphonic_cli --model $MODEL --data $WORK --out /tmp/attack   # does a moved note's attack follow it
 ```
 
 Leave out `--model` to evaluate the DSP-only path. `train_purifier.py` reads the

@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 struct SharedInferenceModels;
@@ -129,6 +130,38 @@ public:
       const std::function<void(Project &)> &onProjectReady,
       const std::function<void()> &onNotesChanged);
 
+  // Analyses the current take again with another mode or detector (the Input
+  // menu, the Analysis card). Works on a copy of the project with its edits
+  // dropped: the pristine waveform comes back, notes and any polyphonic
+  // analysis are cleared, the take's own channels are kept, and settings
+  // (loop, scale, timeline, MIDI reference) carry over. onComplete runs on the
+  // message thread with the analysed copy, or null when the analysis did not
+  // finish; the caller installs it with setProject.
+  void reanalyzeAsync(const AnalysisModeState &state,
+                      const ProgressCallback &onProgress,
+                      std::function<void(std::unique_ptr<Project>)> onComplete);
+
+  // Renders the polyphonic take with the project's current edits on a worker
+  // thread. One render at a time: a request while one runs cancels it and
+  // renders again with the newest edits, so a burst of edits costs one
+  // render. Call on the message thread. When a render lands for the take it
+  // was made from, the result becomes the project's polyphonic playback (the
+  // take's channels) and its waveform (their mono mix, for display), and
+  // onComplete(true) runs on the message thread; the caller hands the
+  // playback to the audio engine. onComplete(false) when nothing was rendered.
+  void renderPolyphonicAsync(std::function<void(bool)> onComplete);
+  bool isPolyphonicRenderBusy() const { return polyRenderRunning; }
+
+  // Live audition of a drag on a polyphonic take: `notes` on their own with
+  // `edits` applied (polyphonic::renderNotes), mixed to mono, delivered on the
+  // message thread. The newest request wins: one still running is cancelled
+  // and only the latest is delivered. cancelPolyphonicAudition drops any
+  // result still to come.
+  void renderPolyphonicAuditionAsync(std::vector<int> notes,
+                                     Project::PolyphonicEdits edits,
+                                     std::function<void(juce::AudioBuffer<float>)> onReady);
+  void cancelPolyphonicAudition();
+
 private:
   // If the vocoder had to load on CPU, move an AI engine to classic (PSOLA)
   // and tell the UI. Returns true when it switched.
@@ -200,6 +233,29 @@ private:
 
   // Async load state
   std::thread loaderThread;
+
+  // renderPolyphonicAsync state; message thread only, except the thread.
+  void startPolyphonicRender();
+  void finishPolyphonicRender(std::shared_ptr<const PolyphonicTake> take,
+                              std::shared_ptr<const juce::AudioBuffer<float>> rendered);
+  std::thread polyRenderThread;
+  std::shared_ptr<std::atomic<bool>> polyRenderCancel;
+  std::function<void(bool)> polyRenderOnComplete;
+  bool polyRenderRunning = false;
+  bool polyRenderRerun = false;
+
+  struct AuditionRequest
+  {
+    std::vector<int> notes;
+    Project::PolyphonicEdits edits;
+    std::function<void(juce::AudioBuffer<float>)> onReady;
+  };
+  void startPolyphonicAudition(AuditionRequest request);
+  std::thread auditionThread;
+  std::shared_ptr<std::atomic<bool>> auditionCancel;
+  std::optional<AuditionRequest> pendingAudition;
+  bool auditionRunning = false;
+  int auditionGeneration = 0; // bumped by cancel: late results are dropped
   std::thread loaderJoinerThread;
   std::atomic<bool> isLoadingAudio{false};
   std::atomic<bool> cancelLoadingFlag{false};

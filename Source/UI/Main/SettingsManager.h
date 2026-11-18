@@ -92,6 +92,10 @@ public:
   void setNoiseVisibility(bool show) { showBreathsAndSibilance = show; }
   bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
+  // Live Audition for polyphonic takes, on by default; each kind of take
+  // keeps its own on/off.
+  bool getLiveAuditionPolyphonicEnabled() const { return liveAuditionPolyphonicEnabled; }
+  void setLiveAuditionPolyphonicEnabled(bool enabled) { liveAuditionPolyphonicEnabled = enabled; }
   bool getFollowPlayback() const { return followPlayback; }
   void setFollowPlayback(bool follow) { followPlayback = follow; }
 
@@ -178,6 +182,7 @@ private:
   double uiBrightnessPercent = 100.0;
   bool showBreathsAndSibilance = true;
   bool liveAuditionEnabled = false;
+  bool liveAuditionPolyphonicEnabled = true;
   bool followPlayback = true;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)

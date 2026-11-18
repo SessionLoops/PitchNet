@@ -7,7 +7,28 @@ bool MidiExporter::hasExportableNotes(const std::vector<Note>& notes) {
                        [](const Note& note) { return !note.isRest(); });
 }
 
+std::vector<MidiExportNote> MidiExporter::toExportNotes(const std::vector<Note>& notes,
+                                                       int velocity) {
+    std::vector<MidiExportNote> out;
+    out.reserve(notes.size());
+    for (const auto& note : notes) {
+        if (note.isRest())
+            continue;
+        // Adjusted pitch: includes user edits (midiNote + pitchOffset).
+        out.push_back({framesToSeconds(note.getStartFrame()),
+                       framesToSeconds(note.getEndFrame()),
+                       note.getAdjustedMidiNote(), velocity});
+    }
+    return out;
+}
+
 bool MidiExporter::exportToFile(const std::vector<Note>& notes,
+                                const juce::File& file,
+                                const ExportOptions& options) {
+    return exportToFile(toExportNotes(notes, options.velocity), file, options);
+}
+
+bool MidiExporter::exportToFile(const std::vector<MidiExportNote>& notes,
                                 const juce::File& file,
                                 const ExportOptions& options) {
     if (!hasExportableNotes(notes))
@@ -24,6 +45,11 @@ bool MidiExporter::exportToFile(const std::vector<Note>& notes,
 }
 
 juce::MidiFile MidiExporter::createMidiFile(const std::vector<Note>& notes,
+                                            const ExportOptions& options) {
+    return createMidiFile(toExportNotes(notes, options.velocity), options);
+}
+
+juce::MidiFile MidiExporter::createMidiFile(const std::vector<MidiExportNote>& notes,
                                             const ExportOptions& options) {
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote(options.ticksPerQuarterNote);
@@ -42,21 +68,13 @@ juce::MidiFile MidiExporter::createMidiFile(const std::vector<Note>& notes,
 
     // Convert each note to MIDI events
     for (const auto& note : notes) {
-        // Skip rest notes
-        if (note.isRest())
-            continue;
-
-        // Get adjusted pitch (includes user edits: midiNote + pitchOffset)
-        float adjustedPitch = note.getAdjustedMidiNote();
-
         // Quantize to nearest semitone if requested
         int midiNoteValue = options.quantizePitch
-            ? clampMidiNote(std::round(adjustedPitch))
-            : clampMidiNote(adjustedPitch);
+            ? clampMidiNote(std::round(note.midi))
+            : clampMidiNote(note.midi);
 
-        // Convert frame positions to MIDI ticks
-        int startTick = frameToTicks(note.getStartFrame(), options.tempo, options.ticksPerQuarterNote);
-        int endTick = frameToTicks(note.getEndFrame(), options.tempo, options.ticksPerQuarterNote);
+        int startTick = secondsToTicks(note.startSeconds, options.tempo, options.ticksPerQuarterNote);
+        int endTick = secondsToTicks(note.endSeconds, options.tempo, options.ticksPerQuarterNote);
 
         // Ensure minimum note duration (at least 1 tick)
         if (endTick <= startTick)
@@ -66,7 +84,7 @@ juce::MidiFile MidiExporter::createMidiFile(const std::vector<Note>& notes,
         auto noteOn = juce::MidiMessage::noteOn(
             options.channel + 1, // MIDI channels are 1-based in JUCE API
             midiNoteValue,
-            static_cast<juce::uint8>(options.velocity));
+            static_cast<juce::uint8>(juce::jlimit(1, 127, note.velocity)));
         noteOn.setTimeStamp(startTick);
         track.addEvent(noteOn);
 

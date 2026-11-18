@@ -14,15 +14,16 @@ Only pitched sound is modelled. Transients and other unpitched sound (hammer
 and pick noise, breath, percussion) are never detected as objects of their own.
 With plain shares they are not attached to notes either: they stay in the
 recording where they are, so muting or moving a note takes its harmonic body and
-leaves its attack noise behind. The Lab instead lets every edited note take its
-part of what no note owns, attack noise included (experimental
-`NoteEdit::takeBackground`, see [What the engine does](#what-the-engine-does)).
+leaves its attack noise behind. By default (`NoteEdit::takeBackground`, used by
+the editor and the Lab) every edited note instead takes its part of what no note
+owns, attack noise included; see [What the engine does](#what-the-engine-does).
 
 Status: the engine (`Source/Audio/Polyphonic`), a command-line tool, unit tests
-and the training/evaluation scripts are in place, and the standalone app has an
-experimental test window for it, the [Polyphonic Lab](#trying-it-in-pitchnet-the-polyphonic-lab).
-It is not yet wired into the main piano roll, ARA or the synthesis pipeline;
-[Integrating into PitchNet](#integrating-into-pitchnet) lays out how.
+and the training/evaluation scripts are in place. In the standalone app,
+polyphonic takes are analysed and edited in the main piano roll (on the
+`polyphonic` branch; see `docs/polyphonic-integration-plan.md`); saving and the
+plugin (ARA) are still to come. The earlier test window, the
+[Polyphonic Lab](#trying-it-in-pitchnet-the-polyphonic-lab), has been removed.
 
 ## Current status — 2026-11-02
 
@@ -149,7 +150,7 @@ them with their edits applied, over only the samples they reach, which is what
 the Lab plays while you hold a note (a 3.7 s note of a 46 s stereo take in about
 60 ms).
 
-**Notes taking their background (experimental).** With `NoteEdit::takeBackground`
+**Notes taking their background (the default).** With `NoteEdit::takeBackground`
 what no note owns is split among the notes sounding in each frame: by level and
 spectral shape (each partial widened to fill the gap to its neighbours, a small
 floor elsewhere), with what is new at an onset going to the notes starting there,
@@ -174,7 +175,28 @@ that start together split their attacks by level, so in chords a muted or moved
 note can take part of its neighbours' attacks: the worst single cases lost up to
 12.7 dB against plain shares. Where a deleted note's partials coincide with a
 kept note's (G4 over a kept C3), the kept note's share of those bins stays.
-`polyphonic_cli --take-background` applies it to every edit.
+`polyphonic_cli` leaves it off, so the measurements in this document stay
+reproducible; `--take-background` applies it to every edit.
+
+`research/evaluate_attack_move.py` measures how far a moved
+note's attack follows it, against the same mix with the note's own recording
+moved (Salamander piano, VSCO harp; one note moved 0.25 s):
+
+| | left at the old onset (>2 kHz, re the note's attack) | SNR |
+|---|---|---|
+| a note on its own | -70 to -150 dB | 32 dB |
+| struck over another note, plain shares | +1.1 dB | 15.1 dB |
+| struck over another note, taking its background | -6.5 dB | 19.4 dB |
+
+Between the partials, the strike noise left behind is about -25 dB. Most of
+the rest lies in bins a held note's partials share: a bin can only be split as
+a whole, so moving more of the strike would move the held note's own sound
+too (measured: a dip at its harmonics). Longer onset claims, narrower claims, no
+lead-in and a median-filter transient layer (Fitzgerald 2010) gave no measurable
+gain; handing what is new in a held note's partial bins to the note starting
+there helped the measurement for a pluck over a held note but sounded worse,
+and was dropped. Notes struck together share one strike, split by level and spectrum, so
+moving one note of a chord moves only its share of it.
 
 **Stretching.** A stretched note's first 80 ms (`Params::stretchAttackSeconds`,
 counted from its start) play as recorded. After that, output frame u plays the
@@ -404,7 +426,6 @@ instrument-family or source-recording holdout.
 | `PolyFFT.h` | dependency-free real FFT |
 | `tools/polyphonic/` | `polyphonic_cli`, standalone CMake for the tool and tests, research scripts |
 | `tests/PolyphonicTests.cpp` | synthetic-signal tests: detection, identity, pitch, gain, mute, move, stretch, vibrato, stereo, solo, a note on its own with its edit, untouched frames, repeated notes, unpitched sound left in place, notes taking their background |
-| `Source/UI/Polyphonic/PolyLab.*` | the Polyphonic Lab window (standalone app, Edit menu) |
 
 ```cpp
 #include "Audio/Polyphonic/PolyEngine.h"
@@ -431,8 +452,10 @@ harmonic they sit on). Frames are hops of `params.hop` samples.
 
 ## Trying it in PitchNet: the Polyphonic Lab
 
-In the standalone app, **Edit → Polyphonic Lab (Experimental)...** opens a
-separate window for trying the engine on real material. It is a test bench, not
+*Removed (2026-11-18) now that the main piano roll edits polyphonic takes; its
+code is in git history (`Source/UI/Polyphonic/PolyLab.*`). The section is kept
+as a record of the test bench.* It opened a separate window for trying the
+engine on real material. It is a test bench, not
 the product integration below: it works on its own copy of the audio and never
 changes the PitchNet project, its undo history or its render.
 

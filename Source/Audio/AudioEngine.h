@@ -127,7 +127,14 @@ private:
   double currentSampleRate = 44100.0;
 
   // For sample rate conversion
+  // One per channel: a stereo waveform (a polyphonic take keeps its
+  // channels) plays as stereo; a mono one goes to every output channel.
   juce::LagrangeInterpolator interpolator;
+  juce::LagrangeInterpolator interpolatorRight;
+  void resetInterpolators() {
+    interpolator.reset();
+    interpolatorRight.reset();
+  }
   double playbackRatio = 1.0;      // waveformSampleRate / deviceSampleRate
   double fractionalPosition = 0.0; // Sub-sample position for interpolation
 

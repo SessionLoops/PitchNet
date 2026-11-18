@@ -315,6 +315,40 @@ PianoRollComponent::PianoRollComponent()
   noteRenderer->setBoxSelector(boxSelector.get());
   pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
   polyphonicLayer->setCoordinateMapper(coordMapper.get());
+  polyphonicLayer->setDoubleClickTarget(
+      [this](float pitch, double startSeconds, double endSeconds) {
+        return getDoubleClickSnapTarget(pitch, startSeconds, endSeconds);
+      });
+  polyphonicLayer->onEditsChanging = [this]() {
+    if (onPolyphonicDragAudition)
+      onPolyphonicDragAudition(polyphonicLayer->getDraggedNotes());
+  };
+  polyphonicLayer->onEditsCommitted =
+      [this](const PolyphonicNoteLayer::Edits &before,
+             const PolyphonicNoteLayer::Edits &after, const juce::String &name) {
+        if (undoManager && project)
+        {
+          juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+          undoManager->addAction(std::make_unique<PolyphonicEditAction>(
+              *project, before, after, name, [safeThis]() {
+                if (safeThis != nullptr)
+                {
+                  safeThis->repaint();
+                  if (safeThis->onPolyphonicSelectionChanged)
+                    safeThis->onPolyphonicSelectionChanged();
+                }
+              }));
+        }
+        repaint();
+        if (onPolyphonicSelectionChanged)
+          onPolyphonicSelectionChanged(); // the Level field shows the new gain
+        if (onPitchEditFinished)
+          onPitchEditFinished(); // renders the take (resynthesizeIncremental)
+      };
+  polyphonicLayer->onSelectionChanged = [this]() {
+    if (onPolyphonicSelectionChanged)
+      onPolyphonicSelectionChanged();
+  };
   previewNoteRenderer->setCoordinateMapper(coordMapper.get());
   previewCurveRenderer->setCoordinateMapper(coordMapper.get());
   pitchCurveRenderer->setSelectHandler(selectHandler_.get());
@@ -1255,7 +1289,14 @@ std::pair<double, double> PianoRollComponent::getMidiReferenceSpan() const
 
 float PianoRollComponent::getDoubleClickSnapTarget(const Note& note) const
 {
-  const float pitch = note.getAdjustedMidiNote();
+  return getDoubleClickSnapTarget(note.getAdjustedMidiNote(),
+                                  framesToSeconds(note.getStartFrame()),
+                                  framesToSeconds(note.getEndFrame()));
+}
+
+float PianoRollComponent::getDoubleClickSnapTarget(float pitch, double noteStartSeconds,
+                                                   double noteEndSeconds) const
+{
   switch (project->getDoubleClickSnapMode())
   {
     case DoubleClickSnapMode::Scale:
@@ -1264,8 +1305,8 @@ float PianoRollComponent::getDoubleClickSnapTarget(const Note& note) const
     case DoubleClickSnapMode::MidiReference:
     {
       const auto [origin, end] = getMidiReferenceSpan();
-      const double startSeconds = std::max<double>(origin, framesToSeconds(note.getStartFrame()));
-      const double endSeconds = std::min<double>(end, framesToSeconds(note.getEndFrame()));
+      const double startSeconds = std::max<double>(origin, noteStartSeconds);
+      const double endSeconds = std::min<double>(end, noteEndSeconds);
       const auto target = MidiReference::findPitchWithGreatestOverlap(
           midiReferenceNotes, startSeconds - origin, endSeconds - origin);
       return target ? static_cast<float>(*target) + ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz)
@@ -2202,10 +2243,13 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
-  // The canvas menu's entries (vocal tools, vocal Select All) do not apply to a
-  // polyphonic take; its Restore Original menu comes with editing (M3).
+  // A polyphonic take has its own menu: Restore Original for the selection
+  // (#19). A right-click on an unselected note selects it first.
   if (e.mods.isPopupMenu() && isCanvasPoint(e) && isPolyphonicActive())
+  {
+    showPolyphonicMenu(adjustedX, adjustedY);
     return;
+  }
 
   if (e.mods.isPopupMenu() && isCanvasPoint(e))
   {
@@ -2288,7 +2332,9 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   // In Select mode, Alt inverts note-drag snapping. Keep Alt-drag panning
   // available when the gesture begins anywhere else on the canvas.
   const bool altNoteDrag =
-      editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
+      isPolyphonicActive()
+          ? polyphonicLayer->noteAt(adjustedX, adjustedY) >= 0
+          : editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
   if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
   {
     modifierPanDragActive = true;
@@ -2336,14 +2382,23 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
 
-  // A polyphonic take: click selects the note under the pointer (Shift or
-  // Cmd adds/toggles), elsewhere clears. Read-only until M3.
+  // A polyphonic take: the note layer's own gestures (section 5 of the
+  // plan): drag notes, drag their ends, click or band-select.
   if (isPolyphonicActive())
   {
     if (e.mods.isLeftButtonDown())
     {
-      polyphonicLayer->select(polyphonicLayer->noteAt(adjustedX, adjustedY),
-                              e.mods.isShiftDown() || e.mods.isCommandDown());
+      grabKeyboardFocus();
+      polyphonicLayer->setDragSnap(
+          snapToSemitoneDrag, [this](float raw, float anchorMidi) {
+            return pitchEditor->getSnappedDragOffset(raw, anchorMidi);
+          });
+      polyphonicLayer->mouseDown(adjustedX, adjustedY, e.mods);
+      // Pressing a note (or its end) plays it at once with Live Audition on,
+      // before any drag.
+      if (polyphonicLayer->isDragging() && onPolyphonicDragAudition)
+        if (const auto notes = polyphonicLayer->getDraggedNotes(); !notes.empty())
+          onPolyphonicDragAudition(notes);
       repaint();
     }
     return;
@@ -2466,6 +2521,20 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   }
 
+  if (isPolyphonicActive())
+  {
+    if (polyphonicLayer->isDragging())
+    {
+      polyphonicLayer->mouseDrag(adjustedX, adjustedY, e.mods);
+      if (shouldRepaint)
+      {
+        repaint();
+        lastDragRepaintTime = now;
+      }
+    }
+    return;
+  }
+
   // Delegate to current mode handler
   if (currentHandler_ && currentHandler_->mouseDrag(e, adjustedX, adjustedY))
   {
@@ -2523,6 +2592,18 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
   if (loopDragHandler_->mouseUp(e, adjustedX, adjustedY))
     return;
 
+  if (isPolyphonicActive())
+  {
+    if (polyphonicLayer->isDragging())
+    {
+      polyphonicLayer->mouseUp();
+      if (onPolyphonicDragFinished)
+        onPolyphonicDragFinished();
+      repaint();
+    }
+    return;
+  }
+
   // Delegate to current mode handler
   if (currentHandler_)
   {
@@ -2543,8 +2624,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (isPolyphonicActive())
   {
     loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
+    // The resize cursor over a note end is how its stretch is found; the
+    // note itself does not change (no hover state).
+    const bool overEdge = !showZoomCursor && e.y >= headerHeight &&
+                          e.x >= pianoKeysWidth &&
+                          polyphonicLayer->isOverStretchEdge(adjustedX, adjustedY);
     setMouseCursor(showZoomCursor ? getMouseCursor()
-                   : loopDragHandler_->isHoveringHandle()
+                   : loopDragHandler_->isHoveringHandle() || overEdge
                        ? juce::MouseCursor::LeftRightResizeCursor
                        : juce::MouseCursor::NormalCursor);
     return;
@@ -2822,6 +2908,17 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+
+  // A polyphonic note tunes to its double-click target; empty space keeps the
+  // canvas's own double-click.
+  if (isPolyphonicActive())
+  {
+    if (polyphonicLayer->mouseDoubleClick(adjustedX, adjustedY))
+      repaint();
+    else if (onCanvasEmptyDoubleClick)
+      onCanvasEmptyDoubleClick(std::max(getTimelineStart(), xToTime(adjustedX)));
+    return;
+  }
 
   // An empty-space double click works uniformly across track regions.
   const auto* pointerRegion = findTrackRegionAtPointer(e.position);
@@ -3117,6 +3214,9 @@ void PianoRollComponent::setProject(Project *proj)
   noteRenderer->setProject(proj);
   pitchCurveRenderer->setProject(proj); // also clears its cache
   polyphonicLayer->setProject(proj);
+  // A new take starts with nothing selected; the Level field follows.
+  if (onPolyphonicSelectionChanged)
+    onPolyphonicSelectionChanged();
   scrollZoomController->setProject(proj);
   pitchEditor->setProject(proj);
   pitchEditor->setSnapToSemitoneDragEnabled(snapToSemitoneDrag);
@@ -3450,6 +3550,20 @@ bool PianoRollComponent::keyPressed(const juce::KeyPress &key)
     return false;
 
   const int keyCode = key.getKeyCode();
+  // Delete mutes a polyphonic selection (or unmutes it when it is all muted);
+  // muted notes stay drawn and selectable.
+  if (isPolyphonicActive())
+  {
+    if (keyCode == juce::KeyPress::deleteKey || keyCode == juce::KeyPress::backspaceKey)
+    {
+      if (polyphonicLayer->getSelection().empty())
+        return false;
+      polyphonicLayer->toggleMuteSelection();
+      repaint();
+      return true;
+    }
+    return false;
+  }
   if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
   {
     const int direction = keyCode == juce::KeyPress::upKey ? 1 : -1;
@@ -4516,9 +4630,12 @@ double PianoRollComponent::getTimelineDuration() const
 
   // ARA region projects contain a playback range; give the editor one full bar
   // of writable-looking canvas after the real project end without extending
-  // the underlying audio or playback range.
+  // the underlying audio or playback range. A polyphonic take gets the same
+  // bar, as room to lengthen a note past the end of the recording (the
+  // render then makes the take longer).
   if (project != nullptr &&
-      !project->getAudioData().playbackRegionRanges.empty())
+      (!project->getAudioData().playbackRegionRanges.empty() ||
+       project->isPolyphonic()))
     timelineDuration += getTimelineBarSeconds();
 
   return timelineDuration;
@@ -4620,6 +4737,37 @@ void PianoRollComponent::updatePitchDrawingConfirmationPopup()
                                      std::min(popupWidth, canvasWidth),
                                      popupHeight);
   pitchDrawingConfirmationPanel->toFront(false);
+}
+
+void PianoRollComponent::showPolyphonicMenu(float worldX, float worldY)
+{
+  auto &layer = *polyphonicLayer;
+  const int hit = layer.noteAt(worldX, worldY);
+  if (hit >= 0 && layer.getSelection().count(hit) == 0)
+  {
+    layer.select(hit, false);
+    repaint();
+  }
+  if (layer.getSelection().empty())
+    return;
+
+  bool anyEdited = false;
+  const auto &edits = layer.currentEdits();
+  for (int note : layer.getSelection())
+    anyEdited = anyEdited || edits.count(note) > 0;
+
+  juce::PopupMenu menu;
+  menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+  menu.addItem(1, TR("tooltip.restore_original"), anyEdited);
+  juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+  menu.showMenuAsync(juce::PopupMenu::Options().withDeletionCheck(*this),
+                     [safeThis](int result) {
+                       if (safeThis == nullptr || result != 1 ||
+                           !safeThis->isPolyphonicActive())
+                         return;
+                       safeThis->polyphonicLayer->restoreSelection();
+                       safeThis->repaint();
+                     });
 }
 
 void PianoRollComponent::drawSelectionRect(juce::Graphics &g)

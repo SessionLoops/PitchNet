@@ -34,9 +34,9 @@
  *              render reproduces the input.
  *
  * Only pitched notes are modelled. Transients and other unpitched sound are never
- * detected as objects of their own. Unless an edit sets NoteEdit::takeBackground
- * (experimental; the Polyphonic Lab always does), they are not attached to notes
- * either and stay in the recording where they are.
+ * detected as objects of their own. An edit with NoteEdit::takeBackground (the
+ * default) attaches the nearby ones to its note; without it they stay in the
+ * recording where they are.
  *
  * Self-contained C++17 without JUCE. Analysis and rendering are offline
  * operations for a worker thread, not the audio thread. See docs/polyphonic-editing.md.
@@ -218,15 +218,24 @@ struct NoteEdit
     // slows down; the attack keeps its speed. Shorter (< 1): the note keeps that share of its length;
     // it plays as recorded and is cut, fading out just before its new end.
     float stretch = 1.0f;
-    // Experimental: the note also owns a part of what no note owns (the background around its
-    // harmonics, the noise at its start, its decay for up to 2 s; see render()). A mute removes that
-    // part too, and a move, pitch or gain change takes it along; a shortened note cuts it with the note
-    // (a lengthened one leaves it in place).
-    bool takeBackground = false;
+    // The note also owns a part of what no note owns (the background around its harmonics, the
+    // noise at its start, its decay for up to 2 s; see render()). A mute removes that part too, and a
+    // move, pitch or gain change takes it along; a shortened note cuts it with the note (a lengthened
+    // one leaves it in place). On by default, as in the editor: a muted piano note then also loses its
+    // hammer noise, and a moved note takes its attack along. Off gives the narrower edit that leaves
+    // everything outside the note's own partials in place.
+    bool takeBackground = true;
     bool isIdentity() const
     {
         return !mute && semitones == 0.0f && pitchCurve.empty() && gainDb == 0.0f && timeOffsetSeconds == 0.0 && stretch == 1.0f;
     }
+    bool operator==(const NoteEdit& o) const
+    {
+        return semitones == o.semitones && pitchCurve == o.pitchCurve && gainDb == o.gainDb && mute == o.mute
+            && preserveFormants == o.preserveFormants && timeOffsetSeconds == o.timeOffsetSeconds
+            && stretch == o.stretch && takeBackground == o.takeBackground;
+    }
+    bool operator!=(const NoteEdit& o) const { return !(*this == o); }
 };
 
 /**
@@ -276,7 +285,7 @@ Analysis analyze(const float* mono, int numSamples, const Params& params,
  * A note's share of a bin is its model over the total model including the noise
  * floor, so an edit leaves the noise floor's share of its bins, and everything no note
  * owns, in place.
- * Experimental (NoteEdit::takeBackground): what no note owns is split among the notes
+ * With NoteEdit::takeBackground (the default): what no note owns is split among the notes
  * sounding in each frame (by level and spectral shape; at an onset what is new goes to
  * the notes starting there, in proportion to each one's own spectrum; a claim fades out
  * over 2 s after a note ends). A muted note

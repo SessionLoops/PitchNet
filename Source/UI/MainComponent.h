@@ -27,7 +27,6 @@
 #include <thread>
 #include <vector>
 
-class PolyLabWindow;
 
 class AnalysisBackdrop : public juce::Component {
 public:
@@ -304,6 +303,11 @@ private:
   void previewNoteRegion(int startFrame, int endFrame);
   void finishPreviewRegion(bool restorePosition);
   void auditionDraggedNote(const Note &note);
+  // Live audition of a drag on a polyphonic take: the dragged notes, rendered
+  // on their own with the drag's edits (EditorController::renderPolyphonicAuditionAsync).
+  void auditionPolyphonicNotes(const std::vector<int> &notes);
+  // The toolbar's Note / Cent / Level for the selected polyphonic notes.
+  void refreshPolyphonicSelectionBar();
   void finishDraggedNoteAudition();
   void dispatchPendingDragAudition();
   void auditionPianoKey(int midiNote);
@@ -311,7 +315,6 @@ private:
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
   void showSettings();
-  void showPolyphonicLab();
   void openRecentFile(const juce::File &file);
   void addRecentFile(const juce::File &file);
   void refreshRecentFilesMenu();
@@ -342,6 +345,14 @@ private:
   void clearProjectForNewLoad(std::optional<MidiReference::State> reference = std::nullopt);
   void openProjectFile(const juce::File &file);
   void analyzeAudio();
+  // The Input menu or the Analysis card asked for another mode or detector.
+  // A change that needs a new analysis (standalone) asks first when the take
+  // has edits, since they are discarded; anything else is just stored.
+  void requestAnalysisModeChange(const AnalysisModeState &next);
+  void reanalyzeTake(const AnalysisModeState &next);
+  // Renders a polyphonic take's edits (EditorController::renderPolyphonicAsync)
+  // and hands the result to the audio engine without moving the playhead.
+  void renderPolyphonicEdits();
   void analyzeAudio(
       Project &targetProject,
       const std::function<void(double, const juce::String &)> &onProgress,
@@ -418,7 +429,6 @@ private:
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;
   // Experimental polyphonic test bench (standalone only), Source/UI/Polyphonic.
-  std::unique_ptr<PolyLabWindow> polyLabWindow;
 
   std::unique_ptr<juce::FileChooser> fileChooser;
   juce::StringArray recentFiles;

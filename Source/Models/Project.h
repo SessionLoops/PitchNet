@@ -158,6 +158,10 @@ struct MacroParameters
     bool projectKeyInitialized = false;
     int pitchReferenceHz = 440;
     bool snapToSemitones = false;
+    // Drag snap for polyphonic takes, on by default (feature review #20): a
+    // plugin instance shares these parameters across its projects and a track
+    // can mix vocal and polyphonic takes, so each mode keeps its own on/off.
+    bool snapToSemitonesPolyphonic = true;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
     MidiReference::State midiReference;
@@ -254,6 +258,43 @@ public:
     void setPolyphonicTake(std::shared_ptr<const PolyphonicTake> take) { polyphonicTake = std::move(take); }
     bool isPolyphonic() const { return polyphonicTake != nullptr && polyphonicTake->hasAnalysis(); }
 
+    // The user's edits of a polyphonic take, keyed by index into its
+    // analysis->notes. Only non-identity edits are kept (setPolyphonicEdits
+    // drops the rest), so an empty map means the take is untouched.
+    using PolyphonicEdits = std::map<int, polyphonic::NoteEdit>;
+    const PolyphonicEdits &getPolyphonicEdits() const { return polyphonicEdits; }
+    void setPolyphonicEdits(PolyphonicEdits edits)
+    {
+        for (auto it = edits.begin(); it != edits.end();)
+            it = it->second.isIdentity() ? edits.erase(it) : std::next(it);
+        if (edits != polyphonicEdits)
+        {
+            polyphonicEdits = std::move(edits);
+            modified = true;
+        }
+    }
+
+    // The latest render of the polyphonic take with its edits, in the take's
+    // channels at the project rate (EditorController::renderPolyphonicAsync);
+    // null until the first render. Playback only: not saved.
+    std::shared_ptr<const juce::AudioBuffer<float>> getPolyphonicPlayback() const { return polyphonicPlayback; }
+    void setPolyphonicPlayback(std::shared_ptr<const juce::AudioBuffer<float>> buffer) { polyphonicPlayback = std::move(buffer); }
+
+    // What the audio engine plays, at getAudioData().sampleRate: for a
+    // polyphonic take its latest render, or its own channels before the first
+    // one (stereo stays stereo); otherwise the (mono) waveform.
+    const juce::AudioBuffer<float> &getPlaybackBuffer() const
+    {
+        if (isPolyphonic())
+        {
+            if (polyphonicPlayback)
+                return *polyphonicPlayback;
+            if (polyphonicTake->source.getNumSamples() > 0)
+                return polyphonicTake->source;
+        }
+        return audioData.waveform;
+    }
+
     // Get adjusted F0 with all modifications applied
     std::vector<float> getAdjustedF0() const;
 
@@ -318,8 +359,15 @@ public:
 
     int getPitchReferenceHz() const { return macroParameters->pitchReferenceHz; }
     void setPitchReferenceHz(int hz);
-    bool getSnapToSemitones() const { return macroParameters->snapToSemitones; }
-    void setSnapToSemitones(bool enabled);
+    // Drag snap for this project's kind of take (vocal or polyphonic).
+    bool getSnapToSemitones() const { return getSnapToSemitonesFor(isPolyphonic()); }
+    void setSnapToSemitones(bool enabled) { setSnapToSemitonesFor(isPolyphonic(), enabled); }
+    bool getSnapToSemitonesFor(bool polyphonic) const
+    {
+        return polyphonic ? macroParameters->snapToSemitonesPolyphonic
+                          : macroParameters->snapToSemitones;
+    }
+    void setSnapToSemitonesFor(bool polyphonic, bool enabled);
     DragSnapMode getDragSnapMode() const { return macroParameters->dragSnapMode; }
     void setDragSnapMode(DragSnapMode mode);
     DoubleClickSnapMode getDoubleClickSnapMode() const { return macroParameters->doubleClickSnapMode; }
@@ -361,6 +409,8 @@ private:
     float pitchCenter = 0.0f;
     AnalysisModeState analysisMode;
     std::shared_ptr<const PolyphonicTake> polyphonicTake;
+    PolyphonicEdits polyphonicEdits;
+    std::shared_ptr<const juce::AudioBuffer<float>> polyphonicPlayback;
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;

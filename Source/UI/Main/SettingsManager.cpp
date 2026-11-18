@@ -263,6 +263,9 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("liveAuditionEnabled"))
           liveAuditionEnabled =
               static_cast<bool>(configObj->getProperty("liveAuditionEnabled"));
+        if (configObj->hasProperty("liveAuditionPolyphonicEnabled"))
+          liveAuditionPolyphonicEnabled = static_cast<bool>(
+              configObj->getProperty("liveAuditionPolyphonicEnabled"));
         if (configObj->hasProperty("followPlayback"))
           followPlayback =
               static_cast<bool>(configObj->getProperty("followPlayback"));
@@ -319,6 +322,7 @@ void SettingsManager::saveConfig()
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("showBreathsAndSibilance", showBreathsAndSibilance);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
+  config->setProperty("liveAuditionPolyphonicEnabled", liveAuditionPolyphonicEnabled);
   config->setProperty("followPlayback", followPlayback);
 
   if (exportSettings)

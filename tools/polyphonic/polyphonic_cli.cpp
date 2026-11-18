@@ -11,7 +11,7 @@
 //     --move INDEX:SECONDS               (repeatable) move a note in time
 //     --stretch INDEX:RATIO              (repeatable) lengthen (> 1) or shorten (< 1) a note
 //     --pad SECONDS                      append silence first (room for lengthened notes)
-//     --take-background                  edited and muted notes also take their part of what no note owns (experimental)
+//     --take-background                  edited and muted notes also take their part of what no note owns (the editor and engine default; off here so the measurements in docs/polyphonic-editing.md stay reproducible)
 //     --no-natural-decay                 lengthened decaying notes are time-stretched too (Params::naturalDecaySlopeDb = 0)
 //     --out out.wav                      render with the edits (32-bit float WAV)
 //     --solo INDEX solo.wav              one note's separated signal

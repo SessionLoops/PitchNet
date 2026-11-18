@@ -370,12 +370,14 @@ void Project::setPitchReferenceHz(int hz)
     modified = true;
 }
 
-void Project::setSnapToSemitones(bool enabled)
+void Project::setSnapToSemitonesFor(bool polyphonic, bool enabled)
 {
-    if (macroParameters->snapToSemitones == enabled)
+    auto &field = polyphonic ? macroParameters->snapToSemitonesPolyphonic
+                             : macroParameters->snapToSemitones;
+    if (field == enabled)
         return;
 
-    macroParameters->snapToSemitones = enabled;
+    field = enabled;
     modified = true;
 }
 

@@ -82,6 +82,10 @@ public:
     std::function<void(bool)> onNoiseVisibilityChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
+    // The Input menu or the Analysis card asks for another analysis mode or
+    // detector. The owner decides whether that needs a new analysis (and asks
+    // first when edits would be lost); without an owner the panel stores it.
+    std::function<void(const AnalysisModeState&)> onAnalysisModeChangeRequested;
 
     // MIDI card. Dragging the button asks the owner for a freshly written
     // .mid file and hands it to the OS as a file drag; a click saves instead.
@@ -178,6 +182,15 @@ private:
     ComboSelectionButton analysisModeButton;
     void refreshAnalysisModeRow();
     void showAnalysisModeMenu();
+    void requestAnalysisMode(const AnalysisModeState& next);
+
+    // For a polyphonic take the card is "Analysis": the polyphonic engine has
+    // no rendering choice, and its note detector replaces the engine radios.
+    // Same height as the Rendering card (the device row stays hidden).
+    RadioButton harmonicDetectorToggle;
+    RadioButton guidedDetectorToggle;
+    bool showsAnalysisCard = false;
+    void refreshAnalysisCard();
 
     juce::Label referenceLabel;
     SliderBox referenceSlider { "Pitch Reference" };

@@ -5,6 +5,7 @@
 #include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 #include "Buttons.h"
+#include "PolyphonicSelectionBar.h"
 #include "ScaleSelectionControl.h"
 #include <optional>
 
@@ -98,6 +99,9 @@ public:
     void setLeftPanelAvailable(bool available);
     void setUndoRedoEnabled(bool undoEnabled, bool redoEnabled);
     void setProject(Project* project);
+    // Note, Cent and Level of the selected polyphonic notes, shown in the
+    // centre while a polyphonic take is shown (in place of the edit tools).
+    PolyphonicSelectionBar& getPolyphonicSelectionBar() { return selectionBar; }
     bool isFollowPlayback() const { return followPlayback; }
     bool isLoopEnabled() const { return loopEnabled; }
 
@@ -162,6 +166,7 @@ private:
     // The four edit tools are vocal-only: hidden while a polyphonic take is
     // shown (docs/polyphonic-integration-plan.md, feature review #4-#7).
     bool editToolsVisible = true;
+    PolyphonicSelectionBar selectionBar;
     ToggleButton followButton;
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;

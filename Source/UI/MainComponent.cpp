@@ -2,10 +2,10 @@
 #include "GpuDeviceList.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
-#include "Polyphonic/PolyLab.h"
 #include "Components/DarkLookAndFeel.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
+#include "../Models/PolyphonicMidi.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Models/ProjectTimelineOffset.h"
 #include "../Utils/AppLogger.h"
@@ -159,34 +159,37 @@ void styleUpdateButton(juce::TextButton &button)
 }
 
 // Match the analysis overlay: dimmed editor and a compact, rounded grey card.
-class UnsavedProjectPopup final : public juce::Component,
-                                  private juce::ComponentListener
+// The in-window question popup used where macOS shows a native sheet (the
+// unsaved-project prompt, the re-analysis confirmation): a message and a row
+// of buttons, each ending the modal state with its result; Escape gives 0.
+class ChoicePopup final : public juce::Component,
+                          private juce::ComponentListener
 {
 public:
-  explicit UnsavedProjectPopup(juce::Component &parent)
-      : owner(&parent), saveButton(TR("dialog.save")),
-        discardButton(TR("dialog.dont_save")), cancelButton(TR("dialog.cancel"))
+  ChoicePopup(juce::Component &parent, juce::String messageText,
+              std::vector<std::pair<juce::String, int>> choices)
+      : owner(&parent), message(std::move(messageText))
   {
     setWantsKeyboardFocus(true);
-    for (auto *button : {&saveButton, &discardButton, &cancelButton})
+    for (const auto &[text, result] : choices)
     {
+      auto button = std::make_unique<juce::TextButton>(text);
       styleUpdateButton(*button);
+      button->onClick = [this, result = result] { exitModalState(result); };
       addAndMakeVisible(*button);
+      buttons.push_back(std::move(button));
     }
-    saveButton.onClick = [this] { exitModalState(1); };
-    discardButton.onClick = [this] { exitModalState(2); };
-    cancelButton.onClick = [this] { exitModalState(0); };
     parent.addAndMakeVisible(this);
     setBounds(parent.getLocalBounds());
     parent.addComponentListener(this);
     toFront(false);
   }
 
-  ~UnsavedProjectPopup() override
+  ~ChoicePopup() override
   {
     if (owner != nullptr)
       owner->removeComponentListener(this);
-    for (auto *button : {&saveButton, &discardButton, &cancelButton})
+    for (auto &button : buttons)
       button->setLookAndFeel(nullptr);
   }
 
@@ -198,18 +201,19 @@ public:
     g.fillRoundedRectangle(card.toFloat(), 7.0f);
     g.setColour(juce::Colour(0xFFEFEFEFu));
     g.setFont(AppFont::getFont(18.0f));
-    g.drawFittedText(TR("dialog.unsaved_message"), card.getX() + padding,
+    g.drawFittedText(message, card.getX() + padding,
                      card.getY() + padding, card.getWidth() - padding * 2,
-                     descriptionHeight,
-                     juce::Justification::centred, 2);
+                     descriptionHeight(), juce::Justification::centred,
+                     descriptionHeight() / lineHeight);
   }
 
   void resized() override
   {
     auto row = cardBounds().reduced(padding);
-    row.removeFromTop(descriptionHeight + padding);
-    const int width = (row.getWidth() - 20) / 3;
-    for (auto *button : {&saveButton, &discardButton, &cancelButton})
+    row.removeFromTop(descriptionHeight() + padding);
+    const int count = juce::jmax(1, static_cast<int>(buttons.size()));
+    const int width = (row.getWidth() - 10 * (count - 1)) / count;
+    for (auto &button : buttons)
     {
       button->setBounds(row.removeFromLeft(width).withHeight(buttonHeight));
       row.removeFromLeft(10);
@@ -228,14 +232,29 @@ public:
 
 private:
   static constexpr int padding = 24;
-  static constexpr int descriptionHeight = 44;
+  static constexpr int lineHeight = 22;
   static constexpr int buttonHeight = 30;
+  static constexpr int cardWidth = 460;
+
+  /** Room for the message: as many lines as it needs at the card's width
+   *  (explicit line breaks included), never less than two. */
+  int descriptionHeight() const
+  {
+    const auto font = AppFont::getFont(18.0f);
+    const float available = static_cast<float>(juce::jmin(cardWidth, getWidth()) - padding * 2);
+    int lines = 0;
+    for (const auto &paragraph : juce::StringArray::fromLines(message))
+      lines += juce::jmax(1, static_cast<int>(std::ceil(
+                                 juce::GlyphArrangement::getStringWidth(font, paragraph) * 1.1f /
+                                 juce::jmax(1.0f, available))));
+    return juce::jlimit(2, 6, lines) * lineHeight;
+  }
 
   juce::Rectangle<int> cardBounds() const
   {
     return getLocalBounds().withSizeKeepingCentre(
-        juce::jmin(460, getWidth()),
-        padding * 3 + descriptionHeight + buttonHeight);
+        juce::jmin(cardWidth, getWidth()),
+        padding * 3 + descriptionHeight() + buttonHeight);
   }
 
   void componentMovedOrResized(juce::Component &component, bool, bool) override
@@ -244,7 +263,8 @@ private:
   }
 
   juce::Component::SafePointer<juce::Component> owner;
-  juce::TextButton saveButton, discardButton, cancelButton;
+  juce::String message;
+  std::vector<std::unique_ptr<juce::TextButton>> buttons;
 };
 
 void styleUpdateLogScrollBars(juce::Component &component)
@@ -849,6 +869,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
+    // Live Audition follows the kind of take: on by default for polyphonic.
+    if (settingsManager)
+    {
+      dragAuditionEnabled = project != nullptr && project->isPolyphonic()
+                                ? settingsManager->getLiveAuditionPolyphonicEnabled()
+                                : settingsManager->getLiveAuditionEnabled();
+      toolbar.setAuditionEnabled(dragAuditionEnabled);
+    }
     if (isPluginMode())
       applyEffectiveHostTimelineState();
   };
@@ -893,6 +921,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
+  parameterPanel.onAnalysisModeChangeRequested = [this](const AnalysisModeState &next)
+  {
+    requestAnalysisModeChange(next);
+  };
   parameterPanel.onRenderDeviceChanged = [this](int deviceId)
   {
     if (settingsManager == nullptr)
@@ -1001,7 +1033,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
     dragAuditionEnabled = enabled;
     if (settingsManager)
     {
-      settingsManager->setLiveAuditionEnabled(enabled);
+      // Stored for the kind of take shown: each keeps its own on/off.
+      if (auto *project = getProject(); project != nullptr && project->isPolyphonic())
+        settingsManager->setLiveAuditionPolyphonicEnabled(enabled);
+      else
+        settingsManager->setLiveAuditionEnabled(enabled);
       settingsManager->saveConfig();
     }
     if (!dragAuditionEnabled)
@@ -1057,7 +1093,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     {
       if (!isPluginMode() && editorController)
         if (auto* engine = editorController->getAudioEngine())
-          engine->loadWaveform(project->getAudioData().waveform,
+          engine->loadWaveform(project->getPlaybackBuffer(),
                                project->getAudioData().sampleRate, true);
       onPitchEdited();
       notifyProjectDataChanged();
@@ -1087,6 +1123,60 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { auditionDraggedNote(note); };
   pianoRoll.onNoteDragAuditionFinished = [this]()
   { finishDraggedNoteAudition(); };
+  pianoRoll.onPolyphonicDragAudition = [this](const std::vector<int> &notes)
+  {
+    // The toolbar's Note / Cent follow a note being dragged; the render waits
+    // for the release.
+    refreshPolyphonicSelectionBar();
+    auditionPolyphonicNotes(notes);
+  };
+  pianoRoll.onPolyphonicDragFinished = [this]()
+  {
+    if (editorController)
+      editorController->cancelPolyphonicAudition();
+    finishDraggedNoteAudition();
+  };
+  pianoRoll.onPolyphonicSelectionChanged = [this]()
+  { refreshPolyphonicSelectionBar(); };
+  {
+    auto &bar = toolbar.getPolyphonicSelectionBar();
+    bar.onShiftSemitones = [this](float semitones, bool fromCents)
+    {
+      if (!pianoRoll.isPolyphonicActive())
+        return;
+      pianoRoll.getPolyphonicLayer().shiftSelectionSemitones(
+          semitones, fromCents ? "Detune Notes" : "Transpose Notes");
+      pianoRoll.repaint();
+      refreshPolyphonicSelectionBar(); // also when nothing changed
+    };
+    bar.onPreviewShift = [this](float semitones)
+    {
+      if (!pianoRoll.isPolyphonicActive())
+        return;
+      pianoRoll.getPolyphonicLayer().previewSelectionShift(semitones);
+      pianoRoll.repaint();
+    };
+    bar.onPreviewLevel = [this](float gainDb)
+    {
+      if (!pianoRoll.isPolyphonicActive())
+        return;
+      pianoRoll.getPolyphonicLayer().previewSelectionGain(gainDb);
+      pianoRoll.repaint();
+    };
+    bar.onPreviewEnd = [this]()
+    {
+      pianoRoll.getPolyphonicLayer().endPreview();
+      pianoRoll.repaint();
+    };
+    bar.onLevelChanged = [this](float gainDb)
+    {
+      if (!pianoRoll.isPolyphonicActive())
+        return;
+      pianoRoll.getPolyphonicLayer().setSelectionGainDb(gainDb);
+      pianoRoll.repaint();
+      refreshPolyphonicSelectionBar();
+    };
+  }
   pianoRoll.onPianoKeyAudition = [this](int midiNote)
   { auditionPianoKey(midiNote); };
   pianoRoll.onPianoKeyAuditionFinished = [this]()
@@ -1543,7 +1633,6 @@ MainComponent::~MainComponent()
   stopTimer();
 
   // The Lab plays through the audio device: close it while the device exists.
-  polyLabWindow.reset();
 
   if (auto *audioEngine = editorController
                               ? editorController->getAudioEngine()
@@ -1840,7 +1929,10 @@ void MainComponent::requestClose(std::function<void()> onClose)
         handleResult(buttonIndex == 0 ? 1 : buttonIndex == 1 ? 2 : 0);
       });
 #else
-  auto *popup = new UnsavedProjectPopup(*this);
+  auto *popup = new ChoicePopup(*this, TR("dialog.unsaved_message"),
+                                {{TR("dialog.save"), 1},
+                                 {TR("dialog.dont_save"), 2},
+                                 {TR("dialog.cancel"), 0}});
   popup->enterModalState(
       true, juce::ModalCallbackFunction::create(std::move(handleResult)), true);
 #endif
@@ -2125,6 +2217,18 @@ void MainComponent::refreshLocalisedText()
   repaint();
 }
 
+namespace
+{
+// The notes MIDI export writes: a polyphonic take's own notes (with their
+// edits and per-note velocity, PolyphonicMidi.h), otherwise the vocal notes.
+std::vector<MidiExportNote> midiExportNotes(const Project &project, int velocity = 100)
+{
+  return project.isPolyphonic()
+             ? polyphonicmidi::exportNotes(project)
+             : MidiExporter::toExportNotes(project.getNotes(), velocity);
+}
+} // namespace
+
 void MainComponent::openRecentFile(const juce::File &file)
 {
   if (!file.existsAsFile())
@@ -2180,6 +2284,138 @@ void MainComponent::analyzeAudio()
         if (safeThis == nullptr)
           return;
         safeThis->notifyProjectDataChanged();
+      });
+}
+
+void MainComponent::requestAnalysisModeChange(const AnalysisModeState &next)
+{
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return;
+
+  // Only the standalone app analyses polyphonic takes so far (M5 brings the
+  // plugin), so there a choice is only stored.
+  const auto &current = project->getAnalysisMode();
+  const bool needsAnalysis =
+      !isPluginMode() &&
+      (next.mode != current.mode ||
+       (next.mode == AnalysisMode::Polyphonic && next.detector != current.detector));
+  if (!needsAnalysis)
+  {
+    project->setAnalysisMode(next);
+    parameterPanel.setProject(project);
+    notifyProjectDataChanged();
+    return;
+  }
+
+  if (isInferenceBusy())
+  {
+    parameterPanel.setProject(project); // put the controls back
+    return;
+  }
+
+  if (undoManager == nullptr || !undoManager->canUndo())
+  {
+    reanalyzeTake(next);
+    return;
+  }
+
+  // The same question style as the unsaved-project prompt: a native sheet on
+  // macOS, the in-window popup elsewhere. 1 re-analyses, 0 cancels.
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  auto handleResult = [safeThis, next](int result) {
+    if (safeThis == nullptr)
+      return;
+    if (result != 1)
+    {
+      if (auto *p = safeThis->getProject())
+        safeThis->parameterPanel.setProject(p); // put the controls back
+      return;
+    }
+    safeThis->reanalyzeTake(next);
+  };
+#if JUCE_MAC
+  juce::NativeMessageBox::showAsync(
+      juce::MessageBoxOptions()
+          .withIconType(juce::MessageBoxIconType::QuestionIcon)
+          .withTitle(TR("dialog.reanalyze_mode_title"))
+          .withMessage(TR("dialog.reanalyze_mode_discards_edits"))
+          .withButton(TR("dialog.reanalyze"))
+          .withButton(TR("dialog.cancel"))
+          .withAssociatedComponent(this),
+      [handleResult = std::move(handleResult)](int buttonIndex) {
+        handleResult(buttonIndex == 0 ? 1 : 0);
+      });
+#else
+  auto *popup = new ChoicePopup(
+      *this, TR("dialog.reanalyze_mode_title") + "\n" + TR("dialog.reanalyze_mode_discards_edits"),
+      {{TR("dialog.reanalyze"), 1}, {TR("dialog.cancel"), 0}});
+  popup->enterModalState(
+      true, juce::ModalCallbackFunction::create(std::move(handleResult)), true);
+#endif
+}
+
+void MainComponent::reanalyzeTake(const AnalysisModeState &next)
+{
+  if (isLoadingAudio.load() || editorController == nullptr || getProject() == nullptr)
+    return;
+
+  if (auto *audioEngine = editorController->getAudioEngine())
+    audioEngine->stop();
+  isPlaying = false;
+  toolbar.setPlaying(false);
+  pianoRoll.setPlaybackActive(false);
+
+  isLoadingAudio = true;
+  loadingProgress = 0.0;
+  {
+    const juce::ScopedLock sl(loadingMessageLock);
+    loadingMessage = TR("progress.analyzing_audio");
+  }
+  toolbar.hideProgress();
+  showAnalysisProgress(0.0);
+
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  editorController->reanalyzeAsync(
+      next,
+      [safeThis](double p, const juce::String &msg) {
+        if (safeThis == nullptr)
+          return;
+        safeThis->loadingProgress = juce::jlimit(0.0, 1.0, p);
+        const juce::ScopedLock sl(safeThis->loadingMessageLock);
+        safeThis->loadingMessage = msg;
+      },
+      [safeThis](std::unique_ptr<Project> analysed) {
+        if (safeThis == nullptr)
+          return;
+        safeThis->isLoadingAudio = false;
+        auto *editor = safeThis->editorController;
+        if (analysed == nullptr || editor == nullptr)
+        {
+          if (auto *p = safeThis->getProject())
+            safeThis->parameterPanel.setProject(p);
+          return;
+        }
+
+        // The undo history points into the project being replaced.
+        if (safeThis->undoManager)
+          safeThis->undoManager->clear();
+        editor->setProject(std::move(analysed));
+
+        auto *project = safeThis->getProject();
+        safeThis->pianoRoll.setProject(project);
+        safeThis->pianoRollView.setProject(project);
+        safeThis->parameterPanel.setProject(project);
+        safeThis->parameterPanel.setSelectedNote(nullptr);
+        if (auto *engine = editor->getAudioEngine();
+            engine != nullptr && !safeThis->isPluginMode())
+        {
+          const auto &audioData = project->getAudioData();
+          engine->loadWaveform(project->getPlaybackBuffer(), audioData.sampleRate);
+        }
+        safeThis->fitAnalyzedPitchRangeToView(*project);
+        safeThis->notifyProjectDataChanged();
+        safeThis->repaint();
       });
 }
 
@@ -2454,8 +2690,7 @@ void MainComponent::exportMidiFile()
   if (fileChooser != nullptr)
     return;
 
-  const auto &notes = project->getNotes();
-  if (!MidiExporter::hasExportableNotes(notes))
+  if (!MidiExporter::hasExportableNotes(midiExportNotes(*project)))
   {
     StyledMessageBox::show(this, TR("dialog.export_failed"),
                            TR("dialog.no_notes_to_export"),
@@ -2502,7 +2737,7 @@ void MainComponent::exportMidiFile()
   toolbar.setProgress(0.6f);
 
   // Export using adjusted pitch data (includes user edits)
-  bool success = MidiExporter::exportToFile(project->getNotes(), file, options);
+  bool success = MidiExporter::exportToFile(midiExportNotes(*project, options.velocity), file, options);
 
   toolbar.setProgress(1.0f);
   toolbar.hideProgress();
@@ -2559,7 +2794,7 @@ void MainComponent::exportMidiFile()
 
         // Export using adjusted pitch data (includes user edits)
         bool success =
-            MidiExporter::exportToFile(project->getNotes(), file, options);
+            MidiExporter::exportToFile(midiExportNotes(*project, options.velocity), file, options);
 
         safeThis->toolbar.setProgress(1.0f);
         safeThis->toolbar.hideProgress();
@@ -2576,7 +2811,7 @@ void MainComponent::exportMidiFile()
 juce::File MainComponent::createMidiDragFile()
 {
   auto *project = getProject();
-  if (project == nullptr || !MidiExporter::hasExportableNotes(project->getNotes()))
+  if (project == nullptr || !MidiExporter::hasExportableNotes(midiExportNotes(*project)))
     return {};
 
   // Name the clip after the source so it reads sensibly in the DAW.
@@ -2604,7 +2839,7 @@ juce::File MainComponent::createMidiDragFile()
   options.velocity = 100;
   options.quantizePitch = true; // Round to nearest semitone
 
-  if (!MidiExporter::exportToFile(project->getNotes(), file, options))
+  if (!MidiExporter::exportToFile(midiExportNotes(*project, options.velocity), file, options))
   {
     AppLogger::log("MIDI drag export failed: " + file.getFullPathName());
     return {};
@@ -3093,6 +3328,12 @@ void MainComponent::resynthesizeIncremental()
     return;
   }
 
+  if (project->isPolyphonic())
+  {
+    renderPolyphonicEdits();
+    return;
+  }
+
   toolbar.showProgress(TR("progress.synthesizing"));
   toolbar.setProgress(-1.0f);
   setToolGroupEnabled(false);
@@ -3132,6 +3373,87 @@ void MainComponent::resynthesizeIncremental()
       },
       pendingIncrementalResynth,
       isPluginMode());
+}
+
+void MainComponent::refreshPolyphonicSelectionBar()
+{
+  PolyphonicSelectionBar::State state;
+  if (auto *project = getProject(); project != nullptr && pianoRoll.isPolyphonicActive())
+  {
+    const auto &layer = pianoRoll.getPolyphonicLayer();
+    state.referenceHz = project->getPitchReferenceHz();
+    if (const auto pitch = layer.getSelectionPitch(state.referenceHz))
+    {
+      state.hasSelection = true;
+      state.midi = pitch->midi;
+      state.notesDiffer = pitch->notesDiffer;
+      state.centsDiffer = pitch->centsDiffer;
+    }
+    state.levelDb = layer.getSelectionGainDb();
+  }
+  toolbar.getPolyphonicSelectionBar().setState(state);
+}
+
+void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)
+{
+  // Standalone only for now (the plugin's drag audition goes through the host).
+  if (!dragAuditionEnabled || notes.empty() || isPluginMode() ||
+      editorController == nullptr)
+    return;
+  auto *engine = editorController->getAudioEngine();
+  if (engine == nullptr)
+    return;
+
+  if (!noteDragAuditionActive)
+  {
+    noteDragAuditionActive = true;
+    noteDragAuditionBackendPreviewStarted = false;
+    noteDragAuditionWasPlaying = engine->isPlaying();
+    noteDragAuditionReturnTime = engine->getPosition();
+  }
+
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  editorController->renderPolyphonicAuditionAsync(
+      notes, pianoRoll.getPolyphonicLayer().currentEdits(),
+      [safeThis](juce::AudioBuffer<float> buffer) {
+        if (safeThis == nullptr || !safeThis->noteDragAuditionActive ||
+            safeThis->editorController == nullptr)
+          return;
+        auto *project = safeThis->getProject();
+        auto *audio = safeThis->editorController->getAudioEngine();
+        if (project == nullptr || audio == nullptr)
+          return;
+        audio->beginAuditionLoop(buffer, project->getAudioData().sampleRate);
+      });
+}
+
+void MainComponent::renderPolyphonicEdits()
+{
+  // Standalone only until M5 (the plugin publishes renders through ARA).
+  if (editorController == nullptr || isPluginMode())
+    return;
+
+  toolbar.showProgress(TR("progress.synthesizing"));
+  toolbar.setProgress(-1.0f);
+
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  editorController->renderPolyphonicAsync([safeThis](bool rendered) {
+    if (safeThis == nullptr)
+      return;
+    safeThis->toolbar.hideProgress();
+    auto *project = safeThis->getProject();
+    if (!rendered || project == nullptr)
+      return;
+    if (auto *engine = safeThis->editorController->getAudioEngine())
+      engine->loadWaveform(project->getPlaybackBuffer(),
+                           project->getAudioData().sampleRate, true);
+    // A note lengthened past the end makes the take longer (and undoing it
+    // shorter again).
+    safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
+    safeThis->pianoRoll.invalidateWaveformCache();
+    safeThis->pianoRoll.refreshTimelineExtent();
+    safeThis->pianoRollView.refreshOverview();
+  });
 }
 
 void MainComponent::onNoteSelected(Note *note)
@@ -4039,7 +4361,6 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       // View commands
       CommandIDs::showSettings,
       CommandIDs::showAbout,
-      CommandIDs::showPolyphonicLab,
       CommandIDs::showDeltaPitch,
       CommandIDs::showBasePitch,
 
@@ -4140,12 +4461,6 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
 
   case CommandIDs::showAbout:
     result.setInfo(TR("command.about"), TR("command.about.desp"), TR("menu.view"), 0);
-    break;
-
-  case CommandIDs::showPolyphonicLab:
-    result.setInfo(TR("command.polyphonic_lab"), TR("command.polyphonic_lab.desp"),
-                   TR("menu.view"), 0);
-    result.setActive(!isPluginMode());
     break;
 
   case CommandIDs::showDeltaPitch:
@@ -4303,10 +4618,6 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     showAboutPopup();
     return true;
 
-  case CommandIDs::showPolyphonicLab:
-    showPolyphonicLab();
-    return true;
-
   case CommandIDs::showDeltaPitch:
   {
     bool newState = !settingsManager->getShowDeltaPitch();
@@ -4375,44 +4686,6 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
   default:
     return false;
   }
-}
-
-void MainComponent::showPolyphonicLab()
-{
-  // Experimental. The Lab plays through this window's audio device, so it is
-  // standalone only, and it works on its own copy of the audio (PolyLab.h).
-  if (isPluginMode())
-    return;
-  auto *audioEngine =
-      editorController ? editorController->getAudioEngine() : nullptr;
-  if (audioEngine == nullptr)
-    return;
-
-  if (polyLabWindow == nullptr)
-  {
-    juce::Component::SafePointer<MainComponent> safeThis(this);
-    polyLabWindow = std::make_unique<PolyLabWindow>(
-        audioEngine->getDeviceManager(),
-        [safeThis](PolyLabSource &source)
-        {
-          auto *project = safeThis != nullptr ? safeThis->getProject() : nullptr;
-          if (project == nullptr)
-            return false;
-          const auto &audio = project->getAudioData();
-          const auto &buffer = audio.originalWaveform.getNumSamples() > 0
-                                   ? audio.originalWaveform
-                                   : audio.waveform;
-          if (buffer.getNumSamples() == 0 || audio.sampleRate <= 0)
-            return false;
-          source.audio.makeCopyOf(buffer);
-          source.sampleRate = audio.sampleRate;
-          source.name = project->getFilePath().getFileNameWithoutExtension();
-          if (source.name.isEmpty())
-            source.name = project->getName();
-          return true;
-        });
-  }
-  polyLabWindow->open();
 }
 
 void MainComponent::restoreProjectPresentation()

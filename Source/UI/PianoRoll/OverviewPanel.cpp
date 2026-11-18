@@ -282,19 +282,33 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
     }
   }
   // A polyphonic take's notes are not Project notes: one line each, at its
-  // median pitch, so chords show as stacked lines.
+  // median pitch, so chords show as stacked lines; drawn where their edits
+  // put them.
   const auto polyTake = project != nullptr ? project->getPolyphonicTake() : nullptr;
   const auto polyAnalysis = polyTake != nullptr ? polyTake->analysis : nullptr;
+  struct PolyLine { double start = 0.0, end = 0.0; float midi = 0.0f; bool muted = false; };
+  std::vector<PolyLine> polyLines;
   if (polyAnalysis) {
-    for (const auto &note : polyAnalysis->notes) {
-      if (!note.active ||
-          !inActiveSpan(polyAnalysis->frameToSeconds(note.startFrame),
-                        polyAnalysis->frameToSeconds(note.endFrame + 1)))
+    const auto &edits = project->getPolyphonicEdits();
+    for (size_t i = 0; i < polyAnalysis->notes.size(); ++i) {
+      const auto &note = polyAnalysis->notes[i];
+      if (!note.active)
         continue;
-      const float midi = note.medianMidi();
-      minPitch = std::min(minPitch, midi);
-      maxPitch = std::max(maxPitch, midi);
+      const auto it = edits.find(static_cast<int>(i));
+      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+      const auto map = polyphonic::stretchMap(*polyAnalysis, static_cast<int>(i), edit);
+      const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
+      PolyLine line;
+      line.start = polyAnalysis->frameToSeconds(note.startFrame) + edit.timeOffsetSeconds;
+      line.end = polyAnalysis->frameToSeconds(lastOut) + edit.timeOffsetSeconds;
+      line.midi = note.medianMidi() + edit.semitones;
+      line.muted = edit.mute;
+      if (line.end <= line.start || !inActiveSpan(line.start, line.end))
+        continue;
+      minPitch = std::min(minPitch, line.midi);
+      maxPitch = std::max(maxPitch, line.midi);
       hasNotePitch = true;
+      polyLines.push_back(line);
     }
   }
   if (hasPreviews) {
@@ -373,19 +387,11 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
     }
   }
 
-  if (polyAnalysis) {
-    for (const auto &note : polyAnalysis->notes) {
-      if (!note.active)
-        continue;
-      const double startTime = polyAnalysis->frameToSeconds(note.startFrame);
-      const double endTime = polyAnalysis->frameToSeconds(note.endFrame + 1);
-      if (endTime <= startTime || !inActiveSpan(startTime, endTime))
-        continue;
-      const float midi = note.medianMidi();
-      const float y = noteRangeY(midi, minPitch, maxPitch, content);
-      g.setColour(getNoteGradientColours(midi, pitchReferenceHz).side.withAlpha(0.9f));
-      g.drawLine(timeToOverviewX(startTime), y, timeToOverviewX(endTime), y, thickness);
-    }
+  for (const auto &line : polyLines) {
+    const float y = noteRangeY(line.midi, minPitch, maxPitch, content);
+    g.setColour(getNoteGradientColours(line.midi, pitchReferenceHz)
+                    .side.withAlpha(line.muted ? 0.3f : 0.9f));
+    g.drawLine(timeToOverviewX(line.start), y, timeToOverviewX(line.end), y, thickness);
   }
 }
 

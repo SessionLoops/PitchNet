@@ -21,11 +21,36 @@ struct MidiExportOptions {
   bool quantizePitch = true;     // Round pitch to nearest semitone
 };
 
+/**
+ * One note to export, in seconds: what both kinds of take convert to. Vocal
+ * notes take MidiExportOptions::velocity; a polyphonic take gives each note its
+ * own (PolyphonicMidi.h).
+ */
+struct MidiExportNote {
+  double startSeconds = 0.0;
+  double endSeconds = 0.0;
+  float midi = 0.0f;  // adjusted pitch, before quantising
+  int velocity = 100; // 1-127
+};
+
 class MidiExporter {
 public:
   using ExportOptions = MidiExportOptions;
 
   static bool hasExportableNotes(const std::vector<Note> &notes);
+  static bool hasExportableNotes(const std::vector<MidiExportNote> &notes) {
+    return !notes.empty();
+  }
+
+  /** Vocal notes as export notes (rests skipped), at `velocity`. */
+  static std::vector<MidiExportNote> toExportNotes(const std::vector<Note> &notes,
+                                                   int velocity);
+  static bool exportToFile(const std::vector<MidiExportNote> &notes,
+                           const juce::File &file,
+                           const ExportOptions &options = ExportOptions());
+  static juce::MidiFile
+  createMidiFile(const std::vector<MidiExportNote> &notes,
+                 const ExportOptions &options = ExportOptions());
 
   /**
    * Export notes to a MIDI file.

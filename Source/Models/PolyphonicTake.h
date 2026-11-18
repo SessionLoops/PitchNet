@@ -14,8 +14,11 @@
  *
  * The loader creates a take holding only `source` (the file's channels at their
  * own rate) before the take is classified; analysis keeps it for a polyphonic
- * take - resampled to the project rate, with `analysis` filled - and drops it
- * for a vocal one.
+ * take - resampled to the project rate, with `analysis` filled. A vocal take
+ * keeps only `source`, so a switch to polyphonic still has its channels.
+ *
+ * The take is what the analysis produced and never changes; the user's edits
+ * live in the Project (Project::getPolyphonicEdits), which changes them often.
  */
 struct PolyphonicTake
 {
@@ -25,9 +28,6 @@ struct PolyphonicTake
     /** The take's own channels (up to two; stereo is kept), at `sourceRate`. */
     juce::AudioBuffer<float> source;
     double sourceRate = 0.0;
-
-    /** Per-note edits, keyed by index into analysis->notes (M3). */
-    std::map<int, polyphonic::NoteEdit> edits;
 
     bool hasAnalysis() const { return analysis != nullptr; }
 };

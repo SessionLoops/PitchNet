@@ -21,6 +21,7 @@
 #include <climits>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <utility>
@@ -198,6 +199,10 @@ void EditorController::requestShutdown()
   hostAnalysisJobId.fetch_add(1);
   if (incrementalSynth)
     incrementalSynth->cancel();
+  if (polyRenderCancel)
+    polyRenderCancel->store(true);
+  if (auditionCancel)
+    auditionCancel->store(true);
   if (vocoder)
     vocoder->requestShutdown();
 }
@@ -211,6 +216,10 @@ EditorController::~EditorController()
     loaderThread.join();
   if (loaderJoinerThread.joinable())
     loaderJoinerThread.join();
+  if (polyRenderThread.joinable())
+    polyRenderThread.join();
+  if (auditionThread.joinable())
+    auditionThread.join();
 }
 
 void EditorController::setProject(std::unique_ptr<Project> newProject)
@@ -1188,6 +1197,9 @@ bool EditorController::analyzePolyphonicTake(
   audioData.baseF0.clear();
   audioData.segmentDebugChunks.clear();
   targetProject.clearNotes();
+  // The key from the take's notes, for Scale drag snapping and double-click
+  // (feature review #15).
+  ScaleUtils::detectAndApplyScale(targetProject);
 
   LOG("Polyphonic analysis: " + juce::String(activeNotes) + " notes (" +
       juce::String(static_cast<int>(take->analysis->notes.size()) - activeNotes) +
@@ -1227,8 +1239,15 @@ void EditorController::analyzeAudioImpl(
       onComplete();
     return;
   }
-  // A vocal take: drop the channels the loader kept for the polyphonic engine.
-  targetProject.setPolyphonicTake(nullptr);
+  // A vocal take keeps only the take's own channels (no analysis), so a later
+  // switch to polyphonic (reanalyzeAsync) still has the stereo source.
+  if (const auto take = targetProject.getPolyphonicTake(); take && take->hasAnalysis())
+  {
+    auto sourceOnly = std::make_shared<PolyphonicTake>();
+    sourceOnly->source.makeCopyOf(take->source);
+    sourceOnly->sourceRate = take->sourceRate;
+    targetProject.setPolyphonicTake(std::move(sourceOnly));
+  }
 
   auto showMissingModelAndAbort = [](const juce::String &modelName,
                                      const juce::File &path)
@@ -1693,11 +1712,335 @@ void EditorController::analyzeAudioAsync(
           projectCopy->getAudioData().deltaPitch;
       project->setAnalysisMode(projectCopy->getAnalysisMode());
       project->setPolyphonicTake(projectCopy->getPolyphonicTake());
+      project->setPolyphonicEdits(projectCopy->getPolyphonicEdits());
+      project->setPolyphonicPlayback(projectCopy->getPolyphonicPlayback());
       if (onProjectReady)
         onProjectReady(*project);
       if (onProjectChanged)
         onProjectChanged();
     }); });
+}
+
+void EditorController::reanalyzeAsync(
+    const AnalysisModeState &state, const ProgressCallback &onProgress,
+    std::function<void(std::unique_ptr<Project>)> onComplete)
+{
+  if (isLoadingAudio.load() || !project)
+  {
+    if (onComplete)
+      onComplete(nullptr);
+    return;
+  }
+
+  cancelLoadingFlag = false;
+  isLoadingAudio = true;
+  if (loaderThread.joinable())
+    loaderThread.join();
+
+  auto copy = std::make_shared<Project>(*project);
+  loaderThread = std::thread([this, copy, state, onProgress,
+                              onComplete = std::move(onComplete)]() mutable
+                             {
+    auto &audioData = copy->getAudioData();
+    // Drop the edits: the rendered waveform goes back to the original, and
+    // the notes and any polyphonic analysis (with its edits) are rebuilt.
+    if (audioData.originalWaveform.getNumSamples() > 0)
+      audioData.waveform.makeCopyOf(audioData.originalWaveform);
+    copy->clearNotes();
+    if (const auto take = copy->getPolyphonicTake(); take && take->hasAnalysis())
+    {
+      auto sourceOnly = std::make_shared<PolyphonicTake>();
+      sourceOnly->source.makeCopyOf(take->source);
+      sourceOnly->sourceRate = take->sourceRate;
+      copy->setPolyphonicTake(std::move(sourceOnly));
+    }
+    copy->setPolyphonicEdits({});
+    copy->setPolyphonicPlayback(nullptr);
+    copy->setAnalysisMode(state); // classified, so the classifier is skipped
+
+    bool finished = false;
+    analyzeAudio(*copy,
+                 [&onProgress](double p, const juce::String &msg) {
+                   if (onProgress)
+                     onProgress(p, msg);
+                 },
+                 [&finished] { finished = true; });
+    finished = finished && !shuttingDown.load() && !cancelLoadingFlag.load();
+    if (finished)
+      audioData.originalWaveform.makeCopyOf(audioData.waveform);
+
+    juce::MessageManager::callAsync(
+        [this, copy, finished, onComplete = std::move(onComplete)]() {
+          isLoadingAudio = false;
+          if (onComplete)
+            onComplete(finished ? std::make_unique<Project>(std::move(*copy))
+                                : nullptr);
+        }); });
+}
+
+namespace
+{
+// Past a lengthened note's new end: the analysis window's half and room for
+// the release to ring out.
+constexpr double kRenderTailSeconds = 0.25;
+
+/**
+ * The take's channels for the engine, padded with silence when an edit makes
+ * a note end after the recording does (a note lengthened, or moved, past the
+ * end): the render, and with it the take, is then that much longer. Without
+ * such an edit the channels are the take's own length.
+ */
+std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
+                                               const Project::PolyphonicEdits &edits)
+{
+  const auto &source = take.source;
+  const auto &analysis = *take.analysis;
+  const int numChannels = source.getNumChannels();
+  const int numSamples = source.getNumSamples();
+  const double rate = analysis.params.sampleRate;
+
+  int length = numSamples;
+  for (const auto &[index, edit] : edits)
+  {
+    if (edit.mute || index < 0 || index >= static_cast<int>(analysis.notes.size()))
+      continue;
+    const auto &note = analysis.notes[static_cast<size_t>(index)];
+    const auto map = polyphonic::stretchMap(analysis, index, edit);
+    const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
+    const double endSeconds =
+        analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds + kRenderTailSeconds;
+    length = std::max(length, static_cast<int>(std::ceil(endSeconds * rate)));
+  }
+
+  std::vector<std::vector<float>> channels(static_cast<size_t>(numChannels));
+  for (int ch = 0; ch < numChannels; ++ch)
+  {
+    auto &channel = channels[static_cast<size_t>(ch)];
+    channel.assign(static_cast<size_t>(length), 0.0f);
+    std::copy(source.getReadPointer(ch), source.getReadPointer(ch) + numSamples,
+              channel.begin());
+  }
+  return channels;
+}
+} // namespace
+
+void EditorController::renderPolyphonicAsync(std::function<void(bool)> onComplete)
+{
+  polyRenderOnComplete = std::move(onComplete);
+  if (polyRenderRunning)
+  {
+    // Superseded: stop the render in flight and run again when it returns.
+    polyRenderRerun = true;
+    if (polyRenderCancel)
+      polyRenderCancel->store(true);
+    return;
+  }
+  startPolyphonicRender();
+}
+
+void EditorController::startPolyphonicRender()
+{
+  polyRenderRerun = false;
+  const auto take = project ? project->getPolyphonicTake() : nullptr;
+  if (!take || !take->hasAnalysis() || take->source.getNumSamples() == 0 ||
+      shuttingDown.load())
+  {
+    if (auto done = polyRenderOnComplete)
+      done(false);
+    return;
+  }
+
+  if (polyRenderThread.joinable())
+    polyRenderThread.join(); // finished: it posted its result before returning
+
+  auto edits = project->getPolyphonicEdits();
+  auto cancel = std::make_shared<std::atomic<bool>>(false);
+  polyRenderCancel = cancel;
+  polyRenderRunning = true;
+  polyRenderThread = std::thread([this, take, edits = std::move(edits), cancel]()
+                                 {
+    std::shared_ptr<const juce::AudioBuffer<float>> result;
+    try
+    {
+      const auto &source = take->source;
+      auto buffer = std::make_shared<juce::AudioBuffer<float>>();
+      if (edits.empty())
+      {
+        buffer->makeCopyOf(source);
+      }
+      else
+      {
+        // Possibly longer than the take (renderChannels).
+        const auto channels = renderChannels(*take, edits);
+        const auto out = polyphonic::render(*take->analysis, channels, edits, cancel.get());
+        const int numChannels = static_cast<int>(out.size());
+        const int length = numChannels > 0 ? static_cast<int>(out.front().size()) : 0;
+        buffer->setSize(numChannels, length);
+        for (int ch = 0; ch < numChannels; ++ch)
+          buffer->copyFrom(ch, 0, out[static_cast<size_t>(ch)].data(), length);
+      }
+      if (!cancel->load() && !shuttingDown.load())
+        result = std::move(buffer);
+    }
+    catch (const std::exception &e)
+    {
+      LOG("Polyphonic render failed: " + juce::String(e.what()));
+    }
+    catch (...)
+    {
+      LOG("Polyphonic render failed");
+    }
+    juce::MessageManager::callAsync([this, take, result]() {
+      finishPolyphonicRender(take, result);
+    }); });
+}
+
+void EditorController::finishPolyphonicRender(
+    std::shared_ptr<const PolyphonicTake> take,
+    std::shared_ptr<const juce::AudioBuffer<float>> rendered)
+{
+  polyRenderRunning = false;
+  if (shuttingDown.load())
+    return;
+  if (polyRenderRerun)
+  {
+    startPolyphonicRender();
+    return;
+  }
+
+  // A render made for a take that has since been re-analysed is stale.
+  const bool current = project && project->getPolyphonicTake() == take;
+  if (rendered && current)
+  {
+    project->setPolyphonicPlayback(rendered);
+    // The waveform is the playback's mono mix, as after analysis, so the
+    // display shows the edited audio.
+    auto &waveform = project->getAudioData().waveform;
+    const int numSamples = rendered->getNumSamples();
+    const int numChannels = rendered->getNumChannels();
+    waveform.setSize(1, numSamples, false, false, true);
+    waveform.clear();
+    for (int ch = 0; ch < numChannels; ++ch)
+      waveform.addFrom(0, 0, *rendered, ch, 0, numSamples,
+                       1.0f / static_cast<float>(numChannels));
+  }
+  if (auto done = polyRenderOnComplete)
+    done(rendered != nullptr && current);
+}
+
+void EditorController::renderPolyphonicAuditionAsync(
+    std::vector<int> notes, Project::PolyphonicEdits edits,
+    std::function<void(juce::AudioBuffer<float>)> onReady)
+{
+  AuditionRequest request{std::move(notes), std::move(edits), std::move(onReady)};
+  if (auditionRunning)
+  {
+    // The render in flight finishes and plays (a drag keeps sounding while it
+    // moves); only the newest request waits for it, older waiting ones are
+    // dropped.
+    pendingAudition = std::move(request);
+    return;
+  }
+  startPolyphonicAudition(std::move(request));
+}
+
+void EditorController::cancelPolyphonicAudition()
+{
+  ++auditionGeneration;
+  pendingAudition.reset();
+  if (auditionCancel)
+    auditionCancel->store(true);
+}
+
+void EditorController::startPolyphonicAudition(AuditionRequest request)
+{
+  const auto take = project ? project->getPolyphonicTake() : nullptr;
+  if (!take || !take->hasAnalysis() || request.notes.empty() || shuttingDown.load())
+    return;
+  if (auditionThread.joinable())
+    auditionThread.join(); // finished: it posted its result before returning
+
+  auto cancel = std::make_shared<std::atomic<bool>>(false);
+  auditionCancel = cancel;
+  auditionRunning = true;
+  const int generation = auditionGeneration;
+  auditionThread = std::thread([this, take, request = std::move(request), cancel,
+                                generation]() mutable
+                               {
+    juce::AudioBuffer<float> mono;
+    try
+    {
+      // Only the notes listed: their edits, or the engine's default (which
+      // brings each note's background along, as the full render does).
+      Project::PolyphonicEdits edits;
+      for (int note : request.notes)
+      {
+        const auto it = request.edits.find(note);
+        edits[note] = it != request.edits.end() ? it->second : polyphonic::NoteEdit{};
+      }
+      const auto channels = renderChannels(*take, edits);
+      const auto &analysis = *take->analysis;
+      const auto span = polyphonic::renderNotes(analysis, channels, request.notes,
+                                                edits, cancel.get());
+      const int spanLength = span.channels.empty()
+                                 ? 0
+                                 : static_cast<int>(span.channels.front().size());
+      // Play the notes themselves: from just before the earliest onset to a
+      // little after the latest end. The span also covers the analysis
+      // window's lead and the background claim's 2 s fade, which would put
+      // ~100 ms of near-silence before the attack and a long gap in the loop.
+      const double rate = analysis.params.sampleRate;
+      double first = std::numeric_limits<double>::max();
+      double last = 0.0;
+      for (const auto &[index, edit] : edits)
+      {
+        const auto &note = analysis.notes[static_cast<size_t>(index)];
+        const auto map = polyphonic::stretchMap(analysis, index, edit);
+        const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
+        first = std::min(first, analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds);
+        last = std::max(last, analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds);
+      }
+      constexpr double kLeadSeconds = 0.03; // detected onsets can be a frame late
+      constexpr double kTailSeconds = 0.3;
+      const int from = juce::jlimit(0, spanLength,
+                                    static_cast<int>((first - kLeadSeconds) * rate) - span.start);
+      const int to = juce::jlimit(from, spanLength,
+                                  static_cast<int>(std::ceil((last + kTailSeconds) * rate)) - span.start);
+      const int length = to - from;
+      if (!cancel->load() && length > 0)
+      {
+        mono.setSize(1, length);
+        mono.clear();
+        const float gain = 1.0f / static_cast<float>(span.channels.size());
+        for (const auto &channel : span.channels)
+          juce::FloatVectorOperations::addWithMultiply(
+              mono.getWritePointer(0), channel.data() + from, gain, length);
+        // Fade the cut edges (5 ms) so the loop does not click.
+        const int fade = std::min(length / 2, static_cast<int>(0.005 * rate));
+        mono.applyGainRamp(0, fade, 0.0f, 1.0f);
+        mono.applyGainRamp(length - fade, fade, 1.0f, 0.0f);
+      }
+    }
+    catch (...)
+    {
+      LOG("Polyphonic audition render failed");
+    }
+    juce::MessageManager::callAsync(
+        [this, mono = std::move(mono), onReady = std::move(request.onReady),
+         generation]() mutable {
+          auditionRunning = false;
+          if (shuttingDown.load())
+            return;
+          if (pendingAudition)
+          {
+            auto next = std::move(*pendingAudition);
+            pendingAudition.reset();
+            startPolyphonicAudition(std::move(next));
+            return;
+          }
+          if (generation == auditionGeneration && mono.getNumSamples() > 0 && onReady)
+            onReady(std::move(mono));
+        }); });
 }
 
 void EditorController::segmentIntoNotesAsync(

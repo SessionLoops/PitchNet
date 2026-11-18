@@ -98,15 +98,23 @@ inline bool detectMajorOrRelativeMinor(const Project& project,
 {
     std::array<int, 12> pitchClassCounts {};
     int noteCount = 0;
-
-    for (const auto& note : project.getNotes()) {
-        if (note.isRest())
-            continue;
-
-        const int roundedMidi = static_cast<int>(std::round(note.getMidiNote()));
+    const auto count = [&](float midi) {
+        const int roundedMidi = static_cast<int>(std::round(midi));
         const int pitchClass = (roundedMidi % 12 + 12) % 12;
         ++pitchClassCounts[static_cast<size_t>(pitchClass)];
         ++noteCount;
+    };
+
+    // A polyphonic take's own notes (as detected, before edits), else the
+    // vocal notes.
+    if (const auto take = project.getPolyphonicTake(); take && take->hasAnalysis()) {
+        for (const auto& note : take->analysis->notes)
+            if (note.active)
+                count(note.medianMidi());
+    } else {
+        for (const auto& note : project.getNotes())
+            if (!note.isRest())
+                count(note.getMidiNote());
     }
 
     if (noteCount == 0)

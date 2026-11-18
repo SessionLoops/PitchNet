@@ -256,6 +256,11 @@ public:
   std::function<void()> onPitchPreviewRenderRequested;
   std::function<void()> onPitchEditCommitted;
   std::function<void(const Note &)> onNoteDragAudition;
+  // A polyphonic take: a drag changed these notes (live audition), the drag
+  // ended, and the selection changed (the parameters panel's Level field).
+  std::function<void(const std::vector<int> &)> onPolyphonicDragAudition;
+  std::function<void()> onPolyphonicDragFinished;
+  std::function<void()> onPolyphonicSelectionChanged;
   std::function<void()> onNoteDragAuditionFinished;
   std::function<void(int midiNote)> onPianoKeyAudition;
   std::function<void()> onPianoKeyAuditionFinished;
@@ -302,6 +307,8 @@ private:
   void drawPitchCurves(juce::Graphics &g);
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
+  // A polyphonic take's right-click menu: Restore Original for the selection.
+  void showPolyphonicMenu(float worldX, float worldY);
   void drawAudioSourceRegionOverlay(juce::Graphics &g);
   void drawRegionPreviews(juce::Graphics &g);
   // Track mode: inactive regions' notes and pitch curves, drawn with the same
@@ -325,6 +332,9 @@ private:
   void drawMidiReference(juce::Graphics &g) const;
   std::pair<double, double> getMidiReferenceSpan() const;
   float getDoubleClickSnapTarget(const Note& note) const;
+  // The same for any pitch sounding from startSeconds to endSeconds (project
+  // time); polyphonic notes use it.
+  float getDoubleClickSnapTarget(float pitch, double startSeconds, double endSeconds) const;
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
   void updatePitchDrawingConfirmationPopup();
@@ -411,6 +421,13 @@ public:
   void selectAllPolyphonicNotes()
   {
     polyphonicLayer->selectAll();
+    repaint();
+  }
+  PolyphonicNoteLayer &getPolyphonicLayer() { return *polyphonicLayer; }
+  /** The take's length changed (a polyphonic render grew or shrank it). */
+  void refreshTimelineExtent()
+  {
+    updateScrollBars();
     repaint();
   }
 

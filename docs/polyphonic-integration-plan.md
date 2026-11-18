@@ -75,9 +75,17 @@ tracks with different modes follows the track it was first analysed on.
 struct PolyphonicTake {
     std::shared_ptr<const polyphonic::Analysis> analysis;  // immutable once built
     juce::AudioBuffer<float> source;   // the take's own channels (stereo kept), project rate
-    std::map<int, polyphonic::NoteEdit> edits;              // by index into analysis->notes
 };
+// in Project: std::map<int, polyphonic::NoteEdit> polyphonicEdits (by index into
+// analysis->notes), and the latest render for playback
 ```
+
+*As built (M3): the edits live in the `Project` (`getPolyphonicEdits`), not in
+the shared, immutable take, since they change on every edit. The render does
+not go into `AudioData::waveform` either: `waveform` stays mono (the render's
+mix, for display), and the stereo render is kept as the project's polyphonic
+playback (`Project::getPlaybackBuffer`), which the audio engine now plays in
+stereo.*
 
 `Project` gains `std::shared_ptr<PolyphonicTake>` (copy-on-write: the plugin
 copies whole Projects for snapshots, e.g. `std::make_shared<Project>(*current)`
@@ -134,7 +142,7 @@ A new `EditorController::renderPolyphonicAsync(Project&, …)` beside
 `pendingRerun` coalescing, completion on the message thread):
 
 ```
-polyphonic::render(*take.analysis, take.source channels, take.edits, cancel)
+polyphonic::render(*take.analysis, take.source channels, project edits, cancel)
     → AudioData::waveform → AudioEngine's deferred waveform hand-off
                           → (plugin) the existing publish to the modification
 ```
@@ -170,12 +178,12 @@ interaction, as in the Lab's `NoteCanvas` today:
 | Gesture | Edit |
 |---|---|
 | drag a note (snapped to semitones; Alt: cents) | `semitones`; once the drag goes sideways, also `timeOffsetSeconds` (small sideways wobble is ignored) |
-| drag the right end | `stretch` (drawn with `stretchMap()`) |
-| drag the left end | `stretch` + `timeOffsetSeconds`, end stays put |
-| click / Shift- or Cmd-click / drag on empty space | select / add to selection / band select; overlapping notes stay individually selectable |
-| Delete | toggles `mute` on the selection (muted notes stay drawn and selectable) |
+| drag the right end | `stretch` (drawn with `stretchMap()`). It may pass the end of the recording: the render pads the take with silence to fit, so the take grows (and shrinks back on undo); the canvas has one bar of room past the end |
+| drag the left end | `stretch` + `timeOffsetSeconds`, end stays put. On a selected note either end stretches the whole selection: every note's grabbed end moves by the same time, within its own limits (deleted notes excluded) |
+| click / Shift-click / drag on empty space | select / add to selection / band select; overlapping notes stay individually selectable (Cmd-drag is the canvas's zoom gesture on macOS, so Shift adds) |
+| Delete | toggles `mute` on the selection. Muted (deleted) notes stay drawn as a dashed outline and selectable, so Delete again or Restore Original brings them back; they take no other edit (no drag, stretch, double-click snap or level) |
 | right-click | menu with Restore Original for the selection (#19) |
-| level | Level (dB) in the parameters panel's Note Info section, for the selection (#9) |
+| Note / Cent / Level | unlabelled boxes in the centre of the main toolbar (where the vocal edit tools are), each showing its unit and named in its tooltip, "–" with nothing selected; for the selection: Note (name; drag, type a name or +N/-N), Cent (from the nearest semitone), Level (dB). Several notes: Note and Cent show the first selected note or "–" where they differ, and a change moves every note by the same amount (their spread is kept); Level sets them all. One commit on release or Enter; deleted notes are left out (#9) |
 
 Undo: one `PolyphonicEditAction` holding before/after `NoteEdit`s of the notes
 it touched, in the existing `PitchUndoManager`. Track mode: a pinned
@@ -261,9 +269,38 @@ checks; each milestone still ends in its own commits and tests.
 2. **M2 — Polyphonic analysis, read-only (branch).** Polyphonic takes get a
    `PolyphonicTake` (stereo source, Basic Pitch in `SharedInferenceModels`);
    notes drawn in the piano roll in the current look; playback is the original.
+   *Done 2026-11-18 for the standalone app (branch `polyphonic`): analysis,
+   the note layer, the Analysis card (Harmonic / Guided) and re-analysis on a
+   mode or detector change (`EditorController::reanalyzeAsync`, after a
+   confirmation when the take has edits). In the plugin the Input menu still
+   only stores the choice (M5).*
 3. **M3 — Editing, standalone (branch).** The features agreed in the
    [feature review](#feature-review), undo, `renderPolyphonicAsync`, drag
    audition, `takeBackground` on.
+   *Done 2026-11-18 for the standalone app (branch `polyphonic`):*
+   - *Engine: `NoteEdit::takeBackground` on by default (tests that measure
+     plain shares now say so); `NoteEdit` equality.*
+   - *Rendering: `EditorController::renderPolyphonicAsync` (one at a time,
+     cancel and re-run with the newest edits), reached through
+     `resynthesizeIncremental()`, so commits, undo and redo all render; the
+     result plays in stereo (`AudioEngine` now plays two channels when the
+     waveform has them).*
+   - *Editing: `PolyphonicNoteLayer` draws notes where their edits put them
+     (muted ones dashed) and takes the section 5 gestures; drag snap is
+     relative and on by default (`snapToSemitonesPolyphonic`, saved), Alt
+     inverts it and gives cents; double-click tunes a note to its Double
+     Click Snap target; Delete toggles mute; right-click offers Restore
+     Original. One `PolyphonicEditAction` per gesture.*
+   - *Live audition: the dragged notes through `renderNotes`, newest request
+     wins.*
+   - *MIDI export and Drag to DAW: the edited notes, velocity from level
+     (`PolyphonicMidi.h`). Key detection from the take's notes.*
+   - *Added while testing: Note / Cent / Level boxes in the main toolbar
+     (in sync with the notes both ways, render on release); group stretch;
+     lengthening past the end of the recording (the take grows); deleted
+     notes read-only; Live Audition on by default for polyphonic takes and
+     sounding on press; the Polyphonic Lab removed.*
+   - *Not yet: saving (M4), the plugin (M5).*
 4. **M4 — Saving (branch).** Format 6, notes + edits, background mask rebuild,
    load tests.
 5. **M5 — Plugin (branch → master).** Track-level mode (pre-pass that
@@ -293,7 +330,7 @@ feature is reviewed one by one; the "Proposal" column is a starting point,
 | 6 | Pitch Drawing tool (3) | draw a new pitch curve | drop for now (`NoteEdit::pitchCurve` exists for later) | **Vocal only** (see #4); not in the first release for polyphonic. The engine supports per-frame curves (`NoteEdit::pitchCurve`: phase-continuous, follows stretch, tested); the missing part is the UI for drawing on overlapping notes. |
 | 7 | Timing tool (4) | drag the boundary between neighbouring notes: one gets longer, the next shorter | — | **Vocal only** (see #4). Polyphonic timing and stretching work as in the Polyphonic Lab: drag a note to move it, drag either end to stretch it. |
 | 8 | Fine Pitch handle (cents) | detune a note | — | **No handles on polyphonic notes.** Cents come from Alt-dragging the note, as in the Lab. |
-| 9 | Amplitude handle | note level | — | **No handle; a Level (dB) field in the parameters panel's Note Info section**, applied to every selected note (`gainDb`). The Lab never exposed level. |
+| 9 | Amplitude handle | note level | — | **No handle; a Level (dB) field**, applied to every selected note (`gainDb`). It sits in the main toolbar's centre beside Note and Cent boxes (polyphonic takes only; section 5); one undo step per drag or typed value. The Lab never exposed level. |
 | 10 | Pitch Drift, Left/Right Slope, Pitch Modulation handles | reshape the pitch curve | drop for now (could map to `pitchCurve` later) | **No handles on polyphonic notes**; each would generate a `pitchCurve` if pitch-curve editing comes later (#6). |
 | 11 | Formant Shift handle, Formant parameter | voice timbre | drop: instrument partials are not formants | **Dropped** (vocal-only; no handles on polyphonic notes). |
 | 12 | Sibilant Balance, breath notes, Show Breaths & Sibilance | consonants and breaths | drop | **Dropped** (vocal-only; no handles on polyphonic notes). |

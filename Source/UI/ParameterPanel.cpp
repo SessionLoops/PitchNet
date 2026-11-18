@@ -349,6 +349,13 @@ ParameterPanel::ParameterPanel()
         radio->setClickingTogglesState(true);
         radio->addListener(this);
     }
+    // Shown instead of the engine radios for polyphonic takes.
+    for (auto* radio : { &harmonicDetectorToggle, &guidedDetectorToggle })
+    {
+        addChildComponent(radio);
+        radio->setClickingTogglesState(true);
+        radio->addListener(this);
+    }
 
     // The button text stays plain language; the algorithm names live here, so
     // they are discoverable without putting "PC-NSF-HiFiGAN" in a 55px label.
@@ -370,6 +377,7 @@ ParameterPanel::ParameterPanel()
     analysisModeLabel.setFont(AppFont::getFont(15.0f));
     addAndMakeVisible(analysisModeButton);
     analysisModeButton.addListener(this);
+
 
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel, &brightnessLabel })
@@ -604,21 +612,26 @@ void ParameterPanel::resized()
     const auto engineFont = AppFont::getFont(15.0f);
     constexpr int radioInset = 30; // circle plus gap, as paintButton trims
 
-    const int vocoderTextWidth = juce::GlyphArrangement::getStringWidthInt(
-        engineFont, vocoderEngineToggle.getButtonText());
-    const int psolaTextWidth = juce::GlyphArrangement::getStringWidthInt(
-        engineFont, psolaEngineToggle.getButtonText());
-    const int totalTextWidth = juce::jmax(1, vocoderTextWidth + psolaTextWidth);
+    const auto layOutRadioPair = [&](RadioButton& first, RadioButton& second)
+    {
+        auto row = engineRow;
+        const int firstTextWidth =
+            juce::GlyphArrangement::getStringWidthInt(engineFont, first.getButtonText());
+        const int secondTextWidth =
+            juce::GlyphArrangement::getStringWidthInt(engineFont, second.getButtonText());
+        const int totalTextWidth = juce::jmax(1, firstTextWidth + secondTextWidth);
 
-    const int sharedTextWidth =
-        juce::jmax(0, engineRow.getWidth() - columnGap - 2 * radioInset);
-    const int vocoderWidth =
-        radioInset + (sharedTextWidth * vocoderTextWidth) / totalTextWidth;
+        const int sharedTextWidth =
+            juce::jmax(0, row.getWidth() - columnGap - 2 * radioInset);
+        const int firstWidth =
+            radioInset + (sharedTextWidth * firstTextWidth) / totalTextWidth;
 
-    auto vocoderArea = engineRow.removeFromLeft(vocoderWidth);
-    engineRow.removeFromLeft(columnGap);
-    vocoderEngineToggle.setBounds(vocoderArea);
-    psolaEngineToggle.setBounds(engineRow);
+        first.setBounds(row.removeFromLeft(firstWidth));
+        row.removeFromLeft(columnGap);
+        second.setBounds(row);
+    };
+    layOutRadioPair(vocoderEngineToggle, psolaEngineToggle);
+    layOutRadioPair(harmonicDetectorToggle, guidedDetectorToggle);
 
     bounds.removeFromTop(rowGap + 1);
     {
@@ -879,6 +892,22 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         return;
     }
 
+    if (button == &harmonicDetectorToggle || button == &guidedDetectorToggle)
+    {
+        if (project == nullptr)
+            return;
+        auto next = project->getAnalysisMode();
+        const auto picked = button == &guidedDetectorToggle ? PolyphonicDetector::Guided
+                                                            : PolyphonicDetector::Harmonic;
+        // Clicking the active one would leave the group empty; put it back.
+        refreshAnalysisCard();
+        if (picked == next.detector)
+            return;
+        next.detector = picked;
+        requestAnalysisMode(next);
+        return;
+    }
+
     if (button == &vocoderEngineToggle || button == &psolaEngineToggle)
     {
         auto picked = synthesisEngine;
@@ -942,6 +971,7 @@ void ParameterPanel::setProject(Project* proj)
 {
     project = proj;
     refreshAnalysisModeRow();
+    refreshAnalysisCard();
     refreshMidiReference();
     updateGlobalSliders();
     updateFromNote();
@@ -956,7 +986,12 @@ void ParameterPanel::refreshLocalisedText()
 
     pitchSectionLabel.setText(TR("panel.pitch"), juce::dontSendNotification);
     timeSectionLabel.setText(TR("panel.time"), juce::dontSendNotification);
-    synthesisSectionLabel.setText(TR("panel.rendering"), juce::dontSendNotification);
+    synthesisSectionLabel.setText(TR(showsAnalysisCard ? "panel.analysis" : "panel.rendering"),
+                                  juce::dontSendNotification);
+    harmonicDetectorToggle.setButtonText(TR("param.detector_harmonic"));
+    guidedDetectorToggle.setButtonText(TR("param.detector_guided"));
+    harmonicDetectorToggle.setTooltip(TR("tooltip.detector_harmonic"));
+    guidedDetectorToggle.setTooltip(TR("tooltip.detector_guided"));
     uiSectionLabel.setText(TR("panel.ui"), juce::dontSendNotification);
     brightnessLabel.setText(TR("param.brightness"), juce::dontSendNotification);
     brightnessSlider.setName(TR("param.brightness"));
@@ -1206,8 +1241,10 @@ void ParameterPanel::setSelectedNote(Note* note)
 
 void ParameterPanel::updateFromNote()
 {
+    // A polyphonic take exports its own notes (MainComponent::midiExportNotes).
     midiDragButton.setEnabled(project != nullptr &&
-                              MidiExporter::hasExportableNotes(project->getNotes()));
+                              (project->isPolyphonic() ||
+                               MidiExporter::hasExportableNotes(project->getNotes())));
 }
 
 void ParameterPanel::updateGlobalSliders()
@@ -1406,18 +1443,55 @@ void ParameterPanel::showAnalysisModeMenu()
             {
                 return;
             }
-            // M2: a changed mode re-analyses the take (edits discarded after a
-            // confirmation). Until then only the stored mode changes.
-            safeThis->project->setAnalysisMode(next);
-            safeThis->refreshAnalysisModeRow();
+            safeThis->requestAnalysisMode(next);
         });
 }
+
+void ParameterPanel::requestAnalysisMode(const AnalysisModeState& next)
+{
+    if (project == nullptr)
+        return;
+    if (onAnalysisModeChangeRequested)
+    {
+        onAnalysisModeChangeRequested(next);
+        return;
+    }
+    project->setAnalysisMode(next);
+    refreshAnalysisModeRow();
+    refreshAnalysisCard();
+}
+
+void ParameterPanel::refreshAnalysisCard()
+{
+    const bool polyphonic = project != nullptr && project->isPolyphonic();
+    const auto detector = project != nullptr ? project->getAnalysisMode().detector
+                                             : PolyphonicDetector::Harmonic;
+    harmonicDetectorToggle.setToggleState(detector == PolyphonicDetector::Harmonic,
+                                          juce::dontSendNotification);
+    guidedDetectorToggle.setToggleState(detector == PolyphonicDetector::Guided,
+                                        juce::dontSendNotification);
+    if (polyphonic == showsAnalysisCard)
+        return;
+
+    showsAnalysisCard = polyphonic;
+    vocoderEngineToggle.setVisible(!polyphonic);
+    psolaEngineToggle.setVisible(!polyphonic);
+    harmonicDetectorToggle.setVisible(polyphonic);
+    guidedDetectorToggle.setVisible(polyphonic);
+    synthesisSectionLabel.setText(TR(polyphonic ? "panel.analysis" : "panel.rendering"),
+                                  juce::dontSendNotification);
+    // The device row belongs to AI Resynthesis, which polyphonic takes do not use.
+    refreshRenderDeviceRow();
+    repaint();
+}
+
 
 void ParameterPanel::refreshRenderDeviceRow()
 {
     // Only PSOLA's counterpart runs a model, and a single-device machine has
     // nothing to pick between, so anything else leaves the row out entirely.
-    const bool shouldShow = synthesisEngine == SynthesisEngineType::Vocoder &&
+    const bool shouldShow = !showsAnalysisCard &&
+                            synthesisEngine == SynthesisEngineType::Vocoder &&
                             renderDeviceNames.size() > 1;
 
     renderDeviceButton.setButtonText(

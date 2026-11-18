@@ -38,6 +38,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(stopButton);
     addAndMakeVisible(loopButton);
     addAndMakeVisible(selectModeButton);
+    addChildComponent(selectionBar);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(pitchDrawingModeButton);
     addAndMakeVisible(timingModeButton);
@@ -206,8 +207,9 @@ void ToolbarComponent::paint(juce::Graphics &g)
         g.fillRoundedRectangle(capsule, 8.0f);
     }
 
-    // Edit tools form their own capsule, matching the transport group.
-    if (!toolContainerBounds.isEmpty() && editToolsVisible)
+    // Edit tools (or, for a polyphonic take, the selection bar) form their own
+    // capsule, matching the transport group.
+    if (!toolContainerBounds.isEmpty())
     {
         g.setColour(juce::Colour(0xFF191818u));
         g.fillRoundedRectangle(toolContainerBounds.toFloat(), 8.0f);
@@ -288,11 +290,15 @@ void ToolbarComponent::resized()
                                     : 0);
     const int editToolGroupWidth = editToolSlotSize * 4 + editToolGap * 3
                                    + editToolPad * 2;
-    const int editToolGroupX = fullToolbarBounds.getCentreX()
-                               - editToolGroupWidth / 2;
+    // A polyphonic take shows its selection bar in the same centred capsule.
+    const int groupWidth = editToolsVisible ? editToolGroupWidth
+                                            : selectionBar.getPreferredWidth();
+    const int editToolGroupX = fullToolbarBounds.getCentreX() - groupWidth / 2;
     const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
     toolContainerBounds = {editToolGroupX, editToolGroupY,
-                           editToolGroupWidth, editToolGroupHeight};
+                           groupWidth, editToolGroupHeight};
+    selectionBar.setVisible(!editToolsVisible);
+    selectionBar.setBounds(toolContainerBounds);
     int editToolX = toolContainerBounds.getX() + editToolPad;
 
     selectModeButton.setVisible(editToolsVisible);
@@ -413,6 +419,7 @@ void ToolbarComponent::refreshLocalisedText()
 #endif
 
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
+    selectionBar.refreshLocalisedText();
 }
 
 void ToolbarComponent::buttonClicked(juce::Button *button)
