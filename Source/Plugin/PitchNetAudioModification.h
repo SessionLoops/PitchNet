@@ -187,25 +187,8 @@ public:
   // by the modification.
 
   //============================================================================
-  // Persistence. Stream this modification's processed audio.
-  bool writeProcessedAudioToStream(juce::OutputStream &output) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
-    if (processedAudio == nullptr || !processedAudio->hasAudio())
-      return false;
-
-    const auto &data = *processedAudio;
-    output.writeDouble(data.sampleRate);
-    output.writeInt64(data.startSampleInModification);
-    output.writeInt(data.audio.getNumChannels());
-    output.writeInt(data.audio.getNumSamples());
-    for (int ch = 0; ch < data.audio.getNumChannels(); ++ch)
-      if (!output.write(data.audio.getReadPointer(ch),
-                        static_cast<size_t>(data.audio.getNumSamples()) *
-                            sizeof(float)))
-        return false;
-    return true;
-  }
-
+  // Persistence. Processed audio is no longer saved (it is re-rendered after
+  // load); these read it from archives written before that change.
   bool readProcessedAudioFromStream(juce::InputStream &input) {
     const auto sampleRateIn = input.readDouble();
     const auto startSampleIn = input.readInt64();

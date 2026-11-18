@@ -77,8 +77,8 @@ Project makeProject(double timelineOffsetSeconds) {
   return project;
 }
 
-void expectNear(float a, float b, const char *what) {
-  if (std::abs(a - b) > 1.0e-4f) {
+void expectNear(float a, float b, const char *what, float tolerance = 1.0e-4f) {
+  if (std::abs(a - b) > tolerance) {
     std::cerr << "mismatch in " << what << ": " << a << " vs " << b << "\n";
     CHECK(false);
   }
@@ -104,10 +104,18 @@ void roundTripRebuildsMel(double timelineOffsetSeconds) {
   const size_t curveBytes = 7 * (size_t)kFrames * sizeof(float);
   const size_t maskBytes = 2 * (size_t)kFrames;
   const size_t noteBytes = 4 * 30 * sizeof(float);
-  const size_t payloadBytes =
-      waveformBytes + curveBytes + maskBytes + noteBytes;
+  const size_t payloadBytes = curveBytes + maskBytes + noteBytes;
   CHECK(archive.getSize() >= payloadBytes);
-  CHECK(archive.getSize() < payloadBytes + melBytes);
+
+  // The host-backed archive is the same minus both waveforms, so it bounds the
+  // non-audio payload (no room for a mel) and the difference is the encoded
+  // audio, which FLAC keeps well under its raw float32 size.
+  juce::MemoryBlock sourceless;
+  CHECK(ProjectSerializer::toBinaryArchive(
+      source, sourceless, ProjectSerializer::BinaryArchiveMode::hostBackedARA));
+  CHECK(sourceless.getSize() < payloadBytes + melBytes);
+  CHECK(archive.getSize() > sourceless.getSize());
+  CHECK(archive.getSize() - sourceless.getSize() < waveformBytes / 2);
 
   Project restored;
   CHECK(ProjectSerializer::fromBinaryArchive(restored, archive.getData(),
@@ -134,7 +142,11 @@ void roundTripRebuildsMel(double timelineOffsetSeconds) {
   for (size_t f = 0; f < a.melSpectrogram.size(); ++f) {
     CHECK(b.melSpectrogram[f].size() == (size_t)NUM_MELS);
     for (size_t bin = 0; bin < a.melSpectrogram[f].size(); ++bin)
-      expectNear(b.melSpectrogram[f][bin], a.melSpectrogram[f][bin], "mel");
+      // Rebuilt from 24-bit FLAC audio, not the float32 original: bins near
+      // the 24-bit noise floor (below ~-100 dB, log value -11.5) may drift.
+      if (a.melSpectrogram[f][bin] > -11.5f)
+        expectNear(b.melSpectrogram[f][bin], a.melSpectrogram[f][bin], "mel",
+                   1.0e-2f);
   }
 
   CHECK(restored.getNotes().size() == 1);

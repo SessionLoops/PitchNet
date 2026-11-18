@@ -467,6 +467,8 @@ private:
   void restoreAraRegionProjectOrPend(const juce::String &regionKey,
                                      const void *data, size_t sizeInBytes);
   void flushPendingAraRegionProjects();
+  void renderRestoredModifications(juce::ARAAudioSource &source);
+  void renderRestoredModifications();
   void snapshotRegionState(juce::ARAPlaybackRegion &region);
   PitchNetAudioProcessor *getRegionCanvasProcessor() const;
 
@@ -503,6 +505,10 @@ private:
     juce::MemoryBlock data;
   };
   std::vector<PendingAraRegionProject> pendingRestoredRegionProjects;
+  // Live modification keys restored from a project without their rendered
+  // audio; re-rendered once the processor exists and source samples are
+  // readable.
+  std::set<juce::String> modificationsAwaitingRender;
   std::shared_ptr<AnalysisState> analysisState =
       std::make_shared<AnalysisState>();
   std::thread analysisThread;

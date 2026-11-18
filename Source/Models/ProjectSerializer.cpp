@@ -12,7 +12,11 @@
 namespace
 {
 constexpr std::uint32_t kProjectArchiveMagic = 0x504E4152u; // PNAR
-constexpr int kProjectArchiveVersion = 10;
+constexpr int kProjectArchiveVersion = 11;
+// v11+: each stored audio buffer carries an encoding byte (raw float or FLAC).
+constexpr int kFirstEncodedAudioArchiveVersion = 11;
+constexpr int kAudioEncodingRawFloat = 0;
+constexpr int kAudioEncodingFlac24 = 1;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
@@ -115,6 +119,99 @@ bool readAudioBuffer(juce::InputStream& in, juce::AudioBuffer<float>& buffer)
             in.read(buffer.getWritePointer(ch), static_cast<int>(bytes)) !=
                 static_cast<int>(bytes))
             return false;
+    return true;
+}
+
+// Self-contained archives end up base64'd inside DAW projects, so audio is
+// stored as 24-bit FLAC (lossless at that depth, roughly half the size of
+// float32). FLAC is integer-only: buffers peaking above 0 dBFS are scaled down
+// before encoding and the scale is stored to undo it. Falls back to raw float
+// if the encoder refuses the buffer (e.g. too many channels).
+bool writeEncodedAudioBuffer(juce::OutputStream& out,
+                             const juce::AudioBuffer<float>& buffer,
+                             double sampleRate)
+{
+    const int channels = buffer.getNumChannels();
+    const int samples = buffer.getNumSamples();
+
+    float peak = 0.0f;
+    for (int ch = 0; ch < channels; ++ch)
+        peak = std::max(peak, buffer.getMagnitude(ch, 0, samples));
+    const float scale = peak > 1.0f && std::isfinite(peak) ? peak : 1.0f;
+
+    juce::MemoryBlock flac;
+    if (channels > 0 && samples > 0 && std::isfinite(peak)) {
+        juce::FlacAudioFormat format;
+        std::unique_ptr<juce::OutputStream> stream =
+            std::make_unique<juce::MemoryOutputStream>(flac, false);
+        auto writer = format.createWriterFor(
+            stream, juce::AudioFormatWriterOptions{}
+                        .withSampleRate(sampleRate > 0.0 ? sampleRate : 44100.0)
+                        .withNumChannels(channels)
+                        .withBitsPerSample(24));
+        bool ok = writer != nullptr;
+        if (ok) {
+            if (scale > 1.0f) {
+                juce::AudioBuffer<float> scaled;
+                scaled.makeCopyOf(buffer);
+                scaled.applyGain(1.0f / scale);
+                ok = writer->writeFromAudioSampleBuffer(scaled, 0, samples);
+            } else {
+                ok = writer->writeFromAudioSampleBuffer(buffer, 0, samples);
+            }
+        }
+        writer.reset(); // finalises the FLAC stream into `flac`
+        if (!ok)
+            flac.reset();
+    }
+
+    if (flac.getSize() == 0 && channels > 0 && samples > 0)
+        return out.writeByte(kAudioEncodingRawFloat) &&
+               writeAudioBuffer(out, buffer);
+
+    return out.writeByte(kAudioEncodingFlac24) && out.writeInt(channels) &&
+           out.writeInt(samples) && out.writeFloat(scale) &&
+           out.writeInt64(static_cast<juce::int64>(flac.getSize())) &&
+           (flac.getSize() == 0 || out.write(flac.getData(), flac.getSize()));
+}
+
+bool readEncodedAudioBuffer(juce::InputStream& in,
+                            juce::AudioBuffer<float>& buffer)
+{
+    const int encoding = in.readByte();
+    if (encoding == kAudioEncodingRawFloat)
+        return readAudioBuffer(in, buffer);
+    if (encoding != kAudioEncodingFlac24)
+        return false;
+
+    const int channels = in.readInt();
+    const int samples = in.readInt();
+    const float scale = in.readFloat();
+    const auto bytes = in.readInt64();
+    if (channels < 0 || samples < 0 || !std::isfinite(scale) || scale <= 0.0f ||
+        bytes < 0 || bytes > std::numeric_limits<int>::max())
+        return false;
+
+    buffer.setSize(channels, samples, false, false, true);
+    buffer.clear();
+    if (bytes == 0)
+        return channels == 0 || samples == 0;
+
+    juce::MemoryBlock flac(static_cast<size_t>(bytes));
+    if (in.read(flac.getData(), static_cast<int>(bytes)) != bytes)
+        return false;
+
+    juce::FlacAudioFormat format;
+    std::unique_ptr<juce::AudioFormatReader> reader(format.createReaderFor(
+        new juce::MemoryInputStream(flac, false), true));
+    if (reader == nullptr ||
+        static_cast<int>(reader->numChannels) != channels ||
+        reader->lengthInSamples != samples ||
+        !reader->read(&buffer, 0, samples, 0, true, true))
+        return false;
+
+    if (scale != 1.0f)
+        buffer.applyGain(scale);
     return true;
 }
 
@@ -545,9 +642,11 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
         !out.writeInt(archiveFlags) ||
         !writeString(out, metadataJson) ||
         (includeSourceDerivedData &&
-         !writeAudioBuffer(out, audioData.waveform)) ||
+         !writeEncodedAudioBuffer(out, audioData.waveform,
+                                  audioData.sampleRate)) ||
         (includeSourceDerivedData &&
-         !writeAudioBuffer(out, audioData.originalWaveform)) ||
+         !writeEncodedAudioBuffer(out, audioData.originalWaveform,
+                                  audioData.sampleRate)) ||
         !writeFloatVector(out, audioData.f0) ||
         !writeFloatVector(out, audioData.rawF0) ||
         !writeFloatVector(out, audioData.cleanedF0) ||
@@ -629,14 +728,17 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
         return false;
 
     auto& audioData = project.getAudioData();
+    const auto readBuffer = archiveVersion >= kFirstEncodedAudioArchiveVersion
+                                ? readEncodedAudioBuffer
+                                : readAudioBuffer;
     if (hasRenderedWaveform) {
-        if (!readAudioBuffer(in, audioData.waveform))
+        if (!readBuffer(in, audioData.waveform))
             return false;
     } else {
         audioData.waveform.setSize(0, 0);
     }
     if (hasOriginalWaveform) {
-        if (!readAudioBuffer(in, audioData.originalWaveform))
+        if (!readBuffer(in, audioData.originalWaveform))
             return false;
     } else {
         audioData.originalWaveform.setSize(0, 0);

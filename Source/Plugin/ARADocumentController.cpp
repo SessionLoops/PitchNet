@@ -1330,6 +1330,77 @@ void PitchNetDocumentController::flushPendingAraRegionProjects() {
   pendingRestoredRegionProjects.clear();
 }
 
+void PitchNetDocumentController::renderRestoredModifications() {
+  if (modificationsAwaitingRender.empty())
+    return;
+  if (auto *document = getDocument<juce::ARADocument>())
+    for (auto *source : document->getAudioSources<juce::ARAAudioSource>())
+      if (source != nullptr)
+        renderRestoredModifications(*source);
+}
+
+void PitchNetDocumentController::renderRestoredModifications(
+    juce::ARAAudioSource &source) {
+  auto *processor = getRegionCanvasProcessor();
+  const auto sampleCount = source.getSampleCount();
+  if (modificationsAwaitingRender.empty() || processor == nullptr ||
+      hostEditing || !source.isSampleAccessEnabled() ||
+      source.getSampleRate() <= 0.0 || sampleCount <= 0 ||
+      sampleCount > std::numeric_limits<int>::max())
+    return; // Retried when the processor binds, editing ends or samples enable.
+
+  juce::AudioBuffer<float> sourceAudio;
+  for (auto *modification :
+       source.getAudioModifications<PitchNetAudioModification>()) {
+    if (modification == nullptr)
+      continue;
+    const auto key = pitchnetModificationKey(*modification);
+    if (modificationsAwaitingRender.count(key) == 0)
+      continue;
+    if (modification->hasProcessedAudio()) {
+      modificationsAwaitingRender.erase(key); // An edit already re-rendered it.
+      continue;
+    }
+
+    if (sourceAudio.getNumSamples() == 0) {
+      const int numSamples = static_cast<int>(sampleCount);
+      sourceAudio.setSize(1, numSamples);
+      sourceAudio.clear();
+      juce::ARAAudioSourceReader reader(&source);
+      if (!reader.read(&sourceAudio, 0, numSamples, 0, true, false))
+        return; // Keep the keys; the next sample-access enable retries.
+    }
+    modificationsAwaitingRender.erase(key);
+
+    if (!processor->hasAraRegionProject(key)) {
+      juce::MemoryBlock archive;
+      if (!modification->copyProjectArchive(archive))
+        continue;
+      processor->restoreAraRegionProject(key, archive.getData(),
+                                         archive.getSize());
+    }
+    if (!processor->hydrateAraRegionProject(key, sourceAudio,
+                                            source.getSampleRate()))
+      continue;
+
+    std::uint64_t revision = 0;
+    bool fromCanvas = false;
+    const auto *project =
+        processor->getAraProjectForPreview(modification, revision, fromCanvas);
+    if (project == nullptr ||
+        !PitchNetAudioProcessor::projectHasRegionEdits(*project))
+      continue;
+
+    // Hydration left the unedited source as the waveform; mark every frame
+    // dirty so the incremental synth renders the whole take.
+    Project toRender(*project);
+    toRender.setF0DirtyRange(
+        0, static_cast<int>(toRender.getAudioData().f0.size()));
+    ARA_DIAG("rerenderRestored key=" + key);
+    processor->requestPluginProjectRender(toRender, modification);
+  }
+}
+
 RealtimePitchProcessor *PitchNetDocumentController::getRealtimeProcessor() {
   // Prefer the live (editor/processor) realtime processor, but ONLY when it is
   // actually ready. Headless — before any editor has bound its project — the
@@ -1358,6 +1429,7 @@ void PitchNetDocumentController::setOwningProcessor(
   owningProcessor = processor;
   ensureHeadlessPlaybackBinding();
   flushPendingAraRegionProjects();
+  renderRestoredModifications();
 }
 
 void PitchNetDocumentController::releaseOwningProcessor(
@@ -1702,6 +1774,8 @@ void PitchNetDocumentController::didEnableAudioSourceSamplesAccess(
   currentAudioSource = audioSource;
   currentDocument = document;
 
+  renderRestoredModifications(*audioSource);
+
   if (currentPlaybackRegion) {
     if (auto *modification = currentPlaybackRegion->getAudioModification();
         modification != nullptr &&
@@ -1871,6 +1945,8 @@ void PitchNetDocumentController::didEndEditing(juce::ARADocument *document) {
   deferredRegionUpdates.clear();
   for (auto *region : updates)
     didUpdatePlaybackRegionProperties(region);
+
+  renderRestoredModifications();
 
   if (auto *processor = getRegionCanvasProcessor();
       processor != nullptr && processor->getMainComponent() != nullptr &&
@@ -2358,6 +2434,7 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
       // Read in stream order; restore when the region is matched, otherwise
       // consume the bytes so the stream stays aligned.
       const int numRegions = input.readInt();
+      bool restoredProject = false;
       for (int r = 0; r < numRegions; ++r) {
         const int regionIndex = input.readInt();
         const auto jsonSize = input.readInt64();
@@ -2390,8 +2467,10 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
           restoreAraRegionProjectOrPend(liveKey, json.getData(),
                                         json.getSize());
         if (payloadIsUsable && pitchModification != nullptr &&
-            json.getSize() > 0)
+            json.getSize() > 0) {
           pitchModification->setProjectArchive(json.getData(), json.getSize());
+          restoredProject = true;
+        }
 
         if (hasAudio != 0) {
           if (payloadIsUsable && pitchModification != nullptr) {
@@ -2406,6 +2485,10 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
 
       if (!audioModification)
         continue;
+
+      if (restoredProject && !pitchModification->hasProcessedAudio())
+        modificationsAwaitingRender.insert(
+            pitchnetModificationKey(*audioModification));
 
       audioModification->notifyContentChanged(
           juce::ARAContentUpdateScopes::samplesAreAffected(), false);
@@ -2549,15 +2632,11 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
               !output.write(entry.json.getData(), entry.json.getSize()))
             return false;
 
-          // No key to disagree about: the predicate and the writer read the
-          // one slot this modification owns, so a "yes" here is always
-          // writable. If they could disagree, the failed write would abort the
-          // whole archive.
-          const bool hasAudio = pitchModification != nullptr &&
-                                pitchModification->hasProcessedAudio();
-          if (!output.writeInt(hasAudio ? 1 : 0))
-            return false;
-          if (hasAudio && !pitchModification->writeProcessedAudioToStream(output))
+          // Rendered audio is not persisted: as raw float32 it dominated the
+          // DAW project size (~60MB per edited 3 minute stereo take). It is
+          // rebuilt from the host's source plus the saved edits after load
+          // (renderRestoredModifications). Old archives with audio still load.
+          if (!output.writeInt(0))
             return false;
         }
       }
