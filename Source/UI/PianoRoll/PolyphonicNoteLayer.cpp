@@ -20,8 +20,11 @@ constexpr float kSelectedOutlineAlpha = 0.85f;
 constexpr float kMutedOutlineAlpha = 0.45f;
 constexpr float kMutedOutlineWidth = 1.2f;
 
-// Sideways wobble while dragging a note's pitch is ignored up to this far.
-constexpr float kTimeEngagePixels = 8.0f;
+// A note drag locks to the direction of its first few pixels: mostly vertical
+// changes only the pitch, mostly horizontal only the time. Moving clearly the
+// other way too (beyond kCrossPixels) adds that axis for the rest of the drag.
+constexpr float kDecidePixels = 6.0f;
+constexpr float kCrossPixels = 40.0f;
 // A note end grabs the mouse this far outside the note, and up to this far
 // inside it (less for short notes, which keep their middle for moving).
 constexpr float kEdgeOutsidePixels = 5.0f;
@@ -477,6 +480,7 @@ void PolyphonicNoteLayer::mouseDown(float worldX, float worldY,
   dragStart = {worldX, worldY};
   dragMoved = false;
   timeEngaged = false;
+  pitchEngaged = false;
   before = project->getPolyphonicEdits();
   working = before;
 
@@ -596,14 +600,26 @@ void PolyphonicNoteLayer::dragNotes(float worldX, float worldY,
   const float pressedSemitones = pressedIt != before.end() ? pressedIt->second.semitones : 0.0f;
   const auto *pressedShape = shapeFor(pressedNote);
   const float anchor = (pressedShape ? pressedShape->medianMidi : 0.0f) + pressedSemitones;
-  float semis = 0.0f;
-  if (dragSnapEnabled != mods.isAltDown())
-    semis = snapOffset ? snapOffset(raw, anchor) : std::round(raw);
-  else
-    semis = std::round(raw * 100.0f) / 100.0f;
+  // Direction lock (see kDecidePixels): until the drag has a direction
+  // nothing changes; then only its axis follows the mouse, until the other
+  // axis is clearly moved as well.
+  const float adx = std::abs(dx), ady = std::abs(dy);
+  if (!pitchEngaged && !timeEngaged && std::max(adx, ady) > kDecidePixels)
+  {
+    pitchEngaged = ady >= adx;
+    timeEngaged = adx > ady;
+  }
+  pitchEngaged = pitchEngaged || (timeEngaged && ady > kCrossPixels);
+  timeEngaged = timeEngaged || (pitchEngaged && adx > kCrossPixels);
 
-  if (!timeEngaged && std::abs(dx) > kTimeEngagePixels)
-    timeEngaged = true;
+  float semis = 0.0f;
+  if (pitchEngaged)
+  {
+    if (dragSnapEnabled != mods.isAltDown())
+      semis = snapOffset ? snapOffset(raw, anchor) : std::round(raw);
+    else
+      semis = std::round(raw * 100.0f) / 100.0f;
+  }
   const double dt = timeEngaged ? dx / coordMapper->getPixelsPerSecond() : 0.0;
 
   bool changed = false;

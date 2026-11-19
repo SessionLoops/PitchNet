@@ -187,7 +187,8 @@ private:
   Drag drag = Drag::none;
   juce::Point<float> dragStart;
   bool dragMoved = false;
-  bool timeEngaged = false;
+  bool timeEngaged = false;  // the drag moves the notes in time
+  bool pitchEngaged = false; // the drag changes their pitch
   int pressedNote = -1;
   int pendingSingle = -1; // a click on a selected note without a drag selects just it
   int stretchNote = -1;               // the note whose end was grabbed

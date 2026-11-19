@@ -177,7 +177,7 @@ interaction, as in the Lab's `NoteCanvas` today:
 
 | Gesture | Edit |
 |---|---|
-| drag a note (snapped to semitones; Alt: cents) | `semitones`; once the drag goes sideways, also `timeOffsetSeconds` (small sideways wobble is ignored) |
+| drag a note (snapped to semitones; Alt: cents) | locked to the direction of its first 6 px: mostly vertical changes `semitones` only, mostly horizontal `timeOffsetSeconds` only; moving more than 40 px the other way adds that axis for the rest of the drag |
 | drag the right end | `stretch` (drawn with `stretchMap()`). It may pass the end of the recording: the render pads the take with silence to fit, so the take grows (and shrinks back on undo); the canvas has one bar of room past the end |
 | drag the left end | `stretch` + `timeOffsetSeconds`, end stays put. On a selected note either end stretches the whole selection: every note's grabbed end moves by the same time, within its own limits (deleted notes excluded) |
 | click / Shift-click / drag on empty space | select / add to selection / band select; overlapping notes stay individually selectable (Cmd-drag is the canvas's zoom gesture on macOS, so Shift adds) |
