@@ -941,6 +941,48 @@ int main()
         CHECK(before < 1e-4);
     }
 
+    // ---- 18. restore(): an analysis rebuilt from its notes (a saved project) has the same masks
+    //      and renders the same as the analysis it came from ----
+    {
+        std::vector<float> x(static_cast<size_t>(2.5 * kRate), 0.0f);
+        addTone(x, midiToHz(60), 0.2, 1.8, 0.2);
+        addTone(x, midiToHz(64), 0.2, 1.8, 0.2);
+        addTone(x, midiToHz(67), 0.9, 1.2, 0.2);
+        addTone(x, midiToHz(48), 1.3, 1.0, 0.25);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const auto R = polyphonic::restore(x.data(), static_cast<int>(x.size()), params, A.notes);
+        bool same = R.masks.size() == A.masks.size() && R.numFrames == A.numFrames && R.numBins == A.numBins;
+        size_t partials = 0;
+        for (size_t i = 0; same && i < A.masks.size(); ++i)
+        {
+            const auto& a0 = A.masks[i];
+            const auto& r0 = R.masks[i];
+            same = a0.partials.size() == r0.partials.size() && a0.weights == r0.weights;
+            for (size_t q = 0; same && q < a0.partials.size(); ++q)
+            {
+                const auto& pa = a0.partials[q];
+                const auto& pr = r0.partials[q];
+                same = pa.frame == pr.frame && pa.harmonic == pr.harmonic && pa.lo == pr.lo && pa.count == pr.count
+                       && pa.weightOffset == pr.weightOffset && pa.freqHz == pr.freqHz && pa.amplitude == pr.amplitude;
+            }
+            partials += a0.partials.size();
+        }
+        polyphonic::NoteEdit up;
+        up.semitones = 2.0f;
+        up.timeOffsetSeconds = 0.1;
+        const int moved = findNote(A, 67);
+        CHECK(moved >= 0);
+        const auto ya = polyphonic::render(A, {x}, {{moved, up}})[0];
+        const auto yr = polyphonic::render(R, {x}, {{moved, up}})[0];
+        double err = 0.0;
+        for (size_t i = 0; i < ya.size() && i < yr.size(); ++i)
+            err = std::max(err, std::fabs(static_cast<double>(ya[i]) - yr[i]));
+        std::printf("restore: %zu notes, %zu partials, masks %s, edited render max difference %.2e\n",
+                    A.notes.size(), partials, same ? "identical" : "DIFFERENT", err);
+        CHECK(same);
+        CHECK(err == 0.0);
+    }
+
     std::printf("PolyphonicTests passed\n");
     return 0;
 }

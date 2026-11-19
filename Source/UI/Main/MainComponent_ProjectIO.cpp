@@ -28,6 +28,16 @@ void MainComponent::openProjectFile(const juce::File &file) {
     return;
   }
   loadedProject->setProjectFilePath(file);
+  // A saved polyphonic take opens at once with its notes, drawn from their
+  // saved levels; its masks are rebuilt in the background
+  // (restorePolyphonicTake).
+  if (const auto pending = loadedProject->getPendingPolyphonicRestore()) {
+    const auto &audio = loadedProject->getAudioData();
+    loadedProject->setPolyphonicTake(makeRestoringTake(
+        *pending, audio.originalWaveform.getNumSamples() > 0
+                      ? audio.originalWaveform.getNumSamples()
+                      : audio.waveform.getNumSamples()));
+  }
 
   // .pitchnet files embed the rendered waveform and analysis data. Prefer this
   // self-contained state so projects reopen exactly as saved, even if the
@@ -71,6 +81,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
     repaint();
     if (isPluginMode())
       notifyProjectDataChanged();
+    // A saved polyphonic take: rebuild its analysis in the background.
+    restorePolyphonicTake();
     return;
   }
 
@@ -288,6 +300,7 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
                 safeThis->repaint();
                 safeThis->isLoadingAudio = false;
+                safeThis->restorePolyphonicTake();
                 if (safeThis->isPluginMode())
                   safeThis->notifyProjectDataChanged();
               });
@@ -498,4 +511,62 @@ void MainComponent::clearProjectForNewLoad(std::optional<MidiReference::State> r
   toolbar.setLoopEnabled(false);
   toolbar.setTransportEnabled(isPluginMode());
   pianoRoll.setCursorTime(0.0);
+}
+
+void MainComponent::restorePolyphonicTake() {
+  auto *project = getProject();
+  // Standalone only until M5 (the plugin restores through ARA).
+  const auto pending = project != nullptr ? project->getPendingPolyphonicRestore() : nullptr;
+  if (pending == nullptr || editorController == nullptr || isPluginMode())
+    return;
+
+  // Normally set when the file was read; this covers any other way in.
+  if (const auto take = project->getPolyphonicTake(); take == nullptr || !take->hasAnalysis()) {
+    const auto &audio = project->getAudioData();
+    project->setPolyphonicTake(makeRestoringTake(
+        *pending, audio.originalWaveform.getNumSamples() > 0
+                      ? audio.originalWaveform.getNumSamples()
+                      : audio.waveform.getNumSamples()));
+    pianoRoll.setProject(project);
+    pianoRollView.setProject(project);
+    parameterPanel.setProject(project);
+  }
+
+  // Nothing to show: the take is drawn and editable meanwhile and its saved
+  // (edited) audio plays; only rendering waits for the masks.
+
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  editorController->restorePolyphonicAsync(
+      [safeThis, pending](std::shared_ptr<const PolyphonicTake> restored) {
+        if (safeThis == nullptr)
+          return;
+        auto *project = safeThis->getProject();
+        // Another project (or a re-analysis) took its place meanwhile.
+        if (project == nullptr || project->getPendingPolyphonicRestore() != pending)
+          return;
+        if (restored == nullptr) {
+          // The take stays shown with its saved audio; it renders nothing
+          // until it is analysed again.
+          AppLogger::log("Polyphonic restore did not finish");
+          return;
+        }
+
+        // Into the live project, so edits made meanwhile (and their undo
+        // steps) stay; the note layer keeps its selection (same notes).
+        project->setPolyphonicTake(restored);
+        project->setPendingPolyphonicRestore(nullptr);
+        safeThis->pianoRoll.repaint();
+        safeThis->pianoRollView.refreshOverview();
+        safeThis->refreshPolyphonicSelectionBar();
+
+        // Edits render now (they waited for the masks), quietly: the saved
+        // (edited) audio already plays, this only brings it back to stereo.
+        // Without any, the take plays as itself, in stereo.
+        if (!project->getPolyphonicEdits().empty()) {
+          safeThis->renderPolyphonicEdits(false);
+        } else if (auto *engine = safeThis->editorController->getAudioEngine()) {
+          engine->loadWaveform(project->getPlaybackBuffer(),
+                               project->getAudioData().sampleRate, true);
+        }
+      });
 }

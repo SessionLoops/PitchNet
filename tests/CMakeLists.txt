@@ -14,6 +14,7 @@
 
 set(PITCHNET_TEST_SOURCES
     AnalysisModeSerializationTests.cpp
+    PolyphonicSerializationTests.cpp
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
     AraTempoMapTests.cpp

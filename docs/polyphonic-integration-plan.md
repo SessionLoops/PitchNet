@@ -303,6 +303,31 @@ checks; each milestone still ends in its own commits and tests.
    - *Not yet: saving (M4), the plugin (M5).*
 4. **M4 — Saving (branch).** Format 6, notes + edits, background mask rebuild,
    load tests.
+   *Done 2026-11-19 for the standalone app, awaiting a test in the app:*
+   - *Engine: `polyphonic::restore()` rebuilds an analysis from saved notes
+     (spectra + `buildMasks`, no detection): masks bit-identical to the
+     analysis (PolyphonicTests #18), 64% of a full analysis on 46 s of
+     Brahms (2.4 s vs 3.7 s), without Basic Pitch.*
+   - *File: `FORMAT_VERSION` 6, a `polyphonic` section (sample rate, FFT
+     size, hop, detector; the notes as a base64 binary block, exact; the
+     edits as JSON). A project read with one holds it as a pending restore
+     (`Project::getPendingPolyphonicRestore`) and its edits; saved again
+     before the restore, it is written back unchanged.*
+   - *Load: the project opens at once in the polyphonic view with a
+     restoring take (`makeRestoringTake`): the saved notes, drawn from their
+     saved levels (notes block version 2: each note's level per frame,
+     `noteLevelsFromMasks`), so it looks exactly as it will once restored; it
+     can be selected and edited and its saved (edited) audio plays. In the
+     background `EditorController::restorePolyphonicAsync` rebuilds the masks
+     from the audio file when it is there and unchanged (stereo), else from
+     the saved mono waveform, with nothing shown (rendering waits for it).
+     Rendering and Live Audition wait for it; the restored take then goes
+     into the live project (edits made meanwhile, their undo steps and the
+     selection stay) and the edits render. The restore does not mark the
+     project as changed. (Version 1 files, without levels, show thin notes
+     until restored.)*
+   - *Tests: `PolyphonicSerializationTests` (JSON, binary archive, saved
+     again before the restore, vocal project, malformed section).*
 5. **M5 — Plugin (branch → master).** Track-level mode (pre-pass that
    classifies a track's clips before analysing them, duration-weighted majority,
    sticky, track-wide override written to every clip's stored project), ARA

@@ -14,7 +14,7 @@ using namespace notecolours;
 namespace
 {
 // The selected note's outline.
-constexpr float kSelectedOutlineWidth = 1.5f;
+constexpr float kSelectedOutlineWidth = 1.0f;
 constexpr float kSelectedOutlineAlpha = 0.85f;
 // A muted note: a dashed outline, brighter when selected.
 constexpr float kMutedOutlineAlpha = 0.45f;
@@ -110,13 +110,19 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
   if (analysis == builtFor)
     return;
 
+  // A restored take replaces its restoring one with the same notes: keep the
+  // selection (and a gesture in progress). Any other new take starts afresh.
+  const bool sameNotes = builtFor && analysis && builtFor->notes.size() == analysis->notes.size();
   builtFor = analysis;
   shapes.clear();
   shapeIndex.clear();
-  selection.clear();
-  drag = Drag::none;
-  working.clear();
-  before.clear();
+  if (!sameNotes)
+  {
+    selection.clear();
+    drag = Drag::none;
+    working.clear();
+    before.clear();
+  }
   if (!analysis)
     return;
 
@@ -124,9 +130,10 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
   std::vector<double> total(static_cast<size_t>(std::max(0, numFrames)), 0.0);
   shapeIndex.assign(analysis->notes.size(), -1);
 
-  // Each active note's own level per frame: the root of its partials' summed
-  // squared model amplitudes. Masks start a few frames before the note.
-  for (size_t i = 0; i < analysis->notes.size() && i < analysis->masks.size(); ++i)
+  // Each active note's own level per frame (noteLevels: from its masks, or
+  // the saved levels while an opened take is being restored).
+  const auto levels = noteLevels(*take);
+  for (size_t i = 0; i < analysis->notes.size(); ++i)
   {
     const auto &note = analysis->notes[i];
     if (!note.active)
@@ -136,21 +143,15 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
     shape.medianMidi = note.medianMidi();
     shape.firstFrame = note.startFrame;
     shape.level.assign(static_cast<size_t>(std::max(1, note.numFrames())), 0.0f);
-    std::vector<double> energy(shape.level.size(), 0.0);
-    for (const auto &partial : analysis->masks[i].partials)
+    if (i < levels.size())
+      std::copy_n(levels[i].begin(), std::min(levels[i].size(), shape.level.size()),
+                  shape.level.begin());
+    for (size_t k = 0; k < shape.level.size(); ++k)
     {
-      const int k = partial.frame - shape.firstFrame;
-      if (k < 0 || k >= static_cast<int>(energy.size()))
-        continue;
-      energy[static_cast<size_t>(k)] +=
-          static_cast<double>(partial.amplitude) * partial.amplitude;
-    }
-    for (size_t k = 0; k < energy.size(); ++k)
-    {
-      shape.level[k] = static_cast<float>(std::sqrt(energy[k]));
       const int f = shape.firstFrame + static_cast<int>(k);
       if (f >= 0 && f < numFrames)
-        total[static_cast<size_t>(f)] += energy[k];
+        total[static_cast<size_t>(f)] +=
+            static_cast<double>(shape.level[k]) * shape.level[k];
     }
     shapeIndex[i] = static_cast<int>(shapes.size());
     shapes.push_back(std::move(shape));
@@ -765,7 +766,20 @@ bool PolyphonicNoteLayer::mouseDoubleClick(float worldX, float worldY)
 
   const auto edit = editOf(hit);
   if (edit.mute)
-    return true; // hit, but a muted note is not edited
+  {
+    // A deleted note comes back, as Delete does: with the rest of the
+    // selection when every selected note is deleted, else on its own.
+    bool allMuted = selection.count(hit) > 0;
+    for (int note : selection)
+      allMuted = allMuted && editOf(note).mute;
+    if (!allMuted)
+    {
+      selection = {hit};
+      selectionChanged();
+    }
+    toggleMuteSelection();
+    return true;
+  }
   const auto bounds = noteBounds(*shape);
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
   const float pitch = shape->medianMidi + edit.semitones;

@@ -274,6 +274,11 @@ public:
         }
     }
 
+    // A saved polyphonic take waiting to be rebuilt (set when a project is
+    // read, cleared once its analysis is restored); null otherwise.
+    std::shared_ptr<const PolyphonicRestore> getPendingPolyphonicRestore() const { return pendingPolyphonicRestore; }
+    void setPendingPolyphonicRestore(std::shared_ptr<const PolyphonicRestore> restore) { pendingPolyphonicRestore = std::move(restore); }
+
     // The latest render of the polyphonic take with its edits, in the take's
     // channels at the project rate (EditorController::renderPolyphonicAsync);
     // null until the first render. Playback only: not saved.
@@ -410,6 +415,7 @@ private:
     AnalysisModeState analysisMode;
     std::shared_ptr<const PolyphonicTake> polyphonicTake;
     PolyphonicEdits polyphonicEdits;
+    std::shared_ptr<const PolyphonicRestore> pendingPolyphonicRestore;
     std::shared_ptr<const juce::AudioBuffer<float>> polyphonicPlayback;
 
     // F0 direct edit dirty range

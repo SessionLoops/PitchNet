@@ -25,27 +25,14 @@ inline int velocityForLevelDb(float levelDb)
     return 1 + static_cast<int>(std::lround(t * 126.0f));
 }
 
-/** Each note's peak level: the root of its partials' summed squared model
- *  amplitudes, at its loudest frame (0 for inactive notes). */
-inline std::vector<double> peakLevels(const polyphonic::Analysis& analysis)
+/** Each note's peak level (noteLevels at its loudest frame; 0 for inactive notes). */
+inline std::vector<double> peakLevels(const PolyphonicTake& take)
 {
-    std::vector<double> peaks(analysis.notes.size(), 0.0);
-    for (size_t i = 0; i < analysis.notes.size() && i < analysis.masks.size(); ++i)
-    {
-        const auto& note = analysis.notes[i];
-        if (!note.active)
-            continue;
-        std::vector<double> energy(static_cast<size_t>(std::max(1, note.numFrames())), 0.0);
-        for (const auto& partial : analysis.masks[i].partials)
-        {
-            const int k = partial.frame - note.startFrame;
-            if (k >= 0 && k < static_cast<int>(energy.size()))
-                energy[static_cast<size_t>(k)] +=
-                    static_cast<double>(partial.amplitude) * partial.amplitude;
-        }
-        for (double e : energy)
-            peaks[i] = std::max(peaks[i], std::sqrt(e));
-    }
+    const auto levels = noteLevels(take);
+    std::vector<double> peaks(levels.size(), 0.0);
+    for (size_t i = 0; i < levels.size(); ++i)
+        for (float v : levels[i])
+            peaks[i] = std::max(peaks[i], static_cast<double>(v));
     return peaks;
 }
 
@@ -58,8 +45,9 @@ inline std::vector<MidiExportNote> exportNotes(const Project& project)
         return out;
     const auto& analysis = *take->analysis;
     const auto& edits = project.getPolyphonicEdits();
-    const auto peaks = peakLevels(analysis);
-    const double loudest = *std::max_element(peaks.begin(), peaks.end());
+    auto peaks = peakLevels(*take);
+    peaks.resize(analysis.notes.size(), 0.0);
+    const double loudest = peaks.empty() ? 0.0 : *std::max_element(peaks.begin(), peaks.end());
 
     for (size_t i = 0; i < analysis.notes.size(); ++i)
     {

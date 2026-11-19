@@ -141,6 +141,18 @@ public:
                       const ProgressCallback &onProgress,
                       std::function<void(std::unique_ptr<Project>)> onComplete);
 
+  // Rebuilds a saved polyphonic take (Project::getPendingPolyphonicRestore)
+  // in the background after a project is opened, while the project is shown
+  // and edited with its restoring take (saved notes and levels): the source is
+  // the project's audio file when it is there and unchanged (stereo kept),
+  // else the saved original waveform (its mono mix); the masks come from
+  // polyphonic::restore, without detecting notes again. onComplete runs on
+  // the message thread with the restored take (the caller puts it into the
+  // project, keeping any edits made meanwhile), or null when it did not
+  // finish.
+  void restorePolyphonicAsync(
+      std::function<void(std::shared_ptr<const PolyphonicTake>)> onComplete);
+
   // Renders the polyphonic take with the project's current edits on a worker
   // thread. One render at a time: a request while one runs cancels it and
   // renders again with the newest edits, so a burst of edits costs one

@@ -21,7 +21,7 @@
  *    and by the note's gain edit;
  *  - drawn where its edit puts it: shifted, moved, stretched or cut; a muted
  *    (deleted) note is a dashed outline that can be selected, unmuted with
- *    Delete or restored, but takes no other edit;
+ *    Delete or a double-click, or restored, but takes no other edit;
  *  - tuning colours as for vocal notes (notecolours), from the note's median
  *    pitch plus its edit;
  *  - selection shown by an outline that follows the note's shape, no box;
@@ -68,7 +68,8 @@ public:
   void mouseDown(float worldX, float worldY, const juce::ModifierKeys &mods);
   void mouseDrag(float worldX, float worldY, const juce::ModifierKeys &mods);
   void mouseUp();
-  /** Tunes the note under the point to its double-click target. True if a note was hit. */
+  /** Tunes the note under the point to its double-click target, or brings a
+   *  deleted one back (as Delete does). True if a note was hit. */
   bool mouseDoubleClick(float worldX, float worldY);
   bool isDragging() const { return drag != Drag::none && drag != Drag::preview; }
   /** The notes a running drag is editing (empty otherwise), for live audition. */

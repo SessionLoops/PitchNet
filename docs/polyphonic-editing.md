@@ -415,7 +415,7 @@ instrument-family or source-recording holdout.
 
 | File | What |
 |---|---|
-| `PolyEngine.h` | public API: `Params`, `analyze()`, `render()`, `renderNotes()`, `extractNotes()`, `extractNote()`, `Note`, `NoteEdit`, `AudioSpan`, `NoteEvidence` |
+| `PolyEngine.h` | public API: `Params`, `analyze()`, `restore()` (an analysis rebuilt from saved notes, without detection), `render()`, `renderNotes()`, `extractNotes()`, `extractNote()`, `Note`, `NoteEdit`, `AudioSpan`, `NoteEvidence` |
 | `PolyEngine.cpp` | the analysis pipeline |
 | `PolySpectral.cpp` | streaming STFT, instantaneous frequency, tonality, whitening, peaks |
 | `PolyExtraction.cpp` | cents field, harmonic-sum salience, iterative estimation and cancellation, pruning, f0/inharmonicity, repeated-note splits, onset refinement, fragment merging |

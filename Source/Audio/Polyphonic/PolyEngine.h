@@ -276,6 +276,15 @@ Analysis analyze(const float* mono, int numSamples, const Params& params,
                  const Progress& progress = {});
 
 /**
+ * Rebuild an analysis from its notes without detecting notes again, e.g. when a saved project
+ * is opened: the spectra and the active notes' masks are computed for this audio. Given the
+ * audio, params and notes analyze() produced, the result equals that analysis (inactive notes
+ * keep no masks, as there). `notes` keep their order, so edits keyed by note index still apply.
+ */
+Analysis restore(const float* mono, int numSamples, const Params& params, std::vector<Note> notes,
+                 const std::atomic<bool>* cancel = nullptr, const Progress& progress = {});
+
+/**
  * Render the edited result for each input channel (the channels the analysis
  * was made from, e.g. left/right; the masks come from their mono mix).
  * Notes without an entry in `edits` pass through untouched, and frames no edit

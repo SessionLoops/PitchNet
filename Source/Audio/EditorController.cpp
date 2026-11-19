@@ -1756,6 +1756,7 @@ void EditorController::reanalyzeAsync(
     }
     copy->setPolyphonicEdits({});
     copy->setPolyphonicPlayback(nullptr);
+    copy->setPendingPolyphonicRestore(nullptr);
     copy->setAnalysisMode(state); // classified, so the classifier is skipped
 
     bool finished = false;
@@ -1824,6 +1825,106 @@ std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
 }
 } // namespace
 
+void EditorController::restorePolyphonicAsync(
+    std::function<void(std::shared_ptr<const PolyphonicTake>)> onComplete)
+{
+  const auto pending = project ? project->getPendingPolyphonicRestore() : nullptr;
+  if (isLoadingAudio.load() || !pending)
+  {
+    if (onComplete)
+      onComplete(nullptr);
+    return;
+  }
+
+  // What the job needs, copied here: the project itself stays with the UI and
+  // can be edited while the masks are rebuilt.
+  const auto file = project->getFilePath();
+  const auto savedSha = project->getAudioSha256();
+  const auto &audioData = project->getAudioData();
+  auto fallback = std::make_shared<juce::AudioBuffer<float>>();
+  fallback->makeCopyOf(audioData.originalWaveform.getNumSamples() > 0 ? audioData.originalWaveform
+                                                                      : audioData.waveform);
+  const double fallbackRate = static_cast<double>(audioData.sampleRate);
+
+  cancelLoadingFlag = false;
+  isLoadingAudio = true;
+  if (loaderThread.joinable())
+    loaderThread.join();
+
+  loaderThread = std::thread([this, pending, file, savedSha, fallback, fallbackRate,
+                              onComplete = std::move(onComplete)]() mutable
+                             {
+    std::shared_ptr<const PolyphonicTake> restored;
+    try
+    {
+      // The take's own channels: the audio file when it is the one the
+      // project was made from, else the saved original (mono) waveform.
+      juce::AudioBuffer<float> source;
+      double sourceRate = 0.0;
+      if (file.existsAsFile() &&
+          (savedSha.isEmpty() || savedSha.equalsIgnoreCase(SHA256Utils::fileSHA256(file))))
+      {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        if (std::unique_ptr<juce::AudioFormatReader> reader{formats.createReaderFor(file)})
+        {
+          const int channels = static_cast<int>(std::min<unsigned int>(2, reader->numChannels));
+          const int samples = static_cast<int>(reader->lengthInSamples);
+          source.setSize(channels, samples);
+          reader->read(&source, 0, samples, 0, true, channels > 1);
+          sourceRate = reader->sampleRate;
+        }
+      }
+      if (source.getNumSamples() == 0)
+      {
+        source = std::move(*fallback);
+        sourceRate = fallbackRate;
+        LOG("Polyphonic restore: audio file missing or changed; using the saved mono waveform");
+      }
+      if (source.getNumSamples() > 0 && sourceRate > 0.0 && !cancelLoadingFlag.load())
+      {
+        if (std::abs(sourceRate - static_cast<double>(SAMPLE_RATE)) > 1e-6)
+          source = AudioResampler::resample(source, sourceRate, static_cast<double>(SAMPLE_RATE));
+        const int numSamples = source.getNumSamples();
+        std::vector<float> mono(static_cast<size_t>(numSamples), 0.0f);
+        const float channelGain = 1.0f / static_cast<float>(source.getNumChannels());
+        for (int ch = 0; ch < source.getNumChannels(); ++ch)
+          juce::FloatVectorOperations::addWithMultiply(mono.data(), source.getReadPointer(ch),
+                                                       channelGain, numSamples);
+        const auto t0 = std::chrono::steady_clock::now();
+        auto analysis = polyphonic::restore(mono.data(), numSamples, pending->params,
+                                            pending->notes, &cancelLoadingFlag);
+        if (!cancelLoadingFlag.load() && !shuttingDown.load())
+        {
+          auto take = std::make_shared<PolyphonicTake>();
+          take->analysis = std::make_shared<const polyphonic::Analysis>(std::move(analysis));
+          take->source = std::move(source);
+          take->sourceRate = static_cast<double>(SAMPLE_RATE);
+          restored = std::move(take);
+          LOG("Polyphonic restore: " + juce::String(static_cast<int>(pending->notes.size())) +
+              " notes, " +
+              juce::String(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), 1) +
+              " s");
+        }
+      }
+    }
+    catch (const std::exception &e)
+    {
+      reportAnalysisException("restorePolyphonic", e.what());
+    }
+    catch (...)
+    {
+      reportAnalysisException("restorePolyphonic", "unknown error");
+    }
+
+    juce::MessageManager::callAsync(
+        [this, restored, onComplete = std::move(onComplete)]() {
+          isLoadingAudio = false;
+          if (onComplete)
+            onComplete(restored);
+        }); });
+}
+
 void EditorController::renderPolyphonicAsync(std::function<void(bool)> onComplete)
 {
   polyRenderOnComplete = std::move(onComplete);
@@ -1842,7 +1943,9 @@ void EditorController::startPolyphonicRender()
 {
   polyRenderRerun = false;
   const auto take = project ? project->getPolyphonicTake() : nullptr;
-  if (!take || !take->hasAnalysis() || take->source.getNumSamples() == 0 ||
+  // A restoring take has no masks yet: nothing to render with (the caller
+  // renders again once the restore lands).
+  if (!take || !take->hasAnalysis() || take->restoring || take->source.getNumSamples() == 0 ||
       shuttingDown.load())
   {
     if (auto done = polyRenderOnComplete)
@@ -1955,7 +2058,8 @@ void EditorController::cancelPolyphonicAudition()
 void EditorController::startPolyphonicAudition(AuditionRequest request)
 {
   const auto take = project ? project->getPolyphonicTake() : nullptr;
-  if (!take || !take->hasAnalysis() || request.notes.empty() || shuttingDown.load())
+  if (!take || !take->hasAnalysis() || take->restoring || request.notes.empty() ||
+      shuttingDown.load())
     return;
   if (auditionThread.joinable())
     auditionThread.join(); // finished: it posted its result before returning

@@ -321,6 +321,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
                      static_cast<int>(project.getTimelineGridDivision()));
     obj->setProperty("timelineSnapCycle", project.getTimelineSnapCycle());
     obj->setProperty("analysisMode", analysisModeToJson(project.getAnalysisMode()));
+    if (auto polyphonicSection = polyphonicToJson(project); !polyphonicSection.isVoid())
+        obj->setProperty("polyphonic", polyphonicSection);
 
     // Loop range
     const auto& loopRange = project.getLoopRange();
@@ -537,6 +539,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         json.getProperty("timelineSnapCycle", false)));
     // Absent in files written before the input-type classifier: vocal, unclassified.
     project.setAnalysisMode(analysisModeFromJson(json.getProperty("analysisMode", {})));
+    // Format 6: a polyphonic take's notes and edits (absent before, and for vocal takes).
+    polyphonicFromJson(project, json.getProperty("polyphonic", {}));
 
     // Loop range
     auto loopVar = json.getProperty("loop", juce::var());
@@ -1110,6 +1114,174 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));
 
     return true;
+}
+
+namespace
+{
+// 1: the notes. 2: each note's level per frame after its pitch curve, so an
+// opened take is drawn before its masks are rebuilt.
+constexpr int kPolyphonicNotesVersion = 2;
+
+juce::String polyphonicDetectorId(polyphonic::DetectionMode mode)
+{
+    return mode == polyphonic::DetectionMode::NeuralGuided ? "guided" : "harmonic";
+}
+} // namespace
+
+juce::var ProjectSerializer::polyphonicToJson(const Project& project) {
+    const auto take = project.getPolyphonicTake();
+    const auto pending = project.getPendingPolyphonicRestore();
+    const polyphonic::Params* params = nullptr;
+    const std::vector<polyphonic::Note>* notes = nullptr;
+    std::vector<std::vector<float>> levels;
+    if (take && take->hasAnalysis()) {
+        params = &take->analysis->params;
+        notes = &take->analysis->notes;
+        levels = noteLevels(*take);
+    } else if (pending) {
+        params = &pending->params;
+        notes = &pending->notes;
+        levels = pending->levels;
+    } else {
+        return {};
+    }
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("sampleRate", params->sampleRate);
+    obj->setProperty("fftSize", params->fftSize);
+    obj->setProperty("hop", params->hop);
+    obj->setProperty("detector", polyphonicDetectorId(params->detectionMode));
+
+    // Notes as a little-endian binary block: exact pitch curves, so the masks
+    // rebuilt from them on load are the ones the take was edited with.
+    juce::MemoryOutputStream out;
+    out.writeInt(kPolyphonicNotesVersion);
+    out.writeInt(static_cast<int>(notes->size()));
+    for (size_t i = 0; i < notes->size(); ++i) {
+        const auto& n = (*notes)[i];
+        out.writeInt(n.id);
+        out.writeInt(n.startFrame);
+        out.writeInt(n.endFrame);
+        out.writeInt(n.parent);
+        out.writeBool(n.active);
+        out.writeFloat(n.inharmonicity);
+        out.writeFloat(n.probability);
+        out.writeDouble(n.energy);
+        out.writeInt(static_cast<int>(n.f0.size()));
+        for (float v : n.f0)
+            out.writeFloat(v);
+        const auto& level = i < levels.size() ? levels[i] : std::vector<float>{};
+        out.writeInt(static_cast<int>(level.size()));
+        for (float v : level)
+            out.writeFloat(v);
+    }
+    obj->setProperty("notes", out.getMemoryBlock().toBase64Encoding());
+
+    juce::Array<juce::var> edits;
+    for (const auto& [index, e] : project.getPolyphonicEdits()) {
+        auto* eo = new juce::DynamicObject();
+        eo->setProperty("note", index);
+        if (e.semitones != 0.0f) eo->setProperty("semitones", e.semitones);
+        if (e.gainDb != 0.0f) eo->setProperty("gainDb", e.gainDb);
+        if (e.mute) eo->setProperty("mute", true);
+        if (e.timeOffsetSeconds != 0.0) eo->setProperty("timeOffset", e.timeOffsetSeconds);
+        if (e.stretch != 1.0f) eo->setProperty("stretch", e.stretch);
+        if (!e.takeBackground) eo->setProperty("takeBackground", false);
+        if (e.preserveFormants) eo->setProperty("preserveFormants", true);
+        if (!e.pitchCurve.empty()) {
+            juce::Array<juce::var> curve;
+            for (float v : e.pitchCurve)
+                curve.add(v);
+            eo->setProperty("pitchCurve", curve);
+        }
+        edits.add(juce::var(eo));
+    }
+    obj->setProperty("edits", edits);
+    return juce::var(obj);
+}
+
+void ProjectSerializer::polyphonicFromJson(Project& project, const juce::var& json) {
+    project.setPendingPolyphonicRestore(nullptr);
+    project.setPolyphonicEdits({});
+    if (!json.isObject())
+        return;
+
+    auto restore = std::make_shared<PolyphonicRestore>();
+    const double rate = static_cast<double>(json.getProperty("sampleRate", 44100.0));
+    if (rate <= 0.0)
+        return;
+    restore->params = polyphonic::Params::forSampleRate(rate);
+    restore->params.fftSize = static_cast<int>(json.getProperty("fftSize", restore->params.fftSize));
+    restore->params.hop = static_cast<int>(json.getProperty("hop", restore->params.hop));
+    restore->params.detectionMode = json.getProperty("detector", "harmonic").toString() == "guided"
+                                        ? polyphonic::DetectionMode::NeuralGuided
+                                        : polyphonic::DetectionMode::Harmonic;
+    if (restore->params.fftSize <= 0 || restore->params.hop <= 0)
+        return;
+
+    juce::MemoryBlock block;
+    if (!block.fromBase64Encoding(json.getProperty("notes", "").toString()))
+        return;
+    juce::MemoryInputStream in(block, false);
+    const int version = in.readInt();
+    if (version < 1 || version > kPolyphonicNotesVersion)
+        return;
+    const int count = in.readInt();
+    if (count < 0 || count > 1000000)
+        return;
+    restore->notes.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        polyphonic::Note n;
+        n.id = in.readInt();
+        n.startFrame = in.readInt();
+        n.endFrame = in.readInt();
+        n.parent = in.readInt();
+        n.active = in.readBool();
+        n.inharmonicity = in.readFloat();
+        n.probability = in.readFloat();
+        n.energy = in.readDouble();
+        const int frames = in.readInt();
+        if (frames < 0 || in.getNumBytesRemaining() < static_cast<juce::int64>(frames) * 4)
+            return; // truncated: open without the take
+        n.f0.resize(static_cast<size_t>(frames));
+        for (auto& v : n.f0)
+            v = in.readFloat();
+        std::vector<float> level;
+        if (version >= 2) {
+            const int levelFrames = in.readInt();
+            if (levelFrames < 0 || in.getNumBytesRemaining() < static_cast<juce::int64>(levelFrames) * 4)
+                return;
+            level.resize(static_cast<size_t>(levelFrames));
+            for (auto& v : level)
+                v = in.readFloat();
+        }
+        restore->notes.push_back(std::move(n));
+        restore->levels.push_back(std::move(level));
+    }
+
+    Project::PolyphonicEdits edits;
+    const auto editsVar = json.getProperty("edits", {});
+    if (editsVar.isArray()) {
+        for (const auto& ev : *editsVar.getArray()) {
+            const int index = static_cast<int>(ev.getProperty("note", -1));
+            if (index < 0 || index >= count)
+                continue;
+            polyphonic::NoteEdit e;
+            e.semitones = static_cast<float>(static_cast<double>(ev.getProperty("semitones", 0.0)));
+            e.gainDb = static_cast<float>(static_cast<double>(ev.getProperty("gainDb", 0.0)));
+            e.mute = static_cast<bool>(ev.getProperty("mute", false));
+            e.timeOffsetSeconds = static_cast<double>(ev.getProperty("timeOffset", 0.0));
+            e.stretch = static_cast<float>(static_cast<double>(ev.getProperty("stretch", 1.0)));
+            e.takeBackground = static_cast<bool>(ev.getProperty("takeBackground", true));
+            e.preserveFormants = static_cast<bool>(ev.getProperty("preserveFormants", false));
+            if (const auto curve = ev.getProperty("pitchCurve", {}); curve.isArray())
+                for (const auto& v : *curve.getArray())
+                    e.pitchCurve.push_back(static_cast<float>(static_cast<double>(v)));
+            edits[index] = e;
+        }
+    }
+    project.setPendingPolyphonicRestore(std::move(restore));
+    project.setPolyphonicEdits(std::move(edits));
 }
 
 juce::var ProjectSerializer::analysisModeToJson(const AnalysisModeState& state) {

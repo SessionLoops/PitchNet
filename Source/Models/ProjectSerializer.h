@@ -13,7 +13,8 @@
  */
 class ProjectSerializer {
 public:
-    static constexpr int FORMAT_VERSION = 5;
+    // 6: a "polyphonic" section (a polyphonic take's notes and edits).
+    static constexpr int FORMAT_VERSION = 6;
 
     enum class BinaryArchiveMode {
         // Standalone documents and conventional plug-in state must remain
@@ -80,6 +81,14 @@ public:
     // unclassified); unknown identifiers keep their defaults.
     static juce::var analysisModeToJson(const AnalysisModeState& state);
     static AnalysisModeState analysisModeFromJson(const juce::var& json);
+
+    // A polyphonic take: its analysis parameters, its notes and their levels
+    // (exact, as a base64 binary block, so the masks rebuilt from them match
+    // the saved analysis and the take is drawn before they are) and its edits. Void for a project without one. Reading sets
+    // the project's pending restore and its edits; a missing or malformed
+    // section leaves both empty (the take then opens as analysed audio only).
+    static juce::var polyphonicToJson(const Project& project);
+    static void polyphonicFromJson(Project& project, const juce::var& json);
 
 private:
     // Note serialization

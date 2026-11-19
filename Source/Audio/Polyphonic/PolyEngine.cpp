@@ -95,4 +95,58 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
     return out;
 }
 
+Analysis restore(const float* mono, int numSamples, const Params& params, std::vector<Note> notes,
+                 const std::atomic<bool>* cancel, const Progress& progress)
+{
+    using namespace detail;
+    Analysis out;
+    out.params = params;
+    out.numSamples = numSamples;
+    out.notes = std::move(notes);
+    out.masks.assign(out.notes.size(), {});
+    if (mono == nullptr || numSamples <= 0)
+        return out;
+    auto report = [&](float v) { if (progress) progress(v); };
+    auto cancelled = [&] { return cancel != nullptr && cancel->load(); };
+
+    Context ctx;
+    ctx.p = params;
+    ctx.audio = mono;
+    ctx.numSamples = numSamples;
+    analyzeSpectra(ctx, cancel);
+    if (cancelled()) return out;
+    out.numFrames = ctx.numFrames;
+    out.numBins = ctx.numBins;
+    report(0.4f);
+
+    // the active notes as the candidates buildMasks takes, in their order; their masks are built
+    // as analyze() builds them and then put back at each note's own index
+    std::vector<Candidate> active;
+    std::vector<size_t> where;
+    for (size_t i = 0; i < out.notes.size(); ++i)
+    {
+        const auto& n = out.notes[i];
+        if (!n.active || n.f0.empty())
+            continue;
+        Candidate c;
+        c.start = n.startFrame;
+        c.end = n.endFrame;
+        c.f0 = n.f0;
+        c.B = n.inharmonicity;
+        c.energy = n.energy;
+        c.probability = n.probability;
+        active.push_back(std::move(c));
+        where.push_back(i);
+    }
+    Analysis built;
+    built.params = params;
+    built.notes.resize(active.size());
+    buildMasks(ctx, active, built);
+    if (cancelled()) return out;
+    for (size_t k = 0; k < where.size() && k < built.masks.size(); ++k)
+        out.masks[where[k]] = std::move(built.masks[k]);
+    report(1.0f);
+    return out;
+}
+
 } // namespace polyphonic

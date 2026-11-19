@@ -352,7 +352,12 @@ private:
   void reanalyzeTake(const AnalysisModeState &next);
   // Renders a polyphonic take's edits (EditorController::renderPolyphonicAsync)
   // and hands the result to the audio engine without moving the playhead.
-  void renderPolyphonicEdits();
+  // showProgress false: a background render nobody asked for (the one after
+  // an opened project's masks are rebuilt), which shows nothing.
+  void renderPolyphonicEdits(bool showProgress = true);
+  // After a project is opened: rebuild its saved polyphonic take
+  // (EditorController::restorePolyphonicAsync) and render its edits.
+  void restorePolyphonicTake();
   void analyzeAudio(
       Project &targetProject,
       const std::function<void(double, const juce::String &)> &onProgress,

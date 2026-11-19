@@ -3427,20 +3427,28 @@ void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)
       });
 }
 
-void MainComponent::renderPolyphonicEdits()
+void MainComponent::renderPolyphonicEdits(bool showProgress)
 {
   // Standalone only until M5 (the plugin publishes renders through ARA).
   if (editorController == nullptr || isPluginMode())
     return;
+  // An opened take whose masks are still being rebuilt renders once they are
+  // (restorePolyphonicTake); its edits wait until then.
+  if (auto *project = getProject(); project != nullptr)
+    if (const auto take = project->getPolyphonicTake(); take != nullptr && take->restoring)
+      return;
 
-  toolbar.showProgress(TR("progress.synthesizing"));
-  toolbar.setProgress(-1.0f);
+  if (showProgress) {
+    toolbar.showProgress(TR("progress.synthesizing"));
+    toolbar.setProgress(-1.0f);
+  }
 
   juce::Component::SafePointer<MainComponent> safeThis(this);
-  editorController->renderPolyphonicAsync([safeThis](bool rendered) {
+  editorController->renderPolyphonicAsync([safeThis, showProgress](bool rendered) {
     if (safeThis == nullptr)
       return;
-    safeThis->toolbar.hideProgress();
+    if (showProgress)
+      safeThis->toolbar.hideProgress();
     auto *project = safeThis->getProject();
     if (!rendered || project == nullptr)
       return;
