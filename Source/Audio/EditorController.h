@@ -300,7 +300,19 @@ private:
   // renderPolyphonicAsync state; message thread only, except the thread.
   void startPolyphonicRender();
   void finishPolyphonicRender(std::shared_ptr<const PolyphonicTake> take,
-                              std::shared_ptr<const juce::AudioBuffer<float>> rendered);
+                              std::shared_ptr<const juce::AudioBuffer<float>> rendered,
+                              Project::PolyphonicEdits edits);
+  // The last render applied and the edits it was made with: the next render
+  // only re-renders the samples the change of edits reaches
+  // (polyphonic::changedRange) and copies the rest from it.
+  struct PolyRenderCache
+  {
+    std::shared_ptr<const PolyphonicTake> take;
+    std::shared_ptr<const polyphonic::Analysis> analysis;
+    Project::PolyphonicEdits edits;
+    std::shared_ptr<const juce::AudioBuffer<float>> buffer;
+  };
+  PolyRenderCache polyRenderCache;
   std::thread polyRenderThread;
   std::shared_ptr<std::atomic<bool>> polyRenderCancel;
   std::function<void(bool)> polyRenderOnComplete;

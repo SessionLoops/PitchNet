@@ -180,6 +180,9 @@ struct EditState
     std::map<std::pair<int, int>, Track> track;  // (harmonic, channel) -> output frame and peak phase
     // NoteEdit::takeBackground: frames of its claim on what no note owns (none when bgHi < bgLo)
     int bgLo = 0, bgHi = -1;
+    // the edit started before the first frame rendered: it is run over its earlier frames first,
+    // output discarded, so its phases (psi, track) are those of a whole render
+    bool warms = false;
 };
 
 /** Least-squares slope of y over x. */
@@ -837,12 +840,31 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     for (int i = 0; i < N; ++i)
         window2[static_cast<size_t>(i)] = static_cast<double>(window[static_cast<size_t>(i)]) * window[static_cast<size_t>(i)];
 
-    for (int u = uFirst; u <= uLast; ++u)
+    // A part of the recording (fromSample > 0): an edit's phases build up from its first frame
+    // (a re-pitched partial's accumulated phase, a stretched partial's continued phase), so each
+    // edit that has started by uFirst is first run on its own over its earlier frames, without
+    // output. Only that edit's own frames are visited, and none of the removal, background or
+    // transforms, so this costs a fraction of rendering them; it does not depend on other edits.
+    int warmFirst = uFirst;
+    for (auto& st : states)
+        if (st.touchLo < uFirst && st.touchHi >= uFirst && !st.edit->mute && (st.shifts || st.stretches))
+        {
+            st.warms = true;
+            warmFirst = std::min(warmFirst, std::max(0, st.touchLo));
+        }
+
+    for (int u = warmFirst; u <= uLast; ++u)
     {
         if (cancel && cancel->load())
             return {};
+        const bool warm = u < uFirst;
         bool transform = true;
-        if (soloMode)
+        if (warm)
+        {
+            for (auto& y : Y)
+                std::fill(y.begin(), y.end(), Complex{});
+        }
+        else if (soloMode)
         {
             transform = false;
             for (auto& y : Y)
@@ -911,11 +933,13 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         for (size_t sIndex = 0; sIndex < editsHere; ++sIndex)
         {
             auto& st = states[sIndex];
+            if (warm && !st.warms)
+                continue;
             const Note& n = A.notes[static_cast<size_t>(st.note)];
             const NoteMasks& nm = A.masks[static_cast<size_t>(st.note)];
             const NoteEdit& ed = *st.edit;
             // 1) remove the note's own share at this frame (on its own there is nothing to remove)
-            if (!soloMode)
+            if (!soloMode && !warm)
             {
                 const auto [b, e] = partialsAt(nm, u);
                 for (int c = 0; c < numCh; ++c)
@@ -931,7 +955,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                 }
             }
             // and its part of what no note owns, when it takes its background
-            if (!soloMode && st.bgHi >= st.bgLo && u >= st.bgLo && u <= st.bgHi)
+            if (!soloMode && !warm && st.bgHi >= st.bgLo && u >= st.bgLo && u <= st.bgHi)
                 for (int c = 0; c < numCh; ++c)
                     if (backgroundAt(0).part(st.note, u, c, part.data()))
                     {
@@ -1122,7 +1146,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                 }
                 for (int c = 0; c < numCh; ++c)
                 {
-                    if (!backgroundAt(st.D).part(st.note, s, c, part.data()))
+                    if (warm || !backgroundAt(st.D).part(st.note, s, c, part.data()))
                         continue;
                     auto& y = Y[static_cast<size_t>(c)];
                     for (int k = 1; k < K - 1; ++k)
@@ -1135,6 +1159,8 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                 }
             }
         }
+        if (warm)
+            continue;
         // inverse transform and weighted overlap-add
         for (int c = 0; transform && c < numCh; ++c)
         {
@@ -1241,6 +1267,115 @@ AudioSpan renderNotes(const Analysis& A, const std::vector<std::vector<float>>& 
     span.start = from;
     span.channels = synthesize(A, channels, edits, noteIndices, cancel, from, to);
     return span;
+}
+
+namespace
+{
+/**
+ * Output frames [lo, hi] an edit can change (empty when hi < lo). Mirrors EditState::touchLo /
+ * touchHi in synthesize(), with the background claim taken as claimSpan() (the claim
+ * BackgroundShares gives the note, or wider when it gives none), so it is never narrower.
+ */
+std::pair<int, int> touchFrames(const Analysis& A, int ni, const NoteEdit& ed, int numFrames)
+{
+    if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()) || ed.isIdentity())
+        return {0, -1};
+    const Params& p = A.params;
+    const int H = p.hop;
+    const auto map = stretchMap(A, ni, ed);
+    const bool stretches = map.ratio > 1.0;
+    const int D = static_cast<int>(std::lround(ed.timeOffsetSeconds * p.sampleRate / H));
+    const auto [lo, hi] = noteFrameRange(A, ni);
+    int tlo = lo, thi = hi;
+    if (!ed.mute && hi >= lo)
+    {
+        const int outHi = stretches ? static_cast<int>(std::ceil(map.outputFrame(hi))) : hi;
+        tlo = std::min(lo, lo + D);
+        thi = std::max(hi, outHi + D);
+    }
+    if (ed.takeBackground && (ed.mute || !stretches))
+    {
+        const auto [blo, bhi] = claimSpan(A, ni, numFrames);
+        if (bhi >= blo)
+        {
+            if (thi < tlo)
+            {
+                tlo = blo;
+                thi = bhi;
+            }
+            tlo = std::min({tlo, blo, ed.mute ? blo : blo + D});
+            thi = std::max({thi, bhi, ed.mute ? bhi : bhi + D});
+        }
+    }
+    return {tlo, thi};
+}
+
+const NoteEdit* activeEdit(const std::map<int, NoteEdit>& edits, int ni)
+{
+    const auto it = edits.find(ni);
+    return it == edits.end() || it->second.isIdentity() ? nullptr : &it->second;
+}
+} // namespace
+
+SampleRange changedRange(const Analysis& A, int numSamples, const std::map<int, NoteEdit>& previousEdits,
+                         const std::map<int, NoteEdit>& edits)
+{
+    SampleRange range;
+    if (numSamples <= 0)
+        return range;
+    const Params& p = A.params;
+    const int N = p.fftSize, H = p.hop, pad = N / 2;
+    const int T = 1 + (numSamples + H - 1) / H;
+
+    // frames a changed note reaches, before or after the change
+    int lo = std::numeric_limits<int>::max(), hi = std::numeric_limits<int>::min();
+    auto include = [&](std::pair<int, int> span) {
+        if (span.second < span.first)
+            return;
+        lo = std::min(lo, span.first);
+        hi = std::max(hi, span.second);
+    };
+    auto consider = [&](int ni) {
+        const NoteEdit* before = activeEdit(previousEdits, ni);
+        const NoteEdit* after = activeEdit(edits, ni);
+        if (before == nullptr && after == nullptr)
+            return;
+        if (before != nullptr && after != nullptr && *before == *after)
+            return;
+        if (before != nullptr)
+            include(touchFrames(A, ni, *before, T));
+        if (after != nullptr)
+            include(touchFrames(A, ni, *after, T));
+    };
+    for (const auto& entry : previousEdits)
+        consider(entry.first);
+    for (const auto& entry : edits)
+        if (previousEdits.find(entry.first) == previousEdits.end())
+            consider(entry.first);
+    if (hi < lo)
+        return range;
+    lo = std::max(lo, 0);
+    hi = std::min(hi, T - 1);
+    if (hi < lo)
+        return range;
+
+    range.start = std::clamp(lo * H - pad, 0, numSamples);
+    range.end = std::clamp(hi * H - pad + N, range.start, numSamples);
+    return range;
+}
+
+std::vector<std::vector<float>> renderRange(const Analysis& A, const std::vector<std::vector<float>>& channels,
+                                            const std::map<int, NoteEdit>& edits, SampleRange range,
+                                            const std::atomic<bool>* cancel)
+{
+    if (channels.empty())
+        return {};
+    const int numSamples = static_cast<int>(channels[0].size());
+    range.start = std::clamp(range.start, 0, numSamples);
+    range.end = std::clamp(range.end, range.start, numSamples);
+    if (range.empty())
+        return std::vector<std::vector<float>>(channels.size());
+    return synthesize(A, channels, edits, {}, cancel, range.start, range.end);
 }
 
 std::vector<float> extractNote(const Analysis& A, const std::vector<float>& channel, int noteIndex)

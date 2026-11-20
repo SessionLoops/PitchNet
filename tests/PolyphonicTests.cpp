@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -981,6 +982,86 @@ int main()
                     A.notes.size(), partials, same ? "identical" : "DIFFERENT", err);
         CHECK(same);
         CHECK(err == 0.0);
+    }
+
+    // ---- 19. re-rendering only what a change of edits reaches: the previous render with
+    //          changedRange() replaced by renderRange() is exactly the new full render ----
+    {
+        // overlapping and separate notes over 6 s, so ranges start inside other edited notes
+        std::vector<float> x(static_cast<size_t>(6.0 * kRate), 0.0f);
+        const double tones[][3] = { {48, 0.1, 2.0}, {55, 0.3, 1.6}, {60, 0.8, 1.5}, {64, 1.6, 1.4},
+                                    {67, 2.4, 1.2}, {72, 3.0, 1.5}, {59, 4.0, 1.4}, {62, 4.6, 1.2} };
+        for (const auto& t : tones)
+            addTone(x, midiToHz(t[0]), t[1], t[2], 0.15);
+        std::vector<float> right(x.size());
+        for (size_t i = 0; i < x.size(); ++i)
+            right[i] = 0.6f * x[i];
+        const std::vector<std::vector<float>> channels{x, right};
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        std::vector<int> notes;
+        for (const auto& t : tones)
+            if (const int ni = findNote(A, t[0]); ni >= 0)
+                notes.push_back(ni);
+        CHECK(notes.size() >= 6);
+
+        std::map<int, polyphonic::NoteEdit> edits;
+        auto previous = polyphonic::render(A, channels, edits);
+        uint32_t seed = 12345;
+        auto rnd = [&seed](int n) { seed = seed * 1664525u + 1013904223u; return static_cast<int>((seed >> 8) % static_cast<uint32_t>(n)); };
+        double worst = 0.0;
+        long renderedSamples = 0, fullSamples = 0;
+        for (int step = 0; step < 40; ++step)
+        {
+            auto next = edits;
+            const int changes = 1 + rnd(2);
+            for (int c = 0; c < changes; ++c)
+            {
+                const int ni = notes[static_cast<size_t>(rnd(static_cast<int>(notes.size())))];
+                polyphonic::NoteEdit ed = next.count(ni) ? next[ni] : polyphonic::NoteEdit{};
+                switch (rnd(8))
+                {
+                    case 0: ed.semitones = static_cast<float>(rnd(7) - 3); break;
+                    case 1: ed.gainDb = static_cast<float>(rnd(13) - 9); break;
+                    case 2: ed.mute = !ed.mute; break;
+                    case 3: ed.timeOffsetSeconds = (rnd(9) - 4) * 0.037; break;
+                    case 4: ed.stretch = 0.5f + 0.25f * static_cast<float>(rnd(6)); break;
+                    case 5: ed.takeBackground = !ed.takeBackground; break;
+                    case 6:
+                        ed.pitchCurve.assign(static_cast<size_t>(40 + rnd(80)), 0.0f);
+                        for (size_t k = 0; k < ed.pitchCurve.size(); ++k)
+                            ed.pitchCurve[k] = 0.5f * static_cast<float>(std::sin(0.2 * static_cast<double>(k)));
+                        break;
+                    default: ed = polyphonic::NoteEdit{}; break;   // reset
+                }
+                if (ed.isIdentity() && ed.takeBackground)
+                    next.erase(ni);
+                else
+                    next[ni] = ed;
+            }
+            const auto range = polyphonic::changedRange(A, static_cast<int>(x.size()), edits, next);
+            const auto part = polyphonic::renderRange(A, channels, next, range);
+            auto spliced = previous;
+            CHECK(part.size() == channels.size());
+            for (size_t c = 0; c < part.size(); ++c)
+            {
+                CHECK(static_cast<int>(part[c].size()) == range.end - range.start);
+                std::copy(part[c].begin(), part[c].end(), spliced[c].begin() + range.start);
+            }
+            const auto full = polyphonic::render(A, channels, next);
+            for (size_t c = 0; c < full.size(); ++c)
+                for (size_t i = 0; i < full[c].size(); ++i)
+                    worst = std::max(worst, std::fabs(static_cast<double>(full[c][i]) - spliced[c][i]));
+            renderedSamples += range.end - range.start;
+            fullSamples += static_cast<long>(x.size());
+            previous = full;
+            edits = std::move(next);
+        }
+        // nothing changed: nothing to render
+        CHECK(polyphonic::changedRange(A, static_cast<int>(x.size()), edits, edits).empty());
+        std::printf("incremental render: 40 changes, max difference from full render %.2e, %.0f%% of the samples re-rendered\n",
+                    worst, 100.0 * static_cast<double>(renderedSamples) / static_cast<double>(fullSamples));
+        CHECK(worst == 0.0);
+        CHECK(renderedSamples < fullSamples);
     }
 
     std::printf("PolyphonicTests passed\n");

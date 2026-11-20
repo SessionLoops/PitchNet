@@ -342,6 +342,37 @@ AudioSpan renderNotes(const Analysis& analysis,
                       const std::map<int, NoteEdit>& edits,
                       const std::atomic<bool>* cancel = nullptr);
 
+/** Samples [start, end) of a recording (empty when end <= start). */
+struct SampleRange
+{
+    int start = 0;
+    int end = 0;
+    bool empty() const { return end <= start; }
+};
+
+/**
+ * The samples of render() that can differ between `previousEdits` and `edits` over
+ * `numSamples` of audio (the channels' length): the samples of every frame a changed note
+ * reaches under its old or new edit. Outside the range the two renders are identical, and
+ * renderRange() over it gives exactly the samples render(edits) has there, so the previous render
+ * with this range replaced IS the new render. Empty when nothing changed. The cost of a
+ * re-render then follows the change, not the number of edits or the length of the recording.
+ */
+SampleRange changedRange(const Analysis& analysis, int numSamples,
+                         const std::map<int, NoteEdit>& previousEdits,
+                         const std::map<int, NoteEdit>& edits);
+
+/**
+ * render() restricted to `range`: the samples [range.start, range.end) of the full render for
+ * each channel, computed from only the frames that overlap them (empty channels for an empty
+ * range; empty when cancelled). An edited note that starts before the range is first run over
+ * its own earlier frames without output, so its phases match the full render's.
+ */
+std::vector<std::vector<float>> renderRange(const Analysis& analysis,
+                                            const std::vector<std::vector<float>>& channels,
+                                            const std::map<int, NoteEdit>& edits, SampleRange range,
+                                            const std::atomic<bool>* cancel = nullptr);
+
 /** One note's separated signal (no edits), for auditioning/solo. */
 std::vector<float> extractNote(const Analysis& analysis, const std::vector<float>& channel, int noteIndex);
 

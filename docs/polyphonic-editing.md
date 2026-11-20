@@ -540,7 +540,17 @@ What is missing is the product around it:
    polyphonic take instead of the vocoder/PSOLA path; it already handles
    stereo, and frames no edit reaches are copied rather than transformed, so a
    re-render after an edit costs time in proportion to the edited notes (a
-   quarter of a second for 70 s of stereo piano with four edits).
+   quarter of a second for 70 s of stereo piano with four edits). After the
+   first render, `EditorController` keeps the result and its edits, and each
+   later render covers only `changedRange(previousEdits, edits)` with
+   `renderRange` and splices it in. That range is every frame a changed note
+   reaches. Re-pitched and stretched partials carry their phase from their
+   note's first frame, so an edited note that starts before the range is
+   first run over its own earlier frames with no output (no transforms) to
+   reach the same phase. The splice is bit-identical to a full render
+   (test 19). A one-note re-render stays about 0.12 s whether 1 or 140
+   notes are edited (60 s stereo, synthetic), while a full render grows
+   from 0.1 s to 1.3 s.
    `extractNotes` serves a solo button and `renderNotes` lets a note be heard
    while it is dragged. The Polyphonic Lab shows the whole loop
    (analysis thread, edits, background render, A/B playback) in one file.
