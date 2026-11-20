@@ -79,6 +79,22 @@ inline void smoothAttackRelease(std::vector<float> &values)
   }
 }
 
+// Forward smoothing only (fast attack, slower release): nothing is spread
+// back before an onset, as smoothAttackRelease's backward pass does.
+inline void smoothRelease(std::vector<float> &values)
+{
+  if (values.empty())
+    return;
+  constexpr float attack = 0.7f;
+  constexpr float release = 0.32f;
+  float envelope = values.front();
+  for (auto &value : values)
+  {
+    envelope += (value - envelope) * (value > envelope ? attack : release);
+    value = envelope;
+  }
+}
+
 inline std::vector<float> build(const float *samples, int totalSamples,
                                 int startSample, int endSample, int pointCount,
                                 float displayWidthPixels, double sampleRate,
@@ -86,7 +102,8 @@ inline std::vector<float> build(const float *samples, int totalSamples,
                                 bool adaptWindowToPixels = true,
                                 float gain = 1.0f,
                                 const std::vector<GainRegion>& gainRegions = {},
-                                const GainCurve* gainCurve = nullptr)
+                                const GainCurve* gainCurve = nullptr,
+                                bool alignOnsets = false)
 {
   std::vector<float> values(static_cast<size_t>(std::max(0, pointCount)), 0.0f);
   if (!samples || totalSamples <= 0 || pointCount <= 0 || endSample <= startSample ||
@@ -104,7 +121,7 @@ inline std::vector<float> build(const float *samples, int totalSamples,
                  ? std::max(sampleRate * 0.012, samplesPerPixel * 10.0)
                  : sampleRate * 0.012)));
   const int halfWindowSamples = windowSamples / 2;
-  const int prefixStartSample = std::max(0, startSample - halfWindowSamples - 1);
+  const int prefixStartSample = std::max(0, startSample - windowSamples - 1);
   const int prefixEndSample = std::min(totalSamples, endSample + halfWindowSamples + 1);
 
   std::vector<double> sumSquares(
@@ -137,10 +154,13 @@ inline std::vector<float> build(const float *samples, int totalSamples,
         startSample +
         (static_cast<double>(point) / denominator) * (endSample - startSample);
     const int centerSample = static_cast<int>(std::round(samplePosition));
-    const int windowStart =
-        std::max(prefixStartSample, centerSample - halfWindowSamples);
-    const int windowEnd =
-        std::min(prefixEndSample, centerSample + halfWindowSamples + 1);
+    // alignOnsets: the window ends at the point, so no sound shows before it
+    // starts (a centred window shows it half a window early).
+    const int windowStart = std::max(
+        prefixStartSample,
+        centerSample - (alignOnsets ? windowSamples - 1 : halfWindowSamples));
+    const int windowEnd = std::min(
+        prefixEndSample, centerSample + (alignOnsets ? 1 : halfWindowSamples + 1));
 
     values[static_cast<size_t>(point)] =
         std::min(1.0f, calculateRms(sumSquares, prefixStartSample, windowStart,
@@ -149,7 +169,10 @@ inline std::vector<float> build(const float *samples, int totalSamples,
   }
 
   rejectSinglePointSpikes(values);
-  smoothAttackRelease(values);
+  if (alignOnsets)
+    smoothRelease(values);
+  else
+    smoothAttackRelease(values);
 
   return values;
 }

@@ -4,6 +4,7 @@
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
 #include "../Models/ProjectModificationRanges.h"
+#include "../Models/PolyphonicTake.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Models/ProjectTimelineOffset.h"
 #include "../UI/IMainView.h"
@@ -31,6 +32,9 @@ namespace {
 // never the audio thread.
 std::unique_ptr<EditorController> makeAnalysisController() {
   auto controller = std::make_unique<EditorController>(false);
+  // Each clip is analysed in its own mode (the classifier's): vocal or
+  // polyphonic.
+  controller->setPolyphonicAnalysisEnabled(true);
   SettingsManager settings;
   controller->setDeviceConfig(settings.getDevice(), settings.getGPUDeviceId());
   if (auto *vocoder = controller->getVocoder()) {
@@ -129,6 +133,8 @@ void mergeRenderedState(Project &target, const Project &rendered) {
   auto &targetAudio = target.getAudioData();
   const auto &renderedAudio = rendered.getAudioData();
   targetAudio.waveform.makeCopyOf(renderedAudio.waveform);
+  if (rendered.isPolyphonic())
+    target.setPolyphonicPlayback(rendered.getPolyphonicPlayback());
   targetAudio.timelineOffsetSeconds = renderedAudio.timelineOffsetSeconds;
   targetAudio.playbackRegionRanges = renderedAudio.playbackRegionRanges;
 
@@ -161,7 +167,7 @@ void sanitiseARAOutput(juce::AudioBuffer<float> &buffer) noexcept {
 bool projectAppearsToCoverRegion(const Project &project, double regionStart,
                                  double regionEnd) {
   const auto &audioData = project.getAudioData();
-  if (audioData.f0.empty())
+  if (audioData.f0.empty() && !project.isPolyphonic())
     return false;
 
   constexpr double epsilon = 1.0e-3;
@@ -177,6 +183,10 @@ bool projectAppearsToCoverRegion(const Project &project, double regionStart,
 }
 
 bool projectHasRestorableAnalysisData(const Project &project) {
+  // A polyphonic take's analysis is the engine's: no pitch curve. One read
+  // from an archive holds its saved notes until the source hydrates it.
+  if (project.isPolyphonic() || project.getPendingPolyphonicRestore() != nullptr)
+    return true;
   const auto &audioData = project.getAudioData();
   // Host-backed ARA region archives contain the analysis/edit shell but omit
   // project-level audio and mel buffers. Those are rebuilt from the ARA source
@@ -191,6 +201,23 @@ bool projectHasRestorableAnalysisData(const Project &project) {
   }
 
   return true;
+}
+
+bool isPolyphonicProject(const Project &project) {
+  return project.isPolyphonic() || project.getPendingPolyphonicRestore() != nullptr;
+}
+
+// Whether a project has what it needs from the host source to be shown and
+// edited: the waveforms, and the mel spectrogram (vocal) or the take
+// (polyphonic, possibly still being restored).
+bool projectHasSourceData(const Project &project) {
+  const auto &audioData = project.getAudioData();
+  if (audioData.waveform.getNumSamples() <= 0 ||
+      audioData.originalWaveform.getNumSamples() <= 0)
+    return false;
+  if (isPolyphonicProject(project))
+    return project.getPolyphonicTake() != nullptr;
+  return !audioData.melSpectrogram.empty();
 }
 
 // archivedRegionKeyForLiveKey() lived here to bridge the two key families.
@@ -1286,6 +1313,214 @@ void PitchNetAudioProcessor::dispatchLiveCaptureUpdate() {
         state->pending.store(false);
       });
 }
+std::unique_ptr<Project> PitchNetAudioProcessor::placePolyphonicCapture(
+    const Project *previous, const Project &capture, double timelineOffsetSeconds) {
+  auto placed = std::make_unique<Project>(previous != nullptr ? *previous : capture);
+  const auto take = capture.getPolyphonicTake();
+  const auto &analysis = *take->analysis;
+  const int hop = std::max(1, analysis.params.hop);
+  const int rate = std::max(1, capture.getAudioData().sampleRate);
+  const int offsetSamples = std::max(
+      0, static_cast<int>(std::llround(std::max(0.0, timelineOffsetSeconds) * rate)));
+  // Notes move by whole frames; their masks are rebuilt below from the placed
+  // audio, so a fraction of a frame does not misplace what they claim.
+  const int offsetFrames =
+      static_cast<int>(std::llround(offsetSamples / static_cast<double>(hop)));
+  const int captureSamples = take->source.getNumSamples();
+  const int captureEndFrame =
+      offsetFrames + (captureSamples + hop - 1) / hop + 1;
+
+  // Copies `from` into `to` at `at`, growing it (and its channels) as needed.
+  const auto paste = [](juce::AudioBuffer<float> &to, const juce::AudioBuffer<float> &from,
+                        int at) {
+    if (from.getNumSamples() <= 0)
+      return;
+    const int channels = std::max(to.getNumChannels(), from.getNumChannels());
+    const int required = at + from.getNumSamples();
+    if (to.getNumChannels() < channels || to.getNumSamples() < required) {
+      juce::AudioBuffer<float> grown(channels, std::max(to.getNumSamples(), required));
+      grown.clear();
+      for (int ch = 0; ch < to.getNumChannels(); ++ch)
+        grown.copyFrom(ch, 0, to, ch, 0, to.getNumSamples());
+      // A mono timeline becoming stereo: its first channel on both sides.
+      for (int ch = to.getNumChannels(); ch < channels && to.getNumChannels() > 0; ++ch)
+        grown.copyFrom(ch, 0, to, 0, 0, to.getNumSamples());
+      to = std::move(grown);
+    }
+    for (int ch = 0; ch < to.getNumChannels(); ++ch)
+      to.copyFrom(ch, at, from, std::min(ch, from.getNumChannels() - 1), 0,
+                  from.getNumSamples());
+  };
+
+  // The earlier timeline's notes (from its take or its saved form), minus
+  // those the new take records over; their edits follow them.
+  std::shared_ptr<const PolyphonicTake> previousTake =
+      previous != nullptr ? previous->getPolyphonicTake() : nullptr;
+  auto previousSaved = previous != nullptr ? previous->getPendingPolyphonicRestore() : nullptr;
+  auto restore = std::make_shared<PolyphonicRestore>();
+  restore->params = analysis.params;
+  Project::PolyphonicEdits edits;
+  if (previous != nullptr) {
+    std::vector<polyphonic::Note> notes;
+    std::vector<std::vector<float>> levels;
+    if (previousSaved != nullptr) {
+      notes = previousSaved->notes;
+      levels = previousSaved->levels;
+    } else if (previousTake != nullptr && previousTake->hasAnalysis()) {
+      notes = previousTake->analysis->notes;
+      levels = noteLevels(*previousTake);
+    }
+    const auto &previousEdits = previous->getPolyphonicEdits();
+    for (size_t i = 0; i < notes.size(); ++i) {
+      if (notes[i].startFrame < captureEndFrame && notes[i].endFrame >= offsetFrames)
+        continue;
+      if (const auto it = previousEdits.find(static_cast<int>(i)); it != previousEdits.end())
+        edits[static_cast<int>(restore->notes.size())] = it->second;
+      restore->notes.push_back(notes[i]);
+      restore->levels.push_back(i < levels.size() ? levels[i] : std::vector<float>{});
+    }
+  }
+  const auto captureLevels = noteLevels(*take);
+  for (size_t i = 0; i < analysis.notes.size(); ++i) {
+    auto note = analysis.notes[i];
+    note.startFrame += offsetFrames;
+    note.endFrame += offsetFrames;
+    restore->notes.push_back(std::move(note));
+    restore->levels.push_back(i < captureLevels.size() ? captureLevels[i]
+                                                       : std::vector<float>{});
+  }
+
+  // The timeline's audio: the take's channels, the mono mix shown and its
+  // original, and the playback (the earlier render with the new take raw).
+  juce::AudioBuffer<float> source;
+  if (previousTake != nullptr && previousTake->source.getNumSamples() > 0)
+    source.makeCopyOf(previousTake->source);
+  else if (previous != nullptr)
+    source.makeCopyOf(previous->getAudioData().originalWaveform);
+  paste(source, take->source, offsetSamples);
+
+  auto &audioData = placed->getAudioData();
+  const auto &captureAudio = capture.getAudioData();
+  if (previous == nullptr) {
+    audioData.waveform.setSize(1, 0);
+    audioData.originalWaveform.setSize(1, 0);
+  }
+  paste(audioData.waveform, captureAudio.waveform, offsetSamples);
+  paste(audioData.originalWaveform,
+        captureAudio.originalWaveform.getNumSamples() > 0 ? captureAudio.originalWaveform
+                                                          : captureAudio.waveform,
+        offsetSamples);
+  audioData.sampleRate = rate;
+  audioData.timelineOffsetSeconds =
+      previous != nullptr ? std::min(std::max(0.0, audioData.timelineOffsetSeconds),
+                                     std::max(0.0, timelineOffsetSeconds))
+                          : std::max(0.0, timelineOffsetSeconds);
+  if (previous != nullptr && previous->getPolyphonicPlayback() != nullptr) {
+    auto playback = std::make_shared<juce::AudioBuffer<float>>();
+    playback->makeCopyOf(*previous->getPolyphonicPlayback());
+    paste(*playback, take->source, offsetSamples);
+    placed->setPolyphonicPlayback(std::move(playback));
+  } else {
+    placed->setPolyphonicPlayback(nullptr);
+  }
+
+  // Drawn and editable at once; the masks of the whole timeline are rebuilt
+  // in the background (startCapturePolyphonicRestore).
+  auto restoring = makeRestoringTake(*restore, source.getNumSamples());
+  restoring->source = std::move(source);
+  restoring->sourceRate = static_cast<double>(rate);
+  placed->setAnalysisMode(capture.getAnalysisMode());
+  placed->setPendingPolyphonicRestore(restore);
+  placed->setPolyphonicTake(std::move(restoring));
+  placed->setPolyphonicEdits(std::move(edits));
+  placed->clearNotes();
+  return placed;
+}
+
+void PitchNetAudioProcessor::preparePolyphonicCaptureProject(Project &project) {
+  // A timeline read from the plug-in state: its saved notes are drawn at once
+  // and the saved render plays; the masks are rebuilt from the saved
+  // original (mono) by startCapturePolyphonicRestore.
+  const auto pending = project.getPendingPolyphonicRestore();
+  if (pending == nullptr || project.getPolyphonicTake() != nullptr)
+    return;
+  const auto &audioData = project.getAudioData();
+  const auto &original = audioData.originalWaveform.getNumSamples() > 0
+                             ? audioData.originalWaveform
+                             : audioData.waveform;
+  auto restoring = makeRestoringTake(*pending, original.getNumSamples());
+  restoring->source.makeCopyOf(original);
+  restoring->sourceRate = static_cast<double>(std::max(1, audioData.sampleRate));
+  project.setPolyphonicTake(std::move(restoring));
+  if (!project.getPolyphonicEdits().empty() && audioData.waveform.getNumSamples() > 0) {
+    auto playback = std::make_shared<juce::AudioBuffer<float>>();
+    playback->makeCopyOf(audioData.waveform);
+    project.setPolyphonicPlayback(std::move(playback));
+  }
+}
+
+void PitchNetAudioProcessor::startCapturePolyphonicRestore() {
+  auto *project = araAnalysisProjectSnapshot.get();
+  if (project == nullptr)
+    return;
+  const auto pending = project->getPendingPolyphonicRestore();
+  const auto take = project->getPolyphonicTake();
+  if (pending == nullptr || take == nullptr || !take->restoring ||
+      take->source.getNumSamples() == 0)
+    return;
+  auto source = std::make_shared<juce::AudioBuffer<float>>();
+  source->makeCopyOf(take->source);
+  const double rate = take->sourceRate > 0.0 ? take->sourceRate
+                                             : static_cast<double>(SAMPLE_RATE);
+  if (!polyphonicRestorePool)
+    polyphonicRestorePool = std::make_unique<juce::ThreadPool>(1);
+  auto cancel = polyphonicRestoreCancel;
+  polyphonicRestorePool->addJob([this, pending, source, rate, cancel]() {
+    auto restored = EditorController::restorePolyphonicTake(
+        *pending, std::move(*source), rate, cancel.get());
+    if (cancel->load())
+      return;
+    juce::MessageManager::callAsync([this, pending, restored, cancel]() {
+      if (!cancel->load())
+        finishCapturePolyphonicRestore(pending, restored);
+    });
+  });
+}
+
+void PitchNetAudioProcessor::finishCapturePolyphonicRestore(
+    std::shared_ptr<const PolyphonicRestore> pending,
+    std::shared_ptr<const PolyphonicTake> restored) {
+  if (restored == nullptr)
+    return; // stays drawn from its notes; renders nothing until analysed again
+  // Every copy of the timeline still waiting for these masks takes them;
+  // edits made meanwhile stay.
+  Project *ui = mainComponent != nullptr ? mainComponent->getProject() : nullptr;
+  Project *candidates[] = {araAnalysisProjectSnapshot.get(),
+                           araAnalysisController ? araAnalysisController->getProject()
+                                                 : nullptr,
+                           ui};
+  bool landed = false;
+  for (auto *project : candidates) {
+    if (project == nullptr || project->getPendingPolyphonicRestore() != pending)
+      continue;
+    project->setPolyphonicTake(restored);
+    project->setPendingPolyphonicRestore(nullptr);
+    landed = true;
+  }
+  if (!landed)
+    return;
+  invalidateAraAnalysisProjectJson();
+  if (ui != nullptr)
+    if (auto *component = mainComponent->getComponent())
+      component->repaint();
+  if (polyphonicRenderAfterRestore.erase(juce::String()) > 0) {
+    if (ui != nullptr)
+      requestPluginProjectRender(*ui);
+    else if (araAnalysisProjectSnapshot)
+      requestPluginProjectRender(*araAnalysisProjectSnapshot);
+  }
+}
+
 void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
     const juce::AudioBuffer<float> &buffer, double sampleRate,
     double timelineOffsetSeconds, std::uint64_t pendingTakeId) {
@@ -1327,6 +1562,25 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
     mainComponent->showAnalysisProgress(0.0);
   }
 
+  // The take's channels for the polyphonic engine, and the instance's mode:
+  // the first capture's (classified) or the user's, sticky for later takes so
+  // one timeline never mixes vocal and polyphonic analyses.
+  EditorController::HostAnalysisOptions captureOptions;
+  {
+    auto channels = std::make_shared<juce::AudioBuffer<float>>();
+    channels->makeCopyOf(buffer);
+    captureOptions.takeChannels = std::move(channels);
+  }
+  if (previousCapturedProject &&
+      previousCapturedProject->getAudioData().waveform.getNumSamples() > 0) {
+    const auto &state = previousCapturedProject->getAnalysisMode();
+    if (state.classified || state.userChosen) {
+      captureOptions.trackMode = state.mode;
+      captureOptions.trackDetector = state.detector;
+      captureOptions.trackModeUserChosen = state.userChosen;
+    }
+  }
+
   araAnalysisController->setHostAudioAsync(
       buffer, sampleRate,
       [this](double progress, const juce::String &msg) {
@@ -1356,7 +1610,13 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
             previousCapturedProject->getAudioData().waveform.getNumSamples() >
                 0;
 
-        if (hasPreviousCapture) {
+        if (analyzedProject->isPolyphonic()) {
+          // One polyphonic take for the whole timeline: this capture placed
+          // at its host position, spliced into the earlier ones.
+          completedProject = placePolyphonicCapture(
+              hasPreviousCapture ? previousCapturedProject.get() : nullptr,
+              *analyzedProject, timelineOffsetSeconds);
+        } else if (hasPreviousCapture) {
           completedProject =
               std::make_unique<Project>(*previousCapturedProject);
           auto &dst = completedProject->getAudioData();
@@ -1510,6 +1770,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
         invalidateAraAnalysisProjectJson();
         araAnalysisLoading = false;
         araAnalysisReady = araAnalysisProjectSnapshot != nullptr;
+        startCapturePolyphonicRestore();
         if (pendingTakeId != 0) {
           // The analyzed project now persists the take; stop carrying the raw
           // audio in the plug-in state.
@@ -1597,6 +1858,14 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
 #endif
   if (controller == nullptr)
     return;
+
+  // A take still being restored has nothing to render with yet: it renders
+  // once its masks land (finishPolyphonicAraRestore, or for a captured
+  // timeline finishCapturePolyphonicRestore under the empty key).
+  if (const auto take = projectToRender.getPolyphonicTake();
+      take != nullptr && take->restoring)
+    polyphonicRenderAfterRestore.insert(target != nullptr ? targetKey
+                                                          : activeRegionKey);
 
   auto *backendProject = controller->getProject();
   if (!backendProject)
@@ -1696,9 +1965,16 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                     projectArchive.getData(), projectArchive.getSize());
             }
 
+            // A polyphonic take publishes its (stereo) render.
+            const auto polyphonicPlayback =
+                renderedProject->isPolyphonic()
+                    ? renderedProject->getPolyphonicPlayback()
+                    : nullptr;
+            const auto &publishedAudio =
+                polyphonicPlayback ? *polyphonicPlayback : audioData.waveform;
             if (renderModification != nullptr &&
                 projectHasRegionEdits(*renderedProject) &&
-                audioData.waveform.getNumSamples() > 0) {
+                publishedAudio.getNumSamples() > 0) {
               const double processedRate =
                   audioData.sampleRate > 0
                       ? static_cast<double>(audioData.sampleRate)
@@ -1707,7 +1983,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               // whole modification, so publish it whole. Each region maps its
               // own span out of it via getStartInAudioModificationSamples().
               juce::AudioBuffer<float> processedSlice;
-              processedSlice.makeCopyOf(audioData.waveform);
+              processedSlice.makeCopyOf(publishedAudio);
               if (!renderChangedSampleRanges.empty()) {
                 juce::AudioBuffer<float> previousProcessed;
                 double previousRate = 0.0;
@@ -1825,7 +2101,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
   invalidateAraAnalysisProjectJson();
   araAnalysisReady =
       stateProject.getAudioData().waveform.getNumSamples() > 0 &&
-      !stateProject.getAudioData().f0.empty();
+      (!stateProject.getAudioData().f0.empty() || stateProject.isPolyphonic());
   cachedPitchOffset = stateProject.getGlobalPitchOffset();
   cachedFormantShift = stateProject.getFormantShift();
   publishPersistentProjectSnapshot(stateProject);
@@ -1850,8 +2126,17 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
     // persistence, timeline clips) reflects the edit instead of the
     // analysis-time audio. Only for regions that were actually CHANGED —
     // an unedited region stores nothing and keeps playing its original source.
+    // A polyphonic take publishes its latest (stereo) render; before the
+    // first one nothing new is published (its render follows).
+    const auto polyphonicPlayback = stateProject.isPolyphonic()
+                                        ? stateProject.getPolyphonicPlayback()
+                                        : nullptr;
+    static const juce::AudioBuffer<float> noAudio;
     if (activeModification != nullptr && projectHasRegionEdits(stateProject)) {
-      const auto &processed = stateProject.getAudioData().waveform;
+      const auto &processed =
+          isPolyphonicProject(stateProject)
+              ? (polyphonicPlayback ? *polyphonicPlayback : noAudio)
+              : stateProject.getAudioData().waveform;
       const double processedRate =
           stateProject.getAudioData().sampleRate > 0
               ? static_cast<double>(stateProject.getAudioData().sampleRate)
@@ -1896,6 +2181,9 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
 
 #if JucePlugin_Enable_ARA
 bool PitchNetAudioProcessor::projectHasRegionEdits(const Project &project) {
+  // A polyphonic take: its note edits (no vocal notes, no global offsets).
+  if (isPolyphonicProject(project))
+    return !project.getPolyphonicEdits().empty();
   if (project.getGlobalPitchOffset() != 0.0f ||
       project.getFormantShift() != 0.0f)
     return true;
@@ -2128,6 +2416,7 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
   if (!ProjectSerializer::fromJson(*restoredProject, parsed))
     return false;
   adoptMacroParameters(*restoredProject);
+  preparePolyphonicCaptureProject(*restoredProject);
 
   araAnalysisTimelineOffsetSeconds =
       restoredProject->getAudioData().timelineOffsetSeconds;
@@ -2139,13 +2428,15 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
   araAnalysisLoading = false;
   araAnalysisReady =
       restoredProject->getAudioData().waveform.getNumSamples() > 0 &&
-      !restoredProject->getAudioData().f0.empty();
+      (!restoredProject->getAudioData().f0.empty() ||
+       restoredProject->isPolyphonic());
 
   if (!araAnalysisController)
     araAnalysisController = makeAnalysisController();
   araAnalysisController->setProject(std::move(restoredProject));
   if (araAnalysisProjectSnapshot)
     publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
+  startCapturePolyphonicRestore();
   return true;
 }
 
@@ -2158,6 +2449,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
   if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
                                             sizeInBytes)) {
     adoptMacroParameters(*restoredProject);
+    preparePolyphonicCaptureProject(*restoredProject);
     pendingStateJson.clear();
     araAnalysisTimelineOffsetSeconds =
         restoredProject->getAudioData().timelineOffsetSeconds;
@@ -2166,7 +2458,8 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
     araAnalysisLoading = false;
     araAnalysisReady =
         restoredProject->getAudioData().waveform.getNumSamples() > 0 &&
-        !restoredProject->getAudioData().f0.empty();
+        (!restoredProject->getAudioData().f0.empty() ||
+       restoredProject->isPolyphonic());
     cachedPitchOffset = restoredProject->getGlobalPitchOffset();
     cachedFormantShift = restoredProject->getFormantShift();
 
@@ -2185,6 +2478,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
       // document-controller pointer is established in didBindToARA().
       bindRealtimeProcessorHeadless();
     }
+    startCapturePolyphonicRestore();
 #if JucePlugin_Enable_ARA
     if (!isPlaybackRenderer())
 #endif
@@ -2202,11 +2496,13 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
   if (mainComponent && mainComponent->restoreProjectJson(projectJson)) {
     pendingStateJson.clear();
     if (auto *project = mainComponent->getProject()) {
+      preparePolyphonicCaptureProject(*project);
       cachedPitchOffset = project->getGlobalPitchOffset();
       cachedFormantShift = project->getFormantShift();
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
       invalidateAraAnalysisProjectJson();
       publishPersistentProjectSnapshot(*project);
+      startCapturePolyphonicRestore();
     }
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
   } else if (araAnalysisProjectSnapshot) {
@@ -2329,7 +2625,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
         invalidateAraAnalysisProjectJson();
         araAnalysisReady =
             project->getAudioData().waveform.getNumSamples() > 0 &&
-            !project->getAudioData().f0.empty();
+            (!project->getAudioData().f0.empty() || project->isPolyphonic());
         publishPersistentProjectSnapshot(*project);
       }
     }
@@ -2783,6 +3079,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     auto outgoing = mainComponent->exchangeProject(nullptr);
     if (outgoing) {
       stampActiveRegionSpan(*outgoing);
+      setAsidePolyphonicTake(*outgoing);
       araRegions[activeRegionKey].project = std::move(outgoing);
     }
   }
@@ -3060,12 +3357,250 @@ void PitchNetAudioProcessor::updateAraTrackAnalysisQueue(
   }
 }
 
+namespace {
+// The session's key of a track (region sequence), as the editor's track list
+// keys it (araTrackKey in PluginEditor.cpp). Never stored.
+juce::String araSequenceKey(const juce::ARARegionSequence *sequence) {
+  return juce::String::toHexString(static_cast<juce::int64>(
+      reinterpret_cast<std::uintptr_t>(sequence)));
+}
+} // namespace
+
+juce::ARARegionSequence *PitchNetAudioProcessor::araSequenceFor(
+    PitchNetAudioModification *modification) const {
+  if (modification == nullptr)
+    return nullptr;
+  if (araDocumentController != nullptr)
+    if (auto *current = araDocumentController->getCurrentPlaybackRegion();
+        current != nullptr && current->getAudioModification() == modification)
+      return current->getRegionSequence();
+  for (auto *region : modification->getPlaybackRegions<juce::ARAPlaybackRegion>())
+    if (region != nullptr)
+      return region->getRegionSequence();
+  return nullptr;
+}
+
+std::optional<PitchNetAudioProcessor::AraTrackMode>
+PitchNetAudioProcessor::resolveAraTrackMode(juce::ARARegionSequence *sequence) {
+  if (sequence == nullptr)
+    return std::nullopt;
+  const auto key = araSequenceKey(sequence);
+  if (const auto it = araTrackModes.find(key); it != araTrackModes.end())
+    return it->second;
+  // A reopened session: the track's mode is the copy its analysed clips keep.
+  for (auto *region : sequence->getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+    if (region == nullptr)
+      continue;
+    const auto *project = findAraRegionProject(pitchnetRegionKey(*region));
+    if (project == nullptr)
+      continue;
+    const auto &state = project->getAnalysisMode();
+    if (!state.classified && !state.userChosen)
+      continue;
+    AraTrackMode mode{state.mode, state.detector, state.userChosen};
+    araTrackModes[key] = mode;
+    return mode;
+  }
+  return std::nullopt;
+}
+
 void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
     const juce::String &regionKey, PitchNetAudioModification *modification,
     juce::int64 startSampleInModification, double timelineOffsetSeconds,
-    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+    const juce::AudioBuffer<float> &buffer, double sampleRate,
+    std::shared_ptr<const juce::AudioBuffer<float>> channels) {
   if (regionKey.isEmpty() || buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
     return;
+
+  auto *sequence = araSequenceFor(modification);
+  if (const auto trackMode = resolveAraTrackMode(sequence)) {
+    startAraRegionAnalysis(regionKey, modification, startSampleInModification,
+                           timelineOffsetSeconds, buffer, sampleRate,
+                           std::move(channels), *trackMode);
+    return;
+  }
+  if (sequence == nullptr) {
+    // Not on a track (yet): its own classification decides.
+    startAraRegionAnalysis(regionKey, modification, startSampleInModification,
+                           timelineOffsetSeconds, buffer, sampleRate,
+                           std::move(channels), std::nullopt);
+    return;
+  }
+
+  // The track's first analysis: classify every clip on it that has no
+  // analysis yet (this one first), and take the duration-weighted majority.
+  std::vector<std::pair<juce::AudioBuffer<float>, double>> clips;
+  std::vector<juce::String> keys;
+  std::vector<double> seconds;
+  {
+    juce::AudioBuffer<float> own;
+    own.makeCopyOf(buffer);
+    clips.emplace_back(std::move(own), sampleRate);
+    keys.push_back(regionKey);
+    seconds.push_back(buffer.getNumSamples() / sampleRate);
+  }
+  std::set<juce::String> seen{regionKey};
+  for (auto *region : sequence->getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+    if (region == nullptr)
+      continue;
+    const auto key = pitchnetRegionKey(*region);
+    if (!seen.insert(key).second || findAraRegionProject(key) != nullptr)
+      continue;
+    auto *source = region->getAudioModification()->getAudioSource();
+    if (source == nullptr || !source->isSampleAccessEnabled() ||
+        source->getSampleRate() <= 0.0 || source->getSampleCount() <= 0 ||
+        source->getSampleCount() > std::numeric_limits<int>::max())
+      continue;
+    const int numSamples = static_cast<int>(source->getSampleCount());
+    juce::AudioBuffer<float> clip(1, numSamples);
+    clip.clear();
+    juce::ARAAudioSourceReader reader(source);
+    if (!reader.read(&clip, 0, numSamples, 0, true, false))
+      continue;
+    clips.emplace_back(std::move(clip), source->getSampleRate());
+    keys.push_back(key);
+    seconds.push_back(numSamples / source->getSampleRate());
+  }
+
+  if (!regionCanvasController)
+    regionCanvasController = makeAnalysisController();
+  const auto generation = regionCanvasAnalysisGeneration.fetch_add(1) + 1;
+  pendingRegionCanvasAnalysisKey = regionKey;
+  regionCanvasAnalysisPending.store(true);
+  if (mainComponent) {
+    mainComponent->setStatusMessage(TR("progress.analyzing"));
+    mainComponent->showAnalysisProgress(trackAnalysisRunning
+        ? (double)trackAnalysisFinished / std::max(1, trackAnalysisTotal) : 0.0);
+  }
+
+  auto ownBuffer = std::make_shared<juce::AudioBuffer<float>>();
+  ownBuffer->makeCopyOf(buffer);
+  const auto trackKey = araSequenceKey(sequence);
+  regionCanvasController->classifyHostAudioAsync(
+      std::move(clips),
+      [this, generation, trackKey, keys, seconds, regionKey, modification,
+       startSampleInModification, timelineOffsetSeconds, ownBuffer, sampleRate,
+       channels](std::vector<AnalysisModeState> states) mutable {
+        if (regionCanvasAnalysisGeneration.load() != generation)
+          return; // cancelled, or the clip went away
+        std::vector<std::pair<AnalysisMode, double>> weights;
+        for (size_t i = 0; i < states.size() && i < keys.size(); ++i) {
+          if (!states[i].classified)
+            continue;
+          weights.emplace_back(states[i].detected, seconds[i]);
+          araPrepassClassifications[keys[i]] = states[i];
+        }
+        AraTrackMode trackMode;
+        // Nothing classified (no models, all silent): the vocal default.
+        trackMode.mode = weights.empty() ? AnalysisMode::Vocal
+                                         : analysismode::trackMode(weights);
+        araTrackModes.emplace(trackKey, trackMode); // a choice made meanwhile wins
+        startAraRegionAnalysis(regionKey, modification, startSampleInModification,
+                               timelineOffsetSeconds, *ownBuffer, sampleRate,
+                               std::move(channels), araTrackModes[trackKey]);
+      });
+}
+
+void PitchNetAudioProcessor::discardAraRegionAnalysis(
+    const juce::String &regionKey, PitchNetAudioModification *modification) {
+  if (pendingRegionCanvasAnalysisKey == regionKey) {
+    regionCanvasAnalysisGeneration.fetch_add(1);
+    if (regionCanvasController)
+      regionCanvasController->requestCancelLoading();
+    pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+  }
+  if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
+      mainComponent != nullptr) {
+    auto displaced = mainComponent->exchangeProject(nullptr);
+    juce::ignoreUnused(displaced);
+    canvasShowsActiveAraRegion = false;
+  }
+  for (auto &entry : trackUndoManagers)
+    entry.second->removeContext(regionKey);
+  if (const auto it = araRegions.find(regionKey); it != araRegions.end()) {
+    if (it->second.undoManager != nullptr)
+      it->second.undoManager->clear();
+    araRegions.erase(it);
+  }
+  araPrepassClassifications.erase(regionKey);
+  polyphonicRenderAfterRestore.erase(regionKey);
+  trackAnalysisAttempted.erase(regionKey);
+  if (modification != nullptr) {
+    // Its saved analysis must not come back on the next request.
+    modification->clearProjectArchive();
+    if (clearProcessedRegionAudio(modification)) {
+      modification->notifyContentChanged(
+          juce::ARAContentUpdateScopes::samplesAreAffected(), true);
+      for (auto *region : modification->getPlaybackRegions())
+        if (region != nullptr)
+          region->notifyContentChanged(
+              juce::ARAContentUpdateScopes::samplesAreAffected(), true);
+    }
+  }
+}
+
+void PitchNetAudioProcessor::changeAraTrackAnalysisMode(const AnalysisModeState &next) {
+  auto *sequence = araSequenceFor(activeModification);
+  if (sequence == nullptr)
+    return;
+  araTrackModes[araSequenceKey(sequence)] = {next.mode, next.detector, true};
+
+  // Every clip on the track is analysed again in it: the active one now, the
+  // others by the track queue or when opened.
+  std::set<juce::String> done;
+  for (auto *region : sequence->getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+    if (region == nullptr)
+      continue;
+    const auto key = pitchnetRegionKey(*region);
+    if (done.insert(key).second)
+      discardAraRegionAnalysis(
+          key, region->getAudioModification<PitchNetAudioModification>());
+  }
+  if (araDocumentController == nullptr)
+    return;
+  auto *current = araDocumentController->getCurrentPlaybackRegion();
+  if (current != nullptr && current->getRegionSequence() == sequence)
+    araDocumentController->requestRegionCanvasAnalysis(current);
+}
+
+bool PitchNetAudioProcessor::activeAraTrackHasEdits() {
+  auto *sequence = araSequenceFor(activeModification);
+  if (sequence == nullptr)
+    return false;
+  for (auto *region : sequence->getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+    if (region == nullptr)
+      continue;
+    if (const auto *project = findAraRegionProject(pitchnetRegionKey(*region));
+        project != nullptr && projectHasRegionEdits(*project))
+      return true;
+  }
+  return false;
+}
+
+void PitchNetAudioProcessor::startAraRegionAnalysis(
+    const juce::String &regionKey, PitchNetAudioModification *modification,
+    juce::int64 startSampleInModification, double timelineOffsetSeconds,
+    const juce::AudioBuffer<float> &buffer, double sampleRate,
+    std::shared_ptr<const juce::AudioBuffer<float>> channels,
+    const std::optional<AraTrackMode> &trackMode) {
+  if (regionKey.isEmpty() || buffer.getNumSamples() <= 0 || sampleRate <= 0.0)
+    return;
+
+  // The clip is analysed in its track's mode; its own classification (from
+  // the track's pre-pass, else made now) stays recorded.
+  EditorController::HostAnalysisOptions options;
+  options.takeChannels = std::move(channels);
+  if (trackMode) {
+    options.trackMode = trackMode->mode;
+    options.trackDetector = trackMode->detector;
+    options.trackModeUserChosen = trackMode->userChosen;
+  }
+  if (const auto it = araPrepassClassifications.find(regionKey);
+      it != araPrepassClassifications.end()) {
+    options.initialMode = it->second;
+    araPrepassClassifications.erase(it);
+  }
 
   // No audio is published at analysis time (unedited regions play their raw
   // source), but the editable analysis project is cached on the ARA
@@ -3238,7 +3773,8 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
         if (mainComponent && !trackAnalysisRunning &&
             (regionKey == activeRegionKey || completedPendingRegion))
           mainComponent->hideAnalysisProgress();
-      });
+      },
+      std::move(options));
 }
 
 void PitchNetAudioProcessor::releaseAraModificationCanvas(
@@ -3362,17 +3898,15 @@ bool PitchNetAudioProcessor::araRegionProjectNeedsSourceHydration(
   if (project == nullptr)
     return false;
 
-  const auto &audioData = project->getAudioData();
-  return audioData.waveform.getNumSamples() <= 0 ||
-         audioData.originalWaveform.getNumSamples() <= 0 ||
-         audioData.melSpectrogram.empty();
+  return !projectHasSourceData(*project);
 }
 
 
 bool PitchNetAudioProcessor::hydrateAraRegionProject(
     const juce::String &regionKey,
     const juce::AudioBuffer<float> &sourceBuffer,
-    double sourceSampleRate) {
+    double sourceSampleRate,
+    std::shared_ptr<const juce::AudioBuffer<float>> channels) {
   if (regionKey.isEmpty() || sourceBuffer.getNumChannels() <= 0 ||
       sourceBuffer.getNumSamples() <= 0 || sourceSampleRate <= 0.0)
     return false;
@@ -3388,6 +3922,10 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
   }
   if (project == nullptr)
     return false;
+
+  if (isPolyphonicProject(*project))
+    return hydratePolyphonicAraProject(regionKey, *project, sourceBuffer,
+                                       sourceSampleRate, std::move(channels));
 
   auto &audioData = project->getAudioData();
 
@@ -3489,6 +4027,149 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
   return true;
 }
 
+void PitchNetAudioProcessor::setAsidePolyphonicTake(Project &project) {
+  // A clip that is not on the canvas keeps its notes, their levels and its
+  // edits, but not the analysis (masks, about 20 MB per minute of dense
+  // material) or the take's channels and render: shown again, it is hydrated
+  // from the host source like a reopened session, and its masks are rebuilt
+  // in the background (about 3 s per minute).
+  const auto take = project.getPolyphonicTake();
+  if (take == nullptr || !take->hasAnalysis() || take->restoring)
+    return;
+  auto saved = std::make_shared<PolyphonicRestore>();
+  saved->params = take->analysis->params;
+  saved->notes = take->analysis->notes;
+  saved->levels = noteLevels(*take);
+  project.setPendingPolyphonicRestore(std::move(saved));
+  project.setPolyphonicTake(nullptr);
+  project.setPolyphonicPlayback(nullptr);
+}
+
+Project *PitchNetAudioProcessor::findAraRegionProject(const juce::String &regionKey) {
+  if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
+      mainComponent != nullptr && mainComponent->getProject() != nullptr)
+    return mainComponent->getProject();
+  const auto it = araRegions.find(regionKey);
+  return it != araRegions.end() ? it->second.project.get() : nullptr;
+}
+
+bool PitchNetAudioProcessor::hydratePolyphonicAraProject(
+    const juce::String &regionKey, Project &project,
+    const juce::AudioBuffer<float> &sourceBuffer, double sourceSampleRate,
+    std::shared_ptr<const juce::AudioBuffer<float>> channels) {
+  if (projectHasSourceData(project))
+    return true;
+
+  // The take's own channels at the project rate, and their mono mix: what the
+  // engine analysed (EditorController::analyzePolyphonicTake).
+  const auto &input = channels != nullptr && channels->getNumSamples() > 0
+                          ? *channels
+                          : sourceBuffer;
+  const double projectRate = static_cast<double>(SAMPLE_RATE);
+  auto source = std::make_shared<juce::AudioBuffer<float>>();
+  source->makeCopyOf(input);
+  if (source->getNumChannels() > 2)
+    source->setSize(2, source->getNumSamples(), true);
+  if (!juce::approximatelyEqual(sourceSampleRate, projectRate)) {
+    *source = AudioResampler::resample(*source, sourceSampleRate, projectRate);
+    if (source->getNumSamples() <= 0)
+      return false;
+  }
+  const auto mixToMono = [](const juce::AudioBuffer<float> &buffer) {
+    juce::AudioBuffer<float> mono(1, buffer.getNumSamples());
+    mono.clear();
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+      mono.addFrom(0, 0, buffer, ch, 0, buffer.getNumSamples(),
+                   1.0f / static_cast<float>(buffer.getNumChannels()));
+    return mono;
+  };
+
+  auto &audioData = project.getAudioData();
+  audioData.sampleRate = SAMPLE_RATE;
+  if (audioData.originalWaveform.getNumSamples() <= 0)
+    audioData.originalWaveform = mixToMono(*source);
+  const bool needsWaveform = audioData.waveform.getNumSamples() <= 0;
+  if (needsWaveform)
+    audioData.waveform.makeCopyOf(audioData.originalWaveform);
+  if (needsWaveform || (project.getPolyphonicPlayback() == nullptr &&
+                        !project.getPolyphonicEdits().empty())) {
+    // The saved render (the edits as last published) is the playback, and
+    // its mix what is drawn.
+    if (regionKey == activeRegionKey && activeModification != nullptr) {
+      juce::AudioBuffer<float> processed;
+      double processedRate = 0.0;
+      juce::int64 processedStart = 0;
+      if (activeModification->copyProcessedAudio(processed, processedRate,
+                                                 processedStart) &&
+          processed.getNumSamples() > 0 && processedRate > 0.0) {
+        if (!juce::approximatelyEqual(processedRate, projectRate))
+          processed = AudioResampler::resample(processed, processedRate, projectRate);
+        if (processed.getNumSamples() > 0) {
+          audioData.waveform = mixToMono(processed);
+          project.setPolyphonicPlayback(
+              std::make_shared<const juce::AudioBuffer<float>>(std::move(processed)));
+        }
+      }
+    }
+  }
+
+  if (project.getPolyphonicTake() == nullptr) {
+    const auto pending = project.getPendingPolyphonicRestore();
+    if (pending == nullptr)
+      return false;
+    // Drawn and editable at once from the saved notes; the masks follow in
+    // the background.
+    project.setPolyphonicTake(makeRestoringTake(
+        *pending, audioData.originalWaveform.getNumSamples()));
+    if (!polyphonicRestorePool)
+      polyphonicRestorePool = std::make_unique<juce::ThreadPool>(1);
+    auto cancel = polyphonicRestoreCancel;
+    polyphonicRestorePool->addJob([this, regionKey, pending, source, cancel]() {
+      auto restored = EditorController::restorePolyphonicTake(
+          *pending, std::move(*source), static_cast<double>(SAMPLE_RATE),
+          cancel.get());
+      if (cancel->load())
+        return;
+      juce::MessageManager::callAsync([this, regionKey, pending, restored, cancel]() {
+        if (!cancel->load())
+          finishPolyphonicAraRestore(regionKey, pending, restored);
+      });
+    });
+  }
+
+  if (pendingRegionCanvasAnalysisKey == regionKey) {
+    pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+  }
+  return true;
+}
+
+void PitchNetAudioProcessor::finishPolyphonicAraRestore(
+    const juce::String &regionKey, std::shared_ptr<const PolyphonicRestore> pending,
+    std::shared_ptr<const PolyphonicTake> restored) {
+  auto *project = findAraRegionProject(regionKey);
+  // Re-analysed, restored again or gone meanwhile.
+  if (project == nullptr || project->getPendingPolyphonicRestore() != pending)
+    return;
+  if (restored == nullptr) {
+    // The take stays drawn from its saved notes and plays its saved render;
+    // it renders nothing until analysed again.
+    ARA_DIAG("polyphonicRestoreFailed key=" + regionKey);
+    polyphonicRenderAfterRestore.erase(regionKey);
+    return;
+  }
+  // Edits made meanwhile (and their undo steps) stay: they live in the project.
+  project->setPolyphonicTake(restored);
+  project->setPendingPolyphonicRestore(nullptr);
+  const bool onCanvas = project == (mainComponent != nullptr ? mainComponent->getProject()
+                                                              : nullptr);
+  if (onCanvas)
+    if (auto *component = mainComponent->getComponent())
+      component->repaint();
+  if (polyphonicRenderAfterRestore.erase(regionKey) > 0 && onCanvas)
+    requestPluginProjectRender(*project);
+}
+
 bool PitchNetAudioProcessor::araRegionProjectAppearsToCover(
     const juce::String &regionKey, double regionStart, double regionEnd) const {
   const Project *project = nullptr;
@@ -3517,12 +4198,8 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
       mainComponent == nullptr)
     return false;
 
-  if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr) {
-    const auto &audioData = mainComponent->getProject()->getAudioData();
-    return audioData.waveform.getNumSamples() > 0 &&
-           audioData.originalWaveform.getNumSamples() > 0 &&
-           !audioData.melSpectrogram.empty();
-  }
+  if (canvasShowsActiveAraRegion && mainComponent->getProject() != nullptr)
+    return projectHasSourceData(*mainComponent->getProject());
 
   auto it = araRegions.find(regionKey);
   if (it == araRegions.end() || !it->second.project)
@@ -3607,10 +4284,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
       return;
 
     if (liveState.project != nullptr &&
-        (liveState.project->getAudioData().waveform.getNumSamples() <= 0 ||
-         liveState.project->getAudioData().originalWaveform.getNumSamples() <=
-             0 ||
-         liveState.project->getAudioData().melSpectrogram.empty())) {
+        !projectHasSourceData(*liveState.project)) {
       // Keep the restored analysis shell out of the editor until its immutable
       // source, source-derived mel, and rendered waveform have been rebuilt.
       // Otherwise an edit could synthesize without all required inputs.
@@ -3753,6 +4427,9 @@ PitchNetAudioProcessor::~PitchNetAudioProcessor() {
                " captured=" +
                juce::String(captureController->getCapturedSampleCount()));
   // Cancel every backend before member destruction starts joining workers.
+  polyphonicRestoreCancel->store(true);
+  if (polyphonicRestorePool)
+    polyphonicRestorePool->removeAllJobs(true, 10000);
   for (auto& entry : modificationRenders)
     if (entry.second.controller) entry.second.controller->requestShutdown();
   modificationRenders.clear();
@@ -3773,6 +4450,9 @@ PitchNetAudioProcessor::~PitchNetAudioProcessor() {
   }
 }
 #else
+void PitchNetAudioProcessor::changeAraTrackAnalysisMode(const AnalysisModeState &) {}
+bool PitchNetAudioProcessor::activeAraTrackHasEdits() { return false; }
+
 void PitchNetAudioProcessor::publishPersistentProjectSnapshot(
     const Project &) {}
 

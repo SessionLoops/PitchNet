@@ -26,6 +26,24 @@
 struct SharedInferenceModels;
 struct ClassifierModels;
 
+// Options of EditorController::setHostAudioAsync (outside the class so it
+// can be a default argument there).
+struct EditorHostAnalysisOptions
+{
+  // The clip's own channels at the analysed rate (at most two), kept for the
+  // polyphonic engine; dropped again when the clip is analysed as vocal.
+  std::shared_ptr<const juce::AudioBuffer<float>> takeChannels;
+  // The clip's analysis state to start from (e.g. its classification from
+  // a track pre-pass, so it is not classified twice).
+  std::optional<AnalysisModeState> initialMode;
+  // The track's mode: applied whatever the clip's own classification says
+  // (which is still recorded). With it, the track's detector and whether the
+  // user chose the mode.
+  std::optional<AnalysisMode> trackMode;
+  PolyphonicDetector trackDetector = PolyphonicDetector::Harmonic;
+  bool trackModeUserChosen = false;
+};
+
 class EditorController
 {
 public:
@@ -100,10 +118,22 @@ public:
                           const ProgressCallback &onProgress,
                           const LoadCompleteCallback &onComplete,
                           const CancelCallback &onCancelled);
+  using HostAnalysisOptions = EditorHostAnalysisOptions;
+
+  // `buffer` is analysed as before (the vocal path's mono input).
   void setHostAudioAsync(const juce::AudioBuffer<float> &buffer,
                          double sampleRate,
                          const ProgressCallback &onProgress,
-                         const LoadCompleteCallback &onComplete);
+                         const LoadCompleteCallback &onComplete,
+                         HostAnalysisOptions options = {});
+
+  // Classifies several clips (mono, each at its own rate) on the loader
+  // thread, for a track's mode; onComplete gets one state per clip (not
+  // classified where it could not be), on the message thread. Nothing when
+  // cancelled or superseded by another load.
+  void classifyHostAudioAsync(
+      std::vector<std::pair<juce::AudioBuffer<float>, double>> clips,
+      std::function<void(std::vector<AnalysisModeState>)> onComplete);
   void requestCancelLoading();
 
   void resynthesizeIncrementalAsync(
@@ -153,6 +183,13 @@ public:
   void restorePolyphonicAsync(
       std::function<void(std::shared_ptr<const PolyphonicTake>)> onComplete);
 
+  // The work of a restore, on the caller's thread: the masks for `restore`'s
+  // notes from `source` (the take's channels, any rate, at most two). Null
+  // when cancelled or on failure.
+  static std::shared_ptr<const PolyphonicTake>
+  restorePolyphonicTake(const PolyphonicRestore &restore, juce::AudioBuffer<float> source,
+                        double sourceRate, const std::atomic<bool> *cancel);
+
   // Renders the polyphonic take with the project's current edits on a worker
   // thread. One render at a time: a request while one runs cancels it and
   // renders again with the newest edits, so a burst of edits costs one
@@ -193,6 +230,9 @@ private:
   // decision in its AnalysisModeState, unless it is already classified. Until
   // M2 the analysis that follows is vocal whatever the decision.
   void classifyInputType(Project &targetProject);
+  // A track's mode for the analysis running on the loader thread
+  // (HostAnalysisOptions); applied after the take's own classification.
+  std::optional<AnalysisModeState> analysisTrackMode;
   // Builds the take's PolyphonicTake (Basic Pitch evidence + polyphonic::analyze)
   // and clears the vocal analysis. False when cancelled.
   bool analyzePolyphonicTake(

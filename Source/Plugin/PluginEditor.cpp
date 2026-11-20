@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "HostCompatibility.h"
+#include "../Models/PolyphonicTake.h"
 #include "../Models/Project.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
@@ -36,6 +37,39 @@ std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
 {
   windowZeroSeconds = 0.0;
   const auto &src = source.getAudioData();
+  // A polyphonic take is drawn whole, in modification time (the canvas clips
+  // it to the region): its notes and levels only, never its masks, so a
+  // preview keeps no analysis alive. A take not yet restored is drawn from
+  // its saved notes.
+  if (source.isPolyphonic() || source.getPendingPolyphonicRestore() != nullptr)
+  {
+    std::shared_ptr<const PolyphonicTake> drawing;
+    if (const auto take = source.getPolyphonicTake(); take != nullptr && take->hasAnalysis())
+      drawing = makeDrawingTake(*take);
+    else if (const auto pending = source.getPendingPolyphonicRestore())
+    {
+      int numSamples = src.originalWaveform.getNumSamples();
+      for (const auto &note : pending->notes)
+        numSamples = std::max(numSamples, (note.endFrame + 1) * pending->params.hop);
+      drawing = makeRestoringTake(*pending, numSamples);
+    }
+    if (drawing == nullptr)
+      return nullptr;
+    auto window = std::make_shared<Project>();
+    window->setPitchReferenceHz(source.getPitchReferenceHz());
+    window->setAnalysisMode(source.getAnalysisMode());
+    window->setPolyphonicTake(std::move(drawing));
+    window->setPolyphonicEdits(source.getPolyphonicEdits());
+    auto &dst = window->getAudioData();
+    dst.sampleRate = src.sampleRate;
+    // The notes are scaled against the mix (PolyphonicNoteLayer).
+    if (src.waveform.getNumSamples() > 0)
+    {
+      dst.waveform.setSize(1, src.waveform.getNumSamples());
+      dst.waveform.copyFrom(0, 0, src.waveform, 0, 0, src.waveform.getNumSamples());
+    }
+    return window;
+  }
   const int frameCount = static_cast<int>(src.f0.size());
   if (frameCount <= 0 || windowEnd <= windowStart)
     return nullptr;
@@ -159,6 +193,32 @@ MainViewRegionPreview buildRegionPreview(const Project &project,
   const double shift = regionStart - std::max(0.0, startInModificationSeconds);
   const double localStart = regionStart - shift;
   const double localEnd = regionEnd - shift;
+
+  // A polyphonic take's notes, where their edits put them (for the overview).
+  if (const auto take = project.getPolyphonicTake(); take != nullptr && take->hasAnalysis())
+  {
+    const auto &analysis = *take->analysis;
+    const auto &edits = project.getPolyphonicEdits();
+    for (size_t i = 0; i < analysis.notes.size(); ++i)
+    {
+      const auto &note = analysis.notes[i];
+      if (!note.active)
+        continue;
+      const auto it = edits.find(static_cast<int>(i));
+      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+      if (edit.mute)
+        continue;
+      const auto map = polyphonic::stretchMap(analysis, static_cast<int>(i), edit);
+      const double lastOut =
+          map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
+      const double start = std::max(
+          regionStart, analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds + shift);
+      const double end = std::min(
+          regionEnd, analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds + shift);
+      if (end > start)
+        preview.notes.push_back({start, end, note.medianMidi() + edit.semitones});
+    }
+  }
 
   for (const auto &note : project.getNotes())
   {
@@ -532,6 +592,12 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
+  // One analysis mode per track: a choice re-analyses the track's clips.
+  mainView->setTrackAnalysisModeHandlers(
+      [this](const AnalysisModeState &next) {
+        audioProcessor.changeAraTrackAnalysisMode(next);
+      },
+      [this] { return audioProcessor.activeAraTrackHasEdits(); });
   mainView->setOnRequestBackendPreview(
       [pitchDocController](const Project &project, int startFrame,
                            int endFrame) {

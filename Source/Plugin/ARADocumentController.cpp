@@ -1766,19 +1766,25 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
     return;
 
   const int numSamples = static_cast<int>(sourceSampleCount);
-  juce::AudioBuffer<float> buffer(1, numSamples);
-  buffer.clear();
+  // The source's own channels (at most two): a polyphonic take keeps its
+  // stereo image. The vocal path reads the first channel, as it always has.
+  const int numChannels =
+      juce::jlimit(1, 2, static_cast<int>(source->getChannelCount()));
+  auto channels = std::make_shared<juce::AudioBuffer<float>>(numChannels, numSamples);
+  channels->clear();
 
   juce::ARAAudioSourceReader reader(source);
-  if (!reader.read(&buffer, 0, numSamples, 0, true, false))
+  if (!reader.read(channels.get(), 0, numSamples, 0, true, numChannels > 1))
     return;
+  juce::AudioBuffer<float> buffer(1, numSamples);
+  buffer.copyFrom(0, 0, *channels, 0, 0, numSamples);
 
   // ARA region archives retain edit data, but not project waveforms or mel.
   // Reattach the source and rebuild mel/rendered audio now, without running
   // pitch detection or note segmentation again.
   if (processor->hasAraRegionProject(liveKey) &&
       processor->hydrateAraRegionProject(liveKey, buffer,
-                                         sourceSampleRate)) {
+                                         sourceSampleRate, channels)) {
     processor->showAraRegionProjectIfActive(liveKey);
     return;
   }
@@ -1794,7 +1800,7 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
   processor->analyzeAraRegionForCanvas(liveKey, pitchModification,
                                        /*startSampleInModification*/ 0,
                                        /*timelineOffsetSeconds*/ 0.0, buffer,
-                                       sourceSampleRate);
+                                       sourceSampleRate, std::move(channels));
 }
 
 void PitchNetDocumentController::setCurrentPlaybackRegion(

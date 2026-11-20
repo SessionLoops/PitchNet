@@ -125,6 +125,11 @@ public:
     projectArchive = juce::MemoryBlock(data, sizeInBytes);
   }
 
+  void clearProjectArchive() const {
+    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    projectArchive.reset();
+  }
+
   //============================================================================
   // Queries
   bool copyProjectArchive(juce::MemoryBlock &dest) const {

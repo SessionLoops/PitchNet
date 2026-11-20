@@ -541,6 +541,8 @@ bool EditorController::isInferenceBusy() const
 {
   if (incrementalSynth && incrementalSynth->isSynthesizing())
     return true;
+  if (polyRenderRunning) // a polyphonic render reads this controller's project
+    return true;
   if (isReloadingModels.load())
     return true;
   return false;
@@ -704,7 +706,8 @@ void EditorController::setHostAudioAsync(
     const juce::AudioBuffer<float> &buffer,
     double sampleRate,
     const ProgressCallback &onProgress,
-    const LoadCompleteCallback &onComplete)
+    const LoadCompleteCallback &onComplete,
+    HostAnalysisOptions options)
 {
   isLoadingAudio = true;
   cancelLoadingFlag.store(true);
@@ -722,7 +725,8 @@ void EditorController::setHostAudioAsync(
 
   const auto jobId = hostAnalysisJobId.fetch_add(1) + 1;
 
-  loaderThread = std::thread([this, buffer, sampleRate, onProgress, onComplete, jobId]() mutable
+  loaderThread = std::thread([this, buffer, sampleRate, onProgress, onComplete, jobId,
+                              options = std::move(options)]() mutable
                              {
     if (cancelLoadingFlag.load() || hostAnalysisJobId.load() != jobId)
     {
@@ -770,6 +774,21 @@ void EditorController::setHostAudioAsync(
     auto projectCopy = std::make_unique<Project>();
     projectCopy->getAudioData().waveform = stored;
     projectCopy->getAudioData().sampleRate = static_cast<int>(storedSampleRate);
+    const auto &takeChannels = options.takeChannels;
+    if (options.initialMode)
+      projectCopy->setAnalysisMode(*options.initialMode);
+    if (takeChannels != nullptr && takeChannels->getNumSamples() > 0)
+    {
+      // The clip's own channels, for the polyphonic engine (as the file
+      // loader keeps them).
+      auto pendingTake = std::make_shared<PolyphonicTake>();
+      const int channels = std::min(2, takeChannels->getNumChannels());
+      pendingTake->source.setSize(channels, takeChannels->getNumSamples());
+      for (int ch = 0; ch < channels; ++ch)
+        pendingTake->source.copyFrom(ch, 0, *takeChannels, ch, 0, takeChannels->getNumSamples());
+      pendingTake->sourceRate = inputSampleRate;
+      projectCopy->setPolyphonicTake(std::move(pendingTake));
+    }
 
     auto updateProgress = [&](double p, const juce::String &msg) {
       if (cancelLoadingFlag.load() || hostAnalysisJobId.load() != jobId)
@@ -778,7 +797,20 @@ void EditorController::setHostAudioAsync(
         onProgress(p, msg);
     };
 
+    if (options.trackMode)
+    {
+      AnalysisModeState track;
+      track.mode = *options.trackMode;
+      track.detector = options.trackDetector;
+      track.userChosen = options.trackModeUserChosen;
+      analysisTrackMode = track;
+    }
     analyzeAudio(*projectCopy, updateProgress);
+    analysisTrackMode.reset();
+    // A vocal clip does not keep its channels: a host session holds many
+    // clips, and the host can read the source again.
+    if (takeChannels != nullptr && !projectCopy->isPolyphonic())
+      projectCopy->setPolyphonicTake(nullptr);
 
     if (cancelLoadingFlag.load() || hostAnalysisJobId.load() != jobId)
     {
@@ -804,6 +836,75 @@ void EditorController::setHostAudioAsync(
         }); });
 }
 
+void EditorController::classifyHostAudioAsync(
+    std::vector<std::pair<juce::AudioBuffer<float>, double>> clips,
+    std::function<void(std::vector<AnalysisModeState>)> onComplete)
+{
+  isLoadingAudio = true;
+  cancelLoadingFlag.store(true);
+  if (loaderThread.joinable())
+  {
+    if (loaderJoinerThread.joinable())
+      loaderJoinerThread.join();
+    auto old = std::move(loaderThread);
+    loaderJoinerThread = std::thread([t = std::move(old)]() mutable
+                                     {
+      if (t.joinable())
+        t.join(); });
+  }
+  cancelLoadingFlag.store(false);
+
+  const auto jobId = hostAnalysisJobId.fetch_add(1) + 1;
+  loaderThread = std::thread([this, clips = std::move(clips), onComplete, jobId]() mutable
+                             {
+    const auto superseded = [this, jobId] {
+      return cancelLoadingFlag.load() || shuttingDown.load() ||
+             hostAnalysisJobId.load() != jobId;
+    };
+    {
+      std::unique_lock<std::mutex> lock(reloadRequestMutex);
+      while (isReloadingModels.load() && !superseded())
+        reloadFinished.wait_for(lock, std::chrono::milliseconds(50));
+    }
+    if (!superseded() && !isSelectedPitchDetectorLoaded())
+      reloadInferenceModels(false);
+
+    std::vector<AnalysisModeState> states;
+    states.reserve(clips.size());
+    for (auto &[buffer, rate] : clips)
+    {
+      if (superseded())
+        break;
+      // As the analysis sees it: the project rate.
+      Project clip;
+      auto &audioData = clip.getAudioData();
+      if (rate > 0.0 && std::abs(rate - static_cast<double>(SAMPLE_RATE)) > 1e-6)
+        audioData.waveform = AudioResampler::resample(buffer, rate, static_cast<double>(SAMPLE_RATE));
+      else
+        audioData.waveform = std::move(buffer);
+      audioData.sampleRate = SAMPLE_RATE;
+      try
+      {
+        classifyInputType(clip);
+      }
+      catch (const std::exception &e)
+      {
+        reportAnalysisException("classifyHostAudio", e.what());
+      }
+      states.push_back(clip.getAnalysisMode());
+    }
+
+    const bool done = !superseded() && states.size() == clips.size();
+    juce::MessageManager::callAsync(
+        [this, states = std::move(states), onComplete, jobId, done]() mutable {
+          if (hostAnalysisJobId.load() != jobId)
+            return;
+          isLoadingAudio = false;
+          if (done && onComplete)
+            onComplete(std::move(states));
+        }); });
+}
+
 void EditorController::resynthesizeIncrementalAsync(
     Project &project,
     const std::function<void(const juce::String &)> &onProgress,
@@ -811,6 +912,20 @@ void EditorController::resynthesizeIncrementalAsync(
     std::atomic<bool> &pendingRerun,
     bool isPluginMode)
 {
+  // A polyphonic take renders with its engine (the host's render path comes
+  // here); one render at a time, newest edits win (renderPolyphonicAsync).
+  if (project.isPolyphonic())
+  {
+    if (&project != getProject())
+    {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+    renderPolyphonicAsync(onComplete);
+    return;
+  }
+
   auto *synth = incrementalSynth.get();
   if (!synth || !vocoder)
   {
@@ -1231,6 +1346,15 @@ void EditorController::analyzeAudioImpl(
   classifyInputType(targetProject);
   if (shuttingDown.load())
     return;
+  if (analysisTrackMode)
+  {
+    // The track's mode applies; the take's own classification stays recorded.
+    auto state = targetProject.getAnalysisMode();
+    state.mode = analysisTrackMode->mode;
+    state.detector = analysisTrackMode->detector;
+    state.userChosen = analysisTrackMode->userChosen;
+    targetProject.setAnalysisMode(state);
+  }
 
   if (polyphonicAnalysisEnabled &&
       targetProject.getAnalysisMode().mode == AnalysisMode::Polyphonic)
@@ -1825,6 +1949,42 @@ std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
 }
 } // namespace
 
+std::shared_ptr<const PolyphonicTake>
+EditorController::restorePolyphonicTake(const PolyphonicRestore &restore,
+                                        juce::AudioBuffer<float> source, double sourceRate,
+                                        const std::atomic<bool> *cancel)
+{
+  if (source.getNumSamples() == 0 || sourceRate <= 0.0 || (cancel && cancel->load()))
+    return nullptr;
+  if (source.getNumChannels() > 2)
+    source.setSize(2, source.getNumSamples(), true);
+  if (std::abs(sourceRate - static_cast<double>(SAMPLE_RATE)) > 1e-6)
+    source = AudioResampler::resample(source, sourceRate, static_cast<double>(SAMPLE_RATE));
+  const int numSamples = source.getNumSamples();
+  if (numSamples == 0)
+    return nullptr;
+  std::vector<float> mono(static_cast<size_t>(numSamples), 0.0f);
+  const float channelGain = 1.0f / static_cast<float>(source.getNumChannels());
+  for (int ch = 0; ch < source.getNumChannels(); ++ch)
+    juce::FloatVectorOperations::addWithMultiply(mono.data(), source.getReadPointer(ch),
+                                                 channelGain, numSamples);
+  const auto t0 = std::chrono::steady_clock::now();
+  auto analysis = polyphonic::restore(mono.data(), numSamples, restore.params,
+                                      restore.notes, cancel);
+  if (cancel && cancel->load())
+    return nullptr;
+  auto take = std::make_shared<PolyphonicTake>();
+  take->analysis = std::make_shared<const polyphonic::Analysis>(std::move(analysis));
+  take->source = std::move(source);
+  take->sourceRate = static_cast<double>(SAMPLE_RATE);
+  LOG("Polyphonic restore: " + juce::String(static_cast<int>(restore.notes.size())) +
+      " notes, " +
+      juce::String(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), 1) +
+      " s");
+  juce::ignoreUnused(t0);
+  return take;
+}
+
 void EditorController::restorePolyphonicAsync(
     std::function<void(std::shared_ptr<const PolyphonicTake>)> onComplete)
 {
@@ -1881,32 +2041,11 @@ void EditorController::restorePolyphonicAsync(
         sourceRate = fallbackRate;
         LOG("Polyphonic restore: audio file missing or changed; using the saved mono waveform");
       }
-      if (source.getNumSamples() > 0 && sourceRate > 0.0 && !cancelLoadingFlag.load())
-      {
-        if (std::abs(sourceRate - static_cast<double>(SAMPLE_RATE)) > 1e-6)
-          source = AudioResampler::resample(source, sourceRate, static_cast<double>(SAMPLE_RATE));
-        const int numSamples = source.getNumSamples();
-        std::vector<float> mono(static_cast<size_t>(numSamples), 0.0f);
-        const float channelGain = 1.0f / static_cast<float>(source.getNumChannels());
-        for (int ch = 0; ch < source.getNumChannels(); ++ch)
-          juce::FloatVectorOperations::addWithMultiply(mono.data(), source.getReadPointer(ch),
-                                                       channelGain, numSamples);
-        const auto t0 = std::chrono::steady_clock::now();
-        auto analysis = polyphonic::restore(mono.data(), numSamples, pending->params,
-                                            pending->notes, &cancelLoadingFlag);
-        if (!cancelLoadingFlag.load() && !shuttingDown.load())
-        {
-          auto take = std::make_shared<PolyphonicTake>();
-          take->analysis = std::make_shared<const polyphonic::Analysis>(std::move(analysis));
-          take->source = std::move(source);
-          take->sourceRate = static_cast<double>(SAMPLE_RATE);
-          restored = std::move(take);
-          LOG("Polyphonic restore: " + juce::String(static_cast<int>(pending->notes.size())) +
-              " notes, " +
-              juce::String(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), 1) +
-              " s");
-        }
-      }
+      if (!cancelLoadingFlag.load() && !shuttingDown.load())
+        restored = restorePolyphonicTake(*pending, std::move(source), sourceRate,
+                                         &cancelLoadingFlag);
+      if (shuttingDown.load())
+        restored = nullptr;
     }
     catch (const std::exception &e)
     {

@@ -85,6 +85,7 @@
   "dialog.reanalyze": "再解析",
   "dialog.reanalyze_mode_title": "再解析しますか？",
   "dialog.reanalyze_mode_discards_edits": "オーディオを再解析し、このテイクの編集を破棄します。この操作は元に戻せません。",
+  "dialog.reanalyze_track_discards_edits": "このトラックのすべてのクリップを再解析し、その編集を破棄します。この操作は元に戻せません。",
   "dialog.reanalyze_question": "この音声を再解析しますか？",
   "dialog.recent_missing": "最近使ったファイルがありません",
   "dialog.save_audio": "オーディオファイルを保存...",

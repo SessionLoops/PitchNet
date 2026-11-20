@@ -187,10 +187,14 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
                                    samplesPerPixel)));
     const int pointCount = lastPixel - firstPixel;
 
+    // Behind a polyphonic take's notes the waveform shows each sound from
+    // where it starts (the notes are placed by the audio itself); the vocal
+    // view keeps the centred, symmetric look its blobs share.
+    const bool alignOnsets = project != nullptr && project->isPolyphonic();
     const auto displayEnvelope = VisualWaveformEnvelope::build(
         samples, numSamples, startSample, endSample, pointCount,
         static_cast<float>(pointCount), sampleRate, pixelsPerSecond, true, 1.0f,
-        {}, previewGain ? activeGainPreview : nullptr);
+        {}, previewGain ? activeGainPreview : nullptr, alignOnsets);
 
     juce::Path waveformPath;
     waveformPath.startNewSubPath(static_cast<float>(firstPixel), centerY);

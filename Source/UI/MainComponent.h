@@ -163,6 +163,12 @@ public:
       std::function<void(const Project &)> callback) override {
     onRequestBackendRender = std::move(callback);
   }
+  void setTrackAnalysisModeHandlers(
+      std::function<void(const AnalysisModeState &)> apply,
+      std::function<bool()> hasEdits) override {
+    onTrackAnalysisModeChange = std::move(apply);
+    trackHasEdits = std::move(hasEdits);
+  }
   void setOnRequestBackendPreview(
       std::function<void(const Project &, int, int)> callback) override {
     onRequestBackendPreview = std::move(callback);
@@ -258,6 +264,9 @@ public:
       onPitchEditFinished; // Called when pitch editing is finished
                            // (Melodyne-style: triggers real-time update)
   std::function<void(const Project &)> onRequestBackendRender;
+  std::function<void(const AnalysisModeState &)> onTrackAnalysisModeChange;
+  std::function<bool()> trackHasEdits;
+  void confirmReanalysis(const juce::String &message, std::function<void(bool)> onAnswer);
   std::function<void(const Project &, int, int)> onRequestBackendPreview;
   std::function<void()> onStopBackendPreview;
   std::function<void(const juce::AudioBuffer<float> &, double)> onRequestDragAudition;

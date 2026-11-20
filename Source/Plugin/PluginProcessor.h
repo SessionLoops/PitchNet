@@ -3,6 +3,7 @@
 #include "../Audio/Engine/PluginTransportController.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
+#include "../Models/AnalysisMode.h"
 #include "../UI/IMainView.h"
 #include "../Undo/PitchUndoManager.h"
 #include "HostCompatibility.h"
@@ -17,6 +18,8 @@
 
 class EditorController;
 class Project;
+struct PolyphonicTake;
+struct PolyphonicRestore;
 class PitchNetDocumentController;
 class PitchNetAudioModification;
 
@@ -105,6 +108,11 @@ public:
   void bindAraUndoManager(PitchUndoManager* fallback);
   void requestPluginProjectRender(const Project &project,
                                   PitchNetAudioModification* target = nullptr);
+  // The user's choice of mode for the active clip's track: every clip on the
+  // track is analysed again in it (their edits are discarded).
+  void changeAraTrackAnalysisMode(const AnalysisModeState &next);
+  // Whether any clip on the active clip's track has edits (to confirm first).
+  bool activeAraTrackHasEdits();
   void updateProjectStateFromEditor(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
@@ -224,7 +232,8 @@ public:
                                  juce::int64 startSampleInModification,
                                  double timelineOffsetSeconds,
                                  const juce::AudioBuffer<float> &buffer,
-                                 double sampleRate);
+                                 double sampleRate,
+                                 std::shared_ptr<const juce::AudioBuffer<float>> channels = nullptr);
 
   // Clear the selection when the host destroys the selected playback region.
   // Its Project and undo history belong to the modification and are kept.
@@ -249,9 +258,12 @@ public:
   bool hasAraRegionProject(const juce::String &regionKey) const;
   bool araRegionProjectNeedsSourceHydration(
       const juce::String &regionKey) const;
+  // `channels`: the source's own channels (at most two), for a polyphonic
+  // project; `sourceBuffer` is the mono read the vocal path uses.
   bool hydrateAraRegionProject(const juce::String &regionKey,
                                const juce::AudioBuffer<float> &sourceBuffer,
-                               double sourceSampleRate);
+                               double sourceSampleRate,
+                               std::shared_ptr<const juce::AudioBuffer<float>> channels = nullptr);
   bool araRegionProjectAppearsToCover(const juce::String &regionKey,
                                       double regionStart,
                                       double regionEnd) const;
@@ -530,6 +542,64 @@ private:
   int trackAnalysisFailed = 0;
 
   std::atomic<bool> regionCanvasRenderPendingRerun{false};
+
+#if JucePlugin_Enable_ARA
+  // One analysis mode per track (docs/polyphonic-integration-plan.md,
+  // section 1): the duration-weighted majority of its clips' classifications
+  // at the track's first analysis, then sticky; the user's choice replaces it
+  // and re-analyses the track. Keyed by the session's track key; each clip's
+  // project keeps a copy (its AnalysisModeState), which is how a reopened
+  // session finds it again.
+  struct AraTrackMode {
+    AnalysisMode mode = AnalysisMode::Vocal;
+    PolyphonicDetector detector = PolyphonicDetector::Harmonic;
+    bool userChosen = false;
+  };
+  std::map<juce::String, AraTrackMode> araTrackModes;
+  // Clips' own classifications from a track's pre-pass, used by their
+  // analysis instead of classifying again.
+  std::map<juce::String, AnalysisModeState> araPrepassClassifications;
+  std::optional<AraTrackMode> resolveAraTrackMode(juce::ARARegionSequence *sequence);
+  juce::ARARegionSequence *araSequenceFor(PitchNetAudioModification *modification) const;
+  void startAraRegionAnalysis(const juce::String &regionKey,
+                              PitchNetAudioModification *modification,
+                              juce::int64 startSampleInModification,
+                              double timelineOffsetSeconds,
+                              const juce::AudioBuffer<float> &buffer, double sampleRate,
+                              std::shared_ptr<const juce::AudioBuffer<float>> channels,
+                              const std::optional<AraTrackMode> &trackMode);
+  void discardAraRegionAnalysis(const juce::String &regionKey,
+                                PitchNetAudioModification *modification);
+
+#endif
+
+  // Polyphonic projects restored from an ARA archive: their masks are rebuilt
+  // from the host source in the background (one job at a time); edits made
+  // meanwhile render once it lands.
+  bool hydratePolyphonicAraProject(const juce::String &regionKey, Project &project,
+                                   const juce::AudioBuffer<float> &sourceBuffer,
+                                   double sourceSampleRate,
+                                   std::shared_ptr<const juce::AudioBuffer<float>> channels);
+  void finishPolyphonicAraRestore(const juce::String &regionKey,
+                                  std::shared_ptr<const PolyphonicRestore> pending,
+                                  std::shared_ptr<const PolyphonicTake> restored);
+  Project *findAraRegionProject(const juce::String &regionKey);
+  void setAsidePolyphonicTake(Project &project);
+  // Non-ARA capture: a polyphonic take placed at its host position and
+  // spliced into the earlier captures (one take for the whole timeline,
+  // restoring); the background rebuild of its masks; a timeline read from the
+  // plug-in state made drawable.
+  std::unique_ptr<Project> placePolyphonicCapture(const Project *previous,
+                                                  const Project &capture,
+                                                  double timelineOffsetSeconds);
+  void preparePolyphonicCaptureProject(Project &project);
+  void startCapturePolyphonicRestore();
+  void finishCapturePolyphonicRestore(std::shared_ptr<const PolyphonicRestore> pending,
+                                      std::shared_ptr<const PolyphonicTake> restored);
+  std::unique_ptr<juce::ThreadPool> polyphonicRestorePool;
+  std::shared_ptr<std::atomic<bool>> polyphonicRestoreCancel =
+      std::make_shared<std::atomic<bool>>(false);
+  std::set<juce::String> polyphonicRenderAfterRestore;
 
   // Non-ARA capture (Stage 2A): decoupled controller
   std::shared_ptr<NonAraCaptureController> captureController =

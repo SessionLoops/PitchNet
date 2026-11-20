@@ -85,6 +85,7 @@
   "dialog.reanalyze": "다시 분석",
   "dialog.reanalyze_mode_title": "다시 분석할까요?",
   "dialog.reanalyze_mode_discards_edits": "오디오를 다시 분석하고 이 테이크의 편집 내용을 삭제합니다. 되돌릴 수 없습니다.",
+  "dialog.reanalyze_track_discards_edits": "이 트랙의 모든 클립을 다시 분석하고 편집 내용을 삭제합니다. 되돌릴 수 없습니다.",
   "dialog.reanalyze_question": "이 오디오를 다시 분석할까요?",
   "dialog.recent_missing": "최근 파일 없음",
   "dialog.save_audio": "오디오 파일 저장...",

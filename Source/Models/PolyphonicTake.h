@@ -119,3 +119,18 @@ inline std::shared_ptr<PolyphonicTake> makeRestoringTake(const PolyphonicRestore
     return take;
 }
 
+/** A take to draw from (Track mode previews, a take set aside): its notes and
+ *  levels only, without the masks a render needs. Null without an analysis. */
+inline std::shared_ptr<const PolyphonicTake> makeDrawingTake(const PolyphonicTake &take)
+{
+    if (!take.hasAnalysis())
+        return nullptr;
+    if (take.restoring)
+        return std::make_shared<const PolyphonicTake>(take);
+    PolyphonicRestore saved;
+    saved.params = take.analysis->params;
+    saved.notes = take.analysis->notes;
+    saved.levels = noteLevels(take);
+    return makeRestoringTake(saved, take.analysis->numSamples);
+}
+

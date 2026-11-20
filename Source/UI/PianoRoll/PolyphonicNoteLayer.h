@@ -51,6 +51,9 @@ public:
   bool isActive() const;
 
   void draw(juce::Graphics &g, int componentWidth);
+  /** Track mode's pinned tracks: notes drawn as outlines in this colour only
+   *  (nullopt: the normal look). */
+  void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
 
   /** The active note under a world-space point (where its edit puts it), or -1. */
   int noteAt(float worldX, float worldY);
@@ -173,6 +176,7 @@ private:
   void commit(const juce::String &name);
   void selectionChanged();
 
+  std::optional<juce::Colour> outlineColour;
   CoordinateMapper *coordMapper = nullptr;
   Project *project = nullptr;
 

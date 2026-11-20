@@ -351,6 +351,7 @@ PianoRollComponent::PianoRollComponent()
   };
   previewNoteRenderer->setCoordinateMapper(coordMapper.get());
   previewCurveRenderer->setCoordinateMapper(coordMapper.get());
+  previewPolyphonicLayer->setCoordinateMapper(coordMapper.get());
   pitchCurveRenderer->setSelectHandler(selectHandler_.get());
   pitchCurveRenderer->setPitchEditor(pitchEditor.get());
   scrollZoomController->setCoordinateMapper(coordMapper.get());
@@ -1007,6 +1008,14 @@ void PianoRollComponent::drawInactiveRegionEdits(
               height)
               .getSmallestIntegerContainer());
 
+      if (region.project->isPolyphonic())
+      {
+        previewPolyphonicLayer->setOutlineColour(std::nullopt);
+        previewPolyphonicLayer->setProject(region.project.get());
+        previewPolyphonicLayer->draw(lg, getWidth());
+        continue;
+      }
+
       auto* curveRenderer = previewCurveRenderer.get();
       auto macro = std::find_if(inactiveMacroPreviews.begin(), inactiveMacroPreviews.end(),
           [&](const auto& item) { return item.project == region.project; });
@@ -1045,6 +1054,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
     coordMapper->setScrollX(savedScrollX);
     previewNoteRenderer->setProject(nullptr);
     previewCurveRenderer->setProject(nullptr);
+    previewPolyphonicLayer->setProject(nullptr);
 
   }
 
@@ -1128,6 +1138,15 @@ void PianoRollComponent::drawPinnedTrackNotes(
                 height)
                 .getSmallestIntegerContainer());
 
+        if (region.project->isPolyphonic())
+        {
+          previewPolyphonicLayer->setOutlineColour(
+              outlines ? std::optional<juce::Colour>(region.outlineColour)
+                       : std::nullopt);
+          previewPolyphonicLayer->setProject(region.project.get());
+          previewPolyphonicLayer->draw(lg, getWidth());
+          continue;
+        }
         previewNoteRenderer->setProject(region.project.get());
         previewNoteRenderer->setFillBodies(!outlines);
         previewNoteRenderer->setOutlineColour(
@@ -1151,6 +1170,8 @@ void PianoRollComponent::drawPinnedTrackNotes(
     drawPass(pinnedLayer, true);
 
     coordMapper->setScrollX(savedScrollX);
+    previewPolyphonicLayer->setProject(nullptr);
+    previewPolyphonicLayer->setOutlineColour(std::nullopt);
     previewNoteRenderer->setProject(nullptr);
     previewNoteRenderer->setFillBodies(true);
     previewNoteRenderer->setOutlineColour(std::nullopt);

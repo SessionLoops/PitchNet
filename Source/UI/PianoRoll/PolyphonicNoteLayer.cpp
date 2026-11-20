@@ -328,6 +328,22 @@ void PolyphonicNoteLayer::draw(juce::Graphics &g, int componentWidth)
     const auto body = notePath(shape, edit);
     const bool isSelected = selection.count(shape.note) > 0;
 
+    if (outlineColour)
+    {
+      if (edit.mute)
+      {
+        strokeDashed(g, body, *outlineColour, kMutedOutlineWidth);
+      }
+      else
+      {
+        g.setColour(*outlineColour);
+        g.strokePath(body, juce::PathStrokeType(kSelectedOutlineWidth,
+                                                juce::PathStrokeType::curved,
+                                                juce::PathStrokeType::rounded));
+      }
+      continue;
+    }
+
     if (edit.mute)
     {
       strokeDashed(g, body,

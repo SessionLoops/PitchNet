@@ -85,6 +85,7 @@
   "dialog.reanalyze": "重新分析",
   "dialog.reanalyze_mode_title": "重新分析？",
   "dialog.reanalyze_mode_discards_edits": "將重新分析音訊並捨棄此片段的編輯，且無法復原。",
+  "dialog.reanalyze_track_discards_edits": "將重新分析此軌道上的所有片段並捨棄其編輯，且無法復原。",
   "dialog.reanalyze_question": "要重新分析這段音訊嗎？",
   "dialog.recent_missing": "最近檔案不存在",
   "dialog.save_audio": "儲存音訊檔案...",

@@ -1531,6 +1531,7 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
   toolbar.setProject(project);
+  refreshPolyphonicSelectionBar();
   if (project)
   {
     toolbar.setTotalTime(project->getAudioData().getDuration());
@@ -2293,13 +2294,47 @@ void MainComponent::requestAnalysisModeChange(const AnalysisModeState &next)
   if (project == nullptr || editorController == nullptr)
     return;
 
-  // Only the standalone app analyses polyphonic takes so far (M5 brings the
-  // plugin), so there a choice is only stored.
   const auto &current = project->getAnalysisMode();
   const bool needsAnalysis =
-      !isPluginMode() &&
-      (next.mode != current.mode ||
-       (next.mode == AnalysisMode::Polyphonic && next.detector != current.detector));
+      next.mode != current.mode ||
+      (next.mode == AnalysisMode::Polyphonic && next.detector != current.detector);
+
+  // The plugin: the mode is the track's, so a choice re-analyses every clip on
+  // the track (PitchNetAudioProcessor::changeAraTrackAnalysisMode).
+  if (isPluginMode())
+  {
+    if (!needsAnalysis || !onTrackAnalysisModeChange)
+    {
+      project->setAnalysisMode(next);
+      parameterPanel.setProject(project);
+      notifyProjectDataChanged();
+      return;
+    }
+    if (isInferenceBusy())
+    {
+      parameterPanel.setProject(project); // put the controls back
+      return;
+    }
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    auto apply = [safeThis, next](bool confirmed) {
+      if (safeThis == nullptr)
+        return;
+      if (!confirmed)
+      {
+        if (auto *p = safeThis->getProject())
+          safeThis->parameterPanel.setProject(p); // put the controls back
+        return;
+      }
+      if (safeThis->onTrackAnalysisModeChange)
+        safeThis->onTrackAnalysisModeChange(next);
+    };
+    if (trackHasEdits && trackHasEdits())
+      confirmReanalysis(TR("dialog.reanalyze_track_discards_edits"), std::move(apply));
+    else
+      apply(true);
+    return;
+  }
+
   if (!needsAnalysis)
   {
     project->setAnalysisMode(next);
@@ -2320,38 +2355,47 @@ void MainComponent::requestAnalysisModeChange(const AnalysisModeState &next)
     return;
   }
 
-  // The same question style as the unsaved-project prompt: a native sheet on
-  // macOS, the in-window popup elsewhere. 1 re-analyses, 0 cancels.
   juce::Component::SafePointer<MainComponent> safeThis(this);
-  auto handleResult = [safeThis, next](int result) {
-    if (safeThis == nullptr)
-      return;
-    if (result != 1)
-    {
-      if (auto *p = safeThis->getProject())
-        safeThis->parameterPanel.setProject(p); // put the controls back
-      return;
-    }
-    safeThis->reanalyzeTake(next);
-  };
+  confirmReanalysis(TR("dialog.reanalyze_mode_discards_edits"),
+                    [safeThis, next](bool confirmed) {
+                      if (safeThis == nullptr)
+                        return;
+                      if (!confirmed)
+                      {
+                        if (auto *p = safeThis->getProject())
+                          safeThis->parameterPanel.setProject(p); // put the controls back
+                        return;
+                      }
+                      safeThis->reanalyzeTake(next);
+                    });
+}
+
+void MainComponent::confirmReanalysis(const juce::String &message,
+                                      std::function<void(bool)> onAnswer)
+{
+  // The same question style as the unsaved-project prompt: a native sheet on
+  // macOS, the in-window popup elsewhere.
 #if JUCE_MAC
   juce::NativeMessageBox::showAsync(
       juce::MessageBoxOptions()
           .withIconType(juce::MessageBoxIconType::QuestionIcon)
           .withTitle(TR("dialog.reanalyze_mode_title"))
-          .withMessage(TR("dialog.reanalyze_mode_discards_edits"))
+          .withMessage(message)
           .withButton(TR("dialog.reanalyze"))
           .withButton(TR("dialog.cancel"))
           .withAssociatedComponent(this),
-      [handleResult = std::move(handleResult)](int buttonIndex) {
-        handleResult(buttonIndex == 0 ? 1 : 0);
+      [onAnswer = std::move(onAnswer)](int buttonIndex) {
+        onAnswer(buttonIndex == 0);
       });
 #else
   auto *popup = new ChoicePopup(
-      *this, TR("dialog.reanalyze_mode_title") + "\n" + TR("dialog.reanalyze_mode_discards_edits"),
+      *this, TR("dialog.reanalyze_mode_title") + "\n" + message,
       {{TR("dialog.reanalyze"), 1}, {TR("dialog.cancel"), 0}});
   popup->enterModalState(
-      true, juce::ModalCallbackFunction::create(std::move(handleResult)), true);
+      true,
+      juce::ModalCallbackFunction::create(
+          [onAnswer = std::move(onAnswer)](int result) { onAnswer(result == 1); }),
+      true);
 #endif
 }
 
@@ -3429,9 +3473,23 @@ void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)
 
 void MainComponent::renderPolyphonicEdits(bool showProgress)
 {
-  // Standalone only until M5 (the plugin publishes renders through ARA).
-  if (editorController == nullptr || isPluginMode())
+  if (editorController == nullptr)
     return;
+  // The plugin renders on the host's backend and publishes the render to the
+  // host (finishBackendRender hides the progress again).
+  if (isPluginMode())
+  {
+    auto *project = getProject();
+    if (project == nullptr || !onRequestBackendRender)
+      return;
+    if (showProgress)
+    {
+      toolbar.showProgress(TR("progress.synthesizing"));
+      toolbar.setProgress(-1.0f);
+    }
+    onRequestBackendRender(*project);
+    return;
+  }
   // An opened take whose masks are still being rebuilt renders once they are
   // (restorePolyphonicTake); its edits wait until then.
   if (auto *project = getProject(); project != nullptr)

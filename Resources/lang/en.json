@@ -85,6 +85,7 @@
   "dialog.reanalyze": "Re-analyze",
   "dialog.reanalyze_mode_title": "Analyze again?",
   "dialog.reanalyze_mode_discards_edits": "This analyzes the audio again and discards your edits to this take. This can't be undone.",
+  "dialog.reanalyze_track_discards_edits": "This analyzes every clip on this track again and discards their edits. This can't be undone.",
   "dialog.reanalyze_question": "Do you want to re-analyze this audio?",
   "dialog.recent_missing": "Recent file missing",
   "dialog.save_audio": "Save audio file...",

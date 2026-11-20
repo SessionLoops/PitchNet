@@ -277,7 +277,8 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
 {
   dismissPitchCenterPopup();
   auto* activeProject = pianoRoll.getProject();
-  if (!activeProject) return;
+  if (!activeProject || activeProject->isPolyphonic()) return; // no pitch curves
+
   const bool track = pianoRoll.isTrackViewMode() && bool(getTrackPitchMacroTargets);
   auto targets = track ? getTrackPitchMacroTargets()
                        : std::vector<TrackPitchMacroTarget>{{activeProject, {}, {}, {}}};

@@ -334,6 +334,76 @@ checks; each milestone still ends in its own commits and tests.
    publish, archive, memory policy,
    non-ARA capture, Track mode overlays; the track-analysis-queue checks in a
    DAW; then merge.
+   *Part 1 (ARA, one clip at a time), 2026-11-19, awaiting a test in REAPER:*
+   - *Analysis: the plugin's controllers analyse polyphonic clips
+     (`setPolyphonicAnalysisEnabled`); the ARA read keeps the source's
+     channels (at most two) beside the mono read the vocal path always used
+     (`setHostAudioAsync(..., takeChannels)`); a clip analysed as vocal drops
+     them again.*
+   - *Rendering: the host's render path (`requestPluginProjectRender` →
+     `resynthesizeIncrementalAsync`) renders a polyphonic take with
+     `renderPolyphonicAsync`; the stereo render is what is published to the
+     modification (`projectHasRegionEdits`: the take's note edits).*
+   - *Archive: the format 6 section travels in the modification's archive. On
+     reopen the region is hydrated from the host source: the saved render is
+     its playback, the notes are drawn at once from the saved levels and the
+     masks are rebuilt on a background thread (`restorePolyphonicTake`);
+     edits made meanwhile render once it lands.*
+   - *Not yet: Live Audition is standalone only.*
+   *Part 2 (one mode per track, ARA), 2026-11-19, awaiting a test in REAPER:*
+   - *A clip is analysed in its track's mode
+     (`PitchNetAudioProcessor::analyzeAraRegionForCanvas`). The track's mode
+     is found in `araTrackModes` (session, keyed like the track list), else in
+     the copy an analysed clip of the track keeps (a reopened session), else
+     made by a pre-pass: every clip on the track without an analysis is
+     classified (`EditorController::classifyHostAudioAsync`) and the
+     duration-weighted majority wins (`analysismode::trackMode`; nothing
+     classified gives Vocal). The clips' own classifications are reused by
+     their analyses and stay recorded.*
+   - *Sticky: clips added later are analysed in the track's mode
+     (`HostAnalysisOptions::trackMode`, applied after the clip's own
+     classification).*
+   - *Override: the Input menu in the plugin applies to the track
+     (`changeAraTrackAnalysisMode`): after a confirmation when any of its clips
+     has edits, every clip's analysis, archive and published render are
+     discarded and the clips are analysed again (the active one at once, the
+     others by the track queue or when opened).*
+   *Part 3 (Track mode and memory, ARA), 2026-11-19, awaiting a test in REAPER:*
+   - *Track mode draws the track's other polyphonic clips with a preview
+     `PolyphonicNoteLayer`, and pinned polyphonic tracks as outlines in the
+     track colour (`setOutlineColour`). A preview holds a drawing take
+     (`makeDrawingTake`: notes and levels, no masks), so it keeps no analysis
+     alive; a clip not yet restored is drawn from its saved notes. The
+     overview gets the notes where their edits put them.*
+   - *Memory: a polyphonic clip leaving the canvas is set aside
+     (`setAsidePolyphonicTake`): its notes, levels and edits stay (as a
+     pending restore), the masks, the take's channels and its render go.
+     Shown again, it is hydrated from the host source like a reopened session
+     (its published render is its playback) and its masks are rebuilt in the
+     background; edits made meanwhile render once they land.*
+   - *Behind a polyphonic take the waveform is drawn onset-aligned (a window
+     ending at each point, forward smoothing only), so it no longer shows a
+     sound before it starts (`VisualWaveformEnvelope::build(..., alignOnsets)`).*
+   *Non-ARA capture, 2026-11-19, awaiting a test in a host without ARA:*
+   - *The instance's mode is the first capture's classification (or the
+     user's choice), sticky for later takes (`HostAnalysisOptions::trackMode`).*
+   - *A polyphonic capture is placed at its host position and spliced into the
+     earlier ones (`placePolyphonicCapture`): one take for the whole timeline,
+     whose notes are the earlier notes the new take does not record over (with
+     their edits) plus the new take's, shifted by whole frames; its channels,
+     waveform and playback (the earlier render with the new take raw) are
+     pasted at the exact sample. It is drawn and editable at once and its
+     masks are rebuilt for the whole timeline in the background
+     (`startCapturePolyphonicRestore`); polyphonic timelines are never re-padded
+     (`repadProjectToTimelineOffset`).*
+   - *The realtime processor plays `Project::getPlaybackBuffer()`, so the
+     stereo render.*
+   - *Plug-in state: the format 6 section; on load the timeline is drawn from
+     its saved notes, plays its saved render and its masks are rebuilt from the
+     saved original. That original is mono, so after a reload the take's
+     renders are mono (a stereo original in the state is a later change).*
+   - *The Input menu in capture mode stores the choice; it applies to the next
+     capture, not to the takes already analysed.*
 6. **After the first release.** Note assignment, and whatever the feature
    review defers.
 

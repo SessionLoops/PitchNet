@@ -7,6 +7,7 @@
 #include <vector>
 
 class Project;
+struct AnalysisModeState;
 class Vocoder;
 class RealtimePitchProcessor;
 class EditorController;
@@ -87,6 +88,12 @@ public:
   virtual void setOnPitchEditFinished(std::function<void()> callback) = 0;
   virtual void setOnRequestBackendRender(
       std::function<void(const Project &)> callback) = 0;
+  // The plugin: the user's choice of analysis mode applies to the clip's
+  // track (`apply` re-analyses its clips; `hasEdits` asks first whether any
+  // of them has edits to lose).
+  virtual void setTrackAnalysisModeHandlers(
+      std::function<void(const AnalysisModeState &)> apply,
+      std::function<bool()> hasEdits) = 0;
   virtual void setOnRequestBackendPreview(
       std::function<void(const Project &, int, int)> callback) = 0;
   virtual void setOnStopBackendPreview(std::function<void()> callback) = 0;

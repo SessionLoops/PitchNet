@@ -220,7 +220,9 @@ void RealtimePitchProcessor::invalidate() {
     proj = project;
     if (proj) {
       auto &audioData = proj->getAudioData();
-      waveformSnapshot.makeCopyOf(audioData.waveform);
+      // What the take plays: the waveform, or a polyphonic take's (stereo)
+      // render.
+      waveformSnapshot.makeCopyOf(proj->getPlaybackBuffer());
       srcSampleRate = audioData.sampleRate;
     }
   }

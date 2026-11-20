@@ -85,6 +85,7 @@
   "dialog.reanalyze": "Повторный анализ",
   "dialog.reanalyze_mode_title": "Проанализировать заново?",
   "dialog.reanalyze_mode_discards_edits": "Аудио будет проанализировано заново, а правки этого дубля будут удалены. Это нельзя отменить.",
+  "dialog.reanalyze_track_discards_edits": "Все клипы этой дорожки будут проанализированы заново, а их правки будут удалены. Это нельзя отменить.",
   "dialog.reanalyze_question": "Проанализировать это аудио заново?",
   "dialog.recent_missing": "Недавний файл не найден",
   "dialog.save_audio": "Сохранить аудиофайл...",

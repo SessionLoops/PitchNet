@@ -85,6 +85,7 @@
   "dialog.reanalyze": "Reanalisar",
   "dialog.reanalyze_mode_title": "Analisar novamente?",
   "dialog.reanalyze_mode_discards_edits": "O áudio será analisado novamente e suas edições desta tomada serão descartadas. Isso não pode ser desfeito.",
+  "dialog.reanalyze_track_discards_edits": "Todos os clipes desta faixa serão analisados novamente e suas edições serão descartadas. Isso não pode ser desfeito.",
   "dialog.reanalyze_question": "Deseja reanalisar este áudio?",
   "dialog.recent_missing": "Arquivo recente ausente",
   "dialog.save_audio": "Salvar arquivo de áudio...",

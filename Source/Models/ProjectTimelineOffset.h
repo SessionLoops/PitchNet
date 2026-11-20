@@ -18,6 +18,11 @@
 inline bool repadProjectToTimelineOffset(Project &project,
                                          double timelineOffsetSeconds) {
   auto &audioData = project.getAudioData();
+  // A polyphonic timeline is placed once, take by take, when it is captured
+  // (PitchNetAudioProcessor::placePolyphonicCapture): its notes and masks
+  // are in timeline frames already and are never re-padded.
+  if (project.isPolyphonic() || project.getPendingPolyphonicRestore() != nullptr)
+    return false;
   if (audioData.waveform.getNumSamples() == 0 || audioData.sampleRate <= 0) {
     audioData.timelineOffsetSeconds = std::max(0.0, timelineOffsetSeconds);
     return false;

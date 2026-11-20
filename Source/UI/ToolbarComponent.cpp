@@ -273,10 +273,17 @@ void ToolbarComponent::resized()
                              capsuleY + (capsuleH - rightButtonSize) / 2,
                              rightButtonSize, rightButtonSize);
 
+    // The pitch macro corrects vocal notes' pitch curves: a polyphonic take
+    // has none, so it has no button (the key moves up to the next icon).
+    quantizeButton.setVisible(editToolsVisible);
     const int scaleButtonWidth = scaleSelectionButton.getPreferredWidth();
     constexpr int scaleQuantizeGap = 11;
+    // The same gap to whichever icon is next to it.
+    const int scaleRight = (editToolsVisible ? quantizeButton.getX()
+                                             : auditionButton.getX()) -
+                           scaleQuantizeGap;
     scaleSelectionButton.setBounds(
-        quantizeButton.getX() - scaleQuantizeGap - scaleButtonWidth,
+        scaleRight - scaleButtonWidth,
         capsuleY + (capsuleH - 26) / 2,
         scaleButtonWidth, 26);
 

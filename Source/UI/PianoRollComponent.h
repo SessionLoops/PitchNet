@@ -434,6 +434,9 @@ public:
 private:
   std::unique_ptr<PitchCurveRenderer> pitchCurveRenderer;
   std::unique_ptr<NoteRenderer> previewNoteRenderer;
+  // Track mode: inactive and pinned clips with a polyphonic take.
+  std::unique_ptr<PolyphonicNoteLayer> previewPolyphonicLayer =
+      std::make_unique<PolyphonicNoteLayer>();
   std::unique_ptr<PitchCurveRenderer> previewCurveRenderer;
   struct InactiveLayerKey
   {
