@@ -2006,13 +2006,40 @@ bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
          e.y < headerHeight + getVisibleContentHeight();
 }
 
-bool PianoRollComponent::isModifierZoomDrag(const juce::MouseEvent &e) const
+bool PianoRollComponent::hasMultiSelectableSelection() const
+{
+  if (isPolyphonicActive())
+    return !polyphonicLayer->getSelection().empty();
+  if (editMode != EditMode::Select)
+    return false;
+  if (project)
+    for (const auto &note : project->getNotes())
+      if (note.isSelected())
+        return true;
+  if (trackViewMode && getTrackEditTargets)
+    for (const auto &target : getTrackEditTargets())
+      if (target.project && (!target.isValid || target.isValid()))
+        for (const auto &note : target.project->getNotes())
+          if (note.isSelected())
+            return true;
+  return false;
+}
+
+bool PianoRollComponent::isZoomModifierDown(const juce::ModifierKeys &mods) const
 {
 #if JUCE_MAC
-  return e.mods.isCommandDown();
+  const bool down = mods.isCommandDown();
 #else
-  return e.mods.isCtrlDown();
+  const bool down = mods.isCtrlDown();
 #endif
+  // With notes already selected, Cmd/Ctrl adds to (or removes from) the
+  // selection instead of zooming.
+  return down && !hasMultiSelectableSelection();
+}
+
+bool PianoRollComponent::isModifierZoomDrag(const juce::MouseEvent &e) const
+{
+  return isZoomModifierDown(e.mods);
 }
 
 void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
@@ -2869,11 +2896,7 @@ void PianoRollComponent::modifierKeysChanged(
       mouseOverCanvas &&
       (isMouseButtonDown() || altControlsDragSnap(worldX, worldY));
 
-#if JUCE_MAC
-  const bool zoomModifierDown = modifiers.isCommandDown();
-#else
-  const bool zoomModifierDown = modifiers.isCtrlDown();
-#endif
+  const bool zoomModifierDown = isZoomModifierDown(modifiers);
 
   if (zoomModifierDown && mouseOverCanvas)
     setMouseCursor(zoomMouseCursor);

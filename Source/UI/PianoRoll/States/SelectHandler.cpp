@@ -95,7 +95,19 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   // Check if clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
-  if (note)
+  // Cmd (macOS) / Ctrl (elsewhere) with notes already selected: toggle the
+  // clicked note in the selection, or box-select on top of the selection.
+  const bool additive = e.mods.isCommandDown() &&
+                        !project->getSelectedNotes().empty();
+  boxInitialSelection.clear();
+
+  if (note && additive)
+  {
+    note->setSelected(!note->isSelected());
+    owner_.updatePitchToolHandlesFromSelection();
+    owner_.repaint();
+  }
+  else if (note)
   {
     // Check if clicking on an already selected note (for multi-note drag)
     auto selectedNotes = project->getSelectedNotes();
@@ -125,7 +137,11 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   else
   {
     // Clicked on empty area - start box selection
+    if (additive)
+      boxInitialSelection = project->getSelectedNotes();
     project->deselectAllNotes();
+    for (auto *selected : boxInitialSelection)
+      selected->setSelected(true);
     owner_.updatePitchToolHandlesFromSelection();
     owner_.boxSelector->startSelection(worldX, worldY);
     owner_.repaint();
@@ -354,6 +370,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   {
     owner_.boxSelector->updateSelection(worldX, worldY);
     project->deselectAllNotes();
+    for (auto *selected : boxInitialSelection)
+      selected->setSelected(true);
     auto notesInRect = owner_.boxSelector->getNotesInRect(
         project, owner_.coordMapper.get());
     for (auto *note : notesInRect)
@@ -641,6 +659,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
     }
     owner_.boxSelector->setLastSelectionFromBox(!notesInRect.empty());
     owner_.boxSelector->endSelection();
+    boxInitialSelection.clear();
     owner_.updatePitchToolHandlesFromSelection();
     owner_.repaint();
     return true;
@@ -1254,6 +1273,7 @@ bool SelectHandler::isActive() const
 
 void SelectHandler::cancel()
 {
+  boxInitialSelection.clear();
   if (isDragging && draggedNote)
   {
     restoreDragBasePreview();

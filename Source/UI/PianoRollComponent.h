@@ -363,6 +363,12 @@ private:
    *  controls that drag's snapping instead of starting an Alt-drag pan. */
   bool altControlsDragSnap(float worldX, float worldY);
   bool isCanvasPoint(const juce::MouseEvent &e) const;
+  /** Whether any note is selected where Cmd/Ctrl-click multi-selects (the
+   *  Select tool, track view targets, or a polyphonic take). */
+  bool hasMultiSelectableSelection() const;
+  /** The zoom modifier (Cmd on macOS, Ctrl elsewhere) is down and is not
+   *  taken over by multi-selection. */
+  bool isZoomModifierDown(const juce::ModifierKeys &mods) const;
   bool isModifierZoomDrag(const juce::MouseEvent &e) const;
   void applyModifierZoomDrag(const juce::MouseEvent &e);
   bool isModifierPanDrag(const juce::MouseEvent &e) const;

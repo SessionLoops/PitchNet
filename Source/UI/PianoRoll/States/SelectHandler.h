@@ -102,4 +102,8 @@ private:
   int deltaOffsetMaxFrame = std::numeric_limits<int>::min();
   std::vector<Note *> deltaOffsetTargetNotes;
   std::vector<F0FrameEdit> deltaOffsetEdits;
+
+  // Notes already selected when a Cmd/Ctrl box selection began; the box
+  // adds to them instead of replacing them.
+  std::vector<Note *> boxInitialSelection;
 };
