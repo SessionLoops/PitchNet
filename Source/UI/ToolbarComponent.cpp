@@ -577,8 +577,11 @@ void ToolbarComponent::setProject(Project* project)
 {
     if (!pluginMode && project != nullptr)
         project->setUseProjectKey(true);
-    scaleSelectionButton.setProjectKeyScope(!pluginMode || trackViewButton.getToggleState());
+    // The new project first: the scope change redraws the label from the
+    // control's project, and the previous one may already be deleted (a
+    // re-analysis replaces the project before the toolbar is told).
     scaleSelectionButton.setProject(project);
+    scaleSelectionButton.setProjectKeyScope(!pluginMode || trackViewButton.getToggleState());
 
     const bool showEditTools = project == nullptr || !project->isPolyphonic();
     if (showEditTools != editToolsVisible)
