@@ -383,7 +383,7 @@ if(AAX_AVAILABLE)
 endif()
 
 # Add source files using GLOB_RECURSE
-file(GLOB_RECURSE PITCHNET_CORE_SOURCES
+file(GLOB_RECURSE PITCHNET_CORE_SOURCES CONFIGURE_DEPENDS
     "Source/Audio/*.cpp" "Source/Audio/*.h"
     "Source/Models/*.cpp" "Source/Models/*.h"
     "Source/Undo/*.cpp" "Source/Undo/*.h"
