@@ -97,6 +97,10 @@ struct PolyphonicRestore
     polyphonic::Params params;
     std::vector<polyphonic::Note> notes;
     std::vector<std::vector<float>> levels; // per note, as noteLevelsFromMasks
+    // A plug-in state's take keeps its stereo image: its channels and its
+    // render as saved (null when only mono mixes were saved).
+    std::shared_ptr<const juce::AudioBuffer<float>> channels;
+    std::shared_ptr<const juce::AudioBuffer<float>> playback;
 };
 
 /** The take an opened project shows while its masks are rebuilt: the saved

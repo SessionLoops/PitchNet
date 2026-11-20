@@ -203,6 +203,8 @@ void EditorController::requestShutdown()
     polyRenderCancel->store(true);
   if (auditionCancel)
     auditionCancel->store(true);
+  if (prerenderCancel)
+    prerenderCancel->store(true);
   if (vocoder)
     vocoder->requestShutdown();
 }
@@ -220,6 +222,8 @@ EditorController::~EditorController()
     polyRenderThread.join();
   if (auditionThread.joinable())
     auditionThread.join();
+  if (prerenderThread.joinable())
+    prerenderThread.join();
 }
 
 void EditorController::setProject(std::unique_ptr<Project> newProject)
@@ -1947,6 +1951,67 @@ std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
   }
   return channels;
 }
+
+// The listed notes on their own with `requested` edits (the engine's default
+// for a note without one, which brings its background along as the full
+// render does), mixed to mono and trimmed to the notes themselves: from just
+// before the earliest onset to a little after the latest end, 5 ms fades at
+// the cuts. `startSeconds` receives the take time of its first sample.
+juce::AudioBuffer<float> renderAuditionNotes(const PolyphonicTake &take,
+                                             const std::vector<int> &notes,
+                                             const Project::PolyphonicEdits &requested,
+                                             const std::atomic<bool> *cancel,
+                                             double &startSeconds)
+{
+  juce::AudioBuffer<float> mono;
+  startSeconds = 0.0;
+  Project::PolyphonicEdits edits;
+  for (int note : notes)
+  {
+    const auto it = requested.find(note);
+    edits[note] = it != requested.end() ? it->second : polyphonic::NoteEdit{};
+  }
+  const auto channels = renderChannels(take, edits);
+  const auto &analysis = *take.analysis;
+  const auto span = polyphonic::renderNotes(analysis, channels, notes, edits, cancel);
+  const int spanLength =
+      span.channels.empty() ? 0 : static_cast<int>(span.channels.front().size());
+  // The span also covers the analysis window's lead and the background
+  // claim's 2 s fade, which would put ~100 ms of near-silence before the
+  // attack and a long gap in the loop.
+  const double rate = analysis.params.sampleRate;
+  double first = std::numeric_limits<double>::max();
+  double last = 0.0;
+  for (const auto &[index, edit] : edits)
+  {
+    const auto &note = analysis.notes[static_cast<size_t>(index)];
+    const auto map = polyphonic::stretchMap(analysis, index, edit);
+    const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
+    first = std::min(first, analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds);
+    last = std::max(last, analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds);
+  }
+  constexpr double kLeadSeconds = 0.03; // detected onsets can be a frame late
+  constexpr double kTailSeconds = 0.3;
+  const int from = juce::jlimit(0, spanLength,
+                                static_cast<int>((first - kLeadSeconds) * rate) - span.start);
+  const int to = juce::jlimit(from, spanLength,
+                              static_cast<int>(std::ceil((last + kTailSeconds) * rate)) - span.start);
+  const int length = to - from;
+  if ((cancel != nullptr && cancel->load()) || length <= 0)
+    return mono;
+  mono.setSize(1, length);
+  mono.clear();
+  const float gain = 1.0f / static_cast<float>(span.channels.size());
+  for (const auto &channel : span.channels)
+    juce::FloatVectorOperations::addWithMultiply(mono.getWritePointer(0),
+                                                 channel.data() + from, gain, length);
+  // Fade the cut edges (5 ms) so the loop does not click.
+  const int fade = std::min(length / 2, static_cast<int>(0.005 * rate));
+  mono.applyGainRamp(0, fade, 0.0f, 1.0f);
+  mono.applyGainRamp(length - fade, fade, 1.0f, 0.0f);
+  startSeconds = static_cast<double>(span.start + from) / rate;
+  return mono;
+}
 } // namespace
 
 std::shared_ptr<const PolyphonicTake>
@@ -2186,6 +2251,55 @@ void EditorController::renderPolyphonicAuditionAsync(
   startPolyphonicAudition(std::move(request));
 }
 
+void EditorController::prerenderPolyphonicNotesAsync(
+    std::shared_ptr<const PolyphonicTake> take, Project::PolyphonicEdits edits,
+    std::vector<int> notes,
+    std::function<void(int, juce::AudioBuffer<float>, double)> onNote)
+{
+  cancelPolyphonicPrerender();
+  if (take == nullptr || !take->hasAnalysis() || take->restoring || notes.empty() ||
+      shuttingDown.load())
+    return;
+  auto cancel = std::make_shared<std::atomic<bool>>(false);
+  prerenderCancel = cancel;
+  const int generation = ++prerenderGeneration;
+  prerenderThread = std::thread([this, take, edits = std::move(edits),
+                                 notes = std::move(notes), onNote, cancel, generation]() {
+    // One note at a time, each delivered as it is done.
+    for (const int note : notes)
+    {
+      if (cancel->load() || shuttingDown.load())
+        return;
+      double startSeconds = 0.0;
+      juce::AudioBuffer<float> buffer;
+      try
+      {
+        buffer = renderAuditionNotes(*take, {note}, edits, cancel.get(), startSeconds);
+      }
+      catch (...)
+      {
+        continue;
+      }
+      if (buffer.getNumSamples() == 0 || cancel->load())
+        continue;
+      juce::MessageManager::callAsync(
+          [this, note, buffer = std::move(buffer), startSeconds, onNote, generation]() mutable {
+            if (!shuttingDown.load() && generation == prerenderGeneration && onNote)
+              onNote(note, std::move(buffer), startSeconds);
+          });
+    }
+  });
+}
+
+void EditorController::cancelPolyphonicPrerender()
+{
+  ++prerenderGeneration;
+  if (prerenderCancel)
+    prerenderCancel->store(true);
+  if (prerenderThread.joinable())
+    prerenderThread.join(); // a note at a time: returns within one note's render
+}
+
 void EditorController::cancelPolyphonicAudition()
 {
   ++auditionGeneration;
@@ -2213,56 +2327,9 @@ void EditorController::startPolyphonicAudition(AuditionRequest request)
     juce::AudioBuffer<float> mono;
     try
     {
-      // Only the notes listed: their edits, or the engine's default (which
-      // brings each note's background along, as the full render does).
-      Project::PolyphonicEdits edits;
-      for (int note : request.notes)
-      {
-        const auto it = request.edits.find(note);
-        edits[note] = it != request.edits.end() ? it->second : polyphonic::NoteEdit{};
-      }
-      const auto channels = renderChannels(*take, edits);
-      const auto &analysis = *take->analysis;
-      const auto span = polyphonic::renderNotes(analysis, channels, request.notes,
-                                                edits, cancel.get());
-      const int spanLength = span.channels.empty()
-                                 ? 0
-                                 : static_cast<int>(span.channels.front().size());
-      // Play the notes themselves: from just before the earliest onset to a
-      // little after the latest end. The span also covers the analysis
-      // window's lead and the background claim's 2 s fade, which would put
-      // ~100 ms of near-silence before the attack and a long gap in the loop.
-      const double rate = analysis.params.sampleRate;
-      double first = std::numeric_limits<double>::max();
-      double last = 0.0;
-      for (const auto &[index, edit] : edits)
-      {
-        const auto &note = analysis.notes[static_cast<size_t>(index)];
-        const auto map = polyphonic::stretchMap(analysis, index, edit);
-        const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
-        first = std::min(first, analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds);
-        last = std::max(last, analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds);
-      }
-      constexpr double kLeadSeconds = 0.03; // detected onsets can be a frame late
-      constexpr double kTailSeconds = 0.3;
-      const int from = juce::jlimit(0, spanLength,
-                                    static_cast<int>((first - kLeadSeconds) * rate) - span.start);
-      const int to = juce::jlimit(from, spanLength,
-                                  static_cast<int>(std::ceil((last + kTailSeconds) * rate)) - span.start);
-      const int length = to - from;
-      if (!cancel->load() && length > 0)
-      {
-        mono.setSize(1, length);
-        mono.clear();
-        const float gain = 1.0f / static_cast<float>(span.channels.size());
-        for (const auto &channel : span.channels)
-          juce::FloatVectorOperations::addWithMultiply(
-              mono.getWritePointer(0), channel.data() + from, gain, length);
-        // Fade the cut edges (5 ms) so the loop does not click.
-        const int fade = std::min(length / 2, static_cast<int>(0.005 * rate));
-        mono.applyGainRamp(0, fade, 0.0f, 1.0f);
-        mono.applyGainRamp(length - fade, fade, 1.0f, 0.0f);
-      }
+      double startSeconds = 0.0;
+      mono = renderAuditionNotes(*take, request.notes, request.edits, cancel.get(),
+                                 startSeconds);
     }
     catch (...)
     {

@@ -349,7 +349,9 @@ checks; each milestone still ends in its own commits and tests.
      its playback, the notes are drawn at once from the saved levels and the
      masks are rebuilt on a background thread (`restorePolyphonicTake`);
      edits made meanwhile render once it lands.*
-   - *Not yet: Live Audition is standalone only.*
+   - *Live Audition in the plug-in (after the merge): the dragged notes are
+     rendered as in the standalone app and played through the host's preview,
+     as the vocal drag audition is (`MainComponent::auditionPolyphonicNotes`).*
    *Part 2 (one mode per track, ARA), 2026-11-19, awaiting a test in REAPER:*
    - *A clip is analysed in its track's mode
      (`PitchNetAudioProcessor::analyzeAraRegionForCanvas`). The track's mode
@@ -400,10 +402,14 @@ checks; each milestone still ends in its own commits and tests.
      stereo render.*
    - *Plug-in state: the format 6 section; on load the timeline is drawn from
      its saved notes, plays its saved render and its masks are rebuilt from the
-     saved original. That original is mono, so after a reload the take's
-     renders are mono (a stereo original in the state is a later change).*
-   - *The Input menu in capture mode stores the choice; it applies to the next
-     capture, not to the takes already analysed.*
+     saved original. Since the merge a stereo take keeps its channels and
+     render in the state's waveform slots (`ProjectSerializer::toBinaryArchive`;
+     read back into `PolyphonicRestore::channels` / `playback`, the project
+     keeping their mono mixes), so the take stays stereo after a reload.*
+   - *The Input menu in capture mode analyses the takes already recorded again
+     in the chosen mode (after a confirmation when they have edits), as one
+     take from the timeline's start (`reanalyzeCapturedTimeline`); later takes
+     follow it.*
 6. **After the first release.** Note assignment, and whatever the feature
    review defers.
 

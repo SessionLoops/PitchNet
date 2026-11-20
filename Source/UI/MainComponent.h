@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+#include <optional>
+
 #include "../Audio/EditorController.h"
 #include "../Audio/ResampledLoopAudition.h"
 #include "IMainView.h"
@@ -315,6 +318,47 @@ private:
   // Live audition of a drag on a polyphonic take: the dragged notes, rendered
   // on their own with the drag's edits (EditorController::renderPolyphonicAuditionAsync).
   void auditionPolyphonicNotes(const std::vector<int> &notes);
+  // Live Audition of polyphonic notes: the selected notes are rendered once
+  // (on selection, before any drag); a pitch drag then plays that render
+  // resampled by the drag's shift, at once. Anything else (a stretch, other
+  // notes) renders again.
+  struct PolyphonicAuditionCache
+  {
+    std::shared_ptr<const PolyphonicTake> take;
+    std::vector<int> notes;                // sorted
+    Project::PolyphonicEdits edits;        // those notes' edits it was rendered with
+    juce::AudioBuffer<float> buffer;       // mono, trimmed to the notes
+    bool ready = false;
+    std::shared_ptr<const PolyphonicTake> requestedTake; // the last render asked for
+    std::vector<int> requestedNotes;
+    Project::PolyphonicEdits requestedEdits;
+    float playedShift = 0.0f;
+    bool played = false;
+  };
+  PolyphonicAuditionCache polyphonicAudition;
+  void prerenderPolyphonicAudition();
+  void requestPolyphonicAuditionRender(std::vector<int> notes, Project::PolyphonicEdits edits);
+  bool polyphonicAuditionShift(const std::vector<int> &notes,
+                               const Project::PolyphonicEdits &edits, float &shift) const;
+  void playPolyphonicAudition(const juce::AudioBuffer<float> &buffer);
+  void updatePolyphonicAudition();
+  // Every note of the take rendered on its own in the background, before any
+  // selection (within a memory budget, notes near the view first); a drag of
+  // any notes then mixes their renders and resamples them for its shift.
+  struct NoteAudition
+  {
+    polyphonic::NoteEdit edit; // what it was rendered with
+    juce::AudioBuffer<float> buffer;
+    double startSeconds = 0.0;
+  };
+  std::shared_ptr<const PolyphonicTake> noteAuditionTake;
+  std::map<int, NoteAudition> noteAuditions;
+  size_t noteAuditionSamples = 0;
+  std::optional<Project::PolyphonicEdits> noteAuditionRequestedFor;
+  void refreshNoteAuditions();
+  bool mixNoteAuditions(const std::vector<int> &notes,
+                        const Project::PolyphonicEdits &edits,
+                        juce::AudioBuffer<float> &mix, float &shift) const;
   // The toolbar's Note / Cent / Level for the selected polyphonic notes.
   void refreshPolyphonicSelectionBar();
   void finishDraggedNoteAudition();

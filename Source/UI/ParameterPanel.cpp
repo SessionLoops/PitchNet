@@ -1463,9 +1463,13 @@ void ParameterPanel::requestAnalysisMode(const AnalysisModeState& next)
 
 void ParameterPanel::refreshAnalysisCard()
 {
-    const bool polyphonic = project != nullptr && project->isPolyphonic();
-    const auto detector = project != nullptr ? project->getAnalysisMode().detector
-                                             : PolyphonicDetector::Harmonic;
+    // Between two analyses of a take (the plugin re-analysing a track, a
+    // clip still loading) there is no project: the card stays as it is.
+    if (project == nullptr)
+        return;
+    const bool polyphonic =
+        project->isPolyphonic() || project->getPendingPolyphonicRestore() != nullptr;
+    const auto detector = project->getAnalysisMode().detector;
     harmonicDetectorToggle.setToggleState(detector == PolyphonicDetector::Harmonic,
                                           juce::dontSendNotification);
     guidedDetectorToggle.setToggleState(detector == PolyphonicDetector::Guided,

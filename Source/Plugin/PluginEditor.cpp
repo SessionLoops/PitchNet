@@ -1562,6 +1562,12 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
+  // Capture: a choice of mode analyses the takes already recorded again.
+  mainView->setTrackAnalysisModeHandlers(
+      [this](const AnalysisModeState &next) {
+        audioProcessor.reanalyzeCapturedTimeline(next);
+      },
+      [this] { return audioProcessor.capturedTimelineHasEdits(); });
   mainView->setOnRequestBackendPreview(
       [this](const Project &project, int startFrame, int endFrame) {
         const auto &audioData = project.getAudioData();

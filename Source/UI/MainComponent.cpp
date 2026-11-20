@@ -1132,12 +1132,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   pianoRoll.onPolyphonicDragFinished = [this]()
   {
-    if (editorController)
-      editorController->cancelPolyphonicAudition();
+    // A render still on its way is kept for the next press (it plays only
+    // while a drag is under way).
     finishDraggedNoteAudition();
   };
   pianoRoll.onPolyphonicSelectionChanged = [this]()
-  { refreshPolyphonicSelectionBar(); };
+  {
+    refreshPolyphonicSelectionBar();
+    prerenderPolyphonicAudition();
+  };
   {
     auto &bar = toolbar.getPolyphonicSelectionBar();
     bar.onShiftSemitones = [this](float semitones, bool fromCents)
@@ -1753,6 +1756,7 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent &e)
 void MainComponent::timerCallback()
 {
   dispatchPendingDragAudition();
+  refreshNoteAuditions();
 
   // Handle throttled cursor updates (30Hz max)
   if (hasPendingCursorUpdate.load())
@@ -3438,37 +3442,395 @@ void MainComponent::refreshPolyphonicSelectionBar()
   toolbar.getPolyphonicSelectionBar().setState(state);
 }
 
+namespace
+{
+// The listed notes' entries of `edits`.
+Project::PolyphonicEdits editsOf(const std::vector<int> &notes,
+                                 const Project::PolyphonicEdits &edits)
+{
+  Project::PolyphonicEdits out;
+  for (const int note : notes)
+    if (const auto it = edits.find(note); it != edits.end())
+      out.emplace(note, it->second);
+  return out;
+}
+
+// `buffer` played `semitones` higher by reading it faster (shorter), or lower.
+juce::AudioBuffer<float> resampledBySemitones(const juce::AudioBuffer<float> &buffer,
+                                              float semitones)
+{
+  if (std::abs(semitones) < 1.0e-4f)
+    return buffer;
+  const double ratio = std::pow(2.0, static_cast<double>(semitones) / 12.0);
+  const int inSamples = buffer.getNumSamples();
+  const int outSamples = std::max(1, static_cast<int>(std::floor((inSamples - 4) / ratio)));
+  juce::AudioBuffer<float> out(buffer.getNumChannels(), outSamples);
+  for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+  {
+    juce::LagrangeInterpolator interpolator;
+    interpolator.process(ratio, buffer.getReadPointer(ch), out.getWritePointer(ch),
+                         outSamples, inSamples, 0);
+  }
+  return out;
+}
+} // namespace
+
+bool MainComponent::polyphonicAuditionShift(const std::vector<int> &notes,
+                                            const Project::PolyphonicEdits &edits,
+                                            float &shift) const
+{
+  const auto &cache = polyphonicAudition;
+  const auto *project = getProject();
+  if (!cache.ready || project == nullptr || project->getPolyphonicTake() != cache.take ||
+      cache.notes != notes)
+    return false;
+  // The render holds for these edits when they differ from its own only in a
+  // pitch shift common to every note (and where the notes sit in time).
+  bool first = true;
+  for (const int note : notes)
+  {
+    const auto at = [note](const Project::PolyphonicEdits &map) {
+      const auto it = map.find(note);
+      return it != map.end() ? it->second : polyphonic::NoteEdit{};
+    };
+    auto rendered = at(cache.edits);
+    auto now = at(edits);
+    const float delta = now.semitones - rendered.semitones;
+    rendered.semitones = now.semitones = 0.0f;
+    rendered.timeOffsetSeconds = now.timeOffsetSeconds = 0.0;
+    if (!(rendered == now))
+      return false;
+    if (first)
+      shift = delta;
+    else if (std::abs(delta - shift) > 1.0e-4f)
+      return false;
+    first = false;
+  }
+  return !first;
+}
+
+void MainComponent::requestPolyphonicAuditionRender(std::vector<int> notes,
+                                                    Project::PolyphonicEdits edits)
+{
+  if (editorController == nullptr)
+    return;
+  auto &cache = polyphonicAudition;
+  const auto *project = getProject();
+  auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  if (take == cache.requestedTake && notes == cache.requestedNotes &&
+      edits == cache.requestedEdits)
+    return; // already asked for (or rendered)
+  cache.requestedTake = take;
+  cache.requestedNotes = notes;
+  cache.requestedEdits = edits;
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  editorController->renderPolyphonicAuditionAsync(
+      notes, edits,
+      [safeThis, take, notes, edits](juce::AudioBuffer<float> buffer) {
+        if (safeThis == nullptr)
+          return;
+        auto &cache = safeThis->polyphonicAudition;
+        cache.take = take;
+        cache.notes = notes;
+        cache.edits = edits;
+        cache.buffer = std::move(buffer);
+        cache.ready = cache.buffer.getNumSamples() > 0;
+        // A drag already under way plays it now, at its current shift.
+        if (safeThis->noteDragAuditionActive)
+          safeThis->updatePolyphonicAudition();
+      });
+}
+
+void MainComponent::prerenderPolyphonicAudition()
+{
+  if (!dragAuditionEnabled || editorController == nullptr || !pianoRoll.isPolyphonicActive())
+    return;
+  const auto *project = getProject();
+  const auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  if (take == nullptr || take->restoring)
+    return;
+  const auto &layer = pianoRoll.getPolyphonicLayer();
+  const auto &edits = layer.currentEdits();
+  std::vector<int> notes;
+  for (const int note : layer.getSelection())
+  {
+    const auto it = edits.find(note);
+    if (it == edits.end() || !it->second.mute)
+      notes.push_back(note);
+  }
+  // A handful of notes: a whole selected passage is not pre-rendered.
+  constexpr size_t kMaxPrerenderedNotes = 16;
+  if (notes.empty() || notes.size() > kMaxPrerenderedNotes)
+    return;
+  float shift = 0.0f;
+  auto own = editsOf(notes, edits);
+  if (polyphonicAuditionShift(notes, own, shift))
+    return; // the render on hand already serves them
+  requestPolyphonicAuditionRender(std::move(notes), std::move(own));
+}
+
+void MainComponent::updatePolyphonicAudition()
+{
+  const auto notes = [this] {
+    auto dragged = pianoRoll.getPolyphonicLayer().getDraggedNotes();
+    std::sort(dragged.begin(), dragged.end());
+    return dragged;
+  }();
+  if (notes.empty())
+    return;
+  const auto edits = editsOf(notes, pianoRoll.getPolyphonicLayer().currentEdits());
+  float shift = 0.0f;
+  auto &cache = polyphonicAudition;
+  // The notes' own renders, made ahead of time.
+  juce::AudioBuffer<float> mix;
+  if (mixNoteAuditions(notes, edits, mix, shift))
+  {
+    if (!cache.played || std::abs(shift - cache.playedShift) > 1.0e-4f)
+    {
+      cache.played = true;
+      cache.playedShift = shift;
+      playPolyphonicAudition(resampledBySemitones(mix, shift));
+    }
+    return;
+  }
+  if (polyphonicAuditionShift(notes, edits, shift))
+  {
+    // Only a change of pitch starts the sound again.
+    if (!cache.played || std::abs(shift - cache.playedShift) > 1.0e-4f)
+    {
+      cache.played = true;
+      cache.playedShift = shift;
+      playPolyphonicAudition(resampledBySemitones(cache.buffer, shift));
+    }
+    return;
+  }
+  cache.played = false;
+  requestPolyphonicAuditionRender(notes, edits);
+}
+
+namespace
+{
+// Two edits that sound the same apart from a pitch shift and where they sit.
+bool sameButPitchAndTime(polyphonic::NoteEdit a, polyphonic::NoteEdit b)
+{
+  a.semitones = b.semitones = 0.0f;
+  a.timeOffsetSeconds = b.timeOffsetSeconds = 0.0;
+  return a == b;
+}
+
+polyphonic::NoteEdit editAt(const Project::PolyphonicEdits &edits, int note)
+{
+  const auto it = edits.find(note);
+  return it != edits.end() ? it->second : polyphonic::NoteEdit{};
+}
+
+// At most this many samples of note renders are kept (64 MB of floats).
+constexpr size_t kMaxNoteAuditionSamples = 16u * 1024u * 1024u;
+} // namespace
+
+bool MainComponent::mixNoteAuditions(const std::vector<int> &notes,
+                                     const Project::PolyphonicEdits &edits,
+                                     juce::AudioBuffer<float> &mix, float &shift) const
+{
+  const auto *project = getProject();
+  if (project == nullptr || notes.empty() || noteAuditionTake == nullptr ||
+      project->getPolyphonicTake() != noteAuditionTake)
+    return false;
+  // Every note rendered, with what it has now but for one pitch shift common
+  // to all of them; placed where each sits now.
+  double first = std::numeric_limits<double>::max();
+  double last = std::numeric_limits<double>::lowest();
+  bool haveShift = false;
+  for (const int note : notes)
+  {
+    const auto it = noteAuditions.find(note);
+    if (it == noteAuditions.end())
+      return false;
+    const auto now = editAt(edits, note);
+    if (!sameButPitchAndTime(it->second.edit, now))
+      return false;
+    const float delta = now.semitones - it->second.edit.semitones;
+    if (!haveShift)
+      shift = delta;
+    else if (std::abs(delta - shift) > 1.0e-4f)
+      return false;
+    haveShift = true;
+    const double start = it->second.startSeconds +
+                         (now.timeOffsetSeconds - it->second.edit.timeOffsetSeconds);
+    first = std::min(first, start);
+    last = std::max(last, start + it->second.buffer.getNumSamples() /
+                                      static_cast<double>(noteAuditionTake->analysis->params.sampleRate));
+  }
+  const double rate = noteAuditionTake->analysis->params.sampleRate;
+  const int length = std::max(1, static_cast<int>(std::ceil((last - first) * rate)));
+  mix.setSize(1, length);
+  mix.clear();
+  for (const int note : notes)
+  {
+    const auto &audition = noteAuditions.at(note);
+    const auto now = editAt(edits, note);
+    const double start = audition.startSeconds +
+                         (now.timeOffsetSeconds - audition.edit.timeOffsetSeconds);
+    const int at = juce::jlimit(0, length - 1, static_cast<int>(std::llround((start - first) * rate)));
+    const int count = std::min(audition.buffer.getNumSamples(), length - at);
+    if (count > 0)
+      mix.addFrom(0, at, audition.buffer, 0, 0, count);
+  }
+  return true;
+}
+
+void MainComponent::refreshNoteAuditions()
+{
+  if (editorController == nullptr || noteDragAuditionActive)
+    return;
+  const auto *project = getProject();
+  const auto take = project != nullptr && pianoRoll.isPolyphonicActive()
+                        ? project->getPolyphonicTake()
+                        : nullptr;
+  if (!dragAuditionEnabled || take == nullptr || take->restoring)
+  {
+    if (noteAuditionTake != nullptr || noteAuditionRequestedFor)
+    {
+      editorController->cancelPolyphonicPrerender();
+      noteAuditionTake = nullptr;
+      noteAuditions.clear();
+      noteAuditionSamples = 0;
+      noteAuditionRequestedFor.reset();
+    }
+    return;
+  }
+  if (take != noteAuditionTake)
+  {
+    editorController->cancelPolyphonicPrerender();
+    noteAuditionTake = take;
+    noteAuditions.clear();
+    noteAuditionSamples = 0;
+    noteAuditionRequestedFor.reset();
+  }
+  const auto &edits = project->getPolyphonicEdits();
+  if (noteAuditionRequestedFor && *noteAuditionRequestedFor == edits)
+    return; // asked for these already
+
+  // The notes still to render (or rendered with something else than a pitch
+  // shift or a move), nearest to the view first.
+  const auto &analysis = *take->analysis;
+  const double viewCentre =
+      (pianoRoll.getScrollX() + pianoRoll.getWidth() * 0.5) /
+      std::max(1.0f, pianoRoll.getPixelsPerSecond());
+  std::vector<std::pair<double, int>> order;
+  for (int i = 0; i < static_cast<int>(analysis.notes.size()); ++i)
+  {
+    const auto &note = analysis.notes[static_cast<size_t>(i)];
+    const auto edit = editAt(edits, i);
+    if (!note.active || edit.mute)
+      continue;
+    if (const auto it = noteAuditions.find(i);
+        it != noteAuditions.end() && sameButPitchAndTime(it->second.edit, edit))
+      continue;
+    const double start = analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds;
+    order.emplace_back(std::abs(start - viewCentre), i);
+  }
+  noteAuditionRequestedFor = edits;
+  if (order.empty())
+    return;
+  std::sort(order.begin(), order.end());
+  std::vector<int> notes;
+  notes.reserve(order.size());
+  for (const auto &[distance, note] : order)
+    notes.push_back(note);
+
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  editorController->prerenderPolyphonicNotesAsync(
+      take, edits, std::move(notes),
+      [safeThis, take, edits](int note, juce::AudioBuffer<float> buffer, double start) {
+        if (safeThis == nullptr || safeThis->noteAuditionTake != take)
+          return;
+        auto &cache = safeThis->noteAuditions;
+        size_t total = safeThis->noteAuditionSamples;
+        if (const auto it = cache.find(note); it != cache.end())
+          total -= static_cast<size_t>(it->second.buffer.getNumSamples());
+        if (total + static_cast<size_t>(buffer.getNumSamples()) > kMaxNoteAuditionSamples)
+          return; // over budget: that note renders when it is dragged
+        safeThis->noteAuditionSamples = total + static_cast<size_t>(buffer.getNumSamples());
+        cache[note] = {editAt(edits, note), std::move(buffer), start};
+      });
+}
+
+void MainComponent::playPolyphonicAudition(const juce::AudioBuffer<float> &buffer)
+{
+  auto *project = getProject();
+  if (project == nullptr || buffer.getNumSamples() == 0 || !noteDragAuditionActive)
+    return;
+  const double rate = static_cast<double>(std::max(1, project->getAudioData().sampleRate));
+  if (isPluginMode())
+  {
+    // Through the host's preview, as the vocal drag audition: the preview
+    // range starts it on the notes' clip, the audition buffer replaces it.
+    if (!noteDragAuditionBackendPreviewStarted && onRequestBackendPreview)
+    {
+      onRequestBackendPreview(*project, noteDragAuditionStartFrame, noteDragAuditionEndFrame);
+      noteDragAuditionBackendPreviewStarted = true;
+    }
+    if (onRequestDragAudition)
+      onRequestDragAudition(buffer, rate);
+    return;
+  }
+  if (auto *engine = editorController ? editorController->getAudioEngine() : nullptr)
+    engine->beginAuditionLoop(buffer, rate);
+}
+
 void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)
 {
-  // Standalone only for now (the plugin's drag audition goes through the host).
-  if (!dragAuditionEnabled || notes.empty() || isPluginMode() ||
-      editorController == nullptr)
+  if (!dragAuditionEnabled || notes.empty() || editorController == nullptr)
     return;
-  auto *engine = editorController->getAudioEngine();
-  if (engine == nullptr)
+  auto *project = getProject();
+  const auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  if (take == nullptr || !take->hasAnalysis() || take->restoring)
     return;
 
   if (!noteDragAuditionActive)
   {
     noteDragAuditionActive = true;
     noteDragAuditionBackendPreviewStarted = false;
-    noteDragAuditionWasPlaying = engine->isPlaying();
-    noteDragAuditionReturnTime = engine->getPosition();
-  }
+    polyphonicAudition.played = false;
+    if (!isPluginMode())
+    {
+      auto *engine = editorController->getAudioEngine();
+      if (engine == nullptr)
+      {
+        noteDragAuditionActive = false;
+        return;
+      }
+      noteDragAuditionWasPlaying = engine->isPlaying();
+      noteDragAuditionReturnTime = engine->getPosition();
+    }
 
-  juce::Component::SafePointer<MainComponent> safeThis(this);
-  editorController->renderPolyphonicAuditionAsync(
-      notes, pianoRoll.getPolyphonicLayer().currentEdits(),
-      [safeThis](juce::AudioBuffer<float> buffer) {
-        if (safeThis == nullptr || !safeThis->noteDragAuditionActive ||
-            safeThis->editorController == nullptr)
-          return;
-        auto *project = safeThis->getProject();
-        auto *audio = safeThis->editorController->getAudioEngine();
-        if (project == nullptr || audio == nullptr)
-          return;
-        audio->beginAuditionLoop(buffer, project->getAudioData().sampleRate);
-      });
+    // The plugin's preview range: where the notes sit (host frames).
+    const auto edits = pianoRoll.getPolyphonicLayer().currentEdits();
+    const auto &analysis = *take->analysis;
+    double first = std::numeric_limits<double>::max();
+    double last = 0.0;
+    for (const int index : notes)
+    {
+      if (index < 0 || index >= static_cast<int>(analysis.notes.size()))
+        continue;
+      const auto &note = analysis.notes[static_cast<size_t>(index)];
+      const auto it = edits.find(index);
+      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+      const auto map = polyphonic::stretchMap(analysis, index, edit);
+      const double lastOut =
+          map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
+      first = std::min(first, analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds);
+      last = std::max(last, analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds);
+    }
+    const double framesPerSecond =
+        static_cast<double>(std::max(1, project->getAudioData().sampleRate)) / HOP_SIZE;
+    noteDragAuditionStartFrame =
+        std::max(0, static_cast<int>(std::floor(std::max(0.0, first) * framesPerSecond)));
+    noteDragAuditionEndFrame = std::max(noteDragAuditionStartFrame + 1,
+                                        static_cast<int>(std::ceil(last * framesPerSecond)));
+  }
+  updatePolyphonicAudition();
 }
 
 void MainComponent::renderPolyphonicEdits(bool showProgress)

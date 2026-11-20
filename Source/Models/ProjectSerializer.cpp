@@ -688,6 +688,21 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
     const auto& audioData = project.getAudioData();
     const bool includeSourceDerivedData =
         mode == BinaryArchiveMode::selfContained;
+    // A polyphonic take keeps its stereo image: its channels stand for the
+    // original and its render for the rendered waveform (both mono mixes are
+    // made again on load, PitchNetAudioProcessor::preparePolyphonicCaptureProject).
+    const juce::AudioBuffer<float>* originalForArchive = &audioData.originalWaveform;
+    const juce::AudioBuffer<float>* renderedForArchive = &audioData.waveform;
+    const auto polyphonicTake = project.getPolyphonicTake();
+    const auto polyphonicPlayback = project.getPolyphonicPlayback();
+    if (polyphonicTake != nullptr && polyphonicTake->hasAnalysis() &&
+        polyphonicTake->source.getNumChannels() > 1 &&
+        polyphonicTake->source.getNumSamples() > 0)
+    {
+        originalForArchive = &polyphonicTake->source;
+        if (polyphonicPlayback != nullptr && polyphonicPlayback->getNumSamples() > 0)
+            renderedForArchive = polyphonicPlayback.get();
+    }
     // The mel spectrogram is a pure function of originalWaveform, so v10+
     // archives omit it (~8MB for a 3 minute take) and rebuild it on load.
     const int archiveFlags =
@@ -701,9 +716,9 @@ bool ProjectSerializer::toBinaryArchive(const Project& project,
         !out.writeInt(archiveFlags) ||
         !writeString(out, metadataJson) ||
         (includeSourceDerivedData &&
-         !writeAudioBuffer(out, audioData.waveform)) ||
+         !writeAudioBuffer(out, *renderedForArchive)) ||
         (includeSourceDerivedData &&
-         !writeAudioBuffer(out, audioData.originalWaveform)) ||
+         !writeAudioBuffer(out, *originalForArchive)) ||
         !writeFloatVector(out, audioData.f0) ||
         !writeFloatVector(out, audioData.rawF0) ||
         !writeFloatVector(out, audioData.cleanedF0) ||
@@ -796,6 +811,35 @@ bool ProjectSerializer::fromBinaryArchive(Project& project, const void* data,
             return false;
     } else {
         audioData.originalWaveform.setSize(0, 0);
+    }
+    // A polyphonic take saved with its channels and render (toBinaryArchive):
+    // they go with its saved notes, and the project keeps their mono mixes.
+    if (const auto pending = project.getPendingPolyphonicRestore();
+        pending != nullptr && (audioData.originalWaveform.getNumChannels() > 1 ||
+                               audioData.waveform.getNumChannels() > 1))
+    {
+        const auto toMono = [](juce::AudioBuffer<float>& buffer) {
+            juce::AudioBuffer<float> mono(1, buffer.getNumSamples());
+            mono.clear();
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                mono.addFrom(0, 0, buffer, ch, 0, buffer.getNumSamples(),
+                             1.0f / static_cast<float>(buffer.getNumChannels()));
+            return mono;
+        };
+        auto withAudio = std::make_shared<PolyphonicRestore>(*pending);
+        if (audioData.originalWaveform.getNumChannels() > 1)
+        {
+            withAudio->channels =
+                std::make_shared<const juce::AudioBuffer<float>>(audioData.originalWaveform);
+            audioData.originalWaveform = toMono(audioData.originalWaveform);
+        }
+        if (audioData.waveform.getNumChannels() > 1)
+        {
+            withAudio->playback =
+                std::make_shared<const juce::AudioBuffer<float>>(audioData.waveform);
+            audioData.waveform = toMono(audioData.waveform);
+        }
+        project.setPendingPolyphonicRestore(std::move(withAudio));
     }
     if (!readFloatVector(in, audioData.f0))
         return false;

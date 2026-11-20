@@ -211,6 +211,17 @@ public:
                                      std::function<void(juce::AudioBuffer<float>)> onReady);
   void cancelPolyphonicAudition();
 
+  // Live Audition ahead of time: each of `notes` rendered on its own with its
+  // edit from `edits` (as the audition renders it), one by one on a
+  // background thread; onNote(note, buffer, startSeconds) on the message
+  // thread for each. A new call, or cancelPolyphonicPrerender, stops the one
+  // running (its results still to come are dropped).
+  void prerenderPolyphonicNotesAsync(
+      std::shared_ptr<const PolyphonicTake> take, Project::PolyphonicEdits edits,
+      std::vector<int> notes,
+      std::function<void(int, juce::AudioBuffer<float>, double)> onNote);
+  void cancelPolyphonicPrerender();
+
 private:
   // If the vocoder had to load on CPU, move an AI engine to classic (PSOLA)
   // and tell the UI. Returns true when it switched.
@@ -308,6 +319,9 @@ private:
   std::optional<AuditionRequest> pendingAudition;
   bool auditionRunning = false;
   int auditionGeneration = 0; // bumped by cancel: late results are dropped
+  std::thread prerenderThread;
+  std::shared_ptr<std::atomic<bool>> prerenderCancel;
+  int prerenderGeneration = 0; // message thread
   std::thread loaderJoinerThread;
   std::atomic<bool> isLoadingAudio{false};
   std::atomic<bool> cancelLoadingFlag{false};

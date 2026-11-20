@@ -1313,6 +1313,52 @@ void PitchNetAudioProcessor::dispatchLiveCaptureUpdate() {
         state->pending.store(false);
       });
 }
+bool PitchNetAudioProcessor::capturedTimelineHasEdits() const {
+  const Project *project =
+      mainComponent != nullptr ? mainComponent->getProject() : nullptr;
+  if (project == nullptr)
+    project = araAnalysisProjectSnapshot.get();
+  if (project == nullptr)
+    return false;
+  if (project->isPolyphonic() || project->getPendingPolyphonicRestore() != nullptr)
+    return !project->getPolyphonicEdits().empty();
+  if (project->getGlobalPitchOffset() != 0.0f || project->getFormantShift() != 0.0f)
+    return true;
+  for (const auto &note : project->getNotes())
+    if (!note.isRest() && !note.isNeutralForOriginalWaveform())
+      return true;
+  return false;
+}
+
+void PitchNetAudioProcessor::reanalyzeCapturedTimeline(const AnalysisModeState &next) {
+  const Project *project =
+      mainComponent != nullptr ? mainComponent->getProject() : nullptr;
+  if (project == nullptr)
+    project = araAnalysisProjectSnapshot.get();
+  if (project == nullptr)
+    return;
+  const auto &audioData = project->getAudioData();
+  const int rate = audioData.sampleRate;
+  // The takes as recorded: a polyphonic take's own channels, else the
+  // original (the host's channels for a vocal timeline).
+  const auto take = project->getPolyphonicTake();
+  const auto &recorded = take != nullptr && take->source.getNumSamples() > 0
+                             ? take->source
+                             : audioData.originalWaveform.getNumSamples() > 0
+                                   ? audioData.originalWaveform
+                                   : audioData.waveform;
+  const double offset = std::max(0.0, audioData.timelineOffsetSeconds);
+  const int first = juce::jlimit(
+      0, recorded.getNumSamples(), static_cast<int>(std::llround(offset * rate)));
+  const int length = recorded.getNumSamples() - first;
+  if (rate <= 0 || length <= 0)
+    return;
+  juce::AudioBuffer<float> buffer(recorded.getNumChannels(), length);
+  for (int ch = 0; ch < recorded.getNumChannels(); ++ch)
+    buffer.copyFrom(ch, 0, recorded, ch, first, length);
+  requestCapturedAudioAnalysis(buffer, static_cast<double>(rate), offset, 0, next);
+}
+
 std::unique_ptr<Project> PitchNetAudioProcessor::placePolyphonicCapture(
     const Project *previous, const Project &capture, double timelineOffsetSeconds) {
   auto placed = std::make_unique<Project>(previous != nullptr ? *previous : capture);
@@ -1444,18 +1490,25 @@ void PitchNetAudioProcessor::preparePolyphonicCaptureProject(Project &project) {
   const auto pending = project.getPendingPolyphonicRestore();
   if (pending == nullptr || project.getPolyphonicTake() != nullptr)
     return;
+  // Its stereo channels and render when the state kept them
+  // (ProjectSerializer), else the mono original and render.
   const auto &audioData = project.getAudioData();
-  const auto &original = audioData.originalWaveform.getNumSamples() > 0
+  const auto &original = pending->channels != nullptr ? *pending->channels
+                         : audioData.originalWaveform.getNumSamples() > 0
                              ? audioData.originalWaveform
                              : audioData.waveform;
   auto restoring = makeRestoringTake(*pending, original.getNumSamples());
   restoring->source.makeCopyOf(original);
   restoring->sourceRate = static_cast<double>(std::max(1, audioData.sampleRate));
   project.setPolyphonicTake(std::move(restoring));
-  if (!project.getPolyphonicEdits().empty() && audioData.waveform.getNumSamples() > 0) {
-    auto playback = std::make_shared<juce::AudioBuffer<float>>();
-    playback->makeCopyOf(audioData.waveform);
-    project.setPolyphonicPlayback(std::move(playback));
+  if (!project.getPolyphonicEdits().empty()) {
+    if (pending->playback != nullptr)
+      project.setPolyphonicPlayback(pending->playback);
+    else if (audioData.waveform.getNumSamples() > 0) {
+      auto playback = std::make_shared<juce::AudioBuffer<float>>();
+      playback->makeCopyOf(audioData.waveform);
+      project.setPolyphonicPlayback(std::move(playback));
+    }
   }
 }
 
@@ -1523,7 +1576,8 @@ void PitchNetAudioProcessor::finishCapturePolyphonicRestore(
 
 void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
     const juce::AudioBuffer<float> &buffer, double sampleRate,
-    double timelineOffsetSeconds, std::uint64_t pendingTakeId) {
+    double timelineOffsetSeconds, std::uint64_t pendingTakeId,
+    std::optional<AnalysisModeState> mode) {
   CAPTURE_DIAG("requestCapturedAudioAnalysis: samples=" +
                juce::String(buffer.getNumSamples()) +
                " sr=" + juce::String(sampleRate) +
@@ -1535,12 +1589,14 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   // Analysis is asynchronous. Preserve the completed regions now rather than
   // trying to recover them from mutable UI/controller state in the callback.
   std::shared_ptr<Project> previousCapturedProject;
-  if (mainComponent) {
+  if (mode.has_value()) {
+    // Re-analysing the whole timeline: nothing earlier to merge into.
+  } else if (mainComponent) {
     if (auto *current = mainComponent->getProject();
         current && current->getAudioData().waveform.getNumSamples() > 0)
       previousCapturedProject = std::make_shared<Project>(*current);
   }
-  if (!previousCapturedProject && araAnalysisProjectSnapshot &&
+  if (!mode.has_value() && !previousCapturedProject && araAnalysisProjectSnapshot &&
       araAnalysisProjectSnapshot->getAudioData().waveform.getNumSamples() > 0)
     previousCapturedProject =
         std::make_shared<Project>(*araAnalysisProjectSnapshot);
@@ -1571,7 +1627,11 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
     channels->makeCopyOf(buffer);
     captureOptions.takeChannels = std::move(channels);
   }
-  if (previousCapturedProject &&
+  if (mode.has_value()) {
+    captureOptions.trackMode = mode->mode;
+    captureOptions.trackDetector = mode->detector;
+    captureOptions.trackModeUserChosen = true;
+  } else if (previousCapturedProject &&
       previousCapturedProject->getAudioData().waveform.getNumSamples() > 0) {
     const auto &state = previousCapturedProject->getAnalysisMode();
     if (state.classified || state.userChosen) {

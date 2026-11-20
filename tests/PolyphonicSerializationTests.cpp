@@ -157,6 +157,46 @@ int main()
         checkLoaded(loaded, "binary archive");
     }
 
+    // A stereo take keeps its channels and its render through the plug-in
+    // state; the project gets their mono mixes back.
+    {
+        Project stereo;
+        auto stereoTake = std::make_shared<PolyphonicTake>(*take);
+        stereoTake->source.setSize(2, static_cast<int>(mono.size()));
+        stereoTake->source.copyFrom(0, 0, mono.data(), static_cast<int>(mono.size()));
+        stereoTake->source.copyFrom(1, 0, mono.data(), static_cast<int>(mono.size()));
+        stereoTake->source.applyGain(1, 0, static_cast<int>(mono.size()), 0.5f);
+        stereo.setPolyphonicTake(stereoTake);
+        stereo.setPolyphonicEdits(edits);
+        auto render = std::make_shared<juce::AudioBuffer<float>>();
+        render->makeCopyOf(stereoTake->source);
+        render->applyGain(0.25f);
+        stereo.setPolyphonicPlayback(render);
+        auto &audio = stereo.getAudioData();
+        audio.sampleRate = static_cast<int>(kRate);
+        audio.waveform.setSize(1, static_cast<int>(mono.size()));
+        audio.waveform.clear();
+        audio.originalWaveform.setSize(1, static_cast<int>(mono.size()));
+        audio.originalWaveform.clear();
+
+        juce::MemoryBlock block;
+        CHECK(ProjectSerializer::toBinaryArchive(stereo, block));
+        Project loaded;
+        CHECK(ProjectSerializer::fromBinaryArchive(loaded, block.getData(), block.getSize()));
+        checkLoaded(loaded, "binary archive, stereo");
+        const auto pending = loaded.getPendingPolyphonicRestore();
+        CHECK(pending->channels != nullptr && pending->channels->getNumChannels() == 2);
+        CHECK(pending->playback != nullptr && pending->playback->getNumChannels() == 2);
+        CHECK(pending->channels->getSample(1, 4000) == stereoTake->source.getSample(1, 4000));
+        CHECK(pending->playback->getSample(0, 4000) == render->getSample(0, 4000));
+        const auto &loadedAudio = loaded.getAudioData();
+        CHECK(loadedAudio.originalWaveform.getNumChannels() == 1);
+        CHECK(loadedAudio.waveform.getNumChannels() == 1);
+        CHECK(std::abs(loadedAudio.originalWaveform.getSample(0, 4000) -
+                       0.75f * mono[4000]) < 1e-6f);
+        std::printf("binary archive, stereo: channels and render back, mono mixes for the project\n");
+    }
+
     // A vocal project writes no section, and a file without one loads without
     // a take or edits.
     {

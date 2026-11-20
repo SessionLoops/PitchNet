@@ -114,10 +114,17 @@ public:
   // Whether any clip on the active clip's track has edits (to confirm first).
   bool activeAraTrackHasEdits();
   void updateProjectStateFromEditor(const Project &project);
+  // `mode`: analyse in this mode (the user's) and replace the whole captured
+  // timeline instead of merging into it (reanalyzeCapturedTimeline).
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds,
-                                    std::uint64_t pendingTakeId = 0);
+                                    std::uint64_t pendingTakeId = 0,
+                                    std::optional<AnalysisModeState> mode = std::nullopt);
+  // Non-ARA capture: the user's choice of mode analyses the takes already
+  // recorded again (their edits are discarded); whether any has edits.
+  void reanalyzeCapturedTimeline(const AnalysisModeState &next);
+  bool capturedTimelineHasEdits() const;
   /** Same archive written straight into a caller-owned stream, so the
       plug-in state path emits it once instead of staging a second full copy. */
   bool serializePersistentProjectState(juce::OutputStream &out,
