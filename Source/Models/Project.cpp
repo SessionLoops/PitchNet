@@ -449,6 +449,16 @@ void Project::setTimelineTempoBpm(double bpm)
     modified = true;
 }
 
+void Project::setTimelineBeatOriginSeconds(double seconds)
+{
+    const double normalized = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
+    if (std::abs(macroParameters->timelineBeatOriginSeconds - normalized) < 1.0e-9)
+        return;
+
+    macroParameters->timelineBeatOriginSeconds = normalized;
+    modified = true;
+}
+
 void Project::setTimelineGridDivision(TimelineGridDivision division)
 {
     const auto normalized = normalizeGridDivision(division);
@@ -459,12 +469,14 @@ void Project::setTimelineGridDivision(TimelineGridDivision division)
     modified = true;
 }
 
-void Project::setTimelineSnapCycle(bool enabled)
+void Project::setTimelineDragSnapFor(bool polyphonic, bool enabled)
 {
-    if (macroParameters->timelineSnapCycle == enabled)
+    auto &field = polyphonic ? macroParameters->timelineDragSnapPolyphonic
+                             : macroParameters->timelineDragSnap;
+    if (field == enabled)
         return;
 
-    macroParameters->timelineSnapCycle = enabled;
+    field = enabled;
     modified = true;
 }
 

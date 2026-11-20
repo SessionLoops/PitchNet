@@ -193,7 +193,7 @@
   "param.pitch_reference": "피치 기준",
   "param.reference_a4": "기준 (A4)",
   "param.scale": "스케일",
-  "param.snap_cycle": "사이클 스냅",
+  "param.timeline_drag_snap": "드래그 스냅",
   "param.tempo": "템포",
   "param.time_mode": "시간",
   "param.volume": "볼륨",

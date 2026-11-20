@@ -379,6 +379,9 @@ private:
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
   void fitAnalyzedPitchRangeToView(Project &project);
+  /** Standalone, polyphonic take, tempo not set yet: sets the tempo and bar 1
+   *  from the take's note onsets and switches the timeline to Beats. */
+  void detectPolyphonicTempo(Project &project);
   void applyUiBrightness(double brightnessPercent);
 
   void reloadInferenceModels(bool async = false);

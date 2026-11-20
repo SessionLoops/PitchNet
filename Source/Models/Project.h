@@ -170,7 +170,13 @@ struct MacroParameters
     int timelineBeatDenominator = 4;
     double timelineTempoBpm = 120.0;
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
-    bool timelineSnapCycle = false;
+    // Time-card Drag Snap, kept per mode like snapToSemitones above: off for
+    // vocal takes, on by default for polyphonic ones.
+    bool timelineDragSnap = false;
+    bool timelineDragSnapPolyphonic = true;
+    // Where bar 1 starts, in timeline seconds (the beat grid is shifted by
+    // it). Set by tempo detection in the standalone app; 0 otherwise.
+    double timelineBeatOriginSeconds = 0.0;
 };
 
 /**
@@ -390,8 +396,16 @@ public:
     void setTimelineTempoBpm(double bpm);
     TimelineGridDivision getTimelineGridDivision() const { return macroParameters->timelineGridDivision; }
     void setTimelineGridDivision(TimelineGridDivision division);
-    bool getTimelineSnapCycle() const { return macroParameters->timelineSnapCycle; }
-    void setTimelineSnapCycle(bool enabled);
+    double getTimelineBeatOriginSeconds() const { return macroParameters->timelineBeatOriginSeconds; }
+    void setTimelineBeatOriginSeconds(double seconds);
+    bool getTimelineDragSnap() const { return getTimelineDragSnapFor(isPolyphonic()); }
+    void setTimelineDragSnap(bool enabled) { setTimelineDragSnapFor(isPolyphonic(), enabled); }
+    bool getTimelineDragSnapFor(bool polyphonic) const
+    {
+        return polyphonic ? macroParameters->timelineDragSnapPolyphonic
+                          : macroParameters->timelineDragSnap;
+    }
+    void setTimelineDragSnapFor(bool polyphonic, bool enabled);
 
     std::shared_ptr<MacroParameters> getMacroParameters() const
     {

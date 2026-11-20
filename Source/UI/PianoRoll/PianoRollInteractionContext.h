@@ -61,7 +61,10 @@ public:
   float yToMidi(float y) const;
   float timeToX(double time) const;
   double xToTime(float x) const;
-  double snapTimeToTimelineGrid(double timeSeconds) const;
+  double snapTimeToTimelineGrid(double timeSeconds,
+                                const juce::ModifierKeys &mods) const;
+  double snapDragTime(double timeSeconds, const juce::ModifierKeys &mods) const;
+  bool shouldSnapTimeDrag(const juce::ModifierKeys &mods) const;
   bool isCanvasPoint(const juce::MouseEvent &e) const;
 
   Note *findNoteAt(float x, float y);

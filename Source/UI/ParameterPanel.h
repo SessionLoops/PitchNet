@@ -77,7 +77,7 @@ public:
     std::function<void(int, int)> onTimelineBeatSignatureChanged;
     std::function<void(double)> onTimelineTempoChanged;
     std::function<void(TimelineGridDivision)> onTimelineGridDivisionChanged;
-    std::function<void(bool)> onTimelineSnapCycleChanged;
+    std::function<void(bool)> onTimelineDragSnapChanged;
     std::function<void(double)> onUiBrightnessChanged;
     std::function<void(bool)> onNoiseVisibilityChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
@@ -121,11 +121,12 @@ private:
     void showRenderDeviceMenu();
     void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);
     void refreshTimelineModeToggles();
+    void refreshTimelineControlsEnabled();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
     void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
     void setTimelineTempoBpmInternal(double bpm, bool notify);
     void setTimelineGridDivisionInternal(TimelineGridDivision division, bool notify);
-    void setTimelineSnapCycleInternal(bool enabled, bool notify);
+    void setTimelineDragSnapInternal(bool enabled, bool notify);
 
     Project* project = nullptr;
     Note* selectedNote = nullptr;
@@ -208,7 +209,7 @@ private:
     SliderBox timelineTempoSlider { "Tempo" };
     juce::Label timelineGridLabel;
     CompactSelectionButton timelineGridButton { "1/4" };
-    StyledToggleButton timelineSnapCycleToggle;
+    StyledToggleButton timelineDragSnapToggle;
     juce::Label brightnessLabel;
     FloatingZoomSliderLookAndFeel brightnessSliderLookAndFeel;
     juce::Slider brightnessSlider;
@@ -225,7 +226,8 @@ private:
     int timelineBeatDenominator = 4;
     double timelineTempoBpm = 120.0;
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
-    bool timelineSnapCycle = false;
+    bool timelineDragSnap = false;
+    bool isPluginMode = false;
     double uiBrightnessPercent = 100.0;
     SynthesisEngineType synthesisEngine = defaultSynthesisEngineType();
     bool aiResynthesisAvailable = true;

@@ -59,9 +59,21 @@ double PianoRollInteractionContext::xToTime(float x) const
 }
 
 double PianoRollInteractionContext::snapTimeToTimelineGrid(
-    double timeSeconds) const
+    double timeSeconds, const juce::ModifierKeys &mods) const
 {
-  return component.snapTimeToTimelineGrid(timeSeconds);
+  return component.snapTimeToTimelineGrid(timeSeconds, mods);
+}
+
+bool PianoRollInteractionContext::shouldSnapTimeDrag(
+    const juce::ModifierKeys &mods) const
+{
+  return component.shouldSnapTimeDrag(mods);
+}
+
+double PianoRollInteractionContext::snapDragTime(
+    double timeSeconds, const juce::ModifierKeys &mods) const
+{
+  return component.snapDragTime(timeSeconds, mods);
 }
 
 bool PianoRollInteractionContext::isCanvasPoint(

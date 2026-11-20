@@ -70,11 +70,25 @@ public:
         return timelineSeconds - timelineDisplayOffset;
     }
 
-    // Snap against the host's grid, then return the result in canvas time.
+    // Where bar 1 starts on the timeline. 0 in a host (the host's grid);
+    // in the standalone app the detected downbeat of a polyphonic take, so
+    // the beat grid can sit on the music rather than on the file's start.
+    void setBeatGridOrigin(double seconds) { beatGridOrigin = seconds; }
+    double getBeatGridOrigin() const { return beatGridOrigin; }
+
+    // Project time <-> position on the beat grid (0 = bar 1, beat 1).
+    double projectToBeatGrid(double projectSeconds) const {
+        return projectToTimeline(projectSeconds) - beatGridOrigin;
+    }
+    double beatGridToProject(double gridSeconds) const {
+        return timelineToProject(gridSeconds + beatGridOrigin);
+    }
+
+    // Snap against the beat grid, then return the result in canvas time.
     double snapProjectTimeToTimelineGrid(double projectSeconds, double interval) const {
         if (interval <= 0.0)
             return projectSeconds;
-        return timelineToProject(std::round(projectToTimeline(projectSeconds) / interval) * interval);
+        return beatGridToProject(std::round(projectToBeatGrid(projectSeconds) / interval) * interval);
     }
 
     // Time <-> X coordinate conversion (in world space, before scroll)
@@ -128,5 +142,6 @@ private:
     double scrollX = 0.0;
     double scrollY = 0.0;
     double timelineDisplayOffset = 0.0;
+    double beatGridOrigin = 0.0;
     double viewStartSeconds = 0.0;
 };

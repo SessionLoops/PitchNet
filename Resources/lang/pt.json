@@ -193,7 +193,7 @@
   "param.pitch_reference": "Referência de afinação",
   "param.reference_a4": "Referência (A4)",
   "param.scale": "Escala",
-  "param.snap_cycle": "Ciclo de ajuste",
+  "param.timeline_drag_snap": "Ajuste ao arrastar",
   "param.tempo": "Andamento",
   "param.time_mode": "Tempo",
   "param.volume": "Volume",

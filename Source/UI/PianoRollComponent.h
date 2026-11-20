@@ -146,8 +146,11 @@ public:
   double timelineToProject(double timelineSeconds) const;
   void setTimelineBeatSignature(int numerator, int denominator);
   void setTimelineTempoBpm(double bpm);
+  /** Where bar 1 starts (timeline seconds); ignored in Track mode, which
+   *  follows the host's grid. */
+  void setTimelineBeatOrigin(double seconds);
   void setTimelineGridDivision(TimelineGridDivision division);
-  void setTimelineSnapCycle(bool enabled);
+  void setTimelineDragSnap(bool enabled);
 
   // Enable/disable cycle (loop) range editing on the timeline strip.
   // Turned off in non-ARA plugin mode, where the host transport is not ours
@@ -347,8 +350,18 @@ private:
   double getTimelineBeatSeconds() const;
   double getTimelineBarSeconds() const;
   double getTimelineGridSeconds() const;
-  bool shouldSnapCycleToGrid() const;
-  double snapTimeToTimelineGrid(double timeSeconds) const;
+  bool canSnapTimeToTimelineGrid() const;
+  void refreshBeatGridOrigin();
+  /** Drag Snap for timing drags (cycle, vocal note boundaries, polyphonic
+   *  notes): on when the setting is on, Alt inverts it for the drag. */
+  bool shouldSnapTimeDrag(const juce::ModifierKeys &mods) const;
+  /** A dragged project time, snapped to the grid when shouldSnapTimeDrag(). */
+  double snapDragTime(double timeSeconds, const juce::ModifierKeys &mods) const;
+  double snapTimeToTimelineGrid(double timeSeconds,
+                                const juce::ModifierKeys &mods) const;
+  /** Alt over something it snaps (a note, a note end, a timing boundary)
+   *  controls that drag's snapping instead of starting an Alt-drag pan. */
+  bool altControlsDragSnap(float worldX, float worldY);
   bool isCanvasPoint(const juce::MouseEvent &e) const;
   bool isModifierZoomDrag(const juce::MouseEvent &e) const;
   void applyModifierZoomDrag(const juce::MouseEvent &e);
@@ -565,7 +578,7 @@ private:
   int &timelineBeatDenominator = viewState.timelineBeatDenominator;
   double &timelineTempoBpm = viewState.timelineTempoBpm;
   TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
-  bool &timelineSnapCycle = viewState.timelineSnapCycle;
+  bool &timelineDragSnap = viewState.timelineDragSnap;
   bool &cycleEditEnabled = viewState.cycleEditEnabled;
   ScaleMode &selectedScaleMode = viewState.selectedScaleMode;
   int &selectedScaleRootNote = viewState.selectedScaleRootNote;

@@ -193,7 +193,7 @@
   "param.pitch_reference": "Pitch Reference",
   "param.reference_a4": "Reference (A4)",
   "param.scale": "Scale",
-  "param.snap_cycle": "Snap Cycle",
+  "param.timeline_drag_snap": "Drag Snap",
   "param.tempo": "Tempo",
   "param.time_mode": "Time",
   "param.volume": "Volume",

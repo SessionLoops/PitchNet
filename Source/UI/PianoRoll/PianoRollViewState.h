@@ -45,7 +45,7 @@ struct PianoRollViewState
   int timelineBeatDenominator = 4;
   double timelineTempoBpm = 120.0;
   TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
-  bool timelineSnapCycle = false;
+  bool timelineDragSnap = false;
 
   // Cycle (loop) range editing on the timeline. Disabled when the plugin
   // cannot drive the host transport (non-ARA plugin mode).

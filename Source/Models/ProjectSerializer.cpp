@@ -317,9 +317,11 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("timelineBeatNumerator", project.getTimelineBeatNumerator());
     obj->setProperty("timelineBeatDenominator", project.getTimelineBeatDenominator());
     obj->setProperty("timelineTempoBpm", project.getTimelineTempoBpm());
+    obj->setProperty("timelineBeatOriginSeconds", project.getTimelineBeatOriginSeconds());
     obj->setProperty("timelineGridDivision",
                      static_cast<int>(project.getTimelineGridDivision()));
-    obj->setProperty("timelineSnapCycle", project.getTimelineSnapCycle());
+    obj->setProperty("timelineDragSnap", project.getTimelineDragSnapFor(false));
+    obj->setProperty("timelineDragSnapPolyphonic", project.getTimelineDragSnapFor(true));
     obj->setProperty("analysisMode", analysisModeToJson(project.getAnalysisMode()));
     if (auto polyphonicSection = polyphonicToJson(project); !polyphonicSection.isVoid())
         obj->setProperty("polyphonic", polyphonicSection);
@@ -517,6 +519,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         static_cast<int>(json.getProperty("timelineBeatDenominator", 4)));
     project.setTimelineTempoBpm(
         static_cast<double>(json.getProperty("timelineTempoBpm", 120.0)));
+    project.setTimelineBeatOriginSeconds(
+        static_cast<double>(json.getProperty("timelineBeatOriginSeconds", 0.0)));
     {
         const int gridValue = static_cast<int>(json.getProperty(
             "timelineGridDivision", static_cast<int>(TimelineGridDivision::Quarter)));
@@ -535,8 +539,15 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
                 break;
         }
     }
-    project.setTimelineSnapCycle(static_cast<bool>(
-        json.getProperty("timelineSnapCycle", false)));
+    // "timelineSnapCycle" is the key written before the setting became Drag
+    // Snap (it only snapped the cycle then); read it when the new one is absent.
+    project.setTimelineDragSnapFor(false, static_cast<bool>(
+        json.hasProperty("timelineDragSnap")
+            ? json.getProperty("timelineDragSnap", false)
+            : json.getProperty("timelineSnapCycle", false)));
+    // Absent before Drag Snap was kept per mode: on, the polyphonic default.
+    project.setTimelineDragSnapFor(true, static_cast<bool>(
+        json.getProperty("timelineDragSnapPolyphonic", true)));
     // Absent in files written before the input-type classifier: vocal, unclassified.
     project.setAnalysisMode(analysisModeFromJson(json.getProperty("analysisMode", {})));
     // Format 6: a polyphonic take's notes and edits (absent before, and for vocal takes).

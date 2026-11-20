@@ -97,6 +97,18 @@ void PolyphonicNoteLayer::setDragSnap(bool enabled,
   snapOffset = std::move(snap);
 }
 
+void PolyphonicNoteLayer::setTimeSnap(
+    std::function<double(double, const juce::ModifierKeys &)> snap)
+{
+  snapTime = std::move(snap);
+}
+
+double PolyphonicNoteLayer::snappedDelta(double seconds, double dt,
+                                         const juce::ModifierKeys &mods) const
+{
+  return snapTime ? snapTime(seconds + dt, mods) - seconds : dt;
+}
+
 void PolyphonicNoteLayer::setDoubleClickTarget(
     std::function<float(float, double, double)> target)
 {
@@ -582,7 +594,7 @@ void PolyphonicNoteLayer::mouseDrag(float worldX, float worldY,
       dragNotes(worldX, worldY, mods);
       break;
     case Drag::stretch:
-      dragStretch(worldX);
+      dragStretch(worldX, mods);
       break;
     case Drag::band:
     {
@@ -637,7 +649,16 @@ void PolyphonicNoteLayer::dragNotes(float worldX, float worldY,
     else
       semis = std::round(raw * 100.0f) / 100.0f;
   }
-  const double dt = timeEngaged ? dx / coordMapper->getPixelsPerSecond() : 0.0;
+  double dt = timeEngaged ? dx / coordMapper->getPixelsPerSecond() : 0.0;
+  // Drag Snap puts the pressed note's start on the grid; the rest of the
+  // selection moves by the same time.
+  if (timeEngaged && pressedNote >= 0)
+  {
+    const auto pressedBase =
+        pressedIt != before.end() ? pressedIt->second : polyphonic::NoteEdit{};
+    const auto &n = builtFor->notes[static_cast<size_t>(pressedNote)];
+    dt = snappedDelta(playedAt(pressedNote, pressedBase, n.startFrame), dt, mods);
+  }
 
   bool changed = false;
   for (int note : selection)
@@ -662,11 +683,21 @@ void PolyphonicNoteLayer::dragNotes(float worldX, float worldY,
   }
 }
 
-void PolyphonicNoteLayer::dragStretch(float worldX)
+void PolyphonicNoteLayer::dragStretch(float worldX, const juce::ModifierKeys &mods)
 {
   // Every note being stretched has the end that was grabbed moved by the same
-  // time (the start, for the left end), each within its own limits.
-  const double dt = (worldX - dragStart.x) / coordMapper->getPixelsPerSecond();
+  // time (the start, for the left end), each within its own limits. Drag Snap
+  // puts the grabbed end of the grabbed note on the grid.
+  double dt = (worldX - dragStart.x) / coordMapper->getPixelsPerSecond();
+  if (stretchNote >= 0)
+  {
+    const auto baseIt = before.find(stretchNote);
+    const auto base = baseIt != before.end() ? baseIt->second : polyphonic::NoteEdit{};
+    const auto &n = builtFor->notes[static_cast<size_t>(stretchNote)];
+    dt = snappedDelta(playedAt(stretchNote, base,
+                               stretchFromStart ? n.startFrame : n.endFrame),
+                      dt, mods);
+  }
   bool changed = false;
   for (int note : stretchTargets)
     changed = stretchNoteBy(note, dt) || changed;

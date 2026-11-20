@@ -58,8 +58,8 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
 
       // Beat indices are HOST timeline positions; the view is in project time.
       const double viewStartTimeline =
-          coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
-      const double viewEndTimeline = coordMapper->projectToTimeline(
+          coordMapper->projectToBeatGrid(scrollX / pixelsPerSecond);
+      const double viewEndTimeline = coordMapper->projectToBeatGrid(
           (scrollX + timelineArea.getWidth()) / pixelsPerSecond);
       const int firstBeat = std::max(
           0, static_cast<int>(std::floor(viewStartTimeline / beatSeconds)));
@@ -70,7 +70,7 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
       {
         // Where this host beat falls in project time - i.e. over which part
         // of the audio the DAW's bar line actually sits.
-        const double time = coordMapper->timelineToProject(
+        const double time = coordMapper->beatGridToProject(
             static_cast<double>(beatIndex) * beatSeconds);
         if (time > duration + beatSeconds)
           break;
@@ -244,8 +244,8 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
 
       // Beat indices are HOST timeline positions; the view is in project time.
       const double viewStartTimeline =
-          coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
-      const double viewEndTimeline = coordMapper->projectToTimeline(
+          coordMapper->projectToBeatGrid(scrollX / pixelsPerSecond);
+      const double viewEndTimeline = coordMapper->projectToBeatGrid(
           (scrollX + loopArea.getWidth()) / pixelsPerSecond);
       const int firstBeat = std::max(
           0, static_cast<int>(std::floor(viewStartTimeline / beatSeconds)));
@@ -256,7 +256,7 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
       {
         // Where this host beat falls in project time - i.e. over which part
         // of the audio the DAW's bar line actually sits.
-        const double time = coordMapper->timelineToProject(
+        const double time = coordMapper->beatGridToProject(
             static_cast<double>(beatIndex) * beatSeconds);
         if (time > duration + beatSeconds)
           break;

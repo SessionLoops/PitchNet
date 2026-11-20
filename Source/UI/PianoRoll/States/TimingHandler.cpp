@@ -1,6 +1,7 @@
 #include "TimingHandler.h"
 
 #include "../../PianoRollComponent.h"
+#include "../../../Audio/BreathSibilanceDetector.h"
 #include "../../../Utils/Constants.h"
 #include "../../../Utils/TimingRegionUtils.h"
 #include "../../../Utils/UI/Theme.h"
@@ -377,7 +378,78 @@ bool TimingHandler::mouseDown(const juce::MouseEvent& e, float worldX,
   return true;
 }
 
-bool TimingHandler::mouseDrag(const juce::MouseEvent&, float worldX, float)
+int TimingHandler::vowelLeadSourceFrames(const Note& note) const
+{
+  if (!owner_.project)
+    return 0;
+  const auto& audio = owner_.project->getAudioData();
+  const auto& voiced = audio.voicedMask;
+  const auto& labels = audio.breathSibilance;
+  const int start = note.getSrcStartFrame();
+  const int end = note.getSrcEndFrame();
+  // A consonant longer than this is not a lead-in (a held "s", a note that
+  // is mostly noise): such a note snaps by its start.
+  const int longest = std::min(
+      end - start - 1,
+      static_cast<int>(std::lround(0.3 * SAMPLE_RATE / HOP_SIZE)));
+  const auto isVowel = [&](int frame)
+  {
+    return frame >= 0 && frame < static_cast<int>(voiced.size()) &&
+           voiced[static_cast<size_t>(frame)] &&
+           !breathsibilance::isNoise(breathsibilance::labelAt(labels, frame));
+  };
+  for (int frame = start; frame <= start + longest; ++frame)
+    // Two vowel frames in a row, so a voicing blip in the consonant does not count.
+    if (isVowel(frame) && isVowel(frame + 1))
+      return frame - start;
+  return 0;
+}
+
+float TimingHandler::snapBoundaryFrame(float rawFrame,
+                                       const juce::ModifierKeys& mods) const
+{
+  const auto toSeconds = [](double frame)
+  { return frame * HOP_SIZE / static_cast<double>(SAMPLE_RATE); };
+  const auto toFrames = [](double seconds)
+  { return seconds * SAMPLE_RATE / static_cast<double>(HOP_SIZE); };
+  const auto snapFrame = [&](double frame)
+  { return toFrames(owner_.snapDragTime(toSeconds(frame), mods)); };
+
+  if (!owner_.shouldSnapTimeDrag(mods))
+    return static_cast<float>(rawFrame);
+
+  const Note* note = activeBoundary.right;
+  const int lead = note ? vowelLeadSourceFrames(*note) : 0;
+  const double sourceLength = note ? note->getSrcDurationFrames() : 0.0;
+  if (!note || lead <= 0 || sourceLength <= 0.0)
+    return static_cast<float>(snapFrame(rawFrame));
+
+  // The note plays its source evenly over its length, so the consonant takes
+  // the same share k of it wherever its start is moved.
+  const double k = lead / sourceLength;
+  const double end = note->getEndFrame();
+  const bool endMoves = std::any_of(
+      dragBoundaries.begin(), dragBoundaries.end(),
+      [note](const Boundary& boundary) { return boundary.left == note; });
+  if (endMoves)
+  {
+    // The whole note moves (both its ends are selected): the consonant keeps
+    // its length.
+    const double leadFrames = k * (end - activeBoundary.frame);
+    return static_cast<float>(snapFrame(rawFrame + leadFrames) - leadFrames);
+  }
+  // Only the start moves, so the note's length, and the consonant's with it,
+  // follow: the vowel is at S + k (end - S). Snap it, then solve for S.
+  const double vowel = rawFrame + k * (end - rawFrame);
+  return static_cast<float>((snapFrame(vowel) - k * end) / (1.0 - k));
+}
+
+bool TimingHandler::isOverBoundary(float worldX, float worldY) const
+{
+  return findBoundary(worldX, worldY, buildBoundaries()) >= 0;
+}
+
+bool TimingHandler::mouseDrag(const juce::MouseEvent& e, float worldX, float)
 {
   if (selecting)
   {
@@ -387,8 +459,12 @@ bool TimingHandler::mouseDrag(const juce::MouseEvent&, float worldX, float)
   if (!dragging || !owner_.project)
     return false;
 
-  const float seconds = worldX / std::max(1.0f, owner_.pixelsPerSecond);
-  const float frame = seconds * SAMPLE_RATE / static_cast<float>(HOP_SIZE);
+  // Drag Snap puts the grabbed boundary (or the vowel of the note it starts)
+  // on the grid; the others in the selection keep their distance to it.
+  const double seconds = worldX / std::max(1.0f, owner_.pixelsPerSecond);
+  const float frame = snapBoundaryFrame(
+      static_cast<float>(seconds * SAMPLE_RATE / static_cast<double>(HOP_SIZE)),
+      e.mods);
   applyPreviewDelta(frame - activeBoundary.frame);
   if (owner_.onPitchEdited)
     owner_.onPitchEdited();

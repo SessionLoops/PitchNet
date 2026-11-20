@@ -407,6 +407,9 @@ void MainComponent::loadAudioFile(const juce::File &file,
           project->setMidiReference(loadingParameters->midiReference);
         if (!safeThis->isPluginMode())
           project->setTimelineDisplayMode(TimelineDisplayMode::Time);
+        // A polyphonic take with a steady beat gets its tempo and bar 1,
+        // and the timeline switches to Beats.
+        safeThis->detectPolyphonicTempo(*project);
 
         // Update UI
         safeThis->pianoRoll.setProject(project);

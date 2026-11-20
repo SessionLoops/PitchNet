@@ -55,7 +55,7 @@ bool LoopDragHandler::mouseDown(const juce::MouseEvent &e, float worldX,
         static_cast<float>(e.x) <= endX) {
       loopDragMode = LoopDragMode::Move;
       loopDragAnchorSeconds =
-          owner_.snapTimeToTimelineGrid(owner_.xToTime(adjustedX));
+          owner_.snapTimeToTimelineGrid(owner_.xToTime(adjustedX), e.mods);
       loopDragOriginalStart = loopRange.startSeconds;
       loopDragOriginalEnd = loopRange.endSeconds;
       loopDragStartSeconds = loopRange.startSeconds;
@@ -68,7 +68,7 @@ bool LoopDragHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   loopDragMode = LoopDragMode::Create;
   loopDragStartX = static_cast<float>(e.x);
   loopDragStartSeconds =
-      owner_.snapTimeToTimelineGrid(owner_.xToTime(adjustedX));
+      owner_.snapTimeToTimelineGrid(owner_.xToTime(adjustedX), e.mods);
   loopDragEndSeconds = loopDragStartSeconds;
   owner_.repaint();
   return true;
@@ -84,7 +84,7 @@ bool LoopDragHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   float adjustedX =
       e.x - PianoRollComponent::pianoKeysWidth + static_cast<float>(owner_.scrollX);
   const double dragTime =
-      owner_.snapTimeToTimelineGrid(owner_.xToTime(adjustedX));
+      owner_.snapTimeToTimelineGrid(owner_.xToTime(adjustedX), e.mods);
 
   switch (loopDragMode) {
   case LoopDragMode::ResizeStart:

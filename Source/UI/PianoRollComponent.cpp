@@ -1960,22 +1960,43 @@ double PianoRollComponent::getTimelineGridSeconds() const
   return getTimelineQuarterNoteSeconds() * quarterNotes;
 }
 
-bool PianoRollComponent::shouldSnapCycleToGrid() const
+bool PianoRollComponent::canSnapTimeToTimelineGrid() const
 {
+  // Time mode has no grid, so nothing snaps there (Alt included).
   return timelineDisplayMode == TimelineDisplayMode::Beats &&
-         timelineSnapCycle &&
          getTimelineGridSeconds() > 1.0e-6;
 }
 
-double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const
+bool PianoRollComponent::shouldSnapTimeDrag(const juce::ModifierKeys &mods) const
 {
-  if (!shouldSnapCycleToGrid())
-    return std::max(getTimelineStart(), timeSeconds);
+  return canSnapTimeToTimelineGrid() && timelineDragSnap != mods.isAltDown();
+}
 
-  const double interval = getTimelineGridSeconds();
-  const double snapped =
-      coordMapper->snapProjectTimeToTimelineGrid(timeSeconds, interval);
-  return std::max(getTimelineStart(), snapped);
+double PianoRollComponent::snapDragTime(double timeSeconds,
+                                        const juce::ModifierKeys &mods) const
+{
+  if (!shouldSnapTimeDrag(mods))
+    return timeSeconds;
+  return coordMapper->snapProjectTimeToTimelineGrid(timeSeconds,
+                                                    getTimelineGridSeconds());
+}
+
+double PianoRollComponent::snapTimeToTimelineGrid(
+    double timeSeconds, const juce::ModifierKeys &mods) const
+{
+  return std::max(getTimelineStart(), snapDragTime(timeSeconds, mods));
+}
+
+bool PianoRollComponent::altControlsDragSnap(float worldX, float worldY)
+{
+  if (isPolyphonicActive())
+    return polyphonicLayer->noteAt(worldX, worldY) >= 0 ||
+           polyphonicLayer->isOverStretchEdge(worldX, worldY);
+  if (editMode == EditMode::Select)
+    return findNoteAt(worldX, worldY) != nullptr;
+  if (editMode == EditMode::Timing && timingHandler_)
+    return timingHandler_->isOverBoundary(worldX, worldY);
+  return false;
 }
 
 bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
@@ -2350,12 +2371,9 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       }
     }
   }
-  // In Select mode, Alt inverts note-drag snapping. Keep Alt-drag panning
-  // available when the gesture begins anywhere else on the canvas.
-  const bool altNoteDrag =
-      isPolyphonicActive()
-          ? polyphonicLayer->noteAt(adjustedX, adjustedY) >= 0
-          : editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
+  // Alt inverts drag snapping over a note, a note end or a timing boundary.
+  // Keep Alt-drag panning available when the gesture begins anywhere else.
+  const bool altNoteDrag = altControlsDragSnap(adjustedX, adjustedY);
   if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
   {
     modifierPanDragActive = true;
@@ -2413,6 +2431,10 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       polyphonicLayer->setDragSnap(
           snapToSemitoneDrag, [this](float raw, float anchorMidi) {
             return pitchEditor->getSnappedDragOffset(raw, anchorMidi);
+          });
+      polyphonicLayer->setTimeSnap(
+          [this](double seconds, const juce::ModifierKeys &mods) {
+            return snapDragTime(seconds, mods);
           });
       polyphonicLayer->mouseDown(adjustedX, adjustedY, e.mods);
       // Pressing a note (or its end) plays it at once with Live Audition on,
@@ -2662,7 +2684,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     noteAtPointer = findNoteAt(adjustedX, adjustedY);
 
   const bool altControlsNoteSnap =
-      editMode == EditMode::Select && noteAtPointer != nullptr;
+      (editMode == EditMode::Select && noteAtPointer != nullptr) ||
+      altControlsDragSnap(adjustedX, adjustedY);
   if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
       !altControlsNoteSnap)
   {
@@ -2841,9 +2864,10 @@ void PianoRollComponent::modifierKeysChanged(
                        static_cast<float>(scrollX);
   const float worldY = mousePosition.y - headerHeight +
                        static_cast<float>(scrollY);
+  // A drag in progress keeps its cursor while Alt toggles its snapping.
   const bool pointerOverNote =
-      mouseOverCanvas && editMode == EditMode::Select &&
-      findNoteAt(worldX, worldY) != nullptr;
+      mouseOverCanvas &&
+      (isMouseButtonDown() || altControlsDragSnap(worldX, worldY));
 
 #if JUCE_MAC
   const bool zoomModifierDown = modifiers.isCommandDown();
@@ -3224,7 +3248,8 @@ void PianoRollComponent::setProject(Project *proj)
   timelineGridDivision = project != nullptr
                              ? project->getTimelineGridDivision()
                              : TimelineGridDivision::Quarter;
-  timelineSnapCycle = project != nullptr ? project->getTimelineSnapCycle() : false;
+  timelineDragSnap = project != nullptr ? project->getTimelineDragSnap() : false;
+  refreshBeatGridOrigin();
   previewScaleRootNote.reset();
   previewScaleMode.reset();
 
@@ -3427,6 +3452,23 @@ void PianoRollComponent::setTimelineTempoBpm(double bpm)
   repaint();
 }
 
+void PianoRollComponent::setTimelineBeatOrigin(double seconds)
+{
+  if (project != nullptr)
+    project->setTimelineBeatOriginSeconds(seconds);
+  refreshBeatGridOrigin();
+  repaint();
+}
+
+void PianoRollComponent::refreshBeatGridOrigin()
+{
+  if (coordMapper)
+    coordMapper->setBeatGridOrigin(
+        project != nullptr && !trackViewMode
+            ? project->getTimelineBeatOriginSeconds()
+            : 0.0);
+}
+
 void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division)
 {
   if (timelineGridDivision == division)
@@ -3438,14 +3480,14 @@ void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division)
   repaint();
 }
 
-void PianoRollComponent::setTimelineSnapCycle(bool enabled)
+void PianoRollComponent::setTimelineDragSnap(bool enabled)
 {
-  if (timelineSnapCycle == enabled)
+  if (timelineDragSnap == enabled)
     return;
 
-  timelineSnapCycle = enabled;
+  timelineDragSnap = enabled;
   if (project != nullptr)
-    project->setTimelineSnapCycle(enabled);
+    project->setTimelineDragSnap(enabled);
 }
 
 void PianoRollComponent::setCycleEditEnabled(bool enabled)
@@ -4693,6 +4735,7 @@ void PianoRollComponent::setTrackViewMode(bool shouldShowTrack)
     return;
 
   trackViewMode = shouldShowTrack;
+  refreshBeatGridOrigin();
   if (coordMapper)
     coordMapper->setViewStartSeconds(getTimelineStart());
   waveformBackgroundRenderer->setProjectDrawRange(getTrackModeActiveSpan());

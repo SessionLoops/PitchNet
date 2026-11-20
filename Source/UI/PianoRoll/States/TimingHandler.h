@@ -21,6 +21,8 @@ public:
                  float worldY) override;
   void draw(juce::Graphics& g) override;
   bool isActive() const override { return dragging || selecting; }
+  /** True over a boundary a drag would move (Alt there inverts Drag Snap). */
+  bool isOverBoundary(float worldX, float worldY) const;
   void cancel() override;
 
 private:
@@ -51,6 +53,14 @@ private:
   std::pair<float, float> getGroupDeltaRange(
       const std::vector<Boundary>& boundaries) const;
   void applyPreviewDelta(float delta);
+  /** Source frames from the note's start to its vowel: the leading consonant
+   *  (sibilance, breath, unvoiced onset) that the note includes. 0 when the
+   *  note starts on its vowel. */
+  int vowelLeadSourceFrames(const Note& note) const;
+  /** The boundary frame a drag to `rawFrame` snaps to. A boundary that
+   *  starts a note puts that note's vowel on the grid, so its consonant sits
+   *  before the beat the way it is sung; any other boundary snaps itself. */
+  float snapBoundaryFrame(float rawFrame, const juce::ModifierKeys& mods) const;
   void clearAffectedPreviews();
   static BoundaryKey keyFor(const Boundary& boundary);
   static bool keysMatch(const BoundaryKey& a, const BoundaryKey& b);

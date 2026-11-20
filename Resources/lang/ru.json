@@ -193,7 +193,7 @@
   "param.pitch_reference": "Эталон высоты",
   "param.reference_a4": "Эталон (A4)",
   "param.scale": "Гамма",
-  "param.snap_cycle": "Цикл привязки",
+  "param.timeline_drag_snap": "Привязка при перетаскивании",
   "param.tempo": "Темп",
   "param.time_mode": "Время",
   "param.volume": "Громкость",

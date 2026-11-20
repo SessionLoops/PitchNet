@@ -64,6 +64,9 @@ public:
   /** Drag snapping: on/off (Alt inverts it for one drag) and the snap itself,
    *  raw semitone offset + the note's pitch -> snapped offset. */
   void setDragSnap(bool enabled, std::function<float(float, float)> snapOffset);
+  /** Time snapping (the Time card's Drag Snap, Alt inverting it): a dragged
+   *  time in seconds and the drag's modifiers -> the time to use. */
+  void setTimeSnap(std::function<double(double, const juce::ModifierKeys &)> snapTime);
   /** The pitch a double-click tunes a note to: (edited median pitch, start and
    *  end seconds) -> target pitch. */
   void setDoubleClickTarget(std::function<float(float, double, double)> target);
@@ -169,7 +172,9 @@ private:
   Edge edgeAt(float worldX, float worldY);
 
   void dragNotes(float worldX, float worldY, const juce::ModifierKeys &mods);
-  void dragStretch(float worldX);
+  void dragStretch(float worldX, const juce::ModifierKeys &mods);
+  /** dt, changed so `seconds + dt` lands where time snapping puts it. */
+  double snappedDelta(double seconds, double dt, const juce::ModifierKeys &mods) const;
   /** Stretches one note so the grabbed end moves by dt seconds; true if its edit changed. */
   bool stretchNoteBy(int note, double dt);
   /** Hands `working` to the project and reports the change (if any) as one step. */
@@ -187,6 +192,7 @@ private:
 
   bool dragSnapEnabled = true;
   std::function<float(float, float)> snapOffset;
+  std::function<double(double, const juce::ModifierKeys &)> snapTime;
   std::function<float(float, double, double)> doubleClickTarget;
 
   Drag drag = Drag::none;

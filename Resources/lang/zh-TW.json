@@ -193,7 +193,7 @@
   "param.pitch_reference": "音高基準",
   "param.reference_a4": "基準 (A4)",
   "param.scale": "音階",
-  "param.snap_cycle": "循環吸附",
+  "param.timeline_drag_snap": "拖曳吸附",
   "param.tempo": "速度",
   "param.time_mode": "時間",
   "param.volume": "音量",

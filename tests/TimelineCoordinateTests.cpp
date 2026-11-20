@@ -42,5 +42,16 @@ int main() {
   mapper.setScrollX(-100.0);
   CHECK(near(mapper.getScrollX(), 0.0));
   CHECK(near(mapper.snapProjectTimeToTimelineGrid(0.30, 0.5), 0.5));
+
+  // A detected downbeat moves the beat grid: bar 1 at 0.37 s, half-second
+  // grid lines at 0.37 + k * 0.5 (before bar 1 too).
+  mapper.setBeatGridOrigin(0.37);
+  CHECK(near(mapper.projectToBeatGrid(0.37), 0.0));
+  CHECK(near(mapper.beatGridToProject(1.0), 1.37));
+  CHECK(near(mapper.snapProjectTimeToTimelineGrid(0.80, 0.5), 0.87));
+  CHECK(near(mapper.snapProjectTimeToTimelineGrid(0.10, 0.5), -0.13) ||
+        near(mapper.snapProjectTimeToTimelineGrid(0.10, 0.5), 0.37));
+  CHECK(near(mapper.snapProjectTimeToTimelineGrid(0.20, 0.5), 0.37));
+  mapper.setBeatGridOrigin(0.0);
   return 0;
 }

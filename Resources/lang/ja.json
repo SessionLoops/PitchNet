@@ -193,7 +193,7 @@
   "param.pitch_reference": "ピッチ基準",
   "param.reference_a4": "基準 (A4)",
   "param.scale": "スケール",
-  "param.snap_cycle": "サイクルをスナップ",
+  "param.timeline_drag_snap": "ドラッグスナップ",
   "param.tempo": "テンポ",
   "param.time_mode": "タイム",
   "param.volume": "音量",

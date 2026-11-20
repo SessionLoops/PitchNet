@@ -193,7 +193,7 @@
   "param.pitch_reference": "Referencia de tono",
   "param.reference_a4": "Referencia (A4)",
   "param.scale": "Escala",
-  "param.snap_cycle": "Ajustar ciclo",
+  "param.timeline_drag_snap": "Ajuste al arrastrar",
   "param.tempo": "Tempo",
   "param.time_mode": "Tiempo",
   "param.volume": "Volumen",

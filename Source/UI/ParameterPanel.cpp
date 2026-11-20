@@ -334,7 +334,7 @@ ParameterPanel::ParameterPanel()
     languageSelectorButton.addListener(this);
     selectedLanguageCode = Localization::getInstance().getPersistedLanguageCode();
 
-    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
+    for (auto* toggle : { &snapToSemitonesToggle, &timelineDragSnapToggle })
     {
         addAndMakeVisible(toggle);
         toggle->setClickingTogglesState(true);
@@ -481,7 +481,7 @@ ParameterPanel::ParameterPanel()
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
     dragSnapModeButton.setEnabled(snapToSemitones);
-    timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
+    timelineDragSnapToggle.setToggleState(timelineDragSnap, juce::dontSendNotification);
 
     const std::array<juce::Component*, 9> pitchComponents {{
         &pitchSectionLabel, &chromaticToggle, &scaleToggle,
@@ -706,13 +706,13 @@ void ParameterPanel::resized()
 
     bounds.removeFromTop(rowGap);
 
-    // Grid / Snap Cycle row
+    // Grid / Drag Snap row
     auto gridRow = bounds.removeFromTop(kControlRowHeight);
     timelineGridLabel.setBounds(gridRow.removeFromLeft(38));
     timelineGridButton.setBounds(
         gridRow.removeFromLeft(44).withSizeKeepingCentre(40, 22));
     gridRow.removeFromLeft(10);
-    timelineSnapCycleToggle.setBounds(gridRow);
+    timelineDragSnapToggle.setBounds(gridRow);
 
     int timeCardBottom = bounds.getY() + innerPadY;
     timeCardBounds = juce::Rectangle<int>(cardArea.getX(), timeCardStart,
@@ -862,9 +862,9 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         showAnalysisModeMenu();
         return;
     }
-    if (button == &timelineSnapCycleToggle)
+    if (button == &timelineDragSnapToggle)
     {
-        setTimelineSnapCycleInternal(timelineSnapCycleToggle.getToggleState(), true);
+        setTimelineDragSnapInternal(timelineDragSnapToggle.getToggleState(), true);
         return;
     }
     if (button == &beatsTimelineToggle)
@@ -1026,7 +1026,7 @@ void ParameterPanel::refreshLocalisedText()
     timelineTempoLabel.setText(TR("param.tempo"), juce::dontSendNotification);
     timelineTempoSlider.setName(TR("param.tempo"));
     timelineGridLabel.setText(TR("param.grid"), juce::dontSendNotification);
-    timelineSnapCycleToggle.setButtonText(TR("param.snap_cycle"));
+    timelineDragSnapToggle.setButtonText(TR("param.timeline_drag_snap"));
 
     // Values whose text is itself a translated word.
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
@@ -1211,9 +1211,23 @@ void ParameterPanel::applyLanguageSelection(const juce::String& languageCode)
 
 void ParameterPanel::setPluginMode(bool pluginMode)
 {
-    timelineBeatButton.setEnabled(!pluginMode);
-    timelineTempoSlider.setEnabled(!pluginMode);
-    timelineGridButton.setEnabled(true);
+    isPluginMode = pluginMode;
+    refreshTimelineControlsEnabled();
+}
+
+void ParameterPanel::refreshTimelineControlsEnabled()
+{
+    // Everything below the Beats | Time toggle is about beats: in Time mode
+    // there is no grid to show or snap to, so the whole group is disabled.
+    // In the plugin the host owns signature and tempo.
+    const bool beatsMode = timelineDisplayMode == TimelineDisplayMode::Beats;
+    timelineBeatLabel.setEnabled(beatsMode && !isPluginMode);
+    timelineBeatButton.setEnabled(beatsMode && !isPluginMode);
+    timelineTempoLabel.setEnabled(beatsMode && !isPluginMode);
+    timelineTempoSlider.setEnabled(beatsMode && !isPluginMode);
+    timelineGridLabel.setEnabled(beatsMode);
+    timelineGridButton.setEnabled(beatsMode);
+    timelineDragSnapToggle.setEnabled(beatsMode);
 }
 
 void ParameterPanel::setUiBrightness(double brightnessPercent)
@@ -1278,7 +1292,7 @@ void ParameterPanel::updateGlobalSliders()
         timelineBeatDenominator = project->getTimelineBeatDenominator();
         timelineTempoBpm = project->getTimelineTempoBpm();
         timelineGridDivision = project->getTimelineGridDivision();
-        timelineSnapCycle = project->getTimelineSnapCycle();
+        timelineDragSnap = project->getTimelineDragSnap();
     }
     else
     {
@@ -1292,7 +1306,7 @@ void ParameterPanel::updateGlobalSliders()
         timelineBeatDenominator = 4;
         timelineTempoBpm = 120.0;
         timelineGridDivision = TimelineGridDivision::Quarter;
-        timelineSnapCycle = false;
+        timelineDragSnap = false;
     }
 
     referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
@@ -1303,7 +1317,7 @@ void ParameterPanel::updateGlobalSliders()
         getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineTempoSlider.setValue(timelineTempoBpm, juce::dontSendNotification);
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
-    timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
+    timelineDragSnapToggle.setToggleState(timelineDragSnap, juce::dontSendNotification);
 
     refreshModeToggles();
     refreshTimelineModeToggles();
@@ -1566,6 +1580,7 @@ void ParameterPanel::refreshTimelineModeToggles()
     const bool beatsMode = timelineDisplayMode == TimelineDisplayMode::Beats;
     beatsTimelineToggle.setToggleState(beatsMode, juce::dontSendNotification);
     timeTimelineToggle.setToggleState(!beatsMode, juce::dontSendNotification);
+    refreshTimelineControlsEnabled();
 }
 
 void ParameterPanel::setScaleRootInternal(int rootNote, bool notify)
@@ -1709,17 +1724,17 @@ void ParameterPanel::setTimelineGridDivisionInternal(TimelineGridDivision divisi
         onTimelineGridDivisionChanged(division);
 }
 
-void ParameterPanel::setTimelineSnapCycleInternal(bool enabled, bool notify)
+void ParameterPanel::setTimelineDragSnapInternal(bool enabled, bool notify)
 {
-    const bool changed = timelineSnapCycle != enabled;
-    timelineSnapCycle = enabled;
-    timelineSnapCycleToggle.setToggleState(enabled, juce::dontSendNotification);
+    const bool changed = timelineDragSnap != enabled;
+    timelineDragSnap = enabled;
+    timelineDragSnapToggle.setToggleState(enabled, juce::dontSendNotification);
 
     if (project != nullptr && changed)
-        project->setTimelineSnapCycle(enabled);
+        project->setTimelineDragSnap(enabled);
 
-    if (notify && changed && onTimelineSnapCycleChanged)
-        onTimelineSnapCycleChanged(enabled);
+    if (notify && changed && onTimelineDragSnapChanged)
+        onTimelineDragSnapChanged(enabled);
 }
 
 void ParameterPanel::showDragSnapModeMenu()

@@ -132,12 +132,15 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
       // Grid lines sit on HOST beats, like the ruler above them; the canvas
       // is in project time, so each host position is mapped back through the
       // display offset.
+      // With a beat grid origin the lines before bar 1 (a pickup) are drawn
+      // too, back to the timeline's zero.
       const double visibleStartTime =
-          coordMapper->projectToTimeline(visibleStartX / pixelsPerSecond);
+          coordMapper->projectToBeatGrid(visibleStartX / pixelsPerSecond);
       const double visibleEndTime =
-          coordMapper->projectToTimeline(visibleEndX / pixelsPerSecond);
+          coordMapper->projectToBeatGrid(visibleEndX / pixelsPerSecond);
       const int firstGrid = std::max(
-          0,
+          static_cast<int>(std::floor(-coordMapper->getBeatGridOrigin() /
+                                      params.gridSeconds)),
           static_cast<int>(std::floor(visibleStartTime / params.gridSeconds)) - 1);
 
       for (int i = firstGrid;; ++i)
@@ -147,7 +150,7 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
           break;
 
         const float x = static_cast<float>(
-            coordMapper->timelineToProject(time) * pixelsPerSecond);
+            coordMapper->beatGridToProject(time) * pixelsPerSecond);
         if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
           continue;
 

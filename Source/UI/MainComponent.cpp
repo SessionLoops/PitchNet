@@ -5,6 +5,7 @@
 #include "Components/DarkLookAndFeel.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
+#include "../Audio/Polyphonic/PolyTempo.h"
 #include "../Models/PolyphonicMidi.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Models/ProjectTimelineOffset.h"
@@ -1273,9 +1274,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
     pianoRoll.setTimelineGridDivision(division);
     notifyProjectDataChanged();
   };
-  parameterPanel.onTimelineSnapCycleChanged = [this](bool enabled)
+  parameterPanel.onTimelineDragSnapChanged = [this](bool enabled)
   {
-    pianoRoll.setTimelineSnapCycle(enabled);
+    pianoRoll.setTimelineDragSnap(enabled);
     notifyProjectDataChanged();
   };
   parameterPanel.setProject(getProject());
@@ -2451,6 +2452,7 @@ void MainComponent::reanalyzeTake(const AnalysisModeState &next)
         editor->setProject(std::move(analysed));
 
         auto *project = safeThis->getProject();
+        safeThis->detectPolyphonicTempo(*project);
         safeThis->pianoRoll.setProject(project);
         safeThis->pianoRollView.setProject(project);
         safeThis->parameterPanel.setProject(project);
@@ -3349,11 +3351,14 @@ void MainComponent::jumpTransport(bool forward)
 
     if (barSeconds > 1.0e-6)
     {
+      // Bars start at the beat grid's origin (the detected downbeat).
+      const double origin =
+          pianoRoll.isTrackViewMode() ? 0.0 : project->getTimelineBeatOriginSeconds();
       constexpr double epsilon = 1.0e-6;
-      const double barPosition = currentTime / barSeconds;
-      targetTime = forward
-                       ? (std::floor(barPosition + epsilon) + 1.0) * barSeconds
-                       : (std::ceil(barPosition - epsilon) - 1.0) * barSeconds;
+      const double barPosition = (currentTime - origin) / barSeconds;
+      targetTime = origin + (forward
+                                 ? (std::floor(barPosition + epsilon) + 1.0) * barSeconds
+                                 : (std::ceil(barPosition - epsilon) - 1.0) * barSeconds);
     }
   }
   else
@@ -3365,6 +3370,39 @@ void MainComponent::jumpTransport(bool forward)
   }
 
   seek(juce::jlimit(0.0, duration, targetTime));
+}
+
+void MainComponent::detectPolyphonicTempo(Project &project)
+{
+  // A host supplies the tempo; a vocal take has no onsets to read it from.
+  if (isPluginMode() || !project.isPolyphonic())
+    return;
+  // Only a tempo nobody has set: the default 120 with bar 1 at the start.
+  if (std::abs(project.getTimelineTempoBpm() - 120.0) > 1.0e-6 ||
+      project.getTimelineBeatOriginSeconds() != 0.0)
+    return;
+  const auto take = project.getPolyphonicTake();
+  if (take == nullptr || take->analysis == nullptr)
+    return;
+
+  polyphonic::TempoOptions options;
+  options.beatsPerBar = juce::jmax(1, project.getTimelineBeatNumerator());
+  const auto estimate = polyphonic::estimateTempo(*take->analysis, options);
+  AppLogger::log("Polyphonic tempo: " +
+                 (estimate.found
+                      ? juce::String(estimate.bpm, 2) + " BPM, bar 1 at " +
+                            juce::String(estimate.downbeatSeconds, 3) + " s"
+                      : juce::String("none")) +
+                 ", confidence " + juce::String(estimate.confidence, 2));
+  if (!estimate.found)
+    return;
+
+  // The estimate counts the signature's beats; the project's tempo counts
+  // quarter notes.
+  const int denominator = juce::jmax(1, project.getTimelineBeatDenominator());
+  project.setTimelineTempoBpm(estimate.bpm * 4.0 / static_cast<double>(denominator));
+  project.setTimelineBeatOriginSeconds(estimate.downbeatSeconds);
+  project.setTimelineDisplayMode(TimelineDisplayMode::Beats);
 }
 
 void MainComponent::resynthesizeIncremental()
