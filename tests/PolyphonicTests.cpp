@@ -1006,6 +1006,12 @@ int main()
 
         std::map<int, polyphonic::NoteEdit> edits;
         auto previous = polyphonic::render(A, channels, edits);
+        // the background split kept between renders must not change a single sample
+        const auto cache = polyphonic::makeRenderCache();
+        // renderChange(): the previous render plus the changed notes' difference, kept running
+        // over all the changes (rounding may add up, but stays far below anything audible)
+        auto running = previous;
+        double worstChange = 0.0;
         uint32_t seed = 12345;
         auto rnd = [&seed](int n) { seed = seed * 1664525u + 1013904223u; return static_cast<int>((seed >> 8) % static_cast<uint32_t>(n)); };
         double worst = 0.0;
@@ -1039,7 +1045,7 @@ int main()
                     next[ni] = ed;
             }
             const auto range = polyphonic::changedRange(A, static_cast<int>(x.size()), edits, next);
-            const auto part = polyphonic::renderRange(A, channels, next, range);
+            const auto part = polyphonic::renderRange(A, channels, next, range, nullptr, cache.get());
             auto spliced = previous;
             CHECK(part.size() == channels.size());
             for (size_t c = 0; c < part.size(); ++c)
@@ -1047,7 +1053,19 @@ int main()
                 CHECK(static_cast<int>(part[c].size()) == range.end - range.start);
                 std::copy(part[c].begin(), part[c].end(), spliced[c].begin() + range.start);
             }
+            const auto change = polyphonic::renderChange(A, channels, edits, next, nullptr, cache.get());
+            CHECK(change.channels.size() == channels.size());
+            for (size_t c = 0; c < change.channels.size(); ++c)
+            {
+                CHECK(change.start >= 0 && change.start + change.channels[c].size() <= running[c].size());
+                CHECK(static_cast<int>(change.channels[c].size()) == range.end - range.start);
+                for (size_t i = 0; i < change.channels[c].size(); ++i)
+                    running[c][static_cast<size_t>(change.start) + i] += change.channels[c][i];
+            }
             const auto full = polyphonic::render(A, channels, next);
+            for (size_t c = 0; c < full.size(); ++c)
+                for (size_t i = 0; i < full[c].size(); ++i)
+                    worstChange = std::max(worstChange, std::fabs(static_cast<double>(full[c][i]) - running[c][i]));
             for (size_t c = 0; c < full.size(); ++c)
                 for (size_t i = 0; i < full[c].size(); ++i)
                     worst = std::max(worst, std::fabs(static_cast<double>(full[c][i]) - spliced[c][i]));
@@ -1058,10 +1076,31 @@ int main()
         }
         // nothing changed: nothing to render
         CHECK(polyphonic::changedRange(A, static_cast<int>(x.size()), edits, edits).empty());
+        // a full render through the now well-filled cache is the full render, as is one through a
+        // cache made for other channels (it starts over)
+        {
+            const auto cached = polyphonic::render(A, channels, edits, nullptr, cache.get());
+            CHECK(cached == previous);
+            const auto mono = polyphonic::render(A, {x}, edits, nullptr, cache.get());
+            CHECK(mono == polyphonic::render(A, {x}, edits));
+            // a budget far too small for the take: frames are dropped and worked out again,
+            // the output does not change and the cache stays within it
+            const size_t budget = 1u << 20;
+            const auto small = polyphonic::makeRenderCache(budget);
+            CHECK(polyphonic::render(A, channels, edits, nullptr, small.get()) == previous);
+            CHECK(polyphonic::render(A, channels, edits, nullptr, small.get()) == previous);
+            std::printf("render cache: %.1f MB for the whole take, %.2f MB within a 1 MB budget\n",
+                        polyphonic::renderCacheBytes(*cache) / 1048576.0, polyphonic::renderCacheBytes(*small) / 1048576.0);
+            CHECK(polyphonic::renderCacheBytes(*small) <= budget);
+        }
         std::printf("incremental render: 40 changes, max difference from full render %.2e, %.0f%% of the samples re-rendered\n",
                     worst, 100.0 * static_cast<double>(renderedSamples) / static_cast<double>(fullSamples));
         CHECK(worst == 0.0);
         CHECK(renderedSamples < fullSamples);
+        std::printf("renderChange: 40 changes added up, max difference from full render %.2e (%.0f dB)\n",
+                    worstChange, db(worstChange));
+        CHECK(worstChange < 1e-5);
+        CHECK(polyphonic::renderChange(A, channels, edits, edits).channels[0].empty());
     }
 
     std::printf("PolyphonicTests passed\n");

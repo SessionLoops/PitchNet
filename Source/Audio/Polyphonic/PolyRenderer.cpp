@@ -32,7 +32,9 @@
 
 #include <functional>
 #include <limits>
+#include <list>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <tuple>
 
@@ -183,6 +185,9 @@ struct EditState
     // the edit started before the first frame rendered: it is run over its earlier frames first,
     // output discarded, so its phases (psi, track) are those of a whole render
     bool warms = false;
+    // a difference render (synthesize's `subtract`): this is the note's previous edit, whose part
+    // is taken away rather than added
+    bool negative = false;
 };
 
 /** Least-squares slope of y over x. */
@@ -390,14 +395,73 @@ std::pair<int, int> claimSpan(const Analysis& A, int note, int numFrames)
  * frame's shape and decays; it fades in over a short lead-in before the onset and out over the
  * second half of the tail. Frames must be prepared in increasing order.
  */
+/**
+ * One frame of BackgroundShares, kept between renders: the notes with a claim there and, for
+ * each, the gain per bin that BackgroundShares::part() applies to the input spectrum. It depends
+ * only on the analysis and the input, never on the edits.
+ */
+struct BackgroundFrame
+{
+    bool done = false;
+    std::vector<int> owners;   // owner indices, in BackgroundShares::present order
+    std::vector<float> gains;  // owners.size() x K
+    std::list<int>::iterator use;   // place in BackgroundKeep::recent while done
+};
+
+/**
+ * The kept frames with a memory budget: the least recently used frame is dropped when a new one
+ * would go over it (and worked out again if it is needed later).
+ */
+struct BackgroundKeep
+{
+    std::vector<BackgroundFrame> frames;
+    std::list<int> recent;     // done frames, most recently used first
+    size_t bytes = 0;
+    size_t maxBytes = 0;
+
+    static size_t sizeOf(const BackgroundFrame& f)
+    {
+        return f.gains.size() * sizeof(float) + f.owners.size() * sizeof(int) + 64;
+    }
+    void reset(int numFrames)
+    {
+        frames.clear();
+        frames.resize(static_cast<size_t>(numFrames));
+        recent.clear();
+        bytes = 0;
+    }
+    void touch(int u)
+    {
+        auto& f = frames[static_cast<size_t>(u)];
+        recent.splice(recent.begin(), recent, f.use);
+    }
+    /** Frame u has just been worked out: count it and drop older frames over the budget. */
+    void added(int u)
+    {
+        auto& f = frames[static_cast<size_t>(u)];
+        recent.push_front(u);
+        f.use = recent.begin();
+        bytes += sizeOf(f);
+        while (bytes > maxBytes && recent.size() > 1)
+        {
+            auto& old = frames[static_cast<size_t>(recent.back())];
+            bytes -= sizeOf(old);
+            recent.pop_back();
+            old = BackgroundFrame{};   // frees its memory
+        }
+    }
+};
+
 class BackgroundShares
 {
 public:
     using Spectrum = std::function<const Complex*(int channel, int frame)>;
 
-    BackgroundShares(const Analysis& A, int numFrames, int numChannels, Spectrum spectrumOf)
+    /** `kept`, when given, holds numFrames frames of earlier results, filled in as frames are prepared. */
+    BackgroundShares(const Analysis& A, int numFrames, int numChannels, Spectrum spectrumOf,
+                     BackgroundKeep* kept = nullptr)
         : analysis(A), K(A.params.fftSize / 2 + 1), binHz(A.params.sampleRate / A.params.fftSize),
-          channels(numChannels), spectrum(std::move(spectrumOf))
+          channels(numChannels), spectrum(std::move(spectrumOf)), keptFrames(kept)
     {
         const Params& p = A.params;
         const double framesPerSecond = p.sampleRate / p.hop;
@@ -460,6 +524,20 @@ public:
         const int o = note >= 0 && note < static_cast<int>(ownerOf.size()) ? ownerOf[static_cast<size_t>(note)] : -1;
         if (o < 0)
             return false;
+        if (keptFrames != nullptr && u >= 0 && u < static_cast<int>(keptFrames->frames.size()))
+        {
+            // the gains are the same in every render: work them out once (for every note with a
+            // claim here), then only apply them to this channel's spectrum
+            const auto& f = keep(u);
+            const auto it = std::find(f.owners.begin(), f.owners.end(), o);
+            if (it == f.owners.end())
+                return false;
+            const Complex* x = spectrum(channel, u);
+            const float* g = f.gains.data() + static_cast<size_t>(it - f.owners.begin()) * static_cast<size_t>(K);
+            for (int k = 0; k < K; ++k)
+                out[k] = g[k] * x[k];
+            return true;
+        }
         prepare(u);
         const auto it = std::find(present.begin(), present.end(), o);
         if (it == present.end())
@@ -477,6 +555,40 @@ public:
             out[k] = (coverage * rest[q] * share) * x[k];
         }
         return true;
+    }
+
+    /**
+     * Frame u of the kept frames, worked out now if it was not yet (needs `kept`; frames not yet
+     * kept must be asked for in increasing order).
+     */
+    const BackgroundFrame& keep(int u)
+    {
+        auto& f = keptFrames->frames[static_cast<size_t>(u)];
+        if (f.done)
+        {
+            keptFrames->touch(u);
+            return f;
+        }
+        prepare(u);
+        f.owners = present;
+        f.gains.resize(present.size() * static_cast<size_t>(K));
+        for (size_t j = 0; j < present.size(); ++j)
+        {
+            const auto& c = claims[j];
+            const auto& n = newClaims[j];
+            float* g = f.gains.data() + j * static_cast<size_t>(K);
+            for (int k = 0; k < K; ++k)
+            {
+                const size_t q = static_cast<size_t>(k);
+                float share = total[q] > 0.0f ? (1.0f - fresh[q]) * c[q] / total[q] : 0.0f;
+                if (!n.empty() && freshTotal[q] > 0.0f)
+                    share += fresh[q] * n[q] / freshTotal[q];
+                g[k] = coverage * rest[q] * share;
+            }
+        }
+        f.done = true;
+        keptFrames->added(u);
+        return f;
     }
 
 private:
@@ -674,8 +786,33 @@ private:
     std::vector<std::vector<float>> claims, newClaims;
     std::vector<float> rest, total, shape, onset, current, fresh, freshTotal, scratch;
     float coverage = 0.0f;             // the strongest (least faded) claim at the prepared frame
+    BackgroundKeep* keptFrames = nullptr;
 };
 
+} // namespace
+
+struct RenderCache
+{
+    const Analysis* analysis = nullptr;
+    int numFrames = -1;
+    int numChannels = -1;
+    BackgroundKeep background;
+};
+
+std::shared_ptr<RenderCache> makeRenderCache(size_t maxBytes)
+{
+    auto cache = std::make_shared<RenderCache>();
+    cache->background.maxBytes = maxBytes;
+    return cache;
+}
+
+size_t renderCacheBytes(const RenderCache& cache)
+{
+    return cache.background.bytes;
+}
+
+namespace
+{
 /**
  * Core synthesis. With a non-empty `solo` the output is those notes only: each as its edit in
  * `edits` makes it (transformed exactly as in a full render), or its separated signal when it has
@@ -692,7 +829,8 @@ private:
 std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<std::vector<float>>& channels,
                                            const std::map<int, NoteEdit>& edits, const std::vector<int>& solo,
                                            const std::atomic<bool>* cancel, int fromSample = 0, int toSample = -1,
-                                           bool soloBackground = false)
+                                           bool soloBackground = false, RenderCache* cache = nullptr,
+                                           const std::map<int, NoteEdit>* subtract = nullptr)
 {
     const Params& p = A.params;
     const int numCh = static_cast<int>(channels.size());
@@ -710,6 +848,13 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     const int K = N / 2 + 1;
     const double binHz = p.sampleRate / p.fftSize;
     SourceFrames source(channels, p);
+    if (cache != nullptr && (cache->analysis != &A || cache->numFrames != T || cache->numChannels != numCh))
+    {
+        cache->analysis = &A;
+        cache->numFrames = T;
+        cache->numChannels = numCh;
+        cache->background.reset(T);
+    }
     const auto window = detail::hannPeriodic(N);
     const float scale = std::accumulate(window.begin(), window.end(), 0.0f) / 2.0f;
     RealFFT fft(N);
@@ -721,17 +866,29 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     auto backgroundAt = [&](int offset) -> BackgroundShares& {
         auto& b = background[offset];
         if (b == nullptr)
-            b = std::make_unique<BackgroundShares>(A, T, numCh, [&source](int c, int t) { return source.get(c, t); });
+            b = std::make_unique<BackgroundShares>(A, T, numCh, [&source](int c, int t) { return source.get(c, t); },
+                                                   cache != nullptr ? &cache->background : nullptr);
         return *b;
     };
     std::vector<Complex> part(static_cast<size_t>(K));
 
     std::vector<EditState> states;
+    // With `subtract` the output is a difference: what `edits` do minus what `subtract` does,
+    // without the input itself (the render is linear in each note's part).
+    const bool difference = subtract != nullptr;
+    std::vector<std::tuple<int, const NoteEdit*, bool>> editList;
     for (const auto& [ni, ed] : edits)
+        editList.emplace_back(ni, &ed, false);
+    if (difference)
+        for (const auto& [ni, ed] : *subtract)
+            editList.emplace_back(ni, &ed, true);
+    for (const auto& [ni, edp, negative] : editList)
     {
+        const NoteEdit& ed = *edp;
         if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()) || ed.isIdentity())
             continue;
         EditState s;
+        s.negative = negative;
         s.note = ni;
         s.edit = &ed;
         s.gain = std::pow(10.0f, ed.gainDb / 20.0f);
@@ -812,6 +969,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     };
 
     std::vector<std::vector<Complex>> Y(static_cast<size_t>(numCh), std::vector<Complex>(static_cast<size_t>(K)));
+    std::vector<std::vector<Complex>> Yneg(difference ? static_cast<size_t>(numCh) : 0, std::vector<Complex>(static_cast<size_t>(K)));
     std::vector<std::vector<double>> acc(static_cast<size_t>(numCh), std::vector<double>(static_cast<size_t>(N), 0.0));
     std::vector<double> nrm(static_cast<size_t>(N), 0.0);
     std::vector<std::vector<float>> out(static_cast<size_t>(numCh), std::vector<float>(static_cast<size_t>(to - from), 0.0f));
@@ -863,6 +1021,17 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         {
             for (auto& y : Y)
                 std::fill(y.begin(), y.end(), Complex{});
+        }
+        else if (difference)
+        {
+            // only the edits' parts: nothing where none reaches
+            transform = !untouched(u);
+            if (transform)
+                for (int c = 0; c < numCh; ++c)
+                {
+                    std::fill(Y[static_cast<size_t>(c)].begin(), Y[static_cast<size_t>(c)].end(), Complex{});
+                    std::fill(Yneg[static_cast<size_t>(c)].begin(), Yneg[static_cast<size_t>(c)].end(), Complex{});
+                }
         }
         else if (soloMode)
         {
@@ -935,6 +1104,20 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             auto& st = states[sIndex];
             if (warm && !st.warms)
                 continue;
+            // a previous edit writes into Yneg (swapped back however this iteration ends)
+            struct SwapBack
+            {
+                bool on;
+                std::vector<std::vector<Complex>>& a;
+                std::vector<std::vector<Complex>>& b;
+                ~SwapBack()
+                {
+                    if (on)
+                        a.swap(b);
+                }
+            } swapBack{st.negative, Y, Yneg};
+            if (st.negative)
+                Y.swap(Yneg);
             const Note& n = A.notes[static_cast<size_t>(st.note)];
             const NoteMasks& nm = A.masks[static_cast<size_t>(st.note)];
             const NoteEdit& ed = *st.edit;
@@ -1161,6 +1344,14 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         }
         if (warm)
             continue;
+        if (difference && transform)
+            for (int c = 0; c < numCh; ++c)
+            {
+                auto& y = Y[static_cast<size_t>(c)];
+                const auto& yn = Yneg[static_cast<size_t>(c)];
+                for (int k = 0; k < K; ++k)
+                    y[static_cast<size_t>(k)] -= yn[static_cast<size_t>(k)];
+            }
         // inverse transform and weighted overlap-add
         for (int c = 0; transform && c < numCh; ++c)
         {
@@ -1200,9 +1391,10 @@ StretchMap stretchMap(const Analysis& A, int note, const NoteEdit& edit)
 }
 
 std::vector<std::vector<float>> render(const Analysis& A, const std::vector<std::vector<float>>& channels,
-                                       const std::map<int, NoteEdit>& edits, const std::atomic<bool>* cancel)
+                                       const std::map<int, NoteEdit>& edits, const std::atomic<bool>* cancel,
+                                       RenderCache* cache)
 {
-    return synthesize(A, channels, edits, {}, cancel);
+    return synthesize(A, channels, edits, {}, cancel, 0, -1, false, cache);
 }
 
 std::vector<std::vector<float>> extractNotes(const Analysis& A, const std::vector<std::vector<float>>& channels,
@@ -1366,7 +1558,7 @@ SampleRange changedRange(const Analysis& A, int numSamples, const std::map<int, 
 
 std::vector<std::vector<float>> renderRange(const Analysis& A, const std::vector<std::vector<float>>& channels,
                                             const std::map<int, NoteEdit>& edits, SampleRange range,
-                                            const std::atomic<bool>* cancel)
+                                            const std::atomic<bool>* cancel, RenderCache* cache)
 {
     if (channels.empty())
         return {};
@@ -1375,7 +1567,42 @@ std::vector<std::vector<float>> renderRange(const Analysis& A, const std::vector
     range.end = std::clamp(range.end, range.start, numSamples);
     if (range.empty())
         return std::vector<std::vector<float>>(channels.size());
-    return synthesize(A, channels, edits, {}, cancel, range.start, range.end);
+    return synthesize(A, channels, edits, {}, cancel, range.start, range.end, false, cache);
+}
+
+AudioSpan renderChange(const Analysis& A, const std::vector<std::vector<float>>& channels,
+                       const std::map<int, NoteEdit>& previousEdits, const std::map<int, NoteEdit>& edits,
+                       const std::atomic<bool>* cancel, RenderCache* cache)
+{
+    AudioSpan span;
+    span.channels.resize(channels.size());
+    if (channels.empty() || channels[0].empty())
+        return span;
+    // the changed notes only: their new edits, and their previous ones to take away
+    std::map<int, NoteEdit> added, removed;
+    for (const auto& [ni, ed] : previousEdits)
+    {
+        const NoteEdit* before = activeEdit(previousEdits, ni);
+        const NoteEdit* after = activeEdit(edits, ni);
+        if (before != nullptr && (after == nullptr || *after != *before))
+            removed[ni] = ed;
+    }
+    for (const auto& [ni, ed] : edits)
+    {
+        const NoteEdit* before = activeEdit(previousEdits, ni);
+        const NoteEdit* after = activeEdit(edits, ni);
+        if (after != nullptr && (before == nullptr || *after != *before))
+            added[ni] = ed;
+    }
+    const auto range = changedRange(A, static_cast<int>(channels[0].size()), previousEdits, edits);
+    if (range.empty())
+        return span;
+    auto out = synthesize(A, channels, added, {}, cancel, range.start, range.end, false, cache, &removed);
+    if (out.empty())
+        return {};   // cancelled
+    span.start = range.start;
+    span.channels = std::move(out);
+    return span;
 }
 
 std::vector<float> extractNote(const Analysis& A, const std::vector<float>& channel, int noteIndex)

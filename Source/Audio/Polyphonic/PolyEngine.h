@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <atomic>
 #include <complex>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 /**
@@ -302,10 +304,26 @@ Analysis restore(const float* mono, int numSamples, const Params& params, std::v
  * partial's band moving with that partial. Muting every note then silences the frames
  * their claims cover.
  */
+/**
+ * Work a render does that depends only on the analysis and the audio, never on the edits (how
+ * what no note owns is split among the notes, NoteEdit::takeBackground), kept so later renders
+ * skip it. It fills in as frames are rendered, around the edited notes, and never changes the
+ * output. It holds at most `maxBytes` (about 110 kB per frame of a dense passage, so 128 MB keeps
+ * some 13 s at 44.1 kHz), dropping the least recently used frames first. Use one per analysis
+ * and the channels it renders: it starts over by itself when the analysis object, the number of
+ * channels or their length changes, but not when different audio of the same size is passed.
+ * Not thread safe: one render at a time.
+ */
+struct RenderCache;
+std::shared_ptr<RenderCache> makeRenderCache(size_t maxBytes = size_t{128} << 20);
+/** What `cache` holds now, in bytes. */
+size_t renderCacheBytes(const RenderCache& cache);
+
 std::vector<std::vector<float>> render(const Analysis& analysis,
                                        const std::vector<std::vector<float>>& channels,
                                        const std::map<int, NoteEdit>& edits,
-                                       const std::atomic<bool>* cancel = nullptr);
+                                       const std::atomic<bool>* cancel = nullptr,
+                                       RenderCache* cache = nullptr);
 
 /**
  * The separated signal of a set of notes (no edits) for each input channel, for
@@ -371,7 +389,21 @@ SampleRange changedRange(const Analysis& analysis, int numSamples,
 std::vector<std::vector<float>> renderRange(const Analysis& analysis,
                                             const std::vector<std::vector<float>>& channels,
                                             const std::map<int, NoteEdit>& edits, SampleRange range,
-                                            const std::atomic<bool>* cancel = nullptr);
+                                            const std::atomic<bool>* cancel = nullptr,
+                                            RenderCache* cache = nullptr);
+
+/**
+ * What changes in render() when the edits go from `previousEdits` to `edits`: add the span to the
+ * previous render (its channels from span.start on) to get the new one. Only the changed notes
+ * are synthesised, each as its new edit minus its old one, over changedRange(), so the cost
+ * follows the change alone, not the other edited notes around it. Equal to the difference of the
+ * two renders up to float rounding (about 1e-7 of full scale, below -130 dB); render() or
+ * renderRange() give the exact result. Nothing changed: a span with no samples. Cancelled: a
+ * span with no channels.
+ */
+AudioSpan renderChange(const Analysis& analysis, const std::vector<std::vector<float>>& channels,
+                       const std::map<int, NoteEdit>& previousEdits, const std::map<int, NoteEdit>& edits,
+                       const std::atomic<bool>* cancel = nullptr, RenderCache* cache = nullptr);
 
 /** One note's separated signal (no edits), for auditioning/solo. */
 std::vector<float> extractNote(const Analysis& analysis, const std::vector<float>& channel, int noteIndex);

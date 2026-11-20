@@ -542,15 +542,20 @@ What is missing is the product around it:
    re-render after an edit costs time in proportion to the edited notes (a
    quarter of a second for 70 s of stereo piano with four edits). After the
    first render, `EditorController` keeps the result and its edits, and each
-   later render covers only `changedRange(previousEdits, edits)` with
-   `renderRange` and splices it in. That range is every frame a changed note
-   reaches. Re-pitched and stretched partials carry their phase from their
-   note's first frame, so an edited note that starts before the range is
-   first run over its own earlier frames with no output (no transforms) to
-   reach the same phase. The splice is bit-identical to a full render
-   (test 19). A one-note re-render stays about 0.12 s whether 1 or 140
-   notes are edited (60 s stereo, synthetic), while a full render grows
-   from 0.1 s to 1.3 s.
+   later render adds `renderChange(previousEdits, edits)` to it. Only the
+   changed notes are synthesised: each one's new edit minus its old one,
+   over `changedRange`. Each note's part of the render is independent and
+   linear, so the sum equals the new render up to float rounding (−141 dB
+   after 40 changes, test 19). `renderRange` gives the exact splice where
+   that matters.
+   How what no note owns is split among the notes (`takeBackground`) does
+   not depend on the edits. A `RenderCache` per take keeps it for the frames
+   around the edited notes, up to 128 MB (about 13 s of a dense passage),
+   dropping the least recently used frames first. It starts over when an
+   edit changes the take's length.
+   Re-editing one note among 140 edited ones (60 s stereo, synthetic): full
+   render 1.24 s, `renderChange` 0.027 s with the note's frames cached and
+   0.07 s the first time; about the same as with one edited note.
    `extractNotes` serves a solo button and `renderNotes` lets a note be heard
    while it is dragged. The Polyphonic Lab shows the whole loop
    (analysis thread, edits, background render, A/B playback) in one file.

@@ -301,10 +301,11 @@ private:
   void startPolyphonicRender();
   void finishPolyphonicRender(std::shared_ptr<const PolyphonicTake> take,
                               std::shared_ptr<const juce::AudioBuffer<float>> rendered,
+                              std::shared_ptr<const juce::AudioBuffer<float>> engineRender,
                               Project::PolyphonicEdits edits);
-  // The last render applied and the edits it was made with: the next render
-  // only re-renders the samples the change of edits reaches
-  // (polyphonic::changedRange) and copies the rest from it.
+  // The last render applied, at the engine's length (the playback's plus
+  // headroom), and the edits it was made with: the next render adds what the
+  // change of edits changes (polyphonic::renderChange) to it.
   struct PolyRenderCache
   {
     std::shared_ptr<const PolyphonicTake> take;
@@ -313,6 +314,11 @@ private:
     std::shared_ptr<const juce::AudioBuffer<float>> buffer;
   };
   PolyRenderCache polyRenderCache;
+  // The engine's edit-independent work around the edited notes of the current
+  // take and analysis (polyphonic::RenderCache, at most 128 MB). Used only on
+  // polyRenderThread.
+  std::shared_ptr<polyphonic::RenderCache> polyEngineCache;
+  std::shared_ptr<const polyphonic::Analysis> polyEngineCacheAnalysis;
   std::thread polyRenderThread;
   std::shared_ptr<std::atomic<bool>> polyRenderCancel;
   std::function<void(bool)> polyRenderOnComplete;

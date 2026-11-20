@@ -1913,19 +1913,22 @@ namespace
 // the release to ring out.
 constexpr double kRenderTailSeconds = 0.25;
 
+// Silence the full render keeps past what the edits need, so that an edit
+// that makes the take a little longer (a note ringing to the end, re-pitched)
+// does not change the length the engine renders: a new length means a full
+// render of every edit, and a fresh engine cache.
+constexpr double kRenderHeadroomSeconds = 4.0;
+
 /**
- * The take's channels for the engine, padded with silence when an edit makes
- * a note end after the recording does (a note lengthened, or moved, past the
- * end): the render, and with it the take, is then that much longer. Without
- * such an edit the channels are the take's own length.
+ * How long the render of `edits` is: the take's length, or longer when an
+ * edit makes a note end after the recording does (a note lengthened, or
+ * moved, past the end): the render, and with it the take, is then that much
+ * longer.
  */
-std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
-                                               const Project::PolyphonicEdits &edits)
+int renderLength(const PolyphonicTake &take, const Project::PolyphonicEdits &edits)
 {
-  const auto &source = take.source;
   const auto &analysis = *take.analysis;
-  const int numChannels = source.getNumChannels();
-  const int numSamples = source.getNumSamples();
+  const int numSamples = take.source.getNumSamples();
   const double rate = analysis.params.sampleRate;
 
   int length = numSamples;
@@ -1940,7 +1943,16 @@ std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
         analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds + kRenderTailSeconds;
     length = std::max(length, static_cast<int>(std::ceil(endSeconds * rate)));
   }
+  return length;
+}
 
+/** The take's channels for the engine, padded with silence to `length`. */
+std::vector<std::vector<float>> paddedChannels(const PolyphonicTake &take, int length)
+{
+  const auto &source = take.source;
+  const int numChannels = source.getNumChannels();
+  const int numSamples = source.getNumSamples();
+  length = std::max(length, numSamples);
   std::vector<std::vector<float>> channels(static_cast<size_t>(numChannels));
   for (int ch = 0; ch < numChannels; ++ch)
   {
@@ -1950,6 +1962,13 @@ std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
               channel.begin());
   }
   return channels;
+}
+
+/** The take's channels for rendering `edits`, as long as renderLength(). */
+std::vector<std::vector<float>> renderChannels(const PolyphonicTake &take,
+                                               const Project::PolyphonicEdits &edits)
+{
+  return paddedChannels(take, renderLength(take, edits));
 }
 
 // The listed notes on their own with `requested` edits (the engine's default
@@ -2169,50 +2188,69 @@ void EditorController::startPolyphonicRender()
   auto previous = polyRenderCache;
   if (previous.take != take || previous.analysis != take->analysis)
     previous = {};
-  polyRenderThread = std::thread([this, take, edits, previous = std::move(previous), cancel]()
+  if (!polyEngineCache || polyEngineCacheAnalysis != take->analysis)
+  {
+    polyEngineCache = polyphonic::makeRenderCache();
+    polyEngineCacheAnalysis = take->analysis;
+  }
+  auto engineCache = polyEngineCache;
+  polyRenderThread = std::thread([this, take, edits, previous = std::move(previous), engineCache, cancel]()
                                  {
-    std::shared_ptr<const juce::AudioBuffer<float>> result;
+    std::shared_ptr<const juce::AudioBuffer<float>> result, rendered;
     try
     {
-      const auto &source = take->source;
-      auto buffer = std::make_shared<juce::AudioBuffer<float>>();
+      // The engine renders a stable length: what the edits need plus
+      // headroom, kept from render to render while it is enough. The playback
+      // gets just what the edits need.
+      const int needed = renderLength(*take, edits);
+      const double rate = take->analysis->params.sampleRate;
+      int length = previous.buffer != nullptr ? previous.buffer->getNumSamples() : 0;
+      if (length < needed)
+        length = needed + static_cast<int>(std::ceil(kRenderHeadroomSeconds * rate));
+      const auto channels = paddedChannels(*take, length);
+      const int numChannels = static_cast<int>(channels.size());
+
+      auto buffer = std::make_shared<juce::AudioBuffer<float>>(numChannels, length);
+      const bool reuse = previous.buffer != nullptr &&
+                         previous.buffer->getNumChannels() == numChannels &&
+                         previous.buffer->getNumSamples() == length;
       if (edits.empty())
       {
-        buffer->makeCopyOf(source);
+        // the unedited render is the input
+        for (int ch = 0; ch < numChannels; ++ch)
+          buffer->copyFrom(ch, 0, channels[static_cast<size_t>(ch)].data(), length);
+      }
+      else if (reuse)
+      {
+        // The previous render plus what the changed notes change: only they
+        // are synthesised, whatever else is edited around them.
+        const auto change = polyphonic::renderChange(*take->analysis, channels, previous.edits,
+                                                     edits, cancel.get(), engineCache.get());
+        buffer->makeCopyOf(*previous.buffer);
+        if (static_cast<int>(change.channels.size()) == numChannels)
+          for (int ch = 0; ch < numChannels; ++ch)
+          {
+            const auto &part = change.channels[static_cast<size_t>(ch)];
+            if (!part.empty())
+              buffer->addFrom(ch, change.start, part.data(), static_cast<int>(part.size()));
+          }
       }
       else
       {
-        // Possibly longer than the take (renderChannels).
-        const auto channels = renderChannels(*take, edits);
-        const int numChannels = static_cast<int>(channels.size());
-        const int numSamples = numChannels > 0 ? static_cast<int>(channels.front().size()) : 0;
-        const bool reuse = previous.buffer != nullptr &&
-                           previous.buffer->getNumChannels() == numChannels &&
-                           previous.buffer->getNumSamples() == numSamples;
-        if (reuse)
-        {
-          const auto range = polyphonic::changedRange(*take->analysis, numSamples,
-                                                      previous.edits, edits);
-          const auto part =
-              polyphonic::renderRange(*take->analysis, channels, edits, range, cancel.get());
-          buffer->makeCopyOf(*previous.buffer);
-          if (static_cast<int>(part.size()) == numChannels)
-            for (int ch = 0; ch < numChannels; ++ch)
-              buffer->copyFrom(ch, range.start, part[static_cast<size_t>(ch)].data(),
-                               static_cast<int>(part[static_cast<size_t>(ch)].size()));
-        }
-        else
-        {
-          const auto out = polyphonic::render(*take->analysis, channels, edits, cancel.get());
-          const int outChannels = static_cast<int>(out.size());
-          const int length = outChannels > 0 ? static_cast<int>(out.front().size()) : 0;
-          buffer->setSize(outChannels, length);
-          for (int ch = 0; ch < outChannels; ++ch)
+        const auto out = polyphonic::render(*take->analysis, channels, edits, cancel.get(),
+                                            engineCache.get());
+        if (static_cast<int>(out.size()) == numChannels)
+          for (int ch = 0; ch < numChannels; ++ch)
             buffer->copyFrom(ch, 0, out[static_cast<size_t>(ch)].data(), length);
-        }
       }
       if (!cancel->load() && !shuttingDown.load())
-        result = std::move(buffer);
+      {
+        auto playback = std::make_shared<juce::AudioBuffer<float>>(numChannels, needed);
+        for (int ch = 0; ch < numChannels; ++ch)
+          playback->copyFrom(ch, 0, *buffer, ch, 0, needed);
+        result = std::move(playback);
+        rendered = std::move(buffer);
+      }
     }
     catch (const std::exception &e)
     {
@@ -2222,14 +2260,15 @@ void EditorController::startPolyphonicRender()
     {
       LOG("Polyphonic render failed");
     }
-    juce::MessageManager::callAsync([this, take, result, edits]() {
-      finishPolyphonicRender(take, result, edits);
+    juce::MessageManager::callAsync([this, take, result, rendered, edits]() {
+      finishPolyphonicRender(take, result, rendered, edits);
     }); });
 }
 
 void EditorController::finishPolyphonicRender(
     std::shared_ptr<const PolyphonicTake> take,
     std::shared_ptr<const juce::AudioBuffer<float>> rendered,
+    std::shared_ptr<const juce::AudioBuffer<float>> engineRender,
     Project::PolyphonicEdits edits)
 {
   polyRenderRunning = false;
@@ -2245,7 +2284,7 @@ void EditorController::finishPolyphonicRender(
   const bool current = project && project->getPolyphonicTake() == take;
   if (rendered && current)
   {
-    polyRenderCache = {take, take->analysis, std::move(edits), rendered};
+    polyRenderCache = {take, take->analysis, std::move(edits), engineRender};
     project->setPolyphonicPlayback(rendered);
     // The waveform is the playback's mono mix, as after analysis, so the
     // display shows the edited audio.
