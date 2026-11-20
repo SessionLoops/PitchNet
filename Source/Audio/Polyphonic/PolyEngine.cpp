@@ -90,7 +90,9 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
     }
     if (cancelled()) return out;
 
-    buildMasks(ctx, active, out);
+    // The sound model is about the last third of the time; report it as it goes.
+    report(0.65f);
+    buildMasks(ctx, active, out, [&](float done) { report(0.65f + 0.35f * done); });
     report(1.0f);
     return out;
 }
@@ -141,7 +143,7 @@ Analysis restore(const float* mono, int numSamples, const Params& params, std::v
     Analysis built;
     built.params = params;
     built.notes.resize(active.size());
-    buildMasks(ctx, active, built);
+    buildMasks(ctx, active, built, [&](float done) { report(0.4f + 0.6f * done); });
     if (cancelled()) return out;
     for (size_t k = 0; k < where.size() && k < built.masks.size(); ++k)
         out.masks[where[k]] = std::move(built.masks[k]);

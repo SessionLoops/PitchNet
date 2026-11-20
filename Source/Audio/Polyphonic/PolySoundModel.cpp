@@ -262,7 +262,8 @@ void nmfBlock(const Context& ctx, const std::vector<Candidate>& notes, const std
 // Notes only interact where they overlap in time, so the NMF is solved in blocks of a few seconds
 // (with margins) to bound memory on long recordings. A recording shorter than one block is
 // solved in one piece.
-void buildMasks(const Context& ctx, const std::vector<Candidate>& notes, Analysis& out)
+void buildMasks(const Context& ctx, const std::vector<Candidate>& notes, Analysis& out,
+                const std::function<void(float)>& progress)
 {
     const Params& p = ctx.p;
     const int T = ctx.numFrames;
@@ -284,6 +285,8 @@ void buildMasks(const Context& ctx, const std::vector<Candidate>& notes, Analysi
         }
         if (!idx.empty())
             nmfBlock(ctx, notes, idx, lo, hi, blockStart, coreEnd, out);
+        if (progress)
+            progress(static_cast<float>(coreEnd) / static_cast<float>(std::max(1, T)));
         if (coreEnd == T)
             break;
     }

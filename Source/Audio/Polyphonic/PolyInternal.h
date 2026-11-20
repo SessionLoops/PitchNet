@@ -140,7 +140,9 @@ void scoreCandidates(const Context& ctx, std::vector<Candidate>& cands, const No
                      std::vector<CandidateFeatures>* exportTo = nullptr);
 
 // ---- PolySoundModel.cpp ----
-void buildMasks(const Context& ctx, const std::vector<Candidate>& notes, Analysis& out);
+// `progress` (optional) gets the share of the recording done, 0..1, after each block.
+void buildMasks(const Context& ctx, const std::vector<Candidate>& notes, Analysis& out,
+                const std::function<void(float)>& progress = {});
 
 } // namespace detail
 } // namespace polyphonic
