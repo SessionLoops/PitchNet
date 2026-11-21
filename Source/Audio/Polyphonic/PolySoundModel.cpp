@@ -270,26 +270,59 @@ void buildMasks(const Context& ctx, const std::vector<Candidate>& notes, Analysi
     out.masks.assign(out.notes.size(), {});
     const int core = std::max(16, static_cast<int>(std::lround(4.0 * p.sampleRate / p.hop)));
     const int margin = static_cast<int>(std::lround(0.5 * p.sampleRate / p.hop));
+    std::vector<std::pair<int, int>> blocks;   // cores [blockStart, coreEnd)
     for (int blockStart = 0; blockStart < T; blockStart += core)
     {
         int coreEnd = std::min(T, blockStart + core);
         if (T - coreEnd < margin)                     // fold a short tail into this block
             coreEnd = T;
-        const int lo = std::max(0, blockStart - margin), hi = std::min(T, coreEnd + margin);
-        std::vector<int> idx;
-        for (int ni = 0; ni < static_cast<int>(notes.size()); ++ni)
-        {
-            const auto& n = notes[static_cast<size_t>(ni)];
-            if (n.end + p.postFrames >= lo && n.start - p.preFrames < hi)
-                idx.push_back(ni);
-        }
-        if (!idx.empty())
-            nmfBlock(ctx, notes, idx, lo, hi, blockStart, coreEnd, out);
-        if (progress)
-            progress(static_cast<float>(coreEnd) / static_cast<float>(std::max(1, T)));
+        blocks.emplace_back(blockStart, coreEnd);
         if (coreEnd == T)
             break;
     }
+
+    // Each block is solved on its own (all cores at once) into its own masks, which are then
+    // appended to each note block by block: the same masks as solving the blocks in turn.
+    std::vector<std::vector<NoteMasks>> solved(blocks.size());
+    parallelFor(
+        static_cast<int>(blocks.size()),
+        [&](int b) {
+            const auto [blockStart, coreEnd] = blocks[static_cast<size_t>(b)];
+            const int lo = std::max(0, blockStart - margin), hi = std::min(T, coreEnd + margin);
+            std::vector<int> idx;
+            for (int ni = 0; ni < static_cast<int>(notes.size()); ++ni)
+            {
+                const auto& n = notes[static_cast<size_t>(ni)];
+                if (n.end + p.postFrames >= lo && n.start - p.preFrames < hi)
+                    idx.push_back(ni);
+            }
+            if (idx.empty())
+                return;
+            Analysis block;
+            block.masks.assign(out.masks.size(), {});
+            nmfBlock(ctx, notes, idx, lo, hi, blockStart, coreEnd, block);
+            solved[static_cast<size_t>(b)] = std::move(block.masks);
+        },
+        [&](int finished) {
+            if (progress)
+                progress(static_cast<float>(finished) / static_cast<float>(blocks.size()));
+        });
+
+    for (auto& block : solved)
+        for (size_t ni = 0; ni < block.size() && ni < out.masks.size(); ++ni)
+        {
+            auto& from = block[ni];
+            if (from.partials.empty())
+                continue;
+            auto& to = out.masks[ni];
+            const int offset = static_cast<int>(to.weights.size());
+            for (auto& pm : from.partials)
+            {
+                pm.weightOffset += offset;
+                to.partials.push_back(pm);
+            }
+            to.weights.insert(to.weights.end(), from.weights.begin(), from.weights.end());
+        }
 }
 
 } // namespace detail

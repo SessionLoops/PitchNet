@@ -439,6 +439,8 @@ void MainComponent::loadAudioFile(const juce::File &file,
         }
 
         safeThis->fitAnalyzedPitchRangeToView(*project);
+        // a polyphonic take's masks, in the background
+        safeThis->restorePolyphonicTake();
 
         if (auto *vocoder = safeThis->editorController
                                 ? safeThis->editorController->getVocoder()

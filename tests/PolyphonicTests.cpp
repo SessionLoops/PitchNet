@@ -1103,6 +1103,135 @@ int main()
         CHECK(polyphonic::renderChange(A, channels, edits, edits).channels[0].empty());
     }
 
+    // ---- 20. detect() then restore(): the notes at once, the masks later, together exactly
+    //          analyze(); detect()'s levels stand in for the masks' until then ----
+    {
+        std::vector<float> x(static_cast<size_t>(4.0 * kRate), 0.0f);
+        addTone(x, midiToHz(48), 0.1, 3.0, 0.2);
+        addTone(x, midiToHz(55), 0.3, 1.5, 0.15);
+        addTone(x, midiToHz(64), 0.6, 2.0, 0.12);
+        addTone(x, midiToHz(67), 1.9, 1.6, 0.12);
+        addTone(x, midiToHz(72), 2.4, 1.2, 0.1);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        std::vector<std::vector<float>> levels;
+        float last = -1.0f;
+        bool rising = true;
+        const auto D = polyphonic::detect(x.data(), static_cast<int>(x.size()), params, nullptr, nullptr,
+                                          [&](float v) { rising = rising && v >= last; last = v; }, &levels);
+        CHECK(rising && last == 1.0f);
+        CHECK(D.notes.size() == A.notes.size());
+        bool sameNotes = D.notes.size() == A.notes.size();
+        for (size_t i = 0; sameNotes && i < D.notes.size(); ++i)
+            sameNotes = D.notes[i].startFrame == A.notes[i].startFrame && D.notes[i].endFrame == A.notes[i].endFrame
+                        && D.notes[i].f0 == A.notes[i].f0 && D.notes[i].active == A.notes[i].active
+                        && D.notes[i].parent == A.notes[i].parent && D.notes[i].probability == A.notes[i].probability;
+        CHECK(sameNotes);
+        CHECK(D.masks.size() == D.notes.size());
+        for (const auto& m : D.masks)
+            CHECK(m.partials.empty());
+        const auto R = polyphonic::restore(x.data(), static_cast<int>(x.size()), params, D.notes);
+        bool sameMasks = R.masks.size() == A.masks.size();
+        for (size_t i = 0; sameMasks && i < A.masks.size(); ++i)
+        {
+            sameMasks = R.masks[i].weights == A.masks[i].weights && R.masks[i].partials.size() == A.masks[i].partials.size();
+            for (size_t q = 0; sameMasks && q < A.masks[i].partials.size(); ++q)
+            {
+                const auto& a = A.masks[i].partials[q];
+                const auto& r = R.masks[i].partials[q];
+                sameMasks = a.frame == r.frame && a.harmonic == r.harmonic && a.lo == r.lo && a.count == r.count
+                            && a.weightOffset == r.weightOffset && a.freqHz == r.freqHz && a.amplitude == r.amplitude;
+            }
+        }
+        CHECK(sameMasks);
+        // the estimated levels against the masks' (as PolyphonicTake's noteLevelsFromMasks): same
+        // layout, and close where the note sounds
+        CHECK(levels.size() == A.notes.size());
+        double worstDb = 0.0;
+        for (size_t i = 0; i < A.notes.size(); ++i)
+        {
+            const auto& n = A.notes[i];
+            if (!n.active)
+            {
+                CHECK(levels[i].empty());
+                continue;
+            }
+            CHECK(static_cast<int>(levels[i].size()) == n.numFrames());
+            std::vector<double> energy(static_cast<size_t>(n.numFrames()), 0.0);
+            for (const auto& pm : A.masks[i].partials)
+                if (pm.frame >= n.startFrame && pm.frame <= n.endFrame)
+                    energy[static_cast<size_t>(pm.frame - n.startFrame)] += static_cast<double>(pm.amplitude) * pm.amplitude;
+            double sumModel = 0.0, sumEstimate = 0.0;
+            for (size_t k = 0; k < energy.size(); ++k)
+            {
+                sumModel += std::sqrt(energy[k]);
+                sumEstimate += levels[i][k];
+            }
+            if (sumModel > 0.0)
+                worstDb = std::max(worstDb, std::fabs(db(sumEstimate / sumModel)));
+        }
+        std::printf("detect + restore: %zu notes and their masks identical to analyze(); estimated levels within %.1f dB of the masks'\n",
+                    A.notes.size(), worstDb);
+        CHECK(worstDb < 6.0);
+    }
+
+    // ---- 21. evidence delivered when needed (EvidenceSource): asked for once, the same result as
+    //          passing it at the start; guided without evidence falls back to harmonic ----
+    {
+        std::vector<float> x(static_cast<size_t>(3.0 * kRate), 0.0f);
+        addTone(x, midiToHz(52), 0.1, 2.5, 0.2);
+        addTone(x, midiToHz(59), 0.4, 2.0, 0.15);
+        addTone(x, midiToHz(64), 1.0, 1.5, 0.12);
+        // a posteriorgram that knows the three keys (frames every 256 samples at 22.05 kHz)
+        polyphonic::NoteEvidence ev;
+        for (int f = 0; f < static_cast<int>(3.0 * 22050 / 256); ++f)
+        {
+            const float sec = static_cast<float>(f * 256.0 / 22050.0);
+            ev.frameTimes.push_back(sec);
+            for (int key = 0; key < 88; ++key)
+            {
+                const int midi = key + 21;
+                const bool on = (midi == 52 && sec > 0.1f && sec < 2.6f) || (midi == 59 && sec > 0.4f && sec < 2.4f)
+                                || (midi == 64 && sec > 1.0f && sec < 2.5f);
+                ev.note.push_back(on ? 0.9f : 0.02f);
+            }
+        }
+        auto same = [](const polyphonic::Analysis& a, const polyphonic::Analysis& b) {
+            if (a.notes.size() != b.notes.size() || a.masks.size() != b.masks.size()
+                || a.params.detectionMode != b.params.detectionMode)
+                return false;
+            for (size_t i = 0; i < a.notes.size(); ++i)
+                if (a.notes[i].startFrame != b.notes[i].startFrame || a.notes[i].f0 != b.notes[i].f0
+                    || a.notes[i].probability != b.notes[i].probability || a.notes[i].active != b.notes[i].active)
+                    return false;
+            for (size_t i = 0; i < a.masks.size(); ++i)
+                if (a.masks[i].weights != b.masks[i].weights)
+                    return false;
+            return true;
+        };
+        for (const auto mode : { polyphonic::DetectionMode::Harmonic, polyphonic::DetectionMode::NeuralGuided })
+        {
+            auto pm = params;
+            pm.detectionMode = mode;
+            const auto direct = polyphonic::analyze(x.data(), static_cast<int>(x.size()), pm, &ev);
+            int calls = 0;
+            const auto lazy = polyphonic::analyze(x.data(), static_cast<int>(x.size()), pm,
+                                                  polyphonic::EvidenceSource([&] { ++calls; return &ev; }));
+            CHECK(calls == 1);
+            CHECK(same(direct, lazy));
+            CHECK(lazy.params.detectionMode == mode);
+        }
+        // guided, but the evidence did not come: the harmonic analysis
+        auto guided = params;
+        guided.detectionMode = polyphonic::DetectionMode::NeuralGuided;
+        const polyphonic::NoteEvidence none;
+        const auto fallback = polyphonic::analyze(x.data(), static_cast<int>(x.size()), guided,
+                                                  polyphonic::EvidenceSource([&] { return &none; }));
+        const auto harmonic = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        CHECK(fallback.params.detectionMode == polyphonic::DetectionMode::Harmonic);
+        CHECK(same(fallback, harmonic));
+        std::printf("evidence when needed: asked once, same result in both modes; guided without it = harmonic\n");
+    }
+
     std::printf("PolyphonicTests passed\n");
     return 0;
 }

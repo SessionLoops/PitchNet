@@ -5,6 +5,7 @@
 #include "PolyInternal.h"
 
 #include <numeric>
+#include <type_traits>
 
 namespace polyphonic
 {
@@ -138,132 +139,176 @@ std::vector<Band> whiteningBands(const std::vector<double>& cb, const Params& p,
 void analyzeSpectra(Context& ctx, const std::atomic<bool>* cancel)
 {
     const Params& p = ctx.p;
-    StftFrames frames(ctx.audio, ctx.numSamples, p);
-    const int T = frames.numFrames(), K = frames.numBins();
+    int T = 0, K = 0;
+    {
+        StftFrames frames(ctx.audio, ctx.numSamples, p);
+        T = frames.numFrames();
+        K = frames.numBins();
+    }
     ctx.numFrames = T;
     ctx.numBins = K;
     const double binHz = p.sampleRate / p.fftSize;
 
     const auto cb = whiteningCentres(p);
     const auto bands = whiteningBands(cb, p, K);
-    std::vector<float> gamma(cb.size()), gains(static_cast<size_t>(K));
-
-    std::vector<std::complex<float>> cur(static_cast<size_t>(K)), nxt(static_cast<size_t>(K)), prev(static_cast<size_t>(K));
-    std::vector<float> mag(static_cast<size_t>(K)), noise(static_cast<size_t>(K)), IF(static_cast<size_t>(K)), scratch;
-
-    Peaks& pk = ctx.peaks;
-    pk = Peaks{};
-    pk.frameStart.assign(static_cast<size_t>(T) + 1, 0);
     const float absThr = std::pow(10.0f, p.peakAbsDb / 20.0f);
     const float relFactor = std::pow(10.0f, p.peakRelDb / 20.0f);
     const float overNoise = std::pow(10.0f, p.peakOverNoiseDb / 20.0f);
     const float ifScale = static_cast<float>(p.fftSize / (2.0 * kPi * p.hop));
 
-    frames.spectrum(0, cur.data());
-    if (T > 1)
-        frames.spectrum(1, nxt.data());
-    for (int t = 0; t < T; ++t)
-    {
-        if (cancel && cancel->load())
+    // Each frame depends only on its own spectrum and its neighbours', so the frames are worked
+    // out in chunks on all cores and their peaks put together in frame order: the same peaks as
+    // one pass over the frames.
+    constexpr int kChunkFrames = 256;
+    const int numChunks = std::max(1, (T + kChunkFrames - 1) / kChunkFrames);
+    std::vector<Peaks> chunks(static_cast<size_t>(numChunks));
+    parallelFor(numChunks, [&](int chunk) {
+        const int t0 = chunk * kChunkFrames, t1 = std::min(T, t0 + kChunkFrames);
+        if (t1 <= t0 || (cancel && cancel->load()))
             return;
-        if (t > 0)
-        {
-            prev.swap(cur);
-            cur.swap(nxt);
-            if (t + 1 < T)
-                frames.spectrum(t + 1, nxt.data());
-        }
-        // instantaneous frequency from the phase advance (frame 0 uses frames 0 -> 1)
-        const auto& a = (t == 0) ? cur : prev;
-        const auto& b = (t == 0) ? (T > 1 ? nxt : cur) : cur;
-        for (int k = 0; k < K; ++k)
-        {
-            mag[static_cast<size_t>(k)] = std::abs(cur[static_cast<size_t>(k)]);
-            const float expected = static_cast<float>(2.0 * kPi * k * p.hop / p.fftSize);
-            const float dphi = (t == 0 && T <= 1) ? 0.0f : std::arg(b[static_cast<size_t>(k)]) - std::arg(a[static_cast<size_t>(k)]);
-            IF[static_cast<size_t>(k)] = static_cast<float>(k) + princarg(dphi - expected) * ifScale;
-        }
-        medianRow(mag.data(), K, p.noiseMedianBins, noise.data(), scratch);
+        StftFrames frames(ctx.audio, ctx.numSamples, p);
+        std::vector<float> gamma(cb.size()), gains(static_cast<size_t>(K));
+        std::vector<std::complex<float>> cur(static_cast<size_t>(K)), nxt(static_cast<size_t>(K)), prev(static_cast<size_t>(K));
+        std::vector<float> mag(static_cast<size_t>(K)), noise(static_cast<size_t>(K)), IF(static_cast<size_t>(K)), scratch;
+        Peaks& pk = chunks[static_cast<size_t>(chunk)];
+        pk.frameStart.assign(static_cast<size_t>(t1 - t0) + 1, 0);
 
-        // whitening gains
-        if (p.whitenNu < 1.0f)
+        // the spectra around the first frame, as one pass would have them there
+        if (t0 > 0)
+            frames.spectrum(t0 - 1, prev.data());
+        frames.spectrum(t0, cur.data());
+        if (t0 + 1 < T)
+            frames.spectrum(t0 + 1, nxt.data());
+        for (int t = t0; t < t1; ++t)
         {
-            for (size_t q = 0; q < bands.size(); ++q)
+            if (cancel && cancel->load())
+                return;
+            if (t > t0)
             {
-                double s = 0.0;
-                for (size_t j = 0; j < bands[q].w.size(); ++j)
-                {
-                    const float m = mag[static_cast<size_t>(bands[q].k0) + j];
-                    s += bands[q].w[j] * static_cast<double>(m) * m;
-                }
-                const double sigma = std::sqrt(s / std::max(1e-9, static_cast<double>(bands[q].sum)));
-                gamma[q] = static_cast<float>(std::pow(sigma + 1e-7, p.whitenNu - 1.0));
+                prev.swap(cur);
+                cur.swap(nxt);
+                if (t + 1 < T)
+                    frames.spectrum(t + 1, nxt.data());
             }
-            size_t q = 0;
+            // instantaneous frequency from the phase advance (frame 0 uses frames 0 -> 1)
+            const auto& a = (t == 0) ? cur : prev;
+            const auto& b = (t == 0) ? (T > 1 ? nxt : cur) : cur;
             for (int k = 0; k < K; ++k)
             {
-                const double f = k * binHz;
-                if (f <= cb.front()) { gains[static_cast<size_t>(k)] = gamma.front(); continue; }
-                if (f >= cb.back()) { gains[static_cast<size_t>(k)] = gamma.back(); continue; }
-                while (q + 1 < cb.size() && cb[q + 1] < f)
-                    ++q;
-                const double u = (f - cb[q]) / (cb[q + 1] - cb[q]);
-                gains[static_cast<size_t>(k)] = static_cast<float>(gamma[q] * (1.0 - u) + gamma[q + 1] * u);
+                mag[static_cast<size_t>(k)] = std::abs(cur[static_cast<size_t>(k)]);
+                const float expected = static_cast<float>(2.0 * kPi * k * p.hop / p.fftSize);
+                const float dphi = (t == 0 && T <= 1) ? 0.0f : std::arg(b[static_cast<size_t>(k)]) - std::arg(a[static_cast<size_t>(k)]);
+                IF[static_cast<size_t>(k)] = static_cast<float>(k) + princarg(dphi - expected) * ifScale;
             }
-        }
-        else
-        {
-            std::fill(gains.begin(), gains.end(), 1.0f);
-        }
+            medianRow(mag.data(), K, p.noiseMedianBins, noise.data(), scratch);
 
-        // peaks
-        pk.frameStart[static_cast<size_t>(t)] = static_cast<int>(pk.bin.size());
-        float frameMax = 0.0f;
-        for (int k = 0; k < K; ++k)
-            frameMax = std::max(frameMax, mag[static_cast<size_t>(k)]);
-        const float thr = std::max(absThr, frameMax * relFactor);
-        for (int k = 2; k < K - 2; ++k)
-        {
-            const float v = mag[static_cast<size_t>(k)];
-            if (!(v > mag[static_cast<size_t>(k - 1)] && v >= mag[static_cast<size_t>(k + 1)] && v > mag[static_cast<size_t>(k - 2)] && v >= mag[static_cast<size_t>(k + 2)]))
-                continue;
-            if (!(v > thr) || !(v > noise[static_cast<size_t>(k)] * overNoise))
-                continue;
-            const float la = std::log(mag[static_cast<size_t>(k - 1)] + 1e-12f), lb = std::log(v + 1e-12f), lc = std::log(mag[static_cast<size_t>(k + 1)] + 1e-12f);
-            const float den = la - 2.0f * lb + lc;
-            float d = std::fabs(den) > 1e-12f ? 0.5f * (la - lc) / den : 0.0f;
-            d = std::clamp(d, -0.5f, 0.5f);
-            const float amp = std::exp(lb - 0.25f * (la - lc) * d);
-            const float fif = IF[static_cast<size_t>(k)];
-            const float fbin = std::fabs(fif - k) <= 1.0f ? fif : k + d;
-            const float dev = std::max(std::fabs(IF[static_cast<size_t>(k - 1)] - fif), std::fabs(IF[static_cast<size_t>(k + 1)] - fif));
-            const float ton = std::exp(-(dev / p.tonalDevBins) * (dev / p.tonalDevBins));
-            pk.bin.push_back(k);
-            pk.fbin.push_back(fbin);
-            pk.amp.push_back(amp);
-            pk.tonality.push_back(ton);
-            pk.wamp.push_back(amp * gains[static_cast<size_t>(k)]);
-        }
-        // keep each frame's peaks sorted by refined frequency for binary search
-        {
-            const int b0 = pk.frameStart[static_cast<size_t>(t)], b1 = static_cast<int>(pk.bin.size());
-            bool sorted = true;
-            for (int j = b0 + 1; j < b1 && sorted; ++j)
-                sorted = pk.fbin[static_cast<size_t>(j - 1)] <= pk.fbin[static_cast<size_t>(j)];
-            if (!sorted)
+            // whitening gains
+            if (p.whitenNu < 1.0f)
             {
-                std::vector<int> o(static_cast<size_t>(b1 - b0));
-                for (int j = 0; j < b1 - b0; ++j)
-                    o[static_cast<size_t>(j)] = b0 + j;
-                std::stable_sort(o.begin(), o.end(), [&](int x, int y) { return pk.fbin[static_cast<size_t>(x)] < pk.fbin[static_cast<size_t>(y)]; });
-                auto permute = [&](auto& v) {
-                    auto copy = v;
+                for (size_t q = 0; q < bands.size(); ++q)
+                {
+                    double s = 0.0;
+                    for (size_t j = 0; j < bands[q].w.size(); ++j)
+                    {
+                        const float m = mag[static_cast<size_t>(bands[q].k0) + j];
+                        s += bands[q].w[j] * static_cast<double>(m) * m;
+                    }
+                    const double sigma = std::sqrt(s / std::max(1e-9, static_cast<double>(bands[q].sum)));
+                    gamma[q] = static_cast<float>(std::pow(sigma + 1e-7, p.whitenNu - 1.0));
+                }
+                size_t q = 0;
+                for (int k = 0; k < K; ++k)
+                {
+                    const double f = k * binHz;
+                    if (f <= cb.front()) { gains[static_cast<size_t>(k)] = gamma.front(); continue; }
+                    if (f >= cb.back()) { gains[static_cast<size_t>(k)] = gamma.back(); continue; }
+                    while (q + 1 < cb.size() && cb[q + 1] < f)
+                        ++q;
+                    const double u = (f - cb[q]) / (cb[q + 1] - cb[q]);
+                    gains[static_cast<size_t>(k)] = static_cast<float>(gamma[q] * (1.0 - u) + gamma[q + 1] * u);
+                }
+            }
+            else
+            {
+                std::fill(gains.begin(), gains.end(), 1.0f);
+            }
+
+            // peaks
+            pk.frameStart[static_cast<size_t>(t - t0)] = static_cast<int>(pk.bin.size());
+            float frameMax = 0.0f;
+            for (int k = 0; k < K; ++k)
+                frameMax = std::max(frameMax, mag[static_cast<size_t>(k)]);
+            const float thr = std::max(absThr, frameMax * relFactor);
+            for (int k = 2; k < K - 2; ++k)
+            {
+                const float v = mag[static_cast<size_t>(k)];
+                if (!(v > mag[static_cast<size_t>(k - 1)] && v >= mag[static_cast<size_t>(k + 1)] && v > mag[static_cast<size_t>(k - 2)] && v >= mag[static_cast<size_t>(k + 2)]))
+                    continue;
+                if (!(v > thr) || !(v > noise[static_cast<size_t>(k)] * overNoise))
+                    continue;
+                const float la = std::log(mag[static_cast<size_t>(k - 1)] + 1e-12f), lb = std::log(v + 1e-12f), lc = std::log(mag[static_cast<size_t>(k + 1)] + 1e-12f);
+                const float den = la - 2.0f * lb + lc;
+                float d = std::fabs(den) > 1e-12f ? 0.5f * (la - lc) / den : 0.0f;
+                d = std::clamp(d, -0.5f, 0.5f);
+                const float amp = std::exp(lb - 0.25f * (la - lc) * d);
+                const float fif = IF[static_cast<size_t>(k)];
+                const float fbin = std::fabs(fif - k) <= 1.0f ? fif : k + d;
+                const float dev = std::max(std::fabs(IF[static_cast<size_t>(k - 1)] - fif), std::fabs(IF[static_cast<size_t>(k + 1)] - fif));
+                const float ton = std::exp(-(dev / p.tonalDevBins) * (dev / p.tonalDevBins));
+                pk.bin.push_back(k);
+                pk.fbin.push_back(fbin);
+                pk.amp.push_back(amp);
+                pk.tonality.push_back(ton);
+                pk.wamp.push_back(amp * gains[static_cast<size_t>(k)]);
+            }
+            // keep each frame's peaks sorted by refined frequency for binary search
+            {
+                const int b0 = pk.frameStart[static_cast<size_t>(t - t0)], b1 = static_cast<int>(pk.bin.size());
+                bool sorted = true;
+                for (int j = b0 + 1; j < b1 && sorted; ++j)
+                    sorted = pk.fbin[static_cast<size_t>(j - 1)] <= pk.fbin[static_cast<size_t>(j)];
+                if (!sorted)
+                {
+                    std::vector<int> o(static_cast<size_t>(b1 - b0));
                     for (int j = 0; j < b1 - b0; ++j)
-                        v[static_cast<size_t>(b0 + j)] = copy[static_cast<size_t>(o[static_cast<size_t>(j)])];
-                };
-                permute(pk.bin); permute(pk.fbin); permute(pk.amp); permute(pk.tonality); permute(pk.wamp);
+                        o[static_cast<size_t>(j)] = b0 + j;
+                    std::stable_sort(o.begin(), o.end(), [&](int x, int y) { return pk.fbin[static_cast<size_t>(x)] < pk.fbin[static_cast<size_t>(y)]; });
+                    // only this frame's peaks are copied (copying the whole list made this quadratic)
+                    auto permute = [&](auto& v) {
+                        const std::vector<typename std::decay_t<decltype(v)>::value_type> copy(v.begin() + b0, v.begin() + b1);
+                        for (int j = 0; j < b1 - b0; ++j)
+                            v[static_cast<size_t>(b0 + j)] = copy[static_cast<size_t>(o[static_cast<size_t>(j)] - b0)];
+                    };
+                    permute(pk.bin); permute(pk.fbin); permute(pk.amp); permute(pk.tonality); permute(pk.wamp);
+                }
             }
         }
+        pk.frameStart[static_cast<size_t>(t1 - t0)] = static_cast<int>(pk.bin.size());
+    });
+    if (cancel && cancel->load())
+        return;
+
+    Peaks& pk = ctx.peaks;
+    pk = Peaks{};
+    pk.frameStart.assign(static_cast<size_t>(T) + 1, 0);
+    size_t total = 0;
+    for (const auto& c : chunks)
+        total += c.bin.size();
+    for (auto* v : { &pk.fbin, &pk.amp, &pk.tonality, &pk.wamp })
+        v->reserve(total);
+    pk.bin.reserve(total);
+    for (int chunk = 0; chunk < numChunks; ++chunk)
+    {
+        const auto& c = chunks[static_cast<size_t>(chunk)];
+        const int t0 = chunk * kChunkFrames;
+        const int offset = static_cast<int>(pk.bin.size());
+        for (size_t j = 0; j + 1 < c.frameStart.size(); ++j)
+            pk.frameStart[static_cast<size_t>(t0) + j] = offset + c.frameStart[j];
+        pk.bin.insert(pk.bin.end(), c.bin.begin(), c.bin.end());
+        pk.fbin.insert(pk.fbin.end(), c.fbin.begin(), c.fbin.end());
+        pk.amp.insert(pk.amp.end(), c.amp.begin(), c.amp.end());
+        pk.tonality.insert(pk.tonality.end(), c.tonality.begin(), c.tonality.end());
+        pk.wamp.insert(pk.wamp.end(), c.wamp.begin(), c.wamp.end());
     }
     pk.frameStart[static_cast<size_t>(T)] = static_cast<int>(pk.bin.size());
 }

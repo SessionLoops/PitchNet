@@ -271,11 +271,37 @@ StretchMap stretchMap(const Analysis& analysis, int note, const NoteEdit& edit);
 
 using Progress = std::function<void(float)>;
 
+/**
+ * Note evidence delivered when the analysis gets to it: called at most once, from the analysing
+ * thread, at the point the evidence is first needed (after the spectra in neural-guided mode,
+ * otherwise after the candidate search), so the evidence can be computed alongside the analysis
+ * up to there. May return null or empty evidence: neural-guided analysis then falls back to the
+ * harmonic search, as without evidence (the result's params say which mode was used).
+ */
+using EvidenceSource = std::function<const NoteEvidence*()>;
+
 /** Analyse mono audio. Returns notes, candidates, masks. */
 Analysis analyze(const float* mono, int numSamples, const Params& params,
                  const NoteEvidence* evidence = nullptr,
                  const std::atomic<bool>* cancel = nullptr,
                  const Progress& progress = {});
+Analysis analyze(const float* mono, int numSamples, const Params& params, const EvidenceSource& evidence,
+                 const std::atomic<bool>* cancel = nullptr, const Progress& progress = {});
+
+/**
+ * analyze() without the sound model: the notes (active and candidates, exactly those analyze()
+ * finds), with empty masks, in about two thirds of the time. For showing and editing the notes
+ * at once while restore() builds the masks in the background from these notes; together they
+ * give analyze()'s result. `levels`, when given, gets each note's level per frame as
+ * PolyphonicTake's noteLevelsFromMasks() lays it out, estimated from the spectral peaks at its
+ * partials until the masks give the model's (empty for inactive notes). `progress` runs to 1.
+ */
+Analysis detect(const float* mono, int numSamples, const Params& params,
+                const NoteEvidence* evidence = nullptr, const std::atomic<bool>* cancel = nullptr,
+                const Progress& progress = {}, std::vector<std::vector<float>>* levels = nullptr);
+Analysis detect(const float* mono, int numSamples, const Params& params, const EvidenceSource& evidence,
+                const std::atomic<bool>* cancel = nullptr, const Progress& progress = {},
+                std::vector<std::vector<float>>* levels = nullptr);
 
 /**
  * Rebuild an analysis from its notes without detecting notes again, e.g. when a saved project

@@ -6,11 +6,16 @@
 #include "PolyFFT.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
 #include <complex>
+#include <exception>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace polyphonic
@@ -19,6 +24,52 @@ namespace detail
 {
 
 constexpr double kPi = 3.14159265358979323846;
+
+/**
+ * fn(i) for every i in [0, n), on up to one thread per core (the calling thread is one of them).
+ * The calls must not depend on each other; whatever combines their results afterwards does so in
+ * index order, so the outcome does not depend on the number of threads. `done(count)`, when
+ * given, runs on the calling thread after each call it made, with how many calls have finished.
+ * An exception from fn stops the remaining calls and is rethrown here.
+ */
+template <typename Fn>
+void parallelFor(int n, Fn&& fn, const std::function<void(int)>& done = {})
+{
+    if (n <= 0)
+        return;
+    const int threads = std::max(1, std::min(n, static_cast<int>(std::thread::hardware_concurrency())));
+    std::atomic<int> next{0}, finished{0};
+    std::exception_ptr error;
+    std::mutex errorMutex;
+    auto work = [&](bool caller) {
+        for (int i = next++; i < n; i = next++)
+        {
+            try
+            {
+                fn(i);
+            }
+            catch (...)
+            {
+                const std::lock_guard<std::mutex> lock(errorMutex);
+                if (!error)
+                    error = std::current_exception();
+                next = n;
+            }
+            const int count = ++finished;
+            if (caller && done)
+                done(count);
+        }
+    };
+    std::vector<std::thread> pool;
+    pool.reserve(static_cast<size_t>(threads - 1));
+    for (int k = 1; k < threads; ++k)
+        pool.emplace_back(work, false);
+    work(true);
+    for (auto& t : pool)
+        t.join();
+    if (error)
+        std::rethrow_exception(error);
+}
 
 /**
  * STFT frames computed on demand (nothing frame-sized is stored for the whole signal).

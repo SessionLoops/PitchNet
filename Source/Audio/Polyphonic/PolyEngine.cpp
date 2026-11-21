@@ -5,41 +5,64 @@
 namespace polyphonic
 {
 
-Analysis analyze(const float* mono, int numSamples, const Params& params, const NoteEvidence* evidence,
-                 const std::atomic<bool>* cancel, const Progress& progress)
+namespace
+{
+/**
+ * analyze() up to its notes: spectra, candidates, scoring, merging. Fills out's notes (and
+ * numFrames, numBins) and `active`, the active notes as buildMasks takes them. `report` gets the
+ * share done of the whole analysis (up to 0.65, where the masks start).
+ */
+bool detectNotes(detail::Context& ctx, const float* mono, int numSamples, const Params& params,
+                 const EvidenceSource& evidenceSource, const std::atomic<bool>* cancel,
+                 const std::function<void(float)>& report, Analysis& out, std::vector<detail::Candidate>& active)
 {
     using namespace detail;
-    Analysis out;
-    out.params = params;
-    out.numSamples = numSamples;
-    if (mono == nullptr || numSamples <= 0)
-        return out;
-    auto report = [&](float v) { if (progress) progress(v); };
     auto cancelled = [&] { return cancel != nullptr && cancel->load(); };
-
-    Context ctx;
     ctx.p = params;
-    ctx.evidence = params.detectionMode == DetectionMode::NeuralGuided ? evidence : nullptr;
     ctx.audio = mono;
     ctx.numSamples = numSamples;
     analyzeSpectra(ctx, cancel);
-    if (cancelled()) return out;
+    if (cancelled()) return false;
     out.numFrames = ctx.numFrames;
     out.numBins = ctx.numBins;
     report(0.2f);
 
+    // The evidence is asked for only where it is first needed, so whatever computes it can run
+    // meanwhile: the candidate search needs it when guided, otherwise only the scoring does.
+    // Guided without evidence falls back to the harmonic search (and its threshold).
+    const NoteEvidence* evidence = nullptr;
+    bool asked = false;
+    auto getEvidence = [&]() {
+        if (!asked && evidenceSource)
+            evidence = evidenceSource();
+        asked = true;
+        if (evidence != nullptr && evidence->empty())
+            evidence = nullptr;
+        return evidence;
+    };
+    if (ctx.p.detectionMode == DetectionMode::NeuralGuided)
+    {
+        ctx.evidence = getEvidence();
+        if (ctx.evidence == nullptr)
+            ctx.p.detectionMode = DetectionMode::Harmonic;
+        out.params.detectionMode = ctx.p.detectionMode;
+        if (cancelled()) return false;
+    }
+
     // note candidates from the harmonic-sum landscape, then the learned real-note/ghost filter
     auto cands = extractCandidates(ctx, cancel);
-    if (cancelled()) return out;
+    if (cancelled()) return false;
     report(0.5f);
     pruneCandidates(ctx, cands);
     refineCandidates(ctx, cands);
     cands = splitReattacks(ctx, cands);
-    scoreCandidates(ctx, cands, evidence, params.exportFeatures ? &out.candidateFeatures : nullptr);
+    scoreCandidates(ctx, cands, getEvidence(), params.exportFeatures ? &out.candidateFeatures : nullptr);
+    if (cancelled()) return false;
     report(0.6f);
 
-    std::vector<Candidate> active, inactive;
-    const float threshold = params.activationThresholdFor(ctx.p.detectionMode);
+    std::vector<Candidate> inactive;
+    active.clear();
+    const float threshold = ctx.p.activationThresholdFor(ctx.p.detectionMode);
     for (auto& c : cands)
         (c.probability >= threshold ? active : inactive).push_back(c);
     active = mergeFragments(ctx, std::move(active));
@@ -88,12 +111,84 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
         }
         out.notes.push_back(std::move(n));
     }
-    if (cancelled()) return out;
+    return !cancelled();
+}
+} // namespace
+
+
+Analysis analyze(const float* mono, int numSamples, const Params& params, const NoteEvidence* evidence,
+                 const std::atomic<bool>* cancel, const Progress& progress)
+{
+    return analyze(mono, numSamples, params, EvidenceSource([evidence] { return evidence; }), cancel, progress);
+}
+
+Analysis analyze(const float* mono, int numSamples, const Params& params, const EvidenceSource& evidence,
+                 const std::atomic<bool>* cancel, const Progress& progress)
+{
+    using namespace detail;
+    Analysis out;
+    out.params = params;
+    out.numSamples = numSamples;
+    if (mono == nullptr || numSamples <= 0)
+        return out;
+    auto report = [&](float v) { if (progress) progress(v); };
+    Context ctx;
+    std::vector<Candidate> active;
+    if (!detectNotes(ctx, mono, numSamples, params, evidence, cancel, report, out, active))
+        return out;
 
     // The sound model is about the last third of the time; report it as it goes.
     report(0.65f);
     buildMasks(ctx, active, out, [&](float done) { report(0.65f + 0.35f * done); });
     report(1.0f);
+    return out;
+}
+
+Analysis detect(const float* mono, int numSamples, const Params& params, const NoteEvidence* evidence,
+                const std::atomic<bool>* cancel, const Progress& progress,
+                std::vector<std::vector<float>>* levels)
+{
+    return detect(mono, numSamples, params, EvidenceSource([evidence] { return evidence; }), cancel, progress, levels);
+}
+
+Analysis detect(const float* mono, int numSamples, const Params& params, const EvidenceSource& evidence,
+                const std::atomic<bool>* cancel, const Progress& progress,
+                std::vector<std::vector<float>>* levels)
+{
+    using namespace detail;
+    Analysis out;
+    out.params = params;
+    out.numSamples = numSamples;
+    if (mono == nullptr || numSamples <= 0)
+        return out;
+    // the notes are the whole job here: their part of the analysis is reported as all of it
+    auto report = [&](float v) { if (progress) progress(std::min(1.0f, v / 0.65f)); };
+    Context ctx;
+    std::vector<Candidate> active;
+    if (!detectNotes(ctx, mono, numSamples, params, evidence, cancel, report, out, active))
+        return out;
+    out.masks.assign(out.notes.size(), {});
+    if (levels != nullptr)
+    {
+        // until the masks are built: each partial's spectral peak in place of its model amplitude
+        levels->assign(out.notes.size(), {});
+        for (size_t i = 0; i < active.size() && i < out.notes.size(); ++i)
+        {
+            const auto& c = active[i];
+            const auto env = partialEnvelopes(ctx, c, params.nmfHarmonics, c.start, c.end);
+            auto& level = (*levels)[i];
+            level.assign(static_cast<size_t>(std::max(1, c.end - c.start + 1)), 0.0f);
+            for (size_t k = 0; k < level.size(); ++k)
+            {
+                double energy = 0.0;
+                for (const auto& h : env)
+                    if (k < h.size())
+                        energy += static_cast<double>(h[k]) * h[k];
+                level[k] = static_cast<float>(std::sqrt(energy));
+            }
+        }
+    }
+    report(0.65f);
     return out;
 }
 

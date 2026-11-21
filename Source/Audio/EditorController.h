@@ -92,6 +92,13 @@ public:
   // Polyphonic takes run the polyphonic engine instead of the vocal pipeline.
   // Off by default; the standalone app turns it on. The plug-in follows in M5
   // (docs/polyphonic-integration-plan.md), until then it analyses as vocal.
+  // A polyphonic analysis hands over its notes as soon as they are found, as a
+  // restoring take with a pending restore (the notes drawn and editable at
+  // once), and leaves the masks to restorePolyphonicAsync, as when a saved
+  // project is opened. The caller must then start that restore. Off: the take
+  // comes with its masks (the plug-in, which restores its own way).
+  void setDeferPolyphonicMasks(bool defer) { deferPolyphonicMasks = defer; }
+
   void setPolyphonicAnalysisEnabled(bool enabled)
   {
     polyphonicAnalysisEnabled = enabled;
@@ -287,6 +294,7 @@ private:
 
   std::atomic<bool> shuttingDown{false};
   bool polyphonicAnalysisEnabled = false;
+  bool deferPolyphonicMasks = false;
   std::atomic<bool> isReloadingModels{false};
   std::mutex modelLoadMutex;
   std::mutex reloadRequestMutex;

@@ -405,7 +405,18 @@ instrument-family or source-recording holdout.
   82 % of found notes start within 50 ms of the truth; slow attacks and notes
   that enter on another note's partial are the outliers. Masks start 3 frames
   before the onset anyway.
-- **Offline.** Analysis takes about one seventh of real time on a modest CPU;
+- **Offline.** Analysis takes about one seventh of real time on a modest CPU
+  with one core; spectra, candidate blocks and mask blocks run on all cores
+  (`parallelFor`, merged in block order, so the result does not depend on the
+  number of cores). `detect()` gives the notes without masks in about two
+  thirds of that, and `restore()` builds the masks from them later (exactly
+  `analyze()`'s). The standalone app shows a new take's notes after
+  `detect()` and builds its masks in the background, as for a reopened
+  project; the plug-in still analyses in one go. Basic Pitch runs on its own
+  thread (half the cores) alongside the spectra and, in Harmonic mode, the
+  candidate search: the engine asks for its evidence (`EvidenceSource`) only
+  where it first needs it, the scoring (Guided: the search; with no
+  evidence Guided falls back to Harmonic);
   rendering is fast enough to re-render an edited passage interactively.
 - **DSP-only mode** works but mistakes more ghosts for notes and misses more
   real ones; the Basic Pitch

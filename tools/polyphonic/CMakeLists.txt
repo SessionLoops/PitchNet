@@ -20,6 +20,9 @@ file(GLOB POLYPHONIC_SOURCES CONFIGURE_DEPENDS "${POLYPHONIC_DIR}/*.cpp" "${POLY
 
 add_library(polyphonic STATIC ${POLYPHONIC_SOURCES})
 target_include_directories(polyphonic PUBLIC "${POLYPHONIC_DIR}")
+# the analysis runs its blocks on all cores (parallelFor in PolyInternal.h)
+find_package(Threads REQUIRED)
+target_link_libraries(polyphonic PUBLIC Threads::Threads)
 
 set(ONNXRUNTIME_DIR "" CACHE PATH "ONNX Runtime release directory (include/ and lib/) for Basic Pitch evidence")
 if(ONNXRUNTIME_DIR)

@@ -655,6 +655,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
     ownedEditorController = std::make_unique<EditorController>(true);
     editorController = ownedEditorController.get();
     editorController->setPolyphonicAnalysisEnabled(true);
+    // A polyphonic take's notes show as soon as they are found; its masks
+    // follow in the background (restorePolyphonicTake after each analysis).
+    editorController->setDeferPolyphonicMasks(true);
     if (auto *project = editorController->getProject())
       project->setTimelineDisplayMode(TimelineDisplayMode::Time);
 
@@ -2277,6 +2280,8 @@ void MainComponent::analyzeAudio()
         safeThis->pianoRollView.setProject(&projectRef);
         safeThis->fitAnalyzedPitchRangeToView(projectRef);
         safeThis->pianoRoll.repaint();
+        // a polyphonic take's masks, in the background
+        safeThis->restorePolyphonicTake();
 
         // Analysis may have fallen back to CPU inference and taken the
         // synthesis engine with it. Keep the Synthesis card showing whatever
@@ -2466,6 +2471,8 @@ void MainComponent::reanalyzeTake(const AnalysisModeState &next)
         safeThis->fitAnalyzedPitchRangeToView(*project);
         safeThis->notifyProjectDataChanged();
         safeThis->repaint();
+        // a polyphonic take's masks, in the background
+        safeThis->restorePolyphonicTake();
       });
 }
 

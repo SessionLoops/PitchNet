@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 #ifdef HAVE_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
@@ -42,7 +43,9 @@ bool BasicPitchEvidence::load(const std::filesystem::path& modelPath)
         impl->env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "PitchNet-BasicPitch");
         Ort::SessionOptions options;
         options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-        options.SetIntraOpNumThreads(2);
+        // Half the cores (at least two): it runs alongside the analysis, which
+        // takes the other half meanwhile.
+        options.SetIntraOpNumThreads(static_cast<int>(std::max(2u, std::thread::hardware_concurrency() / 2)));
         impl->session = std::make_unique<Ort::Session>(*impl->env, modelPath.c_str(), options);
         return true;
     }

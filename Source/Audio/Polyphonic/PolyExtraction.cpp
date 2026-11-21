@@ -392,7 +392,15 @@ namespace
 // Iterative estimation and cancellation over frames [lo, hi). Crests whose maximum lies in the core
 // [coreLo, coreHi) become (or merge into) note candidates; crests found in the margins are only
 // withdrawn - the neighbouring block owns them.
-void extractBlock(Context& ctx, int lo, int hi, int coreLo, int coreHi, std::vector<Candidate>& notes,
+/** A crest found in a block, to be merged into the notes (mergeOrAdd) in the order found. */
+struct ExtractedCrest
+{
+    std::vector<int> ts, cs;
+    std::vector<float> strength;
+    double energy = 0.0;
+};
+
+void extractBlock(Context& ctx, int lo, int hi, int coreLo, int coreHi, std::vector<ExtractedCrest>& crests,
                   const std::atomic<bool>* cancel)
 {
     const Params& p = ctx.p;
@@ -499,10 +507,14 @@ void extractBlock(Context& ctx, int lo, int hi, int coreLo, int coreHi, std::vec
         }
         if (lo + t0 < coreLo || lo + t0 >= coreHi)
             continue;
-        std::vector<int> tg(cr.t);
-        for (auto& t : tg)
+        ExtractedCrest found;
+        found.ts = cr.t;
+        for (auto& t : found.ts)
             t += lo;
-        mergeOrAdd(notes, tg, cField, strength, took, p);
+        found.cs = std::move(cField);
+        found.strength = std::move(strength);
+        found.energy = took;
+        crests.push_back(std::move(found));
     }
 }
 } // namespace
@@ -516,16 +528,32 @@ std::vector<Candidate> extractCandidates(Context& ctx, const std::atomic<bool>* 
     ctx.r0max.assign(static_cast<size_t>(T), 0.0f);
     const int core = std::max(64, static_cast<int>(std::lround(15.0 * p.sampleRate / p.hop)));
     const int margin = static_cast<int>(std::lround(2.5 * p.sampleRate / p.hop));
-    std::vector<Candidate> notes;
+    std::vector<std::pair<int, int>> blocks;   // cores [start, end)
     for (int start = 0; start < T; start += core)
     {
         int end = std::min(T, start + core);
         if (T - end < margin)
             end = T;
-        extractBlock(ctx, std::max(0, start - margin), std::min(T, end + margin), start, end, notes, cancel);
-        if (end == T || (cancel && cancel->load()))
+        blocks.emplace_back(start, end);
+        if (end == T)
             break;
     }
+    // Blocks find their crests independently (each writes r0max only over its own core), on all
+    // cores; the crests then join the notes block by block, in the order one pass would add them.
+    std::vector<std::vector<ExtractedCrest>> found(blocks.size());
+    parallelFor(static_cast<int>(blocks.size()), [&](int b) {
+        if (cancel && cancel->load())
+            return;
+        const auto [start, end] = blocks[static_cast<size_t>(b)];
+        extractBlock(ctx, std::max(0, start - margin), std::min(T, end + margin), start, end,
+                     found[static_cast<size_t>(b)], cancel);
+    });
+    std::vector<Candidate> notes;
+    if (cancel && cancel->load())
+        return notes;
+    for (auto& crests : found)
+        for (auto& c : crests)
+            mergeOrAdd(notes, c.ts, c.cs, c.strength, c.energy, p);
     return notes;
 }
 
