@@ -958,7 +958,7 @@ void PitchNetAudioProcessor::stopPluginPreview() {
 }
 
 void PitchNetAudioProcessor::startPluginAudition(
-    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+    const juce::AudioBuffer<float> &buffer, double sampleRate, bool loop) {
   if (buffer.getNumSamples() <= 0)
     return;
 
@@ -1002,6 +1002,7 @@ void PitchNetAudioProcessor::startPluginAudition(
     }
   }
 
+  pluginAuditionLoopRequested.store(loop);
   std::atomic_store(&pluginAuditionBuffer, std::move(preview));
   pluginPreview.restart.store(true);
   pluginPreview.active.store(true);
@@ -1030,7 +1031,9 @@ bool PitchNetAudioProcessor::processPluginPreview(
     if (audition != activePluginAuditionBuffer) {
       previousPluginAuditionBuffer = activePluginAuditionBuffer;
       previousPluginAuditionCursor = pluginAuditionCursor;
+      previousPluginAuditionLoops = activePluginAuditionLoops;
       activePluginAuditionBuffer = audition;
+      activePluginAuditionLoops = pluginAuditionLoopRequested.load();
       pluginAuditionCursor = 0;
       pluginAuditionTransitionTotal = 4096;
       pluginAuditionTransitionRemaining =
@@ -1050,8 +1053,11 @@ bool PitchNetAudioProcessor::processPluginPreview(
                              : std::min(numChannels, sourceChannels);
 
     auto renderLoopSample = [](const juce::AudioBuffer<float> &source,
-                               juce::int64 cursor, int channel) {
+                               juce::int64 cursor, int channel, bool loop) {
       const int length = source.getNumSamples();
+      if (!loop) // played once: silence after the end
+        return cursor < length ? source.getSample(channel, static_cast<int>(cursor))
+                               : 0.0f;
       const int overlap = std::min(8192, std::max(1, length / 2));
       const int overlapStart = length - overlap;
       const int position = static_cast<int>(cursor);
@@ -1065,8 +1071,13 @@ bool PitchNetAudioProcessor::processPluginPreview(
       return value;
     };
     auto advanceLoopCursor = [](const juce::AudioBuffer<float> &source,
-                                juce::int64 &cursor) {
+                                juce::int64 &cursor, bool loop) {
       const int length = source.getNumSamples();
+      if (!loop) {
+        if (cursor < length)
+          ++cursor;
+        return;
+      }
       const int overlap = std::min(8192, std::max(1, length / 2));
       if (++cursor >= length)
         cursor -= length - overlap;
@@ -1076,7 +1087,8 @@ bool PitchNetAudioProcessor::processPluginPreview(
       for (int ch = 0; ch < channels; ++ch) {
         const int sourceChannel = sourceChannels == 1 ? 0 : ch;
         float value = renderLoopSample(*activePluginAuditionBuffer,
-                                       pluginAuditionCursor, sourceChannel);
+                                       pluginAuditionCursor, sourceChannel,
+                                       activePluginAuditionLoops);
         if (pluginAuditionTransitionRemaining > 0 &&
             previousPluginAuditionBuffer &&
             (previousPluginAuditionBuffer->getNumChannels() == 1 ||
@@ -1085,7 +1097,7 @@ bool PitchNetAudioProcessor::processPluginPreview(
               previousPluginAuditionBuffer->getNumChannels() == 1 ? 0 : ch;
           const float oldValue = renderLoopSample(
               *previousPluginAuditionBuffer, previousPluginAuditionCursor,
-              previousSourceChannel);
+              previousSourceChannel, previousPluginAuditionLoops);
           const float t = 1.0f - static_cast<float>(pluginAuditionTransitionRemaining) /
                                       static_cast<float>(pluginAuditionTransitionTotal);
           value = oldValue * std::cos(t * juce::MathConstants<float>::halfPi) +
@@ -1093,10 +1105,12 @@ bool PitchNetAudioProcessor::processPluginPreview(
         }
         buffer.setSample(ch, sample, value);
       }
-      advanceLoopCursor(*activePluginAuditionBuffer, pluginAuditionCursor);
+      advanceLoopCursor(*activePluginAuditionBuffer, pluginAuditionCursor,
+                        activePluginAuditionLoops);
       if (pluginAuditionTransitionRemaining > 0 && previousPluginAuditionBuffer)
         advanceLoopCursor(*previousPluginAuditionBuffer,
-                          previousPluginAuditionCursor);
+                          previousPluginAuditionCursor,
+                          previousPluginAuditionLoops);
       if (pluginAuditionTransitionRemaining > 0)
         --pluginAuditionTransitionRemaining;
     }

@@ -691,7 +691,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
             safeThis->noteDragAuditionBackendPreviewStarted = true;
           }
           if (safeThis->onRequestDragAudition)
-            safeThis->onRequestDragAudition(preview, auditionSampleRate);
+            safeThis->onRequestDragAudition(preview, auditionSampleRate, true);
           return;
         }
         if (auto *engine = safeThis->editorController->getAudioEngine())
@@ -3288,7 +3288,7 @@ void MainComponent::auditionPianoKey(int midiNote)
     if (auto *project = getProject(); project && onRequestBackendPreview)
       onRequestBackendPreview(*project, 0, 1);
     if (onRequestDragAudition)
-      onRequestDragAudition(tone, sampleRate);
+      onRequestDragAudition(tone, sampleRate, true);
   }
   else if (auto *engine = editorController ? editorController->getAudioEngine()
                                             : nullptr)
@@ -3801,12 +3801,20 @@ void MainComponent::refreshNoteAuditions()
       });
 }
 
-void MainComponent::playPolyphonicAudition(const juce::AudioBuffer<float> &buffer)
+void MainComponent::playPolyphonicAudition(const juce::AudioBuffer<float> &source)
 {
   auto *project = getProject();
-  if (project == nullptr || buffer.getNumSamples() == 0 || !noteDragAuditionActive)
+  if (project == nullptr || source.getNumSamples() == 0 || !noteDragAuditionActive)
     return;
   const double rate = static_cast<double>(std::max(1, project->getAudioData().sampleRate));
+  // Played once, not looped: each new pitch starts the notes again from their
+  // start and they then stop. A short fade-out so a render trimmed mid-sound
+  // does not end on a click.
+  juce::AudioBuffer<float> buffer;
+  buffer.makeCopyOf(source);
+  const int fade = std::min(buffer.getNumSamples(), static_cast<int>(rate * 0.01));
+  if (fade > 0)
+    buffer.applyGainRamp(buffer.getNumSamples() - fade, fade, 1.0f, 0.0f);
   if (isPluginMode())
   {
     // Through the host's preview, as the vocal drag audition: the preview
@@ -3817,11 +3825,11 @@ void MainComponent::playPolyphonicAudition(const juce::AudioBuffer<float> &buffe
       noteDragAuditionBackendPreviewStarted = true;
     }
     if (onRequestDragAudition)
-      onRequestDragAudition(buffer, rate);
+      onRequestDragAudition(buffer, rate, false);
     return;
   }
   if (auto *engine = editorController ? editorController->getAudioEngine() : nullptr)
-    engine->beginAuditionLoop(buffer, rate);
+    engine->beginAuditionLoop(buffer, rate, false);
 }
 
 void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)

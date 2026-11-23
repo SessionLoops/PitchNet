@@ -111,6 +111,8 @@ struct AraPreviewState {
   std::shared_ptr<juce::AudioBuffer<float>> auditionBuffer;
   std::atomic<double> editorRendererSampleRate{0.0};
   std::atomic<bool> auditionActive{false};
+  // Whether auditionBuffer loops or plays once; written before it is stored.
+  std::atomic<bool> auditionLoop{true};
 };
 
 /**
@@ -312,6 +314,8 @@ private:
   juce::int64 previousPreviewLoopPosition = 0;
   int previewTransitionRemaining = 0;
   int previewTransitionTotal = 0;
+  bool previewLoops = true;         // the audition buffer loops (else plays once)
+  bool previousPreviewLoops = true;
   std::uint32_t lastPreviewGeneration = 0;
   // Bumped by configure() once every reader is in place, so a preview that was
   // requested before its reader existed is retried instead of staying silent.
@@ -443,8 +447,9 @@ public:
   // Takes MODIFICATION seconds, matching the Project's coordinate space.
   void startPreviewRange(double previewStartInModificationSeconds,
                          double previewEndInModificationSeconds);
+  // loop=false plays the buffer through once, then silence.
   void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
-                         double sampleRate);
+                         double sampleRate, bool loop = true);
   void stopPreview();
   AraPreviewState &getPreviewState() { return previewState; }
   const AraPreviewState &getPreviewState() const { return previewState; }

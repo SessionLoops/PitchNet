@@ -39,10 +39,12 @@ public:
   void clearLoopRange();
   bool isLoopEnabled() const { return loopEnabled.load(); }
 
-  // Temporary audition source. It loops independently of the project
+  // Temporary audition source. It plays independently of the project
   // transport, so previewing a note never moves the timeline playhead.
+  // loop=false plays the buffer through once and then stays silent until the
+  // next buffer arrives (or endAuditionLoop()).
   void beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
-                         int sampleRate);
+                         int sampleRate, bool loop = true);
   void endAuditionLoop();
   bool isAuditioning() const { return auditionActive.load(); }
 
@@ -107,6 +109,8 @@ private:
   int auditionSampleRate = 44100;
   juce::AudioBuffer<float> previousAuditionWaveform;
   int previousAuditionSampleRate = 44100;
+  bool auditionLooping = true;         // guarded by waveformLock
+  bool previousAuditionLooping = true; // guarded by waveformLock
 
   std::atomic<int64_t> currentPosition{0}; // Position in waveform samples
   std::atomic<int64_t> auditionPosition{0};

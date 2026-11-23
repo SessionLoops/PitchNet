@@ -289,8 +289,9 @@ public:
   // never runs and the ARA preview path handles auditioning instead.
   void startPluginPreview(double startSeconds, double endSeconds);
   void stopPluginPreview();
+  // loop=false plays the buffer through once, then silence.
   void startPluginAudition(const juce::AudioBuffer<float> &buffer,
-                           double sampleRate);
+                           double sampleRate, bool loop = true);
   void stopPluginAudition();
 
   // Non-ARA mode: capture control
@@ -641,6 +642,8 @@ private:
   PluginPreviewState pluginPreview;
   juce::int64 pluginPreviewCursor = 0;
   std::shared_ptr<juce::AudioBuffer<float>> pluginAuditionBuffer;
+  // Whether the published buffer loops; written before the buffer is stored.
+  std::atomic<bool> pluginAuditionLoopRequested{true};
   // Audio-thread-only handoff state for crossfading new audition renders.
   std::shared_ptr<juce::AudioBuffer<float>> activePluginAuditionBuffer;
   std::shared_ptr<juce::AudioBuffer<float>> previousPluginAuditionBuffer;
@@ -648,6 +651,8 @@ private:
   juce::int64 previousPluginAuditionCursor = 0;
   int pluginAuditionTransitionRemaining = 0;
   int pluginAuditionTransitionTotal = 0;
+  bool activePluginAuditionLoops = true;
+  bool previousPluginAuditionLoops = true;
 
   // Plugin state version for forward/backward compatibility
   static constexpr int PLUGIN_STATE_VERSION = 1;

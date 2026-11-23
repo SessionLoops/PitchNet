@@ -127,7 +127,8 @@ void AudioEngine::getNextAudioBlock(
     const int numOutputSamples = bufferToFill.numSamples;
     const int startSample = bufferToFill.startSample;
     auto renderLoopSample = [this](const juce::AudioBuffer<float> &waveform,
-                                   int sampleRate, double &position) {
+                                   int sampleRate, double &position,
+                                   bool loop) {
       const int sampleCount = waveform.getNumSamples();
       const int overlap = std::min(8192, std::max(1, sampleCount / 2));
       const double overlapStart = static_cast<double>(sampleCount - overlap);
@@ -144,6 +145,15 @@ void AudioEngine::getNextAudioBlock(
         const auto *data = waveform.getReadPointer(0);
         return data[left] + fraction * (data[right] - data[left]);
       };
+
+      if (!loop) {
+        // Played once: silence after the end, no wrap.
+        if (position >= static_cast<double>(sampleCount))
+          return 0.0f;
+        const float value = sampleAt(position);
+        position += sampleRatio;
+        return value;
+      }
 
       float value = sampleAt(position);
       if (position >= overlapStart) {
@@ -166,14 +176,15 @@ void AudioEngine::getNextAudioBlock(
     const int transitionTotal = auditionTransitionSamplesTotal.load();
     for (int i = 0; i < numOutputSamples; ++i) {
       float value = renderLoopSample(auditionWaveform, auditionSampleRate,
-                                     position);
+                                     position, auditionLooping);
       if (transitionRemaining > 0 && transitionTotal > 0 &&
           previousAuditionWaveform.getNumSamples() > 0) {
         const float t = 1.0f - static_cast<float>(transitionRemaining) /
                                     static_cast<float>(transitionTotal);
         const float oldValue = renderLoopSample(previousAuditionWaveform,
                                                 previousAuditionSampleRate,
-                                                previousPosition);
+                                                previousPosition,
+                                                previousAuditionLooping);
         value = oldValue * std::cos(t * juce::MathConstants<float>::halfPi) +
                 value * std::sin(t * juce::MathConstants<float>::halfPi);
         --transitionRemaining;
@@ -533,7 +544,7 @@ void AudioEngine::clearLoopRange() {
 }
 
 void AudioEngine::beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
-                                    int sampleRate) {
+                                    int sampleRate, bool loop) {
   if (buffer.getNumSamples() <= 0)
     return;
 
@@ -542,6 +553,7 @@ void AudioEngine::beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
   if (auditionActive.load() && auditionWaveform.getNumSamples() > 0) {
     previousAuditionWaveform.makeCopyOf(auditionWaveform);
     previousAuditionSampleRate = auditionSampleRate;
+    previousAuditionLooping = auditionLooping;
     previousAuditionReadPosition.store(auditionReadPosition.load());
     auditionTransitionSamplesTotal.store(kTransitionSamples);
     auditionTransitionSamplesRemaining.store(kTransitionSamples);
@@ -552,6 +564,7 @@ void AudioEngine::beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
   }
   auditionWaveform.makeCopyOf(buffer);
   auditionSampleRate = sampleRate > 0 ? sampleRate : waveformSampleRate;
+  auditionLooping = loop;
   auditionPosition.store(0);
   auditionReadPosition.store(0.0);
   auditionActive.store(true);

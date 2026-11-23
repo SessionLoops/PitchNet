@@ -180,7 +180,7 @@ public:
     onStopBackendPreview = std::move(callback);
   }
   void setOnRequestDragAudition(
-      std::function<void(const juce::AudioBuffer<float> &, double)> callback) override {
+      std::function<void(const juce::AudioBuffer<float> &, double, bool)> callback) override {
     onRequestDragAudition = std::move(callback);
   }
   void setOnStopDragAudition(std::function<void()> callback) override {
@@ -272,7 +272,7 @@ public:
   void confirmReanalysis(const juce::String &message, std::function<void(bool)> onAnswer);
   std::function<void(const Project &, int, int)> onRequestBackendPreview;
   std::function<void()> onStopBackendPreview;
-  std::function<void(const juce::AudioBuffer<float> &, double)> onRequestDragAudition;
+  std::function<void(const juce::AudioBuffer<float> &, double, bool)> onRequestDragAudition;
   std::function<void()> onStopDragAudition;
 
   // Plugin mode - request host transport control (optional; only works if host
