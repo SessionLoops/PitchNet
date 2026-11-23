@@ -578,9 +578,9 @@ What is missing is the product around it:
 
 ## Note assignment mode
 
-Melodyne's Note Assignment Mode, for polyphonic takes. The toggle sits in the
-toolbar where vocal takes have the pitch macro (icon
-`Resources/images/assign.png`). Following Melodyne, the mode edits the
+Melodyne's Note Assignment Mode, for polyphonic takes. The toggle sits in a
+small capsule of its own just right of the toolbar's centre one, beside the
+tools and slider it brings up (icon `Resources/images/assign.png`). Following Melodyne, the mode edits the
 detection, not the sound:
 
 - **What is shown.** The take as analysed: notes at their detected pitch,

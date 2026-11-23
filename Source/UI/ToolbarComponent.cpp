@@ -220,6 +220,13 @@ void ToolbarComponent::paint(juce::Graphics &g)
         g.setColour(juce::Colour(0xFF191818u));
         g.fillRoundedRectangle(toolContainerBounds.toFloat(), 8.0f);
     }
+
+    // The note assignment toggle's capsule, right of the centre one.
+    if (!assignCapsuleBounds.isEmpty())
+    {
+        g.setColour(juce::Colour(0xFF191818u));
+        g.fillRoundedRectangle(assignCapsuleBounds.toFloat(), 8.0f);
+    }
 }
 
 void ToolbarComponent::resized()
@@ -280,13 +287,14 @@ void ToolbarComponent::resized()
                              rightButtonSize, rightButtonSize);
 
     // The pitch macro corrects vocal notes' pitch curves: a polyphonic take
-    // has none, and its place goes to the note assignment toggle.
+    // has none, so it has no button (the key moves up to the next icon).
     quantizeButton.setVisible(editToolsVisible);
-    noteAssignButton.setBounds(quantizeButton.getBounds());
-    noteAssignButton.setVisible(!editToolsVisible);
     const int scaleButtonWidth = scaleSelectionButton.getPreferredWidth();
     constexpr int scaleQuantizeGap = 11;
-    const int scaleRight = quantizeButton.getX() - scaleQuantizeGap;
+    // The same gap to whichever icon is next to it.
+    const int scaleRight = (editToolsVisible ? quantizeButton.getX()
+                                             : auditionButton.getX()) -
+                           scaleQuantizeGap;
     scaleSelectionButton.setBounds(
         scaleRight - scaleButtonWidth,
         capsuleY + (capsuleH - 26) / 2,
@@ -313,10 +321,31 @@ void ToolbarComponent::resized()
     // Split tools (split and merge notes) and the note assignment slider
     // instead of the selection's Note / Cent / Level.
     const bool assigning = !editToolsVisible && noteAssignButton.getToggleState();
+    const auto modeArea = toolContainerBounds;
     selectionBar.setVisible(!editToolsVisible && !assigning);
-    selectionBar.setBounds(toolContainerBounds);
+    selectionBar.setBounds(modeArea);
+    // The note assignment toggle (polyphonic takes): a capsule of its own just
+    // right of the centre one, beside the tools and slider it brings up, in the
+    // same place in every product (the left of the centre is the crowded half:
+    // logo and transport).
+    noteAssignButton.setVisible(!editToolsVisible);
+    if (!editToolsVisible)
+    {
+        constexpr int capsuleGap = 6;
+        constexpr int capsuleWidth = 38;
+        assignCapsuleBounds = {toolContainerBounds.getRight() + capsuleGap,
+                               toolContainerBounds.getY(), capsuleWidth,
+                               toolContainerBounds.getHeight()};
+        noteAssignButton.setBounds(assignCapsuleBounds.getCentreX() - rightButtonSize / 2,
+                                   assignCapsuleBounds.getCentreY() - rightButtonSize / 2,
+                                   rightButtonSize, rightButtonSize);
+    }
+    else
+    {
+        assignCapsuleBounds = {};
+    }
     candidateSlider.setVisible(assigning);
-    int editToolX = toolContainerBounds.getX() + editToolPad;
+    int editToolX = modeArea.getX() + editToolPad;
 
     selectModeButton.setVisible(editToolsVisible || assigning);
     selectModeButton.setBounds(editToolX,
@@ -332,10 +361,9 @@ void ToolbarComponent::resized()
     {
         constexpr int toolsToSlider = 10;
         candidateSlider.setBounds(juce::Rectangle<int>(
-            editToolX - editToolGap + toolsToSlider, toolContainerBounds.getY(),
-            toolContainerBounds.getRight() - editToolPad -
-                (editToolX - editToolGap + toolsToSlider),
-            toolContainerBounds.getHeight()));
+            editToolX - editToolGap + toolsToSlider, modeArea.getY(),
+            modeArea.getRight() - editToolPad - (editToolX - editToolGap + toolsToSlider),
+            modeArea.getHeight()));
     }
     pitchDrawingModeButton.setVisible(editToolsVisible);
     pitchDrawingModeButton.setBounds(editToolX,

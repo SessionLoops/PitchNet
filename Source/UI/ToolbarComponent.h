@@ -191,6 +191,7 @@ private:
     bool trackViewAvailable = false;
     void refreshTrackViewTooltip();
     juce::Rectangle<int> toolContainerBounds;    // For drawing container background
+    juce::Rectangle<int> assignCapsuleBounds;    // The note assignment toggle's capsule
     juce::Rectangle<int> transportCapsuleBounds; // For drawing transport capsule background
     juce::Rectangle<int> leftPanelCapsuleBounds; // For drawing the left-panel group background
     juce::Rectangle<int> timeCapsuleBounds;      // For drawing centered time capsule
