@@ -264,6 +264,13 @@ public:
   std::function<void(const std::vector<int> &)> onPolyphonicDragAudition;
   std::function<void()> onPolyphonicDragFinished;
   std::function<void()> onPolyphonicSelectionChanged;
+  // Note assignment changed the take's notes (polyphonicassignment::apply,
+  // also on undo and redo): its masks have to be rebuilt.
+  std::function<void()> onPolyphonicAssignmentChanged;
+  // Note assignment mode: what a held note or candidate plays changed
+  // (PolyphonicNoteLayer::getAssignmentAudition); ends with
+  // onPolyphonicDragFinished.
+  std::function<void()> onPolyphonicAssignmentAudition;
   std::function<void()> onNoteDragAuditionFinished;
   std::function<void(int midiNote)> onPianoKeyAudition;
   std::function<void()> onPianoKeyAuditionFinished;
@@ -443,6 +450,14 @@ public:
     repaint();
   }
   PolyphonicNoteLayer &getPolyphonicLayer() { return *polyphonicLayer; }
+  /** Note assignment mode for a polyphonic take (Melodyne's): the take as
+   *  analysed, with its candidates, and gestures that edit the detection. */
+  void setPolyphonicAssignmentMode(bool enabled)
+  {
+    polyphonicLayer->setAssignmentMode(enabled);
+    repaint();
+  }
+  bool isPolyphonicAssignmentMode() const { return polyphonicLayer->isAssignmentMode(); }
   /** The take's length changed (a polyphonic render grew or shrank it). */
   void refreshTimelineExtent()
   {

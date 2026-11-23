@@ -11,6 +11,13 @@
 #pragma once
 #include "../JuceHeader.h"
 
+#include <vector>
+
+/** The frames of a vertical sprite strip of `count` equal bands, each copied
+ *  into an image of its own: drawn scaled, a frame cannot pick up pixels of
+ *  its neighbours (sampling a band of the whole strip reads across its edges). */
+std::vector<juce::Image> splitSpriteFrames(const juce::Image &strip, int count);
+
 class Button : public juce::TextButton
 {
 public:
@@ -21,6 +28,7 @@ public:
     void setTextPosition(int x, int y);
 private:
     juce::Image image;
+    std::vector<juce::Image> frames; // normal, hover, down/disabled
     int textX, textY;
 };
 
@@ -34,4 +42,5 @@ public:
     void setImage(juce::Image img);
 private:
     juce::Image image;
+    std::vector<juce::Image> frames; // off, off hover, on, on hover
 };

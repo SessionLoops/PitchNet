@@ -7,6 +7,45 @@ namespace polyphonic
 
 namespace
 {
+/** A note as the candidate the analysis helpers take. */
+detail::Candidate candidateOf(const Note& n)
+{
+    detail::Candidate c;
+    c.start = n.startFrame;
+    c.end = n.endFrame;
+    c.f0 = n.f0;
+    c.B = n.inharmonicity;
+    c.energy = n.energy;
+    c.probability = n.probability;
+    return c;
+}
+
+/** A candidate's level per frame from the spectral peaks at its partials (the root of their
+ *  summed squared amplitudes), laid out as PolyphonicTake's noteLevelsFromMasks(). */
+std::vector<float> peakLevel(const detail::Context& ctx, const detail::Candidate& c)
+{
+    const auto env = detail::partialEnvelopes(ctx, c, ctx.p.nmfHarmonics, c.start, c.end);
+    std::vector<float> level(static_cast<size_t>(std::max(1, c.end - c.start + 1)), 0.0f);
+    for (size_t k = 0; k < level.size(); ++k)
+    {
+        double energy = 0.0;
+        for (const auto& h : env)
+            if (k < h.size())
+                energy += static_cast<double>(h[k]) * h[k];
+        level[k] = static_cast<float>(std::sqrt(energy));
+    }
+    return level;
+}
+
+/** Analysis::candidateLevels for `out`'s inactive notes (needs the context's spectra). */
+void estimateCandidateLevels(const detail::Context& ctx, Analysis& out)
+{
+    out.candidateLevels.assign(out.notes.size(), {});
+    for (size_t i = 0; i < out.notes.size(); ++i)
+        if (!out.notes[i].active && !out.notes[i].f0.empty())
+            out.candidateLevels[i] = peakLevel(ctx, candidateOf(out.notes[i]));
+}
+
 /**
  * analyze() up to its notes: spectra, candidates, scoring, merging. Fills out's notes (and
  * numFrames, numBins) and `active`, the active notes as buildMasks takes them. `report` gets the
@@ -136,6 +175,7 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
     std::vector<Candidate> active;
     if (!detectNotes(ctx, mono, numSamples, params, evidence, cancel, report, out, active))
         return out;
+    estimateCandidateLevels(ctx, out);
 
     // The sound model is about the last third of the time; report it as it goes.
     report(0.65f);
@@ -168,25 +208,16 @@ Analysis detect(const float* mono, int numSamples, const Params& params, const E
     if (!detectNotes(ctx, mono, numSamples, params, evidence, cancel, report, out, active))
         return out;
     out.masks.assign(out.notes.size(), {});
+    estimateCandidateLevels(ctx, out);
     if (levels != nullptr)
     {
-        // until the masks are built: each partial's spectral peak in place of its model amplitude
+        // until the masks are built: each partial's spectral peak in place of its model amplitude;
+        // the candidates' levels as they are kept anyway
         levels->assign(out.notes.size(), {});
         for (size_t i = 0; i < active.size() && i < out.notes.size(); ++i)
-        {
-            const auto& c = active[i];
-            const auto env = partialEnvelopes(ctx, c, params.nmfHarmonics, c.start, c.end);
-            auto& level = (*levels)[i];
-            level.assign(static_cast<size_t>(std::max(1, c.end - c.start + 1)), 0.0f);
-            for (size_t k = 0; k < level.size(); ++k)
-            {
-                double energy = 0.0;
-                for (const auto& h : env)
-                    if (k < h.size())
-                        energy += static_cast<double>(h[k]) * h[k];
-                level[k] = static_cast<float>(std::sqrt(energy));
-            }
-        }
+            (*levels)[i] = peakLevel(ctx, active[i]);
+        for (size_t i = active.size(); i < out.notes.size(); ++i)
+            (*levels)[i] = out.candidateLevels[i];
     }
     report(0.65f);
     return out;
@@ -214,6 +245,7 @@ Analysis restore(const float* mono, int numSamples, const Params& params, std::v
     if (cancelled()) return out;
     out.numFrames = ctx.numFrames;
     out.numBins = ctx.numBins;
+    estimateCandidateLevels(ctx, out);
     report(0.4f);
 
     // the active notes as the candidates buildMasks takes, in their order; their masks are built

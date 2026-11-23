@@ -4,6 +4,7 @@
 #include "../Utils/AppLogger.h"
 #include "../Undo/AmplitudeAction.h"
 #include "../Undo/GainEditAction.h"
+#include "../Undo/PolyphonicAssignmentAction.h"
 #include "../Audio/BreathNotes.h"
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
@@ -349,6 +350,41 @@ PianoRollComponent::PianoRollComponent()
     if (onPolyphonicSelectionChanged)
       onPolyphonicSelectionChanged();
   };
+  polyphonicLayer->onAssignmentAuditionChanged = [this]() {
+    if (onPolyphonicAssignmentAudition)
+      onPolyphonicAssignmentAudition();
+  };
+  polyphonicLayer->onAssignmentCommitted =
+      [this](const PolyphonicNoteLayer::AssignmentChange &change) {
+        const auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+        if (take == nullptr || take->analysis == nullptr)
+          return;
+        PolyphonicAssignmentAction::State before{take->analysis->notes,
+                                                 project->getPolyphonicEdits(),
+                                                 polyphonicassignment::thresholdOf(*project),
+                                                 noteLevels(*take)};
+        const auto pending = polyphonicassignment::apply(
+            *project, change.notesAfter, change.editsAfter, change.thresholdAfter,
+            change.levelsAfter);
+        if (pending == nullptr)
+          return;
+        PolyphonicAssignmentAction::State after{pending->notes, project->getPolyphonicEdits(),
+                                                change.thresholdAfter, pending->levels};
+        juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+        const auto changed = [safeThis]() {
+          if (safeThis == nullptr)
+            return;
+          safeThis->repaint();
+          if (safeThis->onPolyphonicSelectionChanged)
+            safeThis->onPolyphonicSelectionChanged();
+          if (safeThis->onPolyphonicAssignmentChanged)
+            safeThis->onPolyphonicAssignmentChanged();
+        };
+        if (undoManager)
+          undoManager->addAction(std::make_unique<PolyphonicAssignmentAction>(
+              *project, std::move(before), std::move(after), change.name, changed));
+        changed();
+      };
   previewNoteRenderer->setCoordinateMapper(coordMapper.get());
   previewCurveRenderer->setCoordinateMapper(coordMapper.get());
   previewPolyphonicLayer->setCoordinateMapper(coordMapper.get());
@@ -2465,8 +2501,9 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
           });
       polyphonicLayer->mouseDown(adjustedX, adjustedY, e.mods);
       // Pressing a note (or its end) plays it at once with Live Audition on,
-      // before any drag.
-      if (polyphonicLayer->isDragging() && onPolyphonicDragAudition)
+      // before any drag. (Assignment mode reports its own audition.)
+      if (polyphonicLayer->isDragging() && !polyphonicLayer->isAssignmentMode() &&
+          onPolyphonicDragAudition)
         if (const auto notes = polyphonicLayer->getDraggedNotes(); !notes.empty())
           onPolyphonicDragAudition(notes);
       repaint();
@@ -2694,15 +2731,30 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (isPolyphonicActive())
   {
     loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
+    // Assignment mode highlights the note or candidate under the pointer,
+    // with the note's harmonics and candidates.
+    if (polyphonicLayer->isAssignmentMode() &&
+        polyphonicLayer->setHoverPoint(isCanvasPoint(e)
+                                           ? std::optional<juce::Point<float>>(
+                                                 juce::Point<float>(adjustedX, adjustedY))
+                                           : std::nullopt))
+      repaint();
     // The resize cursor over a note end is how its stretch is found; the
     // note itself does not change (no hover state).
     const bool overEdge = !showZoomCursor && e.y >= headerHeight &&
                           e.x >= pianoKeysWidth &&
                           polyphonicLayer->isOverStretchEdge(adjustedX, adjustedY);
-    setMouseCursor(showZoomCursor ? getMouseCursor()
-                   : loopDragHandler_->isHoveringHandle() || overEdge
-                       ? juce::MouseCursor::LeftRightResizeCursor
-                       : juce::MouseCursor::NormalCursor);
+    // Assignment mode's Split tool: the vocal Split tool's cursors.
+    const bool canvas = !showZoomCursor && isCanvasPoint(e);
+    if (canvas && polyphonicLayer->isOverMergeBoundary())
+      setMouseCursor(mergeMouseCursor);
+    else if (canvas && polyphonicLayer->isOverSplitPoint())
+      setMouseCursor(splitMouseCursor);
+    else
+      setMouseCursor(showZoomCursor ? getMouseCursor()
+                     : loopDragHandler_->isHoveringHandle() || overEdge
+                         ? juce::MouseCursor::LeftRightResizeCursor
+                         : juce::MouseCursor::NormalCursor);
     return;
   }
 
@@ -2909,6 +2961,9 @@ void PianoRollComponent::modifierKeysChanged(
 
 void PianoRollComponent::mouseExit(const juce::MouseEvent &)
 {
+  if (polyphonicLayer->setHoverPoint(std::nullopt))
+    repaint();
+
   if (editMode == EditMode::PitchDrawing && pitchDrawingHandler_)
     pitchDrawingHandler_->clearHover();
 
@@ -4021,6 +4076,8 @@ void PianoRollComponent::setEditMode(EditMode mode)
       timingHandler_)
     timingHandler_->cancel();
   editMode = mode;
+  // Note assignment mode has the Select and Split tools (the others select).
+  polyphonicLayer->setSplitTool(mode == EditMode::Split);
 
   if (mode == EditMode::PitchDrawing)
     setHoveredNote(nullptr);
@@ -4845,14 +4902,23 @@ void PianoRollComponent::showPolyphonicMenu(float worldX, float worldY)
 
   juce::PopupMenu menu;
   menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
-  menu.addItem(1, TR("tooltip.restore_original"), anyEdited);
+  // Assignment mode edits the detection: the selection can be deactivated
+  // (edits are hidden there, so there is nothing to restore).
+  const bool assigning = layer.isAssignmentMode();
+  if (assigning)
+    menu.addItem(2, TR("polyphonic.deactivate_notes"));
+  else
+    menu.addItem(1, TR("tooltip.restore_original"), anyEdited);
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   menu.showMenuAsync(juce::PopupMenu::Options().withDeletionCheck(*this),
                      [safeThis](int result) {
-                       if (safeThis == nullptr || result != 1 ||
+                       if (safeThis == nullptr || result == 0 ||
                            !safeThis->isPolyphonicActive())
                          return;
-                       safeThis->polyphonicLayer->restoreSelection();
+                       if (result == 2)
+                         safeThis->polyphonicLayer->deactivateSelection();
+                       else
+                         safeThis->polyphonicLayer->restoreSelection();
                        safeThis->repaint();
                      });
 }

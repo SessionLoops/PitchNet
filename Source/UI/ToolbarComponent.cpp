@@ -17,6 +17,7 @@ ToolbarComponent::ToolbarComponent()
     stopButton.setImage(loadImage(BinaryData::stop_png, BinaryData::stop_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
     quantizeButton.setImage(loadImage(BinaryData::quantize_png, BinaryData::quantize_pngSize));
+    noteAssignButton.setImage(loadImage(BinaryData::assign_png, BinaryData::assign_pngSize));
     auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
     undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
@@ -45,6 +46,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(followButton);
     addAndMakeVisible(scaleSelectionButton);
     addAndMakeVisible(quantizeButton);
+    addChildComponent(noteAssignButton); // polyphonic takes only
     addAndMakeVisible(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
@@ -62,6 +64,7 @@ ToolbarComponent::ToolbarComponent()
     timingModeButton.addListener(this);
     followButton.addListener(this);
     quantizeButton.addListener(this);
+    noteAssignButton.addListener(this);
     auditionButton.addListener(this);
     undoButton.addListener(this);
     redoButton.addListener(this);
@@ -132,6 +135,9 @@ ToolbarComponent::ToolbarComponent()
     zoomSlider.setColour(juce::Slider::backgroundColourId, APP_COLOR_SURFACE_ALT);
     zoomSlider.setColour(juce::Slider::trackColourId, APP_COLOR_PRIMARY.withAlpha(0.75f));
     zoomSlider.setColour(juce::Slider::thumbColourId, APP_COLOR_PRIMARY);
+
+    // Note assignment: how many candidates are shown (shown in that mode only).
+    addChildComponent(candidateSlider);
 
     // Progress bar (hidden by default)
     addChildComponent(progressBar);
@@ -274,14 +280,13 @@ void ToolbarComponent::resized()
                              rightButtonSize, rightButtonSize);
 
     // The pitch macro corrects vocal notes' pitch curves: a polyphonic take
-    // has none, so it has no button (the key moves up to the next icon).
+    // has none, and its place goes to the note assignment toggle.
     quantizeButton.setVisible(editToolsVisible);
+    noteAssignButton.setBounds(quantizeButton.getBounds());
+    noteAssignButton.setVisible(!editToolsVisible);
     const int scaleButtonWidth = scaleSelectionButton.getPreferredWidth();
     constexpr int scaleQuantizeGap = 11;
-    // The same gap to whichever icon is next to it.
-    const int scaleRight = (editToolsVisible ? quantizeButton.getX()
-                                             : auditionButton.getX()) -
-                           scaleQuantizeGap;
+    const int scaleRight = quantizeButton.getX() - scaleQuantizeGap;
     scaleSelectionButton.setBounds(
         scaleRight - scaleButtonWidth,
         capsuleY + (capsuleH - 26) / 2,
@@ -304,20 +309,34 @@ void ToolbarComponent::resized()
     const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
     toolContainerBounds = {editToolGroupX, editToolGroupY,
                            groupWidth, editToolGroupHeight};
-    selectionBar.setVisible(!editToolsVisible);
+    // Note assignment edits the detection: the capsule holds the Select and
+    // Split tools (split and merge notes) and the note assignment slider
+    // instead of the selection's Note / Cent / Level.
+    const bool assigning = !editToolsVisible && noteAssignButton.getToggleState();
+    selectionBar.setVisible(!editToolsVisible && !assigning);
     selectionBar.setBounds(toolContainerBounds);
+    candidateSlider.setVisible(assigning);
     int editToolX = toolContainerBounds.getX() + editToolPad;
 
-    selectModeButton.setVisible(editToolsVisible);
+    selectModeButton.setVisible(editToolsVisible || assigning);
     selectModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                                editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
-    splitModeButton.setVisible(editToolsVisible);
+    splitModeButton.setVisible(editToolsVisible || assigning);
     splitModeButton.setBounds(editToolX,
                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
                               editToolSlotSize, editToolSlotSize);
     editToolX += editToolSlotSize + editToolGap;
+    if (assigning)
+    {
+        constexpr int toolsToSlider = 10;
+        candidateSlider.setBounds(juce::Rectangle<int>(
+            editToolX - editToolGap + toolsToSlider, toolContainerBounds.getY(),
+            toolContainerBounds.getRight() - editToolPad -
+                (editToolX - editToolGap + toolsToSlider),
+            toolContainerBounds.getHeight()));
+    }
     pitchDrawingModeButton.setVisible(editToolsVisible);
     pitchDrawingModeButton.setBounds(editToolX,
                                toolContainerBounds.getCentreY() - editToolSlotSize / 2,
@@ -409,6 +428,8 @@ void ToolbarComponent::refreshLocalisedText()
     timingModeButton.setTooltip(TR("tooltip.timing_tool"));
     followButton.setTooltip(TR("tooltip.auto_scroll"));
     quantizeButton.setTooltip(TR("tooltip.quantize_macro"));
+    noteAssignButton.setTooltip(TR("tooltip.note_assignment"));
+    candidateSlider.setTooltips(TR("tooltip.note_threshold"), TR("tooltip.candidate_threshold"));
     auditionButton.setTooltip(TR("tooltip.live_audition"));
     recordButton.setTooltip(TR("tooltip.capture"));
     playButton.setTooltip(TR("toolbar.play"));
@@ -498,6 +519,13 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onCorrectPitchCenter)
             onCorrectPitchCenter();
     }
+    else if (button == &noteAssignButton)
+    {
+        resized();
+        repaint();
+        if (onNoteAssignmentModeChanged)
+            onNoteAssignmentModeChanged(noteAssignButton.getToggleState());
+    }
     else if (button == &undoButton && onUndo)
         onUndo();
     else if (button == &redoButton && onRedo)
@@ -525,6 +553,7 @@ void ToolbarComponent::sliderValueChanged(juce::Slider *slider)
 {
     if (slider == &zoomSlider && onZoomChanged)
         onZoomChanged(static_cast<float>(slider->getValue()));
+
 }
 
 void ToolbarComponent::setPlaying(bool playing)
@@ -628,6 +657,15 @@ void ToolbarComponent::setLoopEnabled(bool enabled)
 {
     loopEnabled = enabled;
     loopButton.setToggleState(loopEnabled, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setNoteAssignmentMode(bool enabled)
+{
+    if (noteAssignButton.getToggleState() == enabled)
+        return;
+    noteAssignButton.setToggleState(enabled, juce::dontSendNotification);
+    resized();
+    repaint();
 }
 
 void ToolbarComponent::setAuditionEnabled(bool enabled)

@@ -46,8 +46,10 @@ struct PolyphonicTake
 
 /**
  * Each note's level per frame, from its startFrame, one value per frame of the
- * note: the root of its partials' summed squared model amplitudes (empty for
- * an inactive note). The piano roll draws a note's width from it and MIDI
+ * note: the root of its partials' summed squared model amplitudes. An inactive
+ * note (a candidate) has no masks: its level is estimated from the spectral
+ * peaks at its partials (Analysis::candidateLevels; empty for an analysis
+ * that has none). The piano roll draws a note's width from it and MIDI
  * export its velocity; a saved project keeps it, so an opened take is drawn
  * exactly before its masks are rebuilt.
  */
@@ -58,7 +60,11 @@ inline std::vector<std::vector<float>> noteLevelsFromMasks(const polyphonic::Ana
     {
         const auto &note = analysis.notes[i];
         if (!note.active)
+        {
+            if (i < analysis.candidateLevels.size())
+                levels[i] = analysis.candidateLevels[i];
             continue;
+        }
         std::vector<double> energy(static_cast<size_t>(std::max(1, note.numFrames())), 0.0);
         for (const auto &partial : analysis.masks[i].partials)
         {

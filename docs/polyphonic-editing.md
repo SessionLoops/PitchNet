@@ -544,9 +544,9 @@ What is missing is the product around it:
    still ends where it did, the volume handle
    sets `gainDb`, delete sets `mute`, and per-frame pitch tools write
    `pitchCurve`.
-   A "note assignment" view can show inactive candidates; activating one needs
-   the masks rebuilt for the new active set (`buildMasks`, a fraction of the
-   analysis time; expose it as a public call when that view is built).
+   **Note assignment mode** (built; see [below](#note-assignment-mode)) shows
+   the inactive candidates and lets the user activate them; the masks for the
+   new active set come from `restore()`, which takes any active set.
 4. **Rendering.** Call `polyphonic::render` from the synthesis worker for a
    polyphonic take instead of the vocoder/PSOLA path; it already handles
    stereo, and frames no edit reaches are copied rather than transformed, so a
@@ -575,6 +575,119 @@ What is missing is the product around it:
    SHA-256 `2c3c1d14…0a0ec`) like the other models, and keep its Apache-2.0
    notice in `THIRD_PARTY_NOTICES.txt`. The engine falls back to DSP-only
    note filtering when the file is absent.
+
+## Note assignment mode
+
+Melodyne's Note Assignment Mode, for polyphonic takes. The toggle sits in the
+toolbar where vocal takes have the pitch macro (icon
+`Resources/images/assign.png`). Following Melodyne, the mode edits the
+detection, not the sound:
+
+- **What is shown.** The take as analysed: notes at their detected pitch,
+  time and length, with no edits (they come back when the mode is left). The
+  canvas is tinted. Every candidate the analysis kept (`Note::active ==
+  false`) is a dashed outline, drawn like a deleted
+  note in edit mode: shaped by its level per frame. Candidates have no masks,
+  so that level is estimated from the spectral peaks at their partials
+  (`Analysis::candidateLevels`, filled by `analyze()`, `detect()` and
+  `restore()`; within 2 dB of the note's own level in test 22) and saved with
+  the take's other levels. Projects saved before this draw candidates as even
+  outlines until reopened takes are rebuilt. Hovering a note, or selecting just one, shows its
+  harmonic series (dotted: partials 2 to 8 above it, /2 and /3 below it) and
+  highlights its candidates: those that overlap it for at least half the
+  shorter one's length and sit within 50 cents of one of its first 8
+  harmonics or subharmonics. (The engine's `parent` alone is not enough: it
+  links a candidate to any harmonic of a note, up to the 30th.) Hovering a
+  candidate highlights it and its `parent`, when that is such a note.
+- **The note assignment slider** (`NoteAssignmentSlider`, in the toolbar's
+  centre capsule in place of Note / Cent / Level; after Melodyne's) has two
+  handles on one track of note-filter probability, on a logistic scale
+  (0.995 at the left, 0.003 just before the right end, then everything). The
+  handles are triangles pointing at the track, so they never cover each other:
+  the ball is the filled one below it (like a solid note), the bracket the
+  outlined one above it (like a dashed candidate), and a press in the lower or
+  upper half of the slider works on that handle, on the handle itself or on
+  the track (the handle jumps there). The track is solid left of the ball
+  (notes), dashed between the two (candidates shown) and dim right of the
+  bracket (hidden); the handle under the pointer is drawn brighter.
+  - **The ball** is the probability a possible note needs to be a note. While
+    it is dragged the piano roll previews the result; let go, every note at or
+    above it is active and every other one a candidate
+    (`polyphonicassignment::notesAtThreshold`), as one undo step and one
+    rebuild. It overrides any assignment made by hand (undo brings that back),
+    and deactivated notes lose their edits. At the detection's own threshold
+    (0.5, guided 0.6; a double-click puts it there) it gives back the detection
+    exactly: merged notes carry their pieces' highest probability (checked in
+    test 22 and on all 13 test recordings). Elsewhere it is an approximation:
+    a lower ball switches on candidate pieces as they are, without the
+    fragment merging and onset refinement the detection did. The threshold is
+    kept in the take's params (`setThreshold`), so undo and the saved project
+    (`activationThreshold`) keep it.
+  - **The bracket**, at the ball or right of it, is the probability a
+    candidate needs to be shown (default 0.05; double-click). The engine keeps
+    4 to 10 times as many candidates as notes, most near 0. A candidate at the
+    same pitch (within half a semitone) as an overlapping note, or as a more
+    probable overlapping candidate, is a fragment of the same sound and is
+    shown once. On the test recordings (DSP-only probabilities) the default
+    leaves about one candidate per note: 84 of 344 for 94 notes
+    (`10-chords-104bpm`), 487 of 2275 for 240 (`08-brahms…-strings`). Hidden
+    candidates cannot be hovered, activated or snapped to.
+- **What is heard** (standalone). The recording as it is; the render is
+  loaded again when the mode is left. The plug-in keeps playing its render
+  through the host.
+- **Live Audition** (when it is on). Holding a note plays its own separated
+  sound, unedited (the drag audition's renders, with no edits). Everything
+  that has no separated sound is heard as a tone instead (`notetone::render`,
+  after Melodyne's monitoring synth: four harmonics along the note's own pitch
+  curve, shaped by its level): a held candidate; a dragged note's snap target
+  (the candidate's pitch curve, or the note's own moved by the harmonic ratio),
+  retriggered each time the target changes; and a note whose masks are still
+  being rebuilt. Letting go stops it, as in edit mode.
+- **Gestures.** Double-click a note to deactivate it (it becomes a
+  candidate), or a candidate to activate it. Delete (or the context menu)
+  deactivates the selection. Drag a note up or down to move it to a
+  candidate it overlaps (within 0.6 semitones of the pointer: the candidate
+  becomes the note, the note its candidate) or to its own harmonic or
+  subharmonic (x2, x3, x4, /2, /3, /4, within 0.5 semitones: its f0 track is
+  scaled). Dropped anywhere else, it springs back. Each change is one undo
+  step (`PolyphonicAssignmentAction`).
+- **Split and merge** (the Split tool; the capsule holds the Select and Split
+  tools in this mode; it always starts with Select, so a first click never
+  splits a note, and leaving it restores the tool the editor had before,
+  which vocal takes share). Hovering
+  a note shows the vocal Split tool's guide and cursor; a click splits it before
+  that frame. Each part keeps at least the engine's shortest note
+  (`Params::minNoteSeconds`). The first part keeps the note's index and the
+  second is appended, so every other note and edit keeps its index; both parts
+  keep the note's probability, share its energy and lose its edit. Only
+  consecutive notes merge: a note that starts on the frame after another ends,
+  with its pitch running on across the joint (within half a semitone), as the
+  parts of a split do (`polyphonicassignment::mergePartner`). Their
+  separations are drawn as lines; hovering one shows the merge cursor and
+  highlights both notes, and a click joins them (pitch curves end to end, the
+  higher probability, the summed energy). The second note leaves the list, so
+  later notes' edits and the candidates' `parent` move down one. Levels are
+  sliced or joined from the old notes, so shapes stay put until the masks are
+  rebuilt, also on undo (`PolyphonicAssignmentAction` keeps both sides'
+  levels). Split parts and a merged note are selected afterwards.
+- **Edits.** A note whose assignment changes (deactivated, or moved to another
+  pitch) loses its edit, as a re-detected note does in Melodyne
+  (`polyphonicassignment::editsFor`). Other notes keep theirs: notes keep
+  their order, so edits stay keyed by index.
+- **Masks.** Each change makes the project's take a restoring take with the
+  new notes and a pending restore (`polyphonicassignment::apply`), exactly as
+  for an opened project: drawn and editable at once, rendering nothing yet.
+  `MainComponent::rebuildPolyphonicAssignment` runs `polyphonic::restore` on
+  the take's own channels in the background (standalone and plug-in alike). A
+  newer change cancels the rebuild in flight. When the rebuild lands, the take
+  and its edits are rendered again. Until then a just-activated candidate is
+  drawn at its estimated level, a deactivated note at its old one, and a note
+  moved to another octave or harmonic keeps the shape it had. A clip left while it rebuilds is rebuilt when it is shown again.
+  The new notes are saved with the project (the restoring take's notes).
+- **Limits.** Reassigning needs the take's channels, so it does nothing in
+  the first seconds after a saved project is opened, until its own restore
+  has landed. There is no note separation tool (starting points) and no
+  assignment slider.
 
 ## Reproducing and retraining
 

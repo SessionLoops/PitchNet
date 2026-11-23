@@ -6,6 +6,7 @@
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Audio/Polyphonic/PolyTempo.h"
+#include "../Models/PolyphonicAssignment.h"
 #include "../Models/PolyphonicMidi.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Models/ProjectTimelineOffset.h"
@@ -17,6 +18,7 @@
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "../Utils/PlatformPaths.h"
 #include "../Utils/SHA256Utils.h"
+#include "../Utils/NoteTone.h"
 #include "../Utils/UI/WindowSizing.h"
 #include "BinaryData.h"
 #include <algorithm>
@@ -873,6 +875,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
+    // Note assignment is for polyphonic takes only; a take reassigned and
+    // then left (another ARA clip shown) has its masks rebuilt when it is back.
+    if (polyphonicAssignmentMode && (project == nullptr || !project->isPolyphonic()))
+      setPolyphonicAssignmentMode(false, false);
+    syncNoteAssignmentSlider();
+    rebuildPolyphonicAssignment();
     // Live Audition follows the kind of take: on by default for polyphonic.
     if (settingsManager)
     {
@@ -1059,6 +1067,57 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     pianoRollView.showPitchCenterPopup();
   };
+  toolbar.onNoteAssignmentModeChanged = [this](bool enabled)
+  {
+    setPolyphonicAssignmentMode(enabled);
+  };
+  {
+    // The note assignment slider: the bracket shows candidates, the ball
+    // decides which possible notes are notes (previewed while dragged,
+    // committed as one step when let go).
+    auto &slider = toolbar.getNoteAssignmentSlider();
+    pianoRoll.getPolyphonicLayer().setCandidateThreshold(slider.getBracket());
+    slider.onBracketChanged = [this](float probability)
+    {
+      pianoRoll.getPolyphonicLayer().setCandidateThreshold(probability);
+      pianoRoll.repaint();
+    };
+    slider.onBallDragging = [this](float probability)
+    {
+      if (!pianoRoll.isPolyphonicActive() || !polyphonicAssignmentMode)
+        return;
+      pianoRoll.getPolyphonicLayer().setThresholdPreview(probability);
+      pianoRoll.repaint();
+    };
+    slider.onBallChanged = [this](float probability)
+    {
+      auto &layer = pianoRoll.getPolyphonicLayer();
+      if (!pianoRoll.isPolyphonicActive() || !polyphonicAssignmentMode)
+      {
+        layer.setThresholdPreview(std::nullopt);
+        return;
+      }
+      layer.commitThreshold(probability);
+      pianoRoll.repaint();
+      syncNoteAssignmentSlider(); // also when nothing changed
+    };
+  }
+  pianoRoll.onPolyphonicAssignmentChanged = [this]()
+  {
+    if (auto *project = getProject())
+      if (const auto pending = project->getPendingPolyphonicRestore())
+      {
+        assignmentRestores.erase(
+            std::remove_if(assignmentRestores.begin(), assignmentRestores.end(),
+                           [](const auto &weak) { return weak.expired(); }),
+            assignmentRestores.end());
+        assignmentRestores.push_back(pending);
+      }
+    pianoRollView.refreshOverview();
+    syncNoteAssignmentSlider(); // undo / redo put the ball back
+    notifyProjectDataChanged(); // the plug-in's state keeps the new notes
+    rebuildPolyphonicAssignment();
+  };
   toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
                              undoManager && undoManager->canRedo());
 
@@ -1133,6 +1192,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
     // for the release.
     refreshPolyphonicSelectionBar();
     auditionPolyphonicNotes(notes);
+  };
+  pianoRoll.onPolyphonicAssignmentAudition = [this]()
+  {
+    auditionAssignment();
   };
   pianoRoll.onPolyphonicDragFinished = [this]()
   {
@@ -1617,6 +1680,11 @@ bool MainComponent::isInferenceBusy() const
 
 MainComponent::~MainComponent()
 {
+  // A note-assignment rebuild in flight stops at once (the pool waits for it).
+  if (assignmentRebuildCancel)
+    assignmentRebuildCancel->store(true);
+  assignmentRebuildPool.reset();
+
   // Finish the network worker before JUCE tears down its networking state.
   stoppingUpdateCheck.store(true);
   if (updateRequest != nullptr)
@@ -3886,6 +3954,69 @@ void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)
   updatePolyphonicAudition();
 }
 
+void MainComponent::auditionAssignment()
+{
+  if (!dragAuditionEnabled || editorController == nullptr || !pianoRoll.isPolyphonicActive())
+    return;
+  auto *project = getProject();
+  const auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  if (take == nullptr || take->analysis == nullptr)
+    return;
+  const auto audition = pianoRoll.getPolyphonicLayer().getAssignmentAudition();
+  if (audition.note < 0)
+    return;
+
+  const auto &analysis = *take->analysis;
+  const int frames = audition.separated
+                         ? analysis.notes[static_cast<size_t>(audition.note)].numFrames()
+                         : static_cast<int>(audition.f0.size());
+  const int startFrame = audition.separated
+                             ? analysis.notes[static_cast<size_t>(audition.note)].startFrame
+                             : audition.startFrame;
+  if (!noteDragAuditionActive)
+  {
+    noteDragAuditionActive = true;
+    noteDragAuditionBackendPreviewStarted = false;
+    polyphonicAudition.played = false;
+    if (!isPluginMode())
+    {
+      auto *engine = editorController->getAudioEngine();
+      if (engine == nullptr)
+      {
+        noteDragAuditionActive = false;
+        return;
+      }
+      noteDragAuditionWasPlaying = engine->isPlaying();
+      noteDragAuditionReturnTime = engine->getPosition();
+    }
+    // The plug-in's preview range: where the note sits (host frames).
+    const double framesPerSecond =
+        static_cast<double>(std::max(1, project->getAudioData().sampleRate)) / HOP_SIZE;
+    noteDragAuditionStartFrame = std::max(
+        0, static_cast<int>(std::floor(analysis.frameToSeconds(startFrame) * framesPerSecond)));
+    noteDragAuditionEndFrame = std::max(
+        noteDragAuditionStartFrame + 1,
+        static_cast<int>(std::ceil(analysis.frameToSeconds(startFrame + frames) * framesPerSecond)));
+  }
+
+  if (audition.separated)
+  {
+    // The note's own sound: the drag audition's renders (no edits here).
+    polyphonicAudition.played = false;
+    updatePolyphonicAudition();
+    return;
+  }
+  // A tone along the pitch it stands for, at the take's rate.
+  const auto tone = notetone::render(audition.f0, audition.level, analysis.params.sampleRate,
+                                     analysis.params.hop);
+  if (tone.empty())
+    return;
+  juce::AudioBuffer<float> buffer(1, static_cast<int>(tone.size()));
+  buffer.copyFrom(0, 0, tone.data(), static_cast<int>(tone.size()));
+  polyphonicAudition.played = false; // back on the note itself, it plays again
+  playPolyphonicAudition(buffer);
+}
+
 void MainComponent::renderPolyphonicEdits(bool showProgress)
 {
   if (editorController == nullptr)
@@ -3925,7 +4056,10 @@ void MainComponent::renderPolyphonicEdits(bool showProgress)
     auto *project = safeThis->getProject();
     if (!rendered || project == nullptr)
       return;
-    if (auto *engine = safeThis->editorController->getAudioEngine())
+    // In note assignment mode the recording itself plays; the render is
+    // loaded when the mode is left.
+    if (auto *engine = safeThis->editorController->getAudioEngine();
+        engine != nullptr && !safeThis->polyphonicAssignmentMode)
       engine->loadWaveform(project->getPlaybackBuffer(),
                            project->getAudioData().sampleRate, true);
     // A note lengthened past the end makes the take longer (and undoing it
@@ -3935,6 +4069,151 @@ void MainComponent::renderPolyphonicEdits(bool showProgress)
     safeThis->pianoRoll.refreshTimelineExtent();
     safeThis->pianoRollView.refreshOverview();
   });
+}
+
+void MainComponent::setPolyphonicAssignmentMode(bool enabled, bool reloadPlayback)
+{
+  auto *project = getProject();
+  if (enabled && (project == nullptr || !project->isPolyphonic()))
+    enabled = false;
+  toolbar.setNoteAssignmentMode(enabled);
+  if (enabled == polyphonicAssignmentMode)
+    return;
+  polyphonicAssignmentMode = enabled;
+  pianoRoll.setPolyphonicAssignmentMode(enabled);
+  // Its tools are Select and Split (split and merge notes). It always starts
+  // with Select, so a first click never splits a note, and gives the editor
+  // back the tool it had (shared with vocal takes) when it is left.
+  if (enabled)
+  {
+    editModeBeforeAssignment = pianoRoll.getEditMode();
+    setEditMode(EditMode::Select);
+  }
+  else if (editModeBeforeAssignment)
+  {
+    setEditMode(*editModeBeforeAssignment);
+    editModeBeforeAssignment.reset();
+  }
+  // The toolbar's Note / Cent / Level edit notes, not their detection.
+  toolbar.getPolyphonicSelectionBar().setEnabled(!enabled);
+
+  // What is heard follows what is shown (standalone; the plug-in keeps
+  // playing its render through the host): the recording as it is while
+  // assigning, the render again afterwards.
+  if (reloadPlayback && project != nullptr && !isPluginMode() && editorController != nullptr)
+    if (auto *engine = editorController->getAudioEngine())
+    {
+      const auto take = project->getPolyphonicTake();
+      if (enabled && take != nullptr && take->source.getNumSamples() > 0)
+        engine->loadWaveform(take->source,
+                             static_cast<int>(std::lround(take->sourceRate)), true);
+      else
+        engine->loadWaveform(project->getPlaybackBuffer(),
+                             project->getAudioData().sampleRate, true);
+    }
+  syncNoteAssignmentSlider();
+  refreshPolyphonicSelectionBar();
+  pianoRollView.refreshOverview();
+}
+
+void MainComponent::syncNoteAssignmentSlider()
+{
+  auto &slider = toolbar.getNoteAssignmentSlider();
+  const auto *project = getProject();
+  const auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  if (take == nullptr || take->analysis == nullptr)
+    return;
+  const auto &params = take->analysis->params;
+  slider.setDefaultBall(polyphonic::Params{}.activationThresholdFor(params.detectionMode));
+  slider.setBall(polyphonicassignment::thresholdOf(params));
+  pianoRoll.getPolyphonicLayer().setCandidateThreshold(slider.getBracket());
+}
+
+void MainComponent::rebuildPolyphonicAssignment()
+{
+  auto *project = getProject();
+  const auto pending = project != nullptr ? project->getPendingPolyphonicRestore() : nullptr;
+  const auto take = project != nullptr ? project->getPolyphonicTake() : nullptr;
+  if (pending == nullptr || take == nullptr || !take->restoring ||
+      take->source.getNumSamples() == 0 || take->sourceRate <= 0.0 ||
+      pending == assignmentRebuildRunning)
+    return;
+  const bool ours = std::any_of(assignmentRestores.begin(), assignmentRestores.end(),
+                                [&](const auto &weak) { return weak.lock() == pending; });
+  if (!ours)
+    return;
+
+  if (assignmentRebuildCancel)
+    assignmentRebuildCancel->store(true);
+  auto cancel = std::make_shared<std::atomic<bool>>(false);
+  assignmentRebuildCancel = cancel;
+  assignmentRebuildRunning = pending;
+  auto source = std::make_shared<juce::AudioBuffer<float>>();
+  source->makeCopyOf(take->source);
+  const double rate = take->sourceRate;
+  if (!assignmentRebuildPool)
+    assignmentRebuildPool = std::make_unique<juce::ThreadPool>(1);
+
+  toolbar.showProgress(TR("progress.assigning_notes"));
+  toolbar.setProgress(-1.0f);
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  const Project *target = project;
+  assignmentRebuildPool->addJob([safeThis, target, pending, source, rate, cancel]() {
+    std::shared_ptr<const PolyphonicTake> restored;
+    try
+    {
+      restored = EditorController::restorePolyphonicTake(*pending, std::move(*source), rate,
+                                                         cancel.get());
+    }
+    catch (const std::exception &e)
+    {
+      AppLogger::log("Note assignment rebuild failed: " + juce::String(e.what()));
+    }
+    catch (...)
+    {
+      AppLogger::log("Note assignment rebuild failed");
+    }
+    if (cancel->load())
+      return;
+    juce::MessageManager::callAsync([safeThis, target, pending, restored, cancel]() {
+      if (safeThis != nullptr && !cancel->load())
+        safeThis->finishPolyphonicAssignmentRebuild(target, pending, restored);
+    });
+  });
+}
+
+void MainComponent::finishPolyphonicAssignmentRebuild(
+    const Project *target, std::shared_ptr<const PolyphonicRestore> pending,
+    std::shared_ptr<const PolyphonicTake> restored)
+{
+  if (assignmentRebuildRunning == pending)
+    assignmentRebuildRunning = nullptr;
+  toolbar.hideProgress();
+  auto *project = getProject();
+  if (project == nullptr || project != target ||
+      project->getPendingPolyphonicRestore() != pending)
+  {
+    // Another clip is shown, or the assignment changed again meanwhile.
+    rebuildPolyphonicAssignment();
+    return;
+  }
+  if (restored == nullptr)
+  {
+    // Drawn from its notes; it renders nothing until reassigned or analysed again.
+    AppLogger::log("Note assignment rebuild did not finish");
+    return;
+  }
+
+  // Edits made meanwhile (and their undo steps) stay: they live in the project.
+  project->setPolyphonicTake(restored);
+  project->setPendingPolyphonicRestore(nullptr);
+  pianoRoll.repaint();
+  pianoRollView.refreshOverview();
+  refreshPolyphonicSelectionBar();
+  notifyProjectDataChanged();
+  // Always rendered: the previous render may hold edits of notes that are no
+  // longer active.
+  renderPolyphonicEdits(false);
 }
 
 void MainComponent::onNoteSelected(Note *note)

@@ -128,12 +128,38 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
   builtFor = analysis;
   shapes.clear();
   shapeIndex.clear();
+  candidateShapes.clear();
+  candidateIndex.clear();
+  hoverNote = -1;
+  splitHover = {};
+  mergeHover = {};
   if (!sameNotes)
   {
     selection.clear();
     drag = Drag::none;
     working.clear();
     before.clear();
+  }
+  if (selectAfterRebuild && analysis)
+  {
+    // A split or merge: its notes are selected (their indices are the new
+    // take's).
+    selection.clear();
+    for (int note : *selectAfterRebuild)
+      if (note >= 0 && note < static_cast<int>(analysis->notes.size()))
+        selection.insert(note);
+    selectAfterRebuild.reset();
+    drag = Drag::none;
+  }
+  if (sameNotes)
+  {
+    // A new assignment of the same notes: notes that are no longer active
+    // leave the selection (only active notes are selected and edited).
+    for (auto it = selection.begin(); it != selection.end();)
+      it = analysis && !analysis->notes[static_cast<size_t>(*it)].active ? selection.erase(it)
+                                                                          : std::next(it);
+    if (drag == Drag::assign)
+      drag = Drag::none;
   }
   if (!analysis)
     return;
@@ -187,6 +213,7 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
     modelPeak = std::max(modelPeak, std::sqrt(total[static_cast<size_t>(f)]));
   }
   const float scale = modelPeak > 0.0 ? mixPeak / static_cast<float>(modelPeak) : 0.0f;
+  std::vector<float> peaks;
   for (auto &shape : shapes)
   {
     for (auto &v : shape.level)
@@ -194,7 +221,27 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
       v = std::min(1.0f, v * scale);
       shape.peakLevel = std::max(shape.peakLevel, v);
     }
+    if (shape.peakLevel > 0.0f)
+      peaks.push_back(shape.peakLevel);
   }
+
+  // A note without a level (none saved), or a candidate without an
+  // estimated one (an older saved project), is drawn at a typical level: a little below the
+  // median note's peak.
+  float fallback = 0.3f;
+  if (!peaks.empty())
+  {
+    std::nth_element(peaks.begin(), peaks.begin() + static_cast<long>(peaks.size() / 2),
+                     peaks.end());
+    fallback = std::max(0.08f, 0.6f * peaks[peaks.size() / 2]);
+  }
+  for (auto &shape : shapes)
+    if (shape.peakLevel <= 0.0f)
+    {
+      std::fill(shape.level.begin(), shape.level.end(), fallback);
+      shape.peakLevel = fallback;
+    }
+  buildCandidateShapes(levels, scale, fallback);
 }
 
 const PolyphonicNoteLayer::NoteShape *PolyphonicNoteLayer::shapeFor(int note) const
@@ -208,6 +255,9 @@ const PolyphonicNoteLayer::NoteShape *PolyphonicNoteLayer::shapeFor(int note) co
 const PolyphonicNoteLayer::Edits &PolyphonicNoteLayer::currentEdits() const
 {
   static const Edits none;
+  // Assignment mode shows (and plays) the take as analysed.
+  if (assignmentMode)
+    return none;
   if (drag == Drag::notes || drag == Drag::stretch || drag == Drag::preview)
     return working;
   return project != nullptr ? project->getPolyphonicEdits() : none;
@@ -215,6 +265,10 @@ const PolyphonicNoteLayer::Edits &PolyphonicNoteLayer::currentEdits() const
 
 polyphonic::NoteEdit PolyphonicNoteLayer::editOf(int note) const
 {
+  // Assignment mode shows the take as analysed: its edits come back when the
+  // mode is left.
+  if (assignmentMode)
+    return {};
   const auto &edits = currentEdits();
   const auto it = edits.find(note);
   return it != edits.end() ? it->second : polyphonic::NoteEdit{};
@@ -323,11 +377,18 @@ juce::Path PolyphonicNoteLayer::notePath(const NoteShape &shape,
 void PolyphonicNoteLayer::draw(juce::Graphics &g, int componentWidth)
 {
   rebuildIfNeeded();
-  if (!builtFor || coordMapper == nullptr || shapes.empty())
+  if (!builtFor || coordMapper == nullptr)
     return;
 
   const float visibleStart = static_cast<float>(coordMapper->getScrollX());
   const float visibleEnd = visibleStart + static_cast<float>(componentWidth);
+  if (assignmentMode && !outlineColour)
+  {
+    drawAssignment(g, visibleStart, visibleEnd);
+    return;
+  }
+  if (shapes.empty())
+    return;
   const int pitchReferenceHz = project->getPitchReferenceHz();
 
   for (const auto &shape : shapes)
@@ -486,6 +547,8 @@ PolyphonicNoteLayer::Edge PolyphonicNoteLayer::edgeAt(float worldX, float worldY
 
 bool PolyphonicNoteLayer::isOverStretchEdge(float worldX, float worldY)
 {
+  if (assignmentMode)
+    return false; // nothing is stretched there
   return edgeAt(worldX, worldY).note >= 0;
 }
 
@@ -503,6 +566,11 @@ void PolyphonicNoteLayer::mouseDown(float worldX, float worldY,
   rebuildIfNeeded();
   if (!builtFor || coordMapper == nullptr || project == nullptr)
     return;
+  if (assignmentMode)
+  {
+    assignmentMouseDown(worldX, worldY, mods);
+    return;
+  }
 
   const bool additive = mods.isShiftDown() || mods.isCommandDown();
   pendingSingle = -1;
@@ -595,6 +663,11 @@ void PolyphonicNoteLayer::mouseDrag(float worldX, float worldY,
       break;
     case Drag::stretch:
       dragStretch(worldX, mods);
+      break;
+    case Drag::assign:
+      assignmentMouseDrag(worldX, worldY);
+      break;
+    case Drag::listen:
       break;
     case Drag::band:
     {
@@ -775,6 +848,17 @@ bool PolyphonicNoteLayer::stretchNoteBy(int i, double dt)
 
 void PolyphonicNoteLayer::mouseUp()
 {
+  if (drag == Drag::assign)
+  {
+    assignmentMouseUp();
+    return;
+  }
+  if (drag == Drag::listen)
+  {
+    drag = Drag::none;
+    pressedNote = -1;
+    return;
+  }
   const auto finished = drag;
   const bool moved = dragMoved;
   const int single = pendingSingle;
@@ -804,6 +888,8 @@ void PolyphonicNoteLayer::mouseUp()
 
 bool PolyphonicNoteLayer::mouseDoubleClick(float worldX, float worldY)
 {
+  if (assignmentMode)
+    return assignmentDoubleClick(worldX, worldY);
   const int hit = noteAt(worldX, worldY);
   if (hit < 0 || !doubleClickTarget || project == nullptr)
     return false;
@@ -849,6 +935,13 @@ bool PolyphonicNoteLayer::mouseDoubleClick(float worldX, float worldY)
 
 std::vector<int> PolyphonicNoteLayer::getDraggedNotes() const
 {
+  // Assignment mode: a held note's own sound, while it is not about to snap
+  // anywhere and its masks exist (getAssignmentAudition).
+  if (assignmentMode)
+  {
+    const auto audition = getAssignmentAudition();
+    return audition.separated ? std::vector<int>{audition.note} : std::vector<int>{};
+  }
   if (drag == Drag::notes)
   {
     std::vector<int> notes;
@@ -864,6 +957,11 @@ std::vector<int> PolyphonicNoteLayer::getDraggedNotes() const
 
 void PolyphonicNoteLayer::toggleMuteSelection()
 {
+  if (assignmentMode)
+  {
+    deactivateSelection(); // Delete removes notes from the detection there
+    return;
+  }
   if (project == nullptr || selection.empty() || drag != Drag::none)
     return;
   bool allMuted = true;
@@ -879,7 +977,7 @@ void PolyphonicNoteLayer::toggleMuteSelection()
 
 void PolyphonicNoteLayer::restoreSelection()
 {
-  if (project == nullptr || selection.empty() || drag != Drag::none)
+  if (assignmentMode || project == nullptr || selection.empty() || drag != Drag::none)
     return;
   before = project->getPolyphonicEdits();
   working = before;
@@ -891,7 +989,7 @@ void PolyphonicNoteLayer::restoreSelection()
 
 void PolyphonicNoteLayer::setSelectionGainDb(float gainDb)
 {
-  if (project == nullptr || selection.empty() || drag != Drag::none)
+  if (assignmentMode || project == nullptr || selection.empty() || drag != Drag::none)
     return;
   before = project->getPolyphonicEdits();
   working = before;
@@ -905,7 +1003,7 @@ void PolyphonicNoteLayer::setSelectionGainDb(float gainDb)
 void PolyphonicNoteLayer::shiftSelectionSemitones(float semitones,
                                                   const juce::String &undoName)
 {
-  if (project == nullptr || selection.empty() || drag != Drag::none || semitones == 0.0f)
+  if (assignmentMode || project == nullptr || selection.empty() || drag != Drag::none || semitones == 0.0f)
     return;
   before = project->getPolyphonicEdits();
   working = before;
@@ -921,7 +1019,7 @@ void PolyphonicNoteLayer::shiftSelectionSemitones(float semitones,
 
 void PolyphonicNoteLayer::previewSelectionShift(float semitones)
 {
-  if (project == nullptr || selection.empty() || (drag != Drag::none && drag != Drag::preview))
+  if (assignmentMode || project == nullptr || selection.empty() || (drag != Drag::none && drag != Drag::preview))
     return;
   if (drag == Drag::none)
     before = project->getPolyphonicEdits();
@@ -937,7 +1035,7 @@ void PolyphonicNoteLayer::previewSelectionShift(float semitones)
 
 void PolyphonicNoteLayer::previewSelectionGain(float gainDb)
 {
-  if (project == nullptr || selection.empty() || (drag != Drag::none && drag != Drag::preview))
+  if (assignmentMode || project == nullptr || selection.empty() || (drag != Drag::none && drag != Drag::preview))
     return;
   if (drag == Drag::none)
     before = project->getPolyphonicEdits();

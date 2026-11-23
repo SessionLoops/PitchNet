@@ -1206,6 +1206,8 @@ juce::var ProjectSerializer::polyphonicToJson(const Project& project) {
     obj->setProperty("fftSize", params->fftSize);
     obj->setProperty("hop", params->hop);
     obj->setProperty("detector", polyphonicDetectorId(params->detectionMode));
+    // The note assignment slider's ball (older projects: the detector's own).
+    obj->setProperty("activationThreshold", params->activationThresholdFor(params->detectionMode));
 
     // Notes as a little-endian binary block: exact pitch curves, so the masks
     // rebuilt from them on load are the ones the take was edited with.
@@ -1273,6 +1275,14 @@ void ProjectSerializer::polyphonicFromJson(Project& project, const juce::var& js
                                         : polyphonic::DetectionMode::Harmonic;
     if (restore->params.fftSize <= 0 || restore->params.hop <= 0)
         return;
+    if (json.hasProperty("activationThreshold"))
+    {
+        const float threshold = static_cast<float>(
+            juce::jlimit(0.0, 1.0, static_cast<double>(json.getProperty("activationThreshold", 0.5))));
+        (restore->params.detectionMode == polyphonic::DetectionMode::NeuralGuided
+             ? restore->params.guidedActivationThreshold
+             : restore->params.activationThreshold) = threshold;
+    }
 
     juce::MemoryBlock block;
     if (!block.fromBase64Encoding(json.getProperty("notes", "").toString()))

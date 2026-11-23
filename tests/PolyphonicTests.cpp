@@ -1152,7 +1152,9 @@ int main()
             const auto& n = A.notes[i];
             if (!n.active)
             {
-                CHECK(levels[i].empty());
+                // a candidate: the level analyze() keeps for it
+                CHECK(levels[i] == A.candidateLevels[i] && D.candidateLevels[i] == A.candidateLevels[i]);
+                CHECK(static_cast<int>(levels[i].size()) == n.numFrames());
                 continue;
             }
             CHECK(static_cast<int>(levels[i].size()) == n.numFrames());
@@ -1230,6 +1232,92 @@ int main()
         CHECK(fallback.params.detectionMode == polyphonic::DetectionMode::Harmonic);
         CHECK(same(fallback, harmonic));
         std::printf("evidence when needed: asked once, same result in both modes; guided without it = harmonic\n");
+    }
+
+    // ---- 22. note assignment: restore() takes any active set and rescaled pitches (the
+    //          editor's Note Assignment Mode). Notes keep their order, a deactivated note
+    //          gets no masks and stays in the recording, a note moved to its octave gets
+    //          masks on the partials it shares, and edits keyed by index still apply ----
+    {
+        std::vector<float> x(static_cast<size_t>(3.0 * kRate), 0.0f);
+        addTone(x, midiToHz(48), 0.1, 2.6, 0.2);
+        addTone(x, midiToHz(55), 0.3, 2.2, 0.15);
+        addTone(x, midiToHz(64), 0.5, 2.0, 0.12);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int c3 = findNote(A, 48), g3 = findNote(A, 55), e4 = findNote(A, 64);
+        CHECK(c3 >= 0 && g3 >= 0 && e4 >= 0);
+
+        // the note assignment slider's ball at the analysis's own threshold gives back the
+        // detection: every active note (merged ones carry their pieces' highest probability) is
+        // at or above it, every candidate below it
+        {
+            const float threshold = params.activationThresholdFor(A.params.detectionMode);
+            bool same = true;
+            for (const auto& n : A.notes)
+                same = same && (n.probability >= threshold) == n.active;
+            CHECK(same);
+        }
+
+        // G3 deactivated: no masks; the others keep theirs in place
+        auto notes = A.notes;
+        notes[static_cast<size_t>(g3)].active = false;
+        const auto R = polyphonic::restore(x.data(), static_cast<int>(x.size()), params, notes);
+        CHECK(R.notes.size() == A.notes.size());
+        CHECK(R.masks[static_cast<size_t>(g3)].partials.empty());
+        CHECK(!R.masks[static_cast<size_t>(c3)].partials.empty() && !R.masks[static_cast<size_t>(e4)].partials.empty());
+        // ... and, as a candidate, a level of its own from the spectral peaks: where it sounds,
+        // within a few dB of its masks' level as a note
+        {
+            const auto& level = R.candidateLevels[static_cast<size_t>(g3)];
+            const auto& n = A.notes[static_cast<size_t>(g3)];
+            CHECK(static_cast<int>(level.size()) == n.numFrames());
+            CHECK(R.candidateLevels[static_cast<size_t>(c3)].empty());
+            std::vector<double> energy(level.size(), 0.0);
+            for (const auto& pm : A.masks[static_cast<size_t>(g3)].partials)
+                if (pm.frame >= n.startFrame && pm.frame <= n.endFrame)
+                    energy[static_cast<size_t>(pm.frame - n.startFrame)] += static_cast<double>(pm.amplitude) * pm.amplitude;
+            double model = 0.0, estimate = 0.0;
+            for (size_t k = 0; k < level.size(); ++k)
+            {
+                model += std::sqrt(energy[k]);
+                estimate += level[k];
+            }
+            std::printf("assignment: deactivated G3's estimated level %.1f dB from its masks'\n", db(estimate / model));
+            CHECK(std::fabs(db(estimate / model)) < 6.0);
+        }
+        // muting every active note leaves the deactivated one sounding: nothing owns it now
+        std::map<int, polyphonic::NoteEdit> muteAll;
+        for (size_t i = 0; i < R.notes.size(); ++i)
+            if (R.notes[i].active)
+            {
+                polyphonic::NoteEdit m;
+                m.mute = true;
+                m.takeBackground = false;
+                muteAll[static_cast<int>(i)] = m;
+            }
+        const auto left = polyphonic::render(R, {x}, muteAll)[0];
+        const int a = static_cast<int>(0.8 * kRate), b = static_cast<int>(1.8 * kRate);
+        const double g3Before = db(toneAmplitude(x, midiToHz(55), a, b));
+        const double g3After = db(toneAmplitude(left, midiToHz(55), a, b));
+        const double c3After = db(toneAmplitude(left, midiToHz(48), a, b));
+        std::printf("assignment: G3 deactivated, all notes muted: G3 %.1f -> %.1f dB, C3 left at %.1f dB\n",
+                    g3Before, g3After, c3After);
+        CHECK(g3After > g3Before - 3.0);
+        CHECK(c3After < db(toneAmplitude(x, midiToHz(48), a, b)) - 20.0);
+
+        // reactivated: the same masks as the analysis
+        const auto back = polyphonic::restore(x.data(), static_cast<int>(x.size()), params, A.notes);
+        CHECK(back.masks[static_cast<size_t>(g3)].weights == A.masks[static_cast<size_t>(g3)].weights);
+
+        // E4 moved down an octave (f0 halved, as dragging it to /2 does): it gets masks, on
+        // its even partials the real E4's partials
+        notes = A.notes;
+        for (auto& f : notes[static_cast<size_t>(e4)].f0)
+            f *= 0.5f;
+        const auto O = polyphonic::restore(x.data(), static_cast<int>(x.size()), params, notes);
+        CHECK(!O.masks[static_cast<size_t>(e4)].partials.empty());
+        CHECK(std::fabs(O.notes[static_cast<size_t>(e4)].medianMidi() - 52.0f) < 0.3f);
+        std::printf("assignment: deactivate, reactivate and octave move rebuild masks in place\n");
     }
 
     std::printf("PolyphonicTests passed\n");

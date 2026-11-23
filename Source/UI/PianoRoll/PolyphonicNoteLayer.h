@@ -2,6 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
+#include "../../Models/PolyphonicAssignment.h"
 #include "CoordinateMapper.h"
 
 #include <functional>
@@ -34,6 +35,20 @@
  * on a working copy during a gesture and handed over once, at its end, through
  * onEditsCommitted (one undo step).
  *
+ * Note assignment mode (setAssignmentMode, Melodyne's Note Assignment Mode)
+ * edits the detection instead of the sound: it shows the take as analysed
+ * (edits are hidden until the mode is left), each candidate the analysis kept
+ * as a dashed outline, like a deleted note, and for the note under the pointer (or the one
+ * selected) its harmonic series and its own candidates. Double-click turns a
+ * note into a candidate or a candidate into a note, Delete deactivates the
+ * selection, and dragging a note up or down moves it to a candidate it
+ * overlaps or to one of its harmonics (x2, x3, x4) or subharmonics (/2, /3,
+ * /4), where it snaps; anywhere else it springs back. With the Split tool
+ * (setSplitTool) a click splits the note under the pointer there, and a click
+ * on the separation between two consecutive notes (polyphonicassignment::
+ * mergePartner) merges them, as the vocal editor's Split tool does. Each
+ * change goes out through onAssignmentCommitted (one undo step).
+ *
  * Works in world coordinates, like NoteRenderer (the caller has applied the
  * scroll offset).
  */
@@ -51,6 +66,63 @@ public:
   bool isActive() const;
 
   void draw(juce::Graphics &g, int componentWidth);
+
+  // ---- note assignment (see the class comment) ----
+  void setAssignmentMode(bool enabled);
+  bool isAssignmentMode() const { return assignmentMode; }
+  /** The note assignment slider's bracket: the note filter's probability a
+   *  candidate needs to be shown (0: all). */
+  void setCandidateThreshold(float probability);
+  /** The slider's ball being dragged: notes drawn as active at or above this
+   *  probability (nullopt: as assigned). Nothing changes until commitThreshold. */
+  void setThresholdPreview(std::optional<float> probability);
+  /** The ball let go: every note at or above `probability` active, every other
+   *  one a candidate (polyphonicassignment::notesAtThreshold), as one step. */
+  void commitThreshold(float probability);
+  /** The pointer moved (world coordinates; no position: it left the canvas).
+   *  True if what is highlighted changed (repaint). */
+  bool setHoverPoint(std::optional<juce::Point<float>> worldPoint);
+  /** Deactivates the selected active notes (Delete in assignment mode). */
+  void deactivateSelection();
+  /** Assignment mode's Split tool (the editor's Split mode) instead of Select. */
+  void setSplitTool(bool enabled);
+  /** For the cursor: the pointer would split a note / merge two. */
+  bool isOverSplitPoint() const { return assignmentMode && splitTool && splitHover.note >= 0; }
+  bool isOverMergeBoundary() const { return assignmentMode && splitTool && mergeHover.second >= 0; }
+
+  /** What assignment mode plays while a note or candidate is pressed (Live
+   *  Audition): a pressed note's own separated sound, unedited, while it is
+   *  not dragged anywhere; otherwise a tone (notetone) along a pitch curve
+   *  with a level: a pressed candidate's, the candidate a dragged note would
+   *  snap to, or the dragged note moved by the harmonic it would snap to. A
+   *  note without masks yet (being rebuilt) is a tone too. */
+  struct AssignmentAudition
+  {
+    int note = -1;           // the note or candidate it is about; -1: nothing
+    bool separated = false;  // its separated sound (else the tone below)
+    int startFrame = 0;
+    std::vector<float> f0;   // Hz per frame from startFrame
+    std::vector<float> level;
+    int candidate = -1;      // what it stands for, to tell a change
+    float ratio = 1.0f;
+  };
+  AssignmentAudition getAssignmentAudition() const;
+  /** The audition changed: a note or candidate was pressed, or a drag found
+   *  (or lost) a pitch to snap to. Released: onPolyphonicDragFinished. */
+  std::function<void()> onAssignmentAuditionChanged;
+
+  /** A change of assignment, as one step. */
+  struct AssignmentChange
+  {
+    std::vector<polyphonic::Note> notesAfter;
+    Edits editsAfter;        // the edits of notes whose assignment changed are dropped
+    float thresholdAfter;    // the slider's ball; unchanged for a change by hand
+    /** Levels to draw the new notes with until their masks are rebuilt (split,
+     *  merge); nullopt: polyphonicassignment::apply's own. */
+    std::optional<std::vector<std::vector<float>>> levelsAfter;
+    juce::String name;
+  };
+  std::function<void(const AssignmentChange &)> onAssignmentCommitted;
   /** Track mode's pinned tracks: notes drawn as outlines in this colour only
    *  (nullopt: the normal look). */
   void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
@@ -144,7 +216,9 @@ private:
     notes,
     stretch,
     band,
-    preview // a toolbar box is being dragged
+    preview, // a toolbar box is being dragged
+    assign,  // assignment mode: a note dragged to another pitch
+    listen   // assignment mode: a candidate held down (heard as a tone)
   };
 
   void rebuildIfNeeded();
@@ -180,6 +254,72 @@ private:
   /** Hands `working` to the project and reports the change (if any) as one step. */
   void commit(const juce::String &name);
   void selectionChanged();
+
+  // ---- note assignment (PolyphonicNoteLayerAssignment.cpp) ----
+  /** Where an assignment drag would put the note: on a candidate (its
+   *  index) or on a harmonic of itself (ratio), or nowhere. */
+  struct AssignTarget
+  {
+    int candidate = -1;
+    float ratio = 0.0f;
+    float midi = 0.0f;
+    bool valid() const { return candidate >= 0 || ratio > 0.0f; }
+  };
+  void buildCandidateShapes(const std::vector<std::vector<float>> &levels, float scale,
+                            float fallbackLevel);
+  /** The note (active or candidate) under a world point, or -1. */
+  int assignmentHitAt(float worldX, float worldY) const;
+  /** The note whose harmonics and candidates are shown: the one under the
+   *  pointer, else the only selected note, else -1. */
+  int assignmentFocus() const;
+  bool overlapsInTime(int a, int b) const;
+  /** `b` sounds with `a` on one of a's harmonics or subharmonics (x1..x8). */
+  bool harmonicallyRelated(int a, int b) const;
+
+  /** Which candidates are shown: above the threshold, and not a duplicate of an
+   *  overlapping note or of a more probable overlapping candidate at the same
+   *  pitch. Recomputed when the take or the amount changes. */
+  void updateVisibleCandidates();
+  AssignTarget assignTargetFor(int note, float midi) const;
+  void drawAssignment(juce::Graphics &g, float visibleStart, float visibleEnd);
+  void assignmentMouseDown(float worldX, float worldY, const juce::ModifierKeys &mods);
+  void assignmentMouseDrag(float worldX, float worldY);
+  void assignmentMouseUp();
+  bool assignmentDoubleClick(float worldX, float worldY);
+  /** Hands a new assignment of the take's notes over as one step. */
+  void commitAssignment(std::vector<polyphonic::Note> notes, const juce::String &name,
+                        std::optional<float> threshold = std::nullopt);
+  /** Hands a split or merge over as one step; its notes are then selected. */
+  void commitSeparation(polyphonicassignment::Separation separation, const juce::String &name);
+  /** The split or merge under a world point (Split tool). */
+  void updateSeparationHover(float worldX, float worldY);
+  void drawSeparations(juce::Graphics &g, float visibleStart, float visibleEnd);
+  /** The x of the separation before `second` (its first frame). */
+  float separationX(int second) const;
+  /** Drawn as active: as assigned, or as the ball being dragged would have it. */
+  bool shownActive(int note) const;
+
+  bool assignmentMode = false;
+  std::vector<NoteShape> candidateShapes; // the inactive notes, for assignment mode
+  std::vector<bool> candidateVisible;     // per candidateShapes entry
+  float candidateThreshold = 0.05f;       // the slider's bracket
+  std::optional<float> thresholdPreview;  // the slider's ball while dragged
+  std::vector<int> candidateIndex;        // analysis note -> index into candidateShapes, or -1
+  int hoverNote = -1;                     // assignment mode: note or candidate under the pointer
+  bool splitTool = false;
+  struct SplitHover
+  {
+    int note = -1;
+    int frame = 0; // the first frame of the second part
+  } splitHover;
+  struct MergeHover
+  {
+    int first = -1;
+    int second = -1;
+  } mergeHover;
+  std::optional<std::vector<int>> selectAfterRebuild; // a split or merge's notes
+  float assignDragMidi = 0.0f;            // where an assignment drag has the note now
+  AssignTarget assignTarget;
 
   std::optional<juce::Colour> outlineColour;
   CoordinateMapper *coordMapper = nullptr;

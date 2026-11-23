@@ -14,8 +14,8 @@ saved with the project, in the same look as the vocal editor. A single voice
 keeps today's pipeline unchanged. This is a production feature: no
 experimental flag.
 
-Not in the first release: the note-assignment view (activating rejected
-candidates). The guided detector is in, as a per-take choice (feature review
+Note assignment (activating rejected candidates) has since been built: see
+[polyphonic-editing.md](polyphonic-editing.md#note-assignment-mode). The guided detector is in, as a per-take choice (feature review
 #17). Which of today's editing features carry
 over is decided one by one in the [feature review](#feature-review).
 

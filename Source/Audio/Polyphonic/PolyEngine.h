@@ -189,6 +189,10 @@ struct Analysis
     int numBins = 0;
     std::vector<Note> notes;           // active notes followed by inactive candidates
     std::vector<NoteMasks> masks;      // one entry per note in `notes` (inactive: empty)
+    // One entry per note in `notes`: an inactive note's level per frame from its startFrame,
+    // estimated from the spectral peaks at its partials (it has no masks); empty for active notes.
+    // For drawing candidates (note assignment) in the shape of their sound.
+    std::vector<std::vector<float>> candidateLevels;
     std::vector<CandidateFeatures> candidateFeatures; // only with Params::exportFeatures
 
     double frameToSeconds(double frame) const { return frame * params.hop / params.sampleRate; }
@@ -294,7 +298,8 @@ Analysis analyze(const float* mono, int numSamples, const Params& params, const 
  * at once while restore() builds the masks in the background from these notes; together they
  * give analyze()'s result. `levels`, when given, gets each note's level per frame as
  * PolyphonicTake's noteLevelsFromMasks() lays it out, estimated from the spectral peaks at its
- * partials until the masks give the model's (empty for inactive notes). `progress` runs to 1.
+ * partials until the masks give the model's (for inactive notes: their candidateLevels).
+ * `progress` runs to 1.
  */
 Analysis detect(const float* mono, int numSamples, const Params& params,
                 const NoteEvidence* evidence = nullptr, const std::atomic<bool>* cancel = nullptr,

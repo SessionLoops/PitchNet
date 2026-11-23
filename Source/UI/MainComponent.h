@@ -318,6 +318,10 @@ private:
   // Live audition of a drag on a polyphonic take: the dragged notes, rendered
   // on their own with the drag's edits (EditorController::renderPolyphonicAuditionAsync).
   void auditionPolyphonicNotes(const std::vector<int> &notes);
+  // Live Audition in note assignment mode: a held note's own (unedited)
+  // sound, or a tone along the pitch of a held candidate or of where a
+  // dragged note would snap (PolyphonicNoteLayer::getAssignmentAudition).
+  void auditionAssignment();
   // Live Audition of polyphonic notes: the selected notes are rendered once
   // (on selection, before any drag); a pitch drag then plays that render
   // resampled by the drag's shift, at once. Anything else (a stretch, other
@@ -414,6 +418,33 @@ private:
   // After a project is opened: rebuild its saved polyphonic take
   // (EditorController::restorePolyphonicAsync) and render its edits.
   void restorePolyphonicTake();
+
+  // Note assignment mode for a polyphonic take (the toolbar toggle in the
+  // pitch macro's place; Melodyne's Note Assignment Mode): the piano roll
+  // shows the take as analysed with its candidates and edits the detection.
+  // The standalone app plays the recording as it is meanwhile; edits come
+  // back when the mode is left. `reloadPlayback` false: the project is being
+  // replaced, so the audio engine is left to the new one.
+  void setPolyphonicAssignmentMode(bool enabled, bool reloadPlayback = true);
+  bool polyphonicAssignmentMode = false;
+  // The editor's tool when the mode was entered, restored when it is left.
+  std::optional<EditMode> editModeBeforeAssignment;
+  // A change of assignment (or its undo) left the project a restoring take:
+  // its masks are rebuilt here, in the background, from the take's own
+  // channels (both standalone and plug-in), then its edits are rendered. A
+  // newer change cancels the rebuild in flight. Only restores made by note
+  // assignment are rebuilt here (assignmentRestores); an opened project's
+  // goes through restorePolyphonicTake / the plug-in as before.
+  void rebuildPolyphonicAssignment();
+  // The note assignment slider's ball follows the shown take's threshold.
+  void syncNoteAssignmentSlider();
+  void finishPolyphonicAssignmentRebuild(const Project *target,
+                                         std::shared_ptr<const PolyphonicRestore> pending,
+                                         std::shared_ptr<const PolyphonicTake> restored);
+  std::unique_ptr<juce::ThreadPool> assignmentRebuildPool;
+  std::shared_ptr<std::atomic<bool>> assignmentRebuildCancel;
+  std::shared_ptr<const PolyphonicRestore> assignmentRebuildRunning;
+  std::vector<std::weak_ptr<const PolyphonicRestore>> assignmentRestores;
   void analyzeAudio(
       Project &targetProject,
       const std::function<void(double, const juce::String &)> &onProgress,

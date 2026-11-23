@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Components/NoteAssignmentSlider.h"
 #include "../JuceHeader.h"
 #include "../Utils/Constants.h"
 #include "../Utils/Localization.h"
@@ -129,6 +130,13 @@ public:
     std::function<void(bool)> onToggleAudition;
     std::function<void(bool)> onFollowPlaybackChanged;
     std::function<void()> onCorrectPitchCenter;
+    // Note assignment mode for a polyphonic take (its button takes the pitch
+    // macro's place, which only vocal takes have). true = on.
+    std::function<void(bool)> onNoteAssignmentModeChanged;
+    void setNoteAssignmentMode(bool enabled);
+    // In note assignment mode the centre capsule holds the note assignment
+    // slider (NoteAssignmentSlider) in place of the selection's Note/Cent/Level.
+    NoteAssignmentSlider& getNoteAssignmentSlider() { return candidateSlider; }
     std::function<void(int)> onScaleRootChanged;
     std::function<void(ScaleMode)> onScaleModeChanged;
     std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
@@ -170,6 +178,9 @@ private:
     ToggleButton followButton;
     ScaleSelectionControl scaleSelectionButton;
     Button quantizeButton;
+    // Resources/images/assign.png.
+    ToggleButton noteAssignButton;
+    NoteAssignmentSlider candidateSlider;
     ToggleButton auditionButton;
     Button undoButton;
     Button redoButton;
