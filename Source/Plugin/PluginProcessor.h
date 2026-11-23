@@ -106,6 +106,14 @@ public:
   PitchUndoManager* getTrackUndoManager(const juce::String& key);
   std::function<PitchUndoManager*(const juce::String&)> onAraUndoManagerRequested;
   void bindAraUndoManager(PitchUndoManager* fallback);
+  // Note assignment mode (the editor's, message thread): the clip on the
+  // canvas plays as recorded, as in the standalone app. ARA: its source
+  // instead of its processed audio (PitchNetDocumentController::
+  // playsOriginal), following the active clip; capture: the input passes
+  // through. Nothing stored or saved changes. Off again when the mode is left
+  // or the editor closes.
+  void setOriginalPlayback(bool enabled);
+
   void requestPluginProjectRender(const Project &project,
                                   PitchNetAudioModification* target = nullptr);
   // The user's choice of mode for the active clip's track: every clip on the
@@ -530,6 +538,12 @@ private:
   // edits can be re-published onto the modification (resynth-on-edit) and stay
   // in sync for headless/persisted per-region playback.
   PitchNetAudioModification *activeModification = nullptr;
+  // setOriginalPlayback: the request, and the document controller's original-
+  // playback modification brought in line with activeModification (called
+  // wherever that changes).
+  bool originalPlaybackRequested = false;
+  std::atomic<bool> nonAraOriginalPlayback{false};
+  void refreshOriginalPlayback();
   juce::int64 activeStartSampleInModification = 0;
   double activeRegionStartSeconds = 0.0;
   double activeRegionEndSeconds = 0.0;

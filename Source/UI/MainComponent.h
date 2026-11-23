@@ -166,6 +166,11 @@ public:
       std::function<void(const Project &)> callback) override {
     onRequestBackendRender = std::move(callback);
   }
+  void setOnOriginalPlaybackChanged(std::function<void(bool)> callback) override {
+    onOriginalPlaybackChanged = std::move(callback);
+    if (onOriginalPlaybackChanged)
+      onOriginalPlaybackChanged(polyphonicAssignmentMode);
+  }
   void setTrackAnalysisModeHandlers(
       std::function<void(const AnalysisModeState &)> apply,
       std::function<bool()> hasEdits) override {
@@ -267,6 +272,7 @@ public:
       onPitchEditFinished; // Called when pitch editing is finished
                            // (Melodyne-style: triggers real-time update)
   std::function<void(const Project &)> onRequestBackendRender;
+  std::function<void(bool)> onOriginalPlaybackChanged; // the plugin's, see IMainView
   std::function<void(const AnalysisModeState &)> onTrackAnalysisModeChange;
   std::function<bool()> trackHasEdits;
   void confirmReanalysis(const juce::String &message, std::function<void(bool)> onAnswer);

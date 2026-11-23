@@ -443,9 +443,14 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
              .isEmpty();
 
     bool renderedRegion = false;
+    auto *docController = getDocController();
 
+    // In note assignment mode the clip on the canvas plays its source (the
+    // raw path below), as the standalone app does.
     if (auto *modification =
-            region->getAudioModification<PitchNetAudioModification>()) {
+            region->getAudioModification<PitchNetAudioModification>();
+        modification != nullptr &&
+        !(docController != nullptr && docController->playsOriginal(modification))) {
       const auto lock = modification->tryLockProcessedAudio();
       if (lock.isLocked()) {
         // The modification owns one processed buffer and every region
@@ -838,8 +843,12 @@ void PitchNetEditorRenderer::renderPreviewBuffer(
   input.clear();
 
   bool renderedPreview = false;
+  auto *docController = getDocController();
+  // In note assignment mode the clip previews its source too.
   if (auto *modification =
-          region->getAudioModification<PitchNetAudioModification>()) {
+          region->getAudioModification<PitchNetAudioModification>();
+      modification != nullptr &&
+      !(docController != nullptr && docController->playsOriginal(modification))) {
     const auto lock = modification->tryLockProcessedAudio();
     if (lock.isLocked()) {
       // One modification, one processed buffer - see the playback renderer.

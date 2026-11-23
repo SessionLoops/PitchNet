@@ -345,6 +345,19 @@ public:
       ARADocumentControllerSpecialisation;
 
   ~PitchNetDocumentController() override;
+
+  // Note assignment mode (the editor's): the modification on the canvas
+  // plays its source instead of its processed audio, without touching what
+  // is stored or saved. Set from the message thread, read by the renderers
+  // on the audio thread; the pointer is only ever compared, never
+  // dereferenced, so a modification the host has since destroyed is harmless.
+  void setOriginalPlaybackModification(const void *modification) noexcept {
+    originalPlaybackModification.store(modification);
+  }
+  bool playsOriginal(const void *modification) const noexcept {
+    return modification != nullptr &&
+           originalPlaybackModification.load() == modification;
+  }
   void willBeginEditing(juce::ARADocument *document) override;
   void didEndEditing(juce::ARADocument *document) override;
 
@@ -536,6 +549,8 @@ private:
       std::make_shared<AnalysisState>();
   std::thread analysisThread;
   std::thread analysisJoinerThread;
+
+  std::atomic<const void *> originalPlaybackModification{nullptr};
 };
 
 #endif // JucePlugin_Enable_ARA

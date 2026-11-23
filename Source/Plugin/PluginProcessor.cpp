@@ -824,6 +824,9 @@ void PitchNetAudioProcessor::processNonARAMode(
   }
 
   if (!isCaptureArmed() && hasProject) {
+    // Note assignment mode: the take as recorded, which is the input.
+    if (nonAraOriginalPlayback.load())
+      return;
     if (!realtimeProcessor.isReady())
       return;
 
@@ -1904,6 +1907,20 @@ void PitchNetAudioProcessor::bindAraUndoManager(PitchUndoManager* fallback)
   mainComponent->bindUndoManager(manager ? manager : fallback);
 }
 
+void PitchNetAudioProcessor::setOriginalPlayback(bool enabled) {
+  originalPlaybackRequested = enabled;
+  nonAraOriginalPlayback.store(enabled);
+  refreshOriginalPlayback();
+}
+
+void PitchNetAudioProcessor::refreshOriginalPlayback() {
+#if JucePlugin_Enable_ARA
+  if (araDocumentController != nullptr)
+    araDocumentController->setOriginalPlaybackModification(
+        originalPlaybackRequested ? activeModification : nullptr);
+#endif
+}
+
 void PitchNetAudioProcessor::requestPluginProjectRender(
     const Project &projectToRender, PitchNetAudioModification* target) {
   bool renderActiveAraRegion = false;
@@ -2863,6 +2880,7 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
     activeRegionKey.clear();
   activeRegionSelector.clear();
     activeModification = nullptr;
+    refreshOriginalPlayback();
     canvasShowsActiveAraRegion = false;
 #endif
     if (mainComponent)
@@ -3161,6 +3179,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   activeRegionKey = key;
   activeRegionSelector = selector;
   activeModification = region->getAudioModification<PitchNetAudioModification>();
+  refreshOriginalPlayback();
   activeRegionStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
   activeRegionEndSeconds = std::max(activeRegionStartSeconds,
                                     region->getEndInPlaybackTime());
@@ -3295,6 +3314,7 @@ void PitchNetAudioProcessor::updateActiveAraRegionProperties(
     return;
 
   activeModification = region->getAudioModification<PitchNetAudioModification>();
+  refreshOriginalPlayback();
   activeRegionStartSeconds = newStart;
   activeRegionEndSeconds =
       std::max(activeRegionStartSeconds, region->getEndInPlaybackTime());
@@ -3767,6 +3787,7 @@ void PitchNetAudioProcessor::startAraRegionAnalysis(
         if (!backgroundAnalysis && completedPendingRegion && activeRegionKey.isEmpty()) {
           activeRegionKey = regionKey;
           activeModification = modification;
+          refreshOriginalPlayback();
           // Placement is the live region's, in host time, exactly as
           // setActiveAraRegion() records it. The analysis offset is always
           // zero and the project spans the whole modification, so neither can
@@ -3869,6 +3890,7 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
   }
 
   activeModification = nullptr;
+  refreshOriginalPlayback();
   activeRegionKey.clear();
   activeRegionSelector.clear();
   canvasShowsActiveAraRegion = false;
@@ -4445,6 +4467,7 @@ void PitchNetAudioProcessor::setAraDocumentController(
     araDocumentController->releaseOwningProcessor(this);
 
   araDocumentController = dc;
+  refreshOriginalPlayback();
   if (dc) {
     dc->setOwningProcessor(this);
     dc->setRealtimeProcessor(&realtimeProcessor);

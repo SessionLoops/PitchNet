@@ -364,6 +364,9 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
     // Preview/audition is editor-owned in non-ARA mode. Do not leave its
     // per-sample rendering path active after the controls that stop it are gone.
     audioProcessor.stopPluginAudition();
+    // Note assignment mode lives in the editor: with it gone the clip plays
+    // its edited result again.
+    audioProcessor.setOriginalPlayback(false);
     audioProcessor.getTransportController().clearCallbacks();
     audioProcessor.setMainComponent(nullptr);
   }
@@ -592,6 +595,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
+  mainView->setOnOriginalPlaybackChanged(
+      [this](bool enabled) { audioProcessor.setOriginalPlayback(enabled); });
   // One analysis mode per track: a choice re-analyses the track's clips.
   mainView->setTrackAnalysisModeHandlers(
       [this](const AnalysisModeState &next) {
@@ -1562,6 +1567,8 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setOnRequestBackendRender([this](const Project &project) {
     audioProcessor.requestPluginProjectRender(project);
   });
+  mainView->setOnOriginalPlaybackChanged(
+      [this](bool enabled) { audioProcessor.setOriginalPlayback(enabled); });
   // Capture: a choice of mode analyses the takes already recorded again.
   mainView->setTrackAnalysisModeHandlers(
       [this](const AnalysisModeState &next) {

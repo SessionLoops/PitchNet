@@ -4097,9 +4097,11 @@ void MainComponent::setPolyphonicAssignmentMode(bool enabled, bool reloadPlaybac
   // The toolbar's Note / Cent / Level edit notes, not their detection.
   toolbar.getPolyphonicSelectionBar().setEnabled(!enabled);
 
-  // What is heard follows what is shown (standalone; the plug-in keeps
-  // playing its render through the host): the recording as it is while
-  // assigning, the render again afterwards.
+  // What is heard follows what is shown: the recording as it is while
+  // assigning, the render again afterwards. The plug-in's host plays the
+  // clip, so the processor switches it (setOriginalPlayback).
+  if (isPluginMode() && onOriginalPlaybackChanged)
+    onOriginalPlaybackChanged(enabled);
   if (reloadPlayback && project != nullptr && !isPluginMode() && editorController != nullptr)
     if (auto *engine = editorController->getAudioEngine())
     {

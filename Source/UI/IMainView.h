@@ -88,6 +88,9 @@ public:
   virtual void setOnPitchEditFinished(std::function<void()> callback) = 0;
   virtual void setOnRequestBackendRender(
       std::function<void(const Project &)> callback) = 0;
+  // The plugin: note assignment mode was entered (true) or left (false); the
+  // clip on the canvas should play as recorded meanwhile.
+  virtual void setOnOriginalPlaybackChanged(std::function<void(bool)>) {}
   // The plugin: the user's choice of analysis mode applies to the clip's
   // track (`apply` re-analyses its clips; `hasEdits` asks first whether any
   // of them has edits to lose).

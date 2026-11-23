@@ -632,9 +632,15 @@ detection, not the sound:
     leaves about one candidate per note: 84 of 344 for 94 notes
     (`10-chords-104bpm`), 487 of 2275 for 240 (`08-brahms…-strings`). Hidden
     candidates cannot be hovered, activated or snapped to.
-- **What is heard** (standalone). The recording as it is; the render is
-  loaded again when the mode is left. The plug-in keeps playing its render
-  through the host.
+- **What is heard.** The recording as it is; the edited result again when
+  the mode is left. Standalone: the audio engine loads the take's own channels
+  and then the render. Plug-in: nothing stored or saved changes. With ARA, the
+  document controller marks the clip on the canvas as playing its original
+  (`PitchNetDocumentController::playsOriginal`, an atomic pointer the playback
+  and preview renderers only compare), so it plays its ARA source instead of
+  its processed audio; the processor keeps the mark on the active clip as it
+  changes (`refreshOriginalPlayback`). In capture mode the input, which is the
+  take as recorded, passes through. Closing the editor ends it.
 - **Live Audition** (when it is on). Holding a note plays its own separated
   sound, unedited (the drag audition's renders, with no edits). Everything
   that has no separated sound is heard as a tone instead (`notetone::render`,
