@@ -350,10 +350,12 @@ void PolyphonicNoteLayer::drawSeparations(juce::Graphics &g, float visibleStart,
                          pixelsPerSemitone * 0.5f;
     if (mergeHover.second == shape.note)
     {
-      // The two notes a click merges.
+      // The two notes a click merges, highlighted; the line between them is
+      // gone, as it will be once they are one note.
       g.setColour(juce::Colours::white.withAlpha(0.18f));
       g.fillPath(notePath(*firstShape, {}));
       g.fillPath(notePath(shape, {}));
+      continue;
     }
     g.setColour(lineColour);
     g.drawLine(x, top, x, bottom, 1.5f);

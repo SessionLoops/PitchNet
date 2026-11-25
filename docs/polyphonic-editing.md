@@ -669,8 +669,8 @@ detection, not the sound:
   consecutive notes merge: a note that starts on the frame after another ends,
   with its pitch running on across the joint (within half a semitone), as the
   parts of a split do (`polyphonicassignment::mergePartner`). Their
-  separations are drawn as lines; hovering one shows the merge cursor and
-  highlights both notes, and a click joins them (pitch curves end to end, the
+  separations are drawn as lines; hovering one shows the merge cursor, hides
+  that line and highlights both notes, and a click joins them (pitch curves end to end, the
   higher probability, the summed energy). The second note leaves the list, so
   later notes' edits and the candidates' `parent` move down one. Levels are
   sliced or joined from the old notes, so shapes stay put until the masks are
