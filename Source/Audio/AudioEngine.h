@@ -9,7 +9,9 @@
 /**
  * Audio engine for playback and synthesis.
  */
-class AudioEngine : public juce::AudioSource, public juce::ChangeListener {
+class AudioEngine : public juce::AudioSource,
+                    public juce::ChangeListener,
+                    private juce::Timer {
 public:
   AudioEngine();
   ~AudioEngine() override;
@@ -85,6 +87,19 @@ public:
   float getVolumeDb() const;
 
 private:
+  // Device open + retry. CoreAudio sometimes reports an empty buffer-size range
+  // (and so a 0-sample buffer) while a device is still coming up at launch, so
+  // initializeAudio() re-opens it a few times until it reports sane settings.
+  void openDevice();
+  bool deviceIsUsable();
+  void timerCallback() override;
+
+  juce::String deviceStateXml;
+  bool deviceFollowSystemDefault = true;
+  int deviceRetriesLeft = 0;
+  static constexpr int kDeviceRetryCount = 5;
+  static constexpr int kDeviceRetryIntervalMs = 400;
+
   struct PositionUpdateState {
     std::atomic<double> latestSeconds{0.0};
     std::atomic<bool> callbackPending{false};

@@ -24,6 +24,52 @@ juce::String defaultOutputDeviceName(juce::AudioDeviceManager &manager) {
 
 void AudioEngine::initializeAudio(const juce::String &savedStateXml,
                                   bool followSystemDefault) {
+  deviceStateXml = savedStateXml;
+  deviceFollowSystemDefault = followSystemDefault;
+  stopTimer();
+
+  openDevice();
+
+  deviceManager.addAudioCallback(&audioSourcePlayer);
+  audioSourcePlayer.setSource(this);
+
+  if (!deviceIsUsable()) {
+    deviceRetriesLeft = kDeviceRetryCount;
+    LOG("AudioEngine: device not ready, retrying in " +
+        juce::String(kDeviceRetryIntervalMs) + " ms");
+    startTimer(kDeviceRetryIntervalMs);
+  }
+}
+
+bool AudioEngine::deviceIsUsable() {
+  auto *device = deviceManager.getCurrentAudioDevice();
+  return device != nullptr && device->getCurrentBufferSizeSamples() > 0 &&
+         device->getCurrentSampleRate() > 0.0;
+}
+
+void AudioEngine::timerCallback() {
+  // The user may have picked a working device in Settings meanwhile.
+  if (deviceIsUsable()) {
+    stopTimer();
+    return;
+  }
+
+  LOG("AudioEngine: retrying device open (" + juce::String(deviceRetriesLeft) +
+      " attempts left)");
+  deviceManager.closeAudioDevice();
+  openDevice();
+
+  if (deviceIsUsable() || --deviceRetriesLeft <= 0) {
+    stopTimer();
+    if (!deviceIsUsable())
+      LOG("AudioEngine: device still not usable after retries");
+  }
+}
+
+void AudioEngine::openDevice() {
+  const auto &savedStateXml = deviceStateXml;
+  const bool followSystemDefault = deviceFollowSystemDefault;
+
   // Initialize audio device, restoring the device type / device / sample rate
   // / buffer size the user last chose. Passing the state to initialise() (0 in,
   // stereo out) falls back to the default device if the saved one is gone.
@@ -75,12 +121,10 @@ void AudioEngine::initializeAudio(const juce::String &savedStateXml,
         juce::String(device->getCurrentBufferSizeSamples()) + " samples)");
   else
     LOG("AudioEngine: no output device could be opened");
-
-  deviceManager.addAudioCallback(&audioSourcePlayer);
-  audioSourcePlayer.setSource(this);
 }
 
 void AudioEngine::shutdownAudio() {
+  stopTimer();
   audioSourcePlayer.setSource(nullptr);
   deviceManager.removeAudioCallback(&audioSourcePlayer);
   deviceManager.closeAudioDevice();
@@ -88,6 +132,10 @@ void AudioEngine::shutdownAudio() {
 
 void AudioEngine::prepareToPlay(int samplesPerBlockExpected,
                                 double sampleRate) {
+  // A device still coming up can briefly report 0 Hz; keep the last good rate
+  // rather than dividing by zero below.
+  if (sampleRate <= 0.0)
+    sampleRate = currentSampleRate;
   currentSampleRate = sampleRate;
   playbackRatio = static_cast<double>(waveformSampleRate) / sampleRate;
   resetInterpolators();
