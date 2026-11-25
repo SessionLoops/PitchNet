@@ -353,6 +353,14 @@ private:
   /** Sets the chord segmentation as one undo step (empty: detect again). */
   void setChordSegmentation(std::vector<double> boundaries, const juce::String &name);
   void updateChordLaneHover(const juce::MouseEvent &e);
+  // Dragging the first chord's start or the last chord's end (one undo step
+  // at mouse up; the segmentation follows the pointer meanwhile).
+  void beginChordEdgeDrag(bool start);
+  void dragChordEdge(const juce::MouseEvent &e);
+  void finishChordEdgeDrag();
+  bool chordEdgeDragging = false;
+  bool chordEdgeIsStart = false;
+  std::vector<double> chordEdgeBefore, chordEdgeBase;
   std::unique_ptr<juce::BubbleMessageComponent> chordMessage;
   void drawAudioSourceRegionOverlay(juce::Graphics &g);
   void drawRegionPreviews(juce::Graphics &g);

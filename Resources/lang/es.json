@@ -5,6 +5,7 @@
   "chord_track.no_chord_played": "Las notas aquí no forman un acorde",
   "chord_track.detect_again": "Detectar acordes de nuevo",
   "chord_track.merge": "Unir acordes",
+  "chord_track.resize": "Cambiar duración del acorde",
   "chord_track.split": "Dividir acorde",
   "chord_track.type_hint": "Escribe un acorde, p. ej. Cm7/G",
   "chord_track.unreadable": "No se puede leer \"{text}\" como acorde",

@@ -209,6 +209,28 @@ ChordLane::Hit ChordLane::hitTest(int screenX, int componentWidth, int scrollBar
       return hit;
     }
   }
+  // The outer edges: the first chord's start, the last chord's end.
+  if (!boxes.empty())
+  {
+    const auto &first = boxes.front();
+    const auto &last = boxes.back();
+    if (first.span == 0 && std::isfinite(spans.front().startSeconds) &&
+        std::abs(x - first.x0) <= kBoundaryPixels)
+    {
+      hit.kind = Hit::Kind::StartEdge;
+      hit.span = 0;
+      hit.boundarySeconds = spans.front().startSeconds;
+      return hit;
+    }
+    if (last.span == static_cast<int>(spans.size()) - 1 && std::isfinite(spans.back().endSeconds) &&
+        std::abs(x - last.x1) <= kBoundaryPixels)
+    {
+      hit.kind = Hit::Kind::EndEdge;
+      hit.span = last.span;
+      hit.boundarySeconds = spans.back().endSeconds;
+      return hit;
+    }
+  }
   for (const auto &l : boxes)
   {
     if (x < l.x0 || x >= l.x1)
@@ -264,22 +286,16 @@ void ChordLane::draw(juce::Graphics &g, int componentWidth, int scrollBarSize, c
   const auto lane = juce::Rectangle<int>(keysWidth, top,
                                          componentWidth - keysWidth - scrollBarSize, height);
 
+  // Beside the lane, the keys column carries on (PianoKeysRenderer).
   juce::Graphics::ScopedSaveState savedState(g);
-  g.reduceClipRegion(juce::Rectangle<int>(0, top, componentWidth - scrollBarSize, height));
+  g.reduceClipRegion(lane);
 
   g.setColour(juce::Colour(0xFF1D1D1Du));
   g.fillRect(lane);
 
-  // The keys column: three stacked note heads, a chord.
-  g.setColour(juce::Colour(0xFF232323u));
-  g.fillRect(0, top, keysWidth, height);
-  g.setColour(juce::Colour(0xFF6A6A6Au));
-  for (int i = 0; i < 3; ++i)
-    g.fillEllipse(static_cast<float>(keysWidth) * 0.5f - 3.5f,
-                  static_cast<float>(top + height - 6 - 4 * i), 7.0f, 4.0f);
-
   g.setColour(juce::Colour(0xFF0D0B0Bu));
-  g.drawHorizontalLine(top + height - 1, 0.0f, static_cast<float>(componentWidth - scrollBarSize));
+  g.drawHorizontalLine(top + height - 1, static_cast<float>(keysWidth),
+                       static_cast<float>(componentWidth - scrollBarSize));
 
   const auto boxes = layout(componentWidth, scrollBarSize, grid);
   const auto &spans = getChords(grid);

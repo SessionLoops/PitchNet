@@ -14,11 +14,14 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     return;
 
   const int pianoKeysWidth = CoordinateMapper::pianoKeysWidth;
+  // Keys line up with the canvas (below the header) but the column starts
+  // under the ruler: beside the chord track it shows the keys above.
   const int headerHeight = coordMapper->getHeaderHeight();
+  const int keysTop = CoordinateMapper::rulerHeight;
 
   auto keyArea = juce::Rectangle<int>(
-      0, headerHeight, pianoKeysWidth,
-      juce::jmax(0, componentHeight - headerHeight - scrollBarSize));
+      0, keysTop, pianoKeysWidth,
+      juce::jmax(0, componentHeight - keysTop - scrollBarSize));
 
   juce::Graphics::ScopedSaveState savedState(g);
   g.reduceClipRegion(keyArea);

@@ -5,6 +5,7 @@
   "chord_track.no_chord_played": "ここのノートはコードを鳴らしていません",
   "chord_track.detect_again": "コードを再検出",
   "chord_track.merge": "コードを結合",
+  "chord_track.resize": "コードの長さを変更",
   "chord_track.split": "コードを分割",
   "chord_track.type_hint": "コードを入力（例: Cm7/G）",
   "chord_track.unreadable": "「{text}」をコードとして読み取れません",

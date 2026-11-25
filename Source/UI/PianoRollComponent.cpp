@@ -2508,6 +2508,14 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     if (!e.mods.isLeftButtonDown() || polyphonicLayer->isAssignmentMode())
       return;
     const auto hit = chordLaneHit(e.x);
+    if ((hit.kind == ChordLane::Hit::Kind::StartEdge ||
+         hit.kind == ChordLane::Hit::Kind::EndEdge) &&
+        !chordLane->showsHostChords())
+    {
+      swallowGestureUntilMouseUp = false; // the drag follows
+      beginChordEdgeDrag(hit.kind == ChordLane::Hit::Kind::StartEdge);
+      return;
+    }
     if (hit.kind == ChordLane::Hit::Kind::Name)
       showChordEditor(time);
     else if (hit.kind == ChordLane::Hit::Kind::Chord && !chordLane->showsHostChords())
@@ -2562,7 +2570,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   // Clicking a note name auditions its labelled pitch without changing the
   // current edit or transport state.
-  if (e.x < pianoKeysWidth && e.y >= getHeaderHeight() &&
+  if (e.x < pianoKeysWidth && e.y >= rulerHeight &&
       e.y < getHeight() - (showHorizontalScrollBar ? 8 : 0))
   {
     const float referenceOffset =
@@ -2688,6 +2696,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
   if (trackGestureActive) { updateTrackGesture(e); return; }
+  if (chordEdgeDragging) { dragChordEdge(e); return; }
   if (e.mods.isPopupMenu())
     return;
   if (swallowGestureUntilMouseUp)
@@ -2762,6 +2771,7 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
   if (trackGestureActive) { finishTrackGesture(); return; }
+  if (chordEdgeDragging) { finishChordEdgeDrag(); return; }
   if (e.mods.isPopupMenu())
     return;
   if (swallowGestureUntilMouseUp)
@@ -2866,6 +2876,9 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
         setMouseCursor(juce::MouseCursor::IBeamCursor);
       else if (hit.kind == ChordLane::Hit::Kind::Boundary && !host)
         setMouseCursor(mergeMouseCursor);
+      else if ((hit.kind == ChordLane::Hit::Kind::StartEdge ||
+                hit.kind == ChordLane::Hit::Kind::EndEdge) && !host)
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
       else if (hit.kind == ChordLane::Hit::Kind::Chord && !host)
         setMouseCursor(splitMouseCursor);
       else
@@ -3464,6 +3477,7 @@ void PianoRollComponent::setProject(Project *proj)
   polyphonicLayer->setProject(proj);
   chordLane->setProject(proj);
   closeChordEditor(false);
+  chordEdgeDragging = false;
   syncChordLaneVisibility();
   // A new take starts with nothing selected; the Level field follows.
   if (onPolyphonicSelectionChanged)
@@ -5118,6 +5132,54 @@ void PianoRollComponent::setChordSegmentation(std::vector<double> boundaries,
         }));
   }
   chordLane->setHover(std::nullopt, std::nullopt);
+  repaint();
+}
+
+void PianoRollComponent::beginChordEdgeDrag(bool start)
+{
+  if (project == nullptr)
+    return;
+  chordEdgeBefore = project->getChordBoundaries();
+  chordEdgeBase = chordLane->isSegmentedByUser() ? chordEdgeBefore
+                                                 : chordLane->getShownBoundaries(getChordGrid());
+  if (chordEdgeBase.size() < 2)
+    return;
+  chordEdgeDragging = true;
+  chordEdgeIsStart = start;
+  chordLane->setHover(std::nullopt, std::nullopt);
+}
+
+void PianoRollComponent::dragChordEdge(const juce::MouseEvent &e)
+{
+  if (project == nullptr || chordEdgeBase.size() < 2)
+    return;
+  const float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+  double t = snapDragTime(xToTime(adjustedX), e.mods);
+  constexpr double minimum = 0.05; // the chord keeps some length
+  auto working = chordEdgeBase;
+  if (chordEdgeIsStart)
+    working.front() = std::min(working[1] - minimum, std::max(getTimelineStart(), t));
+  else
+    working.back() = std::max(working[working.size() - 2] + minimum, t);
+  project->setChordBoundaries(std::move(working));
+  repaint();
+}
+
+void PianoRollComponent::finishChordEdgeDrag()
+{
+  chordEdgeDragging = false;
+  if (project == nullptr)
+    return;
+  auto after = project->getChordBoundaries();
+  if (after != chordEdgeBefore && undoManager)
+  {
+    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+    undoManager->addAction(std::make_unique<ChordBoundariesAction>(
+        *project, chordEdgeBefore, std::move(after), TR("chord_track.resize"), [safeThis]() {
+          if (safeThis != nullptr)
+            safeThis->repaint();
+        }));
+  }
   repaint();
 }
 

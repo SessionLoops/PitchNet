@@ -71,13 +71,14 @@ public:
 
   struct Hit
   {
-    enum class Kind { None, Name, Chord, Boundary };
+    enum class Kind { None, Name, Chord, Boundary, StartEdge, EndEdge };
     Kind kind = Kind::None;
     int span = -1;              // into getChords
-    double boundarySeconds = 0; // Boundary: where the two chords meet
+    double boundarySeconds = 0; // Boundary: where the two chords meet; an edge: where it is
   };
   /** What a screen x in the lane is over. Boundaries are where two chords
-   *  meet (a few pixels either side); a chord's name is its text. */
+   *  meet (a few pixels either side); the edges are the first chord's start
+   *  and the last one's end; a chord's name is its text. */
   Hit hitTest(int screenX, int componentWidth, int scrollBarSize, const Grid &grid);
 
   /** The outline of the chord drawn at a project time (screen coordinates),

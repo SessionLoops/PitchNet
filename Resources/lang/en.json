@@ -5,6 +5,7 @@
   "chord_track.no_chord_played": "The notes here play no chord",
   "chord_track.detect_again": "Detect Chords Again",
   "chord_track.merge": "Merge Chords",
+  "chord_track.resize": "Resize Chord",
   "chord_track.split": "Split Chord",
   "chord_track.type_hint": "Type a chord, e.g. Cm7/G",
   "chord_track.unreadable": "Can't read \"{text}\" as a chord",

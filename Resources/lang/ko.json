@@ -5,6 +5,7 @@
   "chord_track.no_chord_played": "여기의 노트는 코드를 연주하지 않습니다",
   "chord_track.detect_again": "코드 다시 감지",
   "chord_track.merge": "코드 병합",
+  "chord_track.resize": "코드 길이 조절",
   "chord_track.split": "코드 분할",
   "chord_track.type_hint": "코드 입력 (예: Cm7/G)",
   "chord_track.unreadable": "\"{text}\"을(를) 코드로 읽을 수 없습니다",

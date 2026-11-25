@@ -762,7 +762,9 @@ from the notes (or kept, once split or merged; below).
 splits it: at the nearest grid line in Beats mode (the timeline's grid
 division), where the pointer is in Time mode; a dashed line shows where. A
 click where two chords meet merges them; hovering there highlights the area
-the merged chord will cover. Nothing is retuned: both halves of a
+the merged chord will cover. Dragging the first chord's start or the last
+chord's end (a resize cursor shows them) changes its length, snapping as
+Drag Snap says (Alt inverts). Nothing is retuned: both halves of a
 split play what they played, and a merged chord is read from all its notes.
 From the first split or merge on, the lane keeps that segmentation
 (`Project::getChordBoundaries`, saved with the project and the plug-in state,

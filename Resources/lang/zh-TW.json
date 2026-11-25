@@ -5,6 +5,7 @@
   "chord_track.no_chord_played": "此處的音符沒有構成和弦",
   "chord_track.detect_again": "重新偵測和弦",
   "chord_track.merge": "合併和弦",
+  "chord_track.resize": "調整和弦長度",
   "chord_track.split": "分割和弦",
   "chord_track.type_hint": "輸入和弦，例如 Cm7/G",
   "chord_track.unreadable": "無法將「{text}」讀作和弦",
