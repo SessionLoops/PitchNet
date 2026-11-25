@@ -12,7 +12,15 @@ public:
     static constexpr int pianoKeysWidth = 30;
     static constexpr int timelineHeight = 18;
     static constexpr int loopTimelineHeight = 16;
-    static constexpr int headerHeight = timelineHeight + loopTimelineHeight;
+    // The ruler: bar/time labels over the loop gutter.
+    static constexpr int rulerHeight = timelineHeight + loopTimelineHeight;
+    // The chord track, under the ruler; only polyphonic takes show it.
+    static constexpr int chordLaneHeight = 20;
+
+    // Where the canvas starts: below the ruler and the chord track if shown.
+    void setChordLaneVisible(bool visible) { chordLaneVisible = visible; }
+    bool isChordLaneVisible() const { return chordLaneVisible; }
+    int getHeaderHeight() const { return rulerHeight + (chordLaneVisible ? chordLaneHeight : 0); }
 
     CoordinateMapper() = default;
 
@@ -115,7 +123,7 @@ public:
     }
 
     float screenToWorldY(float screenY) const {
-        return screenY - headerHeight + static_cast<float>(scrollY);
+        return screenY - getHeaderHeight() + static_cast<float>(scrollY);
     }
 
     float worldToScreenX(float worldX) const {
@@ -123,7 +131,7 @@ public:
     }
 
     float worldToScreenY(float worldY) const {
-        return worldY + headerHeight - static_cast<float>(scrollY);
+        return worldY + getHeaderHeight() - static_cast<float>(scrollY);
     }
 
     // Get total content dimensions
@@ -144,4 +152,5 @@ private:
     double timelineDisplayOffset = 0.0;
     double beatGridOrigin = 0.0;
     double viewStartSeconds = 0.0;
+    bool chordLaneVisible = false;
 };

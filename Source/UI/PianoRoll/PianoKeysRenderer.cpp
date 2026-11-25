@@ -14,7 +14,7 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     return;
 
   const int pianoKeysWidth = CoordinateMapper::pianoKeysWidth;
-  const int headerHeight = CoordinateMapper::headerHeight;
+  const int headerHeight = coordMapper->getHeaderHeight();
 
   auto keyArea = juce::Rectangle<int>(
       0, headerHeight, pianoKeysWidth,

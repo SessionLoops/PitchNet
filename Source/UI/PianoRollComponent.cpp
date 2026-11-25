@@ -26,6 +26,43 @@
 #include "PianoRoll/PitchDrawingConfirmationPanel.h"
 #include "Components/PitchPopupMenu.h"
 #include "Components/CanvasPopupMenu.h"
+#include "../Undo/ChordBoundariesAction.h"
+
+namespace
+{
+// The chord being edited looks like its chord in the lane: the same
+// rounded box, with only its outline in another colour.
+class ChordValueBoxLookAndFeel final : public juce::LookAndFeel_V4
+{
+public:
+  void fillTextEditorBackground(juce::Graphics &g, int width, int height,
+                                juce::TextEditor &editor) override
+  {
+    g.setColour(editor.findColour(juce::TextEditor::backgroundColourId));
+    g.fillRoundedRectangle(area(width, height), 3.0f);
+  }
+
+  void drawTextEditorOutline(juce::Graphics &g, int width, int height,
+                             juce::TextEditor &editor) override
+  {
+    g.setColour(editor.findColour(juce::TextEditor::focusedOutlineColourId));
+    g.drawRoundedRectangle(area(width, height), 3.0f, 1.0f);
+  }
+
+private:
+  static juce::Rectangle<float> area(int width, int height)
+  {
+    return juce::Rectangle<float>(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height))
+        .reduced(0.5f);
+  }
+};
+
+ChordValueBoxLookAndFeel &chordValueBoxLookAndFeel()
+{
+  static ChordValueBoxLookAndFeel lookAndFeel;
+  return lookAndFeel;
+}
+} // namespace
 #include "BinaryData.h"
 #include <array>
 #include <algorithm>
@@ -316,6 +353,7 @@ PianoRollComponent::PianoRollComponent()
   noteRenderer->setBoxSelector(boxSelector.get());
   pitchCurveRenderer->setCoordinateMapper(coordMapper.get());
   polyphonicLayer->setCoordinateMapper(coordMapper.get());
+  chordLane->setCoordinateMapper(coordMapper.get());
   polyphonicLayer->setDoubleClickTarget(
       [this](float pitch, double startSeconds, double endSeconds) {
         return getDoubleClickSnapTarget(pitch, startSeconds, endSeconds);
@@ -555,10 +593,37 @@ int PianoRollComponent::getVisibleContentWidth() const
   return std::max(0, getWidth() - pianoKeysWidth - verticalScrollBarSize);
 }
 
+int PianoRollComponent::getHeaderHeight() const
+{
+  return coordMapper != nullptr ? coordMapper->getHeaderHeight() : rulerHeight;
+}
+
+void PianoRollComponent::syncChordLaneVisibility()
+{
+  const bool visible = isPolyphonicActive();
+  if (coordMapper == nullptr || coordMapper->isChordLaneVisible() == visible)
+    return;
+  coordMapper->setChordLaneVisible(visible);
+  // The canvas, its scroll bar and its visible pitch range move with it.
+  resized();
+  repaint();
+}
+
+ChordLane::Grid PianoRollComponent::getChordGrid() const
+{
+  ChordLane::Grid grid;
+  if (timelineDisplayMode == TimelineDisplayMode::Beats && coordMapper != nullptr)
+  {
+    grid.beatSeconds = getTimelineBeatSeconds();
+    grid.originProjectSeconds = coordMapper->beatGridToProject(0.0);
+  }
+  return grid;
+}
+
 int PianoRollComponent::getVisibleContentHeight() const
 {
   constexpr int horizontalScrollBarSize = APP_SCROLLBAR_THICKNESS;
-  return std::max(0, getHeight() - headerHeight -
+  return std::max(0, getHeight() - getHeaderHeight() -
                          (showHorizontalScrollBar ? horizontalScrollBarSize : 0));
 }
 
@@ -576,11 +641,14 @@ void PianoRollComponent::setHorizontalScrollBarVisible(bool shouldShow)
 void PianoRollComponent::paint(juce::Graphics &g)
 {
   updatePitchToolHandlesFromSelection();
+  // A take that became polyphonic after it was bound (an analysis or a
+  // restore finishing) gets its chord track here.
+  syncChordLaneVisibility();
 
   // Background (solid to keep grid clean)
   g.fillAll(APP_COLOR_BACKGROUND);
   g.setColour(juce::Colour(0xFF232323u));
-  g.fillRect(0, 0, getWidth(), headerHeight);
+  g.fillRect(0, 0, getWidth(), getHeaderHeight());
 
   const int horizontalScrollBarSize =
       showHorizontalScrollBar ? APP_SCROLLBAR_THICKNESS : 0;
@@ -589,10 +657,10 @@ void PianoRollComponent::paint(juce::Graphics &g)
 
   g.setColour(APP_COLOR_SCROLLBAR_TRACK);
   g.fillRect(getWidth() - verticalScrollBarSize, 0, verticalScrollBarSize,
-             headerHeight);
-  g.fillRect(getWidth() - verticalScrollBarSize, headerHeight,
+             getHeaderHeight());
+  g.fillRect(getWidth() - verticalScrollBarSize, getHeaderHeight(),
              verticalScrollBarSize,
-             getHeight() - headerHeight - horizontalScrollBarSize);
+             getHeight() - getHeaderHeight() - horizontalScrollBarSize);
   if (showHorizontalScrollBar)
   {
     g.fillRect(0, getHeight() - horizontalScrollBarSize, pianoKeysWidth,
@@ -608,7 +676,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
   // Create clipping region for main area (below timelines)
   auto mainArea = contentBounds
                       .withTrimmedLeft(pianoKeysWidth)
-                      .withTrimmedTop(headerHeight)
+                      .withTrimmedTop(getHeaderHeight())
                       .withTrimmedBottom(horizontalScrollBarSize)
                       .withTrimmedRight(verticalScrollBarSize);
 
@@ -617,7 +685,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     juce::Graphics::ScopedSaveState saveState(g);
     g.reduceClipRegion(mainArea);
     g.setOrigin(pianoKeysWidth - static_cast<int>(scrollX),
-                headerHeight - static_cast<int>(scrollY));
+                getHeaderHeight() - static_cast<int>(scrollY));
     drawGrid(g, true, false);
   }
 
@@ -632,7 +700,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
     juce::Graphics::ScopedSaveState saveState(g);
     g.reduceClipRegion(mainArea);
     g.setOrigin(pianoKeysWidth - static_cast<int>(scrollX),
-                headerHeight - static_cast<int>(scrollY));
+                getHeaderHeight() - static_cast<int>(scrollY));
 
     drawGrid(g, false, true);
     drawRegionPreviews(g);
@@ -692,6 +760,8 @@ void PianoRollComponent::paint(juce::Graphics &g)
   // Draw timeline (above grid, scrolls horizontally)
   drawTimeline(g);
   drawLoopTimeline(g);
+  if (coordMapper->isChordLaneVisible())
+    chordLane->draw(g, getWidth(), verticalScrollBarSize, getChordGrid());
 
   // Timing boundaries use the full canvas height. Hide the stationary
   // playhead in Timing mode so it cannot be mistaken for an editable edge.
@@ -699,7 +769,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
   {
     float x = static_cast<float>(pianoKeysWidth) + timeToX(cursorTime) -
               static_cast<float>(scrollX);
-    float cursorTop = static_cast<float>(headerHeight);
+    float cursorTop = static_cast<float>(getHeaderHeight());
     float cursorBottom =
         static_cast<float>(getHeight() -
                            horizontalScrollBarSize); // Exclude scrollbar
@@ -746,9 +816,9 @@ void PianoRollComponent::resized()
   }
 
   verticalScrollBar.setBounds(
-      bounds.getWidth() - verticalScrollBarSize, headerHeight,
+      bounds.getWidth() - verticalScrollBarSize, getHeaderHeight(),
       verticalScrollBarSize,
-      bounds.getHeight() - horizontalScrollBarSize - headerHeight);
+      bounds.getHeight() - horizontalScrollBarSize - getHeaderHeight());
 
   updateScrollBars();
   updatePreviewButtonBounds();
@@ -930,7 +1000,7 @@ const MainViewRegionPreview* PianoRollComponent::findTrackRegionAtPointer(
 {
   if (!trackViewMode || !regionPreviews) return nullptr;
   const double hostTime = projectToTimeline(xToTime(point.x - pianoKeysWidth + scrollX));
-  const float worldY = point.y - headerHeight + scrollY;
+  const float worldY = point.y - getHeaderHeight() + scrollY;
   const MainViewRegionPreview* background = nullptr;
   // Stable drawing order, with actual note hits before empty region space.
   // The routing/bound-region flag must not influence interaction priority.
@@ -959,7 +1029,7 @@ bool PianoRollComponent::prepareTrackPointer(juce::Point<float> point, bool note
 {
   if (!trackViewMode || !onInactiveRegionClicked || trackGestureActive || isMouseButtonDown()) return false;
   const float worldX = point.x - pianoKeysWidth + scrollX;
-  const float worldY = point.y - headerHeight + scrollY;
+  const float worldY = point.y - getHeaderHeight() + scrollY;
   if (hoveredNote && pitchToolHandles && pitchToolHandles->containsLayoutPoint(worldX, worldY))
     return false;
   if (pitchDrawingHandler_ && pitchDrawingHandler_->hasAnchors()) return false;
@@ -2037,9 +2107,9 @@ bool PianoRollComponent::altControlsDragSnap(float worldX, float worldY)
 
 bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
 {
-  return e.x >= pianoKeysWidth && e.y >= headerHeight &&
+  return e.x >= pianoKeysWidth && e.y >= getHeaderHeight() &&
          e.x < pianoKeysWidth + getVisibleContentWidth() &&
-         e.y < headerHeight + getVisibleContentHeight();
+         e.y < getHeaderHeight() + getVisibleContentHeight();
 }
 
 bool PianoRollComponent::hasMultiSelectableSelection() const
@@ -2088,7 +2158,7 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
     return;
 
   const float mouseX = static_cast<float>(e.x - pianoKeysWidth);
-  const float mouseY = static_cast<float>(e.y - headerHeight);
+  const float mouseY = static_cast<float>(e.y - getHeaderHeight());
 
   if (std::abs(deltaX) >= 0.01f)
   {
@@ -2159,7 +2229,7 @@ std::vector<juce::Rectangle<float>> PianoRollComponent::trackNoteBounds(const No
     if (end <= region.startSeconds || start >= region.endSeconds) continue;
     const float left = pianoKeysWidth + timeToX(timelineToProject(std::max(start, region.startSeconds))) - scrollX;
     const float right = pianoKeysWidth + timeToX(timelineToProject(std::min(end, region.endSeconds))) - scrollX;
-    const float y = headerHeight + coordMapper->midiToY(note.getAdjustedMidiNote()) - scrollY;
+    const float y = getHeaderHeight() + coordMapper->midiToY(note.getAdjustedMidiNote()) - scrollY;
     result.emplace_back(left, y, std::max(4.0f, right - left), pixelsPerSemitone);
   }
   return result;
@@ -2192,7 +2262,7 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
   trackGestureTargets = getTrackEditTargets();
   if (trackGestureTargets.empty()) return false;
   const float worldX = e.x - pianoKeysWidth + scrollX;
-  const float worldY = e.y - headerHeight + scrollY;
+  const float worldY = e.y - getHeaderHeight() + scrollY;
   if ((hoveredNote && pitchToolHandles && pitchToolHandles->containsLayoutPoint(worldX, worldY)) ||
       findPreviewButtonNoteAt(worldX, worldY)) return false;
   Note* hit = nullptr;
@@ -2346,7 +2416,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   }
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-  float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+  float adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
 
   // A polyphonic take has its own menu: Restore Original for the selection
   // (#19). A right-click on an unselected note selects it first.
@@ -2412,6 +2482,41 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
+  // The chord track: a chord's name edits it (and the notes follow), a click
+  // elsewhere on a chord splits it, a click where two meet merges them.
+  if (coordMapper->isChordLaneVisible() && e.x >= pianoKeysWidth &&
+      e.y >= rulerHeight && e.y < getHeaderHeight())
+  {
+    swallowGestureUntilMouseUp = true;
+    const double time = xToTime(adjustedX);
+    if (e.mods.isPopupMenu())
+    {
+      if (chordLane->isSegmentedByUser())
+      {
+        juce::PopupMenu menu;
+        menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+        menu.addItem(1, TR("chord_track.detect_again"));
+        juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withDeletionCheck(*this),
+                           [safeThis](int result) {
+                             if (safeThis != nullptr && result == 1)
+                               safeThis->setChordSegmentation({}, TR("chord_track.detect_again"));
+                           });
+      }
+      return;
+    }
+    if (!e.mods.isLeftButtonDown() || polyphonicLayer->isAssignmentMode())
+      return;
+    const auto hit = chordLaneHit(e.x);
+    if (hit.kind == ChordLane::Hit::Kind::Name)
+      showChordEditor(time);
+    else if (hit.kind == ChordLane::Hit::Kind::Chord && !chordLane->showsHostChords())
+      splitChordAt(time);
+    else if (hit.kind == ChordLane::Hit::Kind::Boundary && !chordLane->showsHostChords())
+      mergeChordsAt(hit.boundarySeconds);
+    return;
+  }
+
   if (isCanvasPoint(e) && isModifierZoomDrag(e))
   {
     modifierZoomDragActive = true;
@@ -2430,7 +2535,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
         const auto key = region->key;
         onInactiveRegionClicked(key);
         adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-        adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+        adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
       }
     }
   }
@@ -2457,7 +2562,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   // Clicking a note name auditions its labelled pitch without changing the
   // current edit or transport state.
-  if (e.x < pianoKeysWidth && e.y >= headerHeight &&
+  if (e.x < pianoKeysWidth && e.y >= getHeaderHeight() &&
       e.y < getHeight() - (showHorizontalScrollBar ? 8 : 0))
   {
     const float referenceOffset =
@@ -2481,7 +2586,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
 
   // Ignore clicks outside main area
-  if (e.y < headerHeight || e.x < pianoKeysWidth)
+  if (e.y < getHeaderHeight() || e.x < pianoKeysWidth)
     return;
 
   // A polyphonic take: the note layer's own gestures (section 5 of the
@@ -2551,7 +2656,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
       // Same screen point, now in the new region's time.
       adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-      adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+      adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
       setHoveredNote(nullptr);
     }
     else if (trackViewMode && project != nullptr && !region && !handleHit)
@@ -2615,7 +2720,7 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
   juce::ignoreUnused(shouldRepaint);
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-  float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+  float adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
 
   // Loop drag has priority (always active)
   if (loopDragHandler_->mouseDrag(e, adjustedX, adjustedY))
@@ -2693,7 +2798,7 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
   }
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-  float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+  float adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
 
   // Loop drag has priority (always active)
   if (loopDragHandler_->mouseUp(e, adjustedX, adjustedY))
@@ -2726,10 +2831,11 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   const float adjustedX =
       e.x - pianoKeysWidth + static_cast<float>(scrollX);
   const float adjustedY =
-      e.y - headerHeight + static_cast<float>(scrollY);
+      e.y - getHeaderHeight() + static_cast<float>(scrollY);
 
   if (isPolyphonicActive())
   {
+    updateChordLaneHover(e);
     loopDragHandler_->mouseMove(e, adjustedX, adjustedY);
     // Assignment mode highlights the note or candidate under the pointer,
     // with the note's harmonics and candidates.
@@ -2741,7 +2847,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       repaint();
     // The resize cursor over a note end is how its stretch is found; the
     // note itself does not change (no hover state).
-    const bool overEdge = !showZoomCursor && e.y >= headerHeight &&
+    const bool overEdge = !showZoomCursor && e.y >= getHeaderHeight() &&
                           e.x >= pianoKeysWidth &&
                           polyphonicLayer->isOverStretchEdge(adjustedX, adjustedY);
     // Assignment mode's Split tool: the vocal Split tool's cursors.
@@ -2750,6 +2856,21 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       setMouseCursor(mergeMouseCursor);
     else if (canvas && polyphonicLayer->isOverSplitPoint())
       setMouseCursor(splitMouseCursor);
+    else if (coordMapper->isChordLaneVisible() && !polyphonicLayer->isAssignmentMode() &&
+             e.x >= pianoKeysWidth && e.y >= rulerHeight && e.y < getHeaderHeight())
+    {
+      // The chord track: the name edits, the rest splits, a boundary merges.
+      const auto hit = chordLaneHit(e.x);
+      const bool host = chordLane->showsHostChords();
+      if (hit.kind == ChordLane::Hit::Kind::Name)
+        setMouseCursor(juce::MouseCursor::IBeamCursor);
+      else if (hit.kind == ChordLane::Hit::Kind::Boundary && !host)
+        setMouseCursor(mergeMouseCursor);
+      else if (hit.kind == ChordLane::Hit::Kind::Chord && !host)
+        setMouseCursor(splitMouseCursor);
+      else
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+    }
     else
       setMouseCursor(showZoomCursor ? getMouseCursor()
                      : loopDragHandler_->isHoveringHandle() || overEdge
@@ -2759,7 +2880,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   }
 
   Note *noteAtPointer = nullptr;
-  if (e.y >= headerHeight && e.x >= pianoKeysWidth)
+  if (e.y >= getHeaderHeight() && e.x >= pianoKeysWidth)
     noteAtPointer = findNoteAt(adjustedX, adjustedY);
 
   const bool altControlsNoteSnap =
@@ -2829,7 +2950,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   // A breath note under the pointer, where no note or note control is.
   {
     const int breath =
-        !noteUnderMouse && e.y >= headerHeight && e.x >= pianoKeysWidth
+        !noteUnderMouse && e.y >= getHeaderHeight() && e.x >= pianoKeysWidth
             ? findBreathAt(adjustedX, adjustedY)
             : -1;
     if (breath != hoveredBreath)
@@ -2856,7 +2977,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 
   // Pitch tool handle hover (uses raw event coordinates, not world-adjusted)
   if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty() &&
-      e.y >= headerHeight && e.x >= pianoKeysWidth)
+      e.y >= getHeaderHeight() && e.x >= pianoKeysWidth)
   {
     int hitIndex = pitchToolHandles->hitTest(adjustedX, adjustedY);
     if (hitIndex != hoveredPitchToolHandle)
@@ -2936,12 +3057,12 @@ void PianoRollComponent::modifierKeysChanged(
 {
   const auto mousePosition = getMouseXYRelative();
   const bool mouseOverCanvas =
-      mousePosition.x >= pianoKeysWidth && mousePosition.y >= headerHeight &&
+      mousePosition.x >= pianoKeysWidth && mousePosition.y >= getHeaderHeight() &&
       mousePosition.x < pianoKeysWidth + getVisibleContentWidth() &&
-      mousePosition.y < headerHeight + getVisibleContentHeight();
+      mousePosition.y < getHeaderHeight() + getVisibleContentHeight();
   const float worldX = mousePosition.x - pianoKeysWidth +
                        static_cast<float>(scrollX);
-  const float worldY = mousePosition.y - headerHeight +
+  const float worldY = mousePosition.y - getHeaderHeight() +
                        static_cast<float>(scrollY);
   // A drag in progress keeps its cursor while Alt toggles its snapping.
   const bool pointerOverNote =
@@ -2961,6 +3082,8 @@ void PianoRollComponent::modifierKeysChanged(
 
 void PianoRollComponent::mouseExit(const juce::MouseEvent &)
 {
+  if (chordLane->setHover(std::nullopt, std::nullopt))
+    repaint();
   if (polyphonicLayer->setHoverPoint(std::nullopt))
     repaint();
 
@@ -2976,13 +3099,13 @@ void PianoRollComponent::mouseExit(const juce::MouseEvent &)
 
 juce::String PianoRollComponent::getTooltip()
 {
+  const auto mousePosition = getMouseXYRelative();
   if (!pitchToolHandles || pitchToolHandles->isEmpty())
     return {};
 
-  const auto mousePosition = getMouseXYRelative();
   const float adjustedX = mousePosition.x - pianoKeysWidth +
                           static_cast<float>(scrollX);
-  const float adjustedY = mousePosition.y - headerHeight +
+  const float adjustedY = mousePosition.y - getHeaderHeight() +
                           static_cast<float>(scrollY);
   const int handleIndex = pitchToolHandles->hitTest(adjustedX, adjustedY);
   if (handleIndex < 0)
@@ -3012,7 +3135,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   if (!project)
     return;
 
-  if (e.y >= timelineHeight && e.y < headerHeight && e.x >= pianoKeysWidth)
+  if (e.y >= timelineHeight && e.y < rulerHeight && e.x >= pianoKeysWidth)
   {
     auto loopRange = project->getLoopRange();
     if (loopRange.endSeconds > loopRange.startSeconds)
@@ -3026,11 +3149,11 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   }
 
   // Ignore double-clicks outside main area
-  if (e.y < headerHeight || e.x < pianoKeysWidth)
+  if (e.y < getHeaderHeight() || e.x < pianoKeysWidth)
     return;
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-  float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+  float adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
 
   // A polyphonic note tunes to its double-click target; empty space keeps the
   // canvas's own double-click.
@@ -3103,6 +3226,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
                                         const juce::MouseWheelDetails &wheel)
 {
+  closeChordEditor(false); // it would stay over a chord that scrolled away
   float scrollMultiplier = wheel.isSmooth ? 200.0f : 80.0f;
   const int visibleHeight = getVisibleContentHeight();
   const int visibleWidth = getVisibleContentWidth();
@@ -3119,7 +3243,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
           : MIN_PIXELS_PER_SECOND;
 
   bool isOverPianoKeys = e.x < pianoKeysWidth;
-  bool isOverTimeline = e.y < headerHeight;
+  bool isOverTimeline = e.y < getHeaderHeight();
 
   // Hover-based zoom (no modifier keys needed)
   if (!e.mods.isCommandDown() && !e.mods.isCtrlDown())
@@ -3127,7 +3251,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     // Over piano keys: vertical zoom
     if (isOverPianoKeys)
     {
-      float mouseY = e.y - headerHeight;
+      float mouseY = e.y - getHeaderHeight();
 
       float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
       if (zoomFactor < 1.0f)
@@ -3202,7 +3326,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     if (e.mods.isShiftDown())
     {
       // Vertical zoom - center on mouse position
-      float mouseY = static_cast<float>(e.y - headerHeight);
+      float mouseY = static_cast<float>(e.y - getHeaderHeight());
       float midiAtMouse = yToMidi(mouseY + static_cast<float>(scrollY));
 
       float newPps = pixelsPerSemitone * zoomFactor;
@@ -3338,6 +3462,9 @@ void PianoRollComponent::setProject(Project *proj)
   noteRenderer->setProject(proj);
   pitchCurveRenderer->setProject(proj); // also clears its cache
   polyphonicLayer->setProject(proj);
+  chordLane->setProject(proj);
+  closeChordEditor(false);
+  syncChordLaneVisibility();
   // A new take starts with nothing selected; the Level field follows.
   if (onPolyphonicSelectionChanged)
     onPolyphonicSelectionChanged();
@@ -4129,9 +4256,9 @@ void PianoRollComponent::updateMouseCursorForEditMode()
   {
     const auto pointer = getMouseXYRelative();
     const bool overCanvas = pointer.x >= pianoKeysWidth &&
-                            pointer.y >= headerHeight &&
+                            pointer.y >= getHeaderHeight() &&
                             pointer.x < pianoKeysWidth + getVisibleContentWidth() &&
-                            pointer.y < headerHeight + getVisibleContentHeight();
+                            pointer.y < getHeaderHeight() + getVisibleContentHeight();
     const float worldX = pointer.x - pianoKeysWidth +
                          static_cast<float>(scrollX);
     if (overCanvas && pitchDrawingHandler_ &&
@@ -4350,7 +4477,7 @@ PianoRollComponent::getPreviewButtonLocalBounds(const Note &note) const
       getPreviewButtonBounds(note)
           .translated(static_cast<float>(pianoKeysWidth) -
                           static_cast<float>(scrollX),
-                      static_cast<float>(headerHeight) -
+                      static_cast<float>(getHeaderHeight()) -
                           static_cast<float>(scrollY));
   return {static_cast<int>(std::round(bounds.getX())),
           static_cast<int>(std::round(bounds.getY())), previewButtonWidth,
@@ -4364,7 +4491,7 @@ PianoRollComponent::getResetButtonLocalBounds(const Note &note) const
       getResetButtonBounds(note)
           .translated(static_cast<float>(pianoKeysWidth) -
                           static_cast<float>(scrollX),
-                      static_cast<float>(headerHeight) -
+                      static_cast<float>(getHeaderHeight()) -
                           static_cast<float>(scrollY));
   return {static_cast<int>(std::round(bounds.getX())),
           static_cast<int>(std::round(bounds.getY())), resetButtonWidth,
@@ -4399,7 +4526,7 @@ void PianoRollComponent::updatePreviewButtonBounds()
   constexpr int verticalScrollBarSize = APP_SCROLLBAR_THICKNESS;
   const auto mainArea = getLocalBounds()
                             .withTrimmedLeft(pianoKeysWidth)
-                            .withTrimmedTop(headerHeight)
+                            .withTrimmedTop(getHeaderHeight())
                             .withTrimmedBottom(horizontalScrollBarSize)
                             .withTrimmedRight(verticalScrollBarSize);
 
@@ -4877,7 +5004,7 @@ void PianoRollComponent::updatePitchDrawingConfirmationPopup()
   constexpr int popupHeight = 30;
   const int canvasWidth = getVisibleContentWidth();
   const int popupX = pianoKeysWidth + std::max(0, (canvasWidth - popupWidth) / 2);
-  pitchDrawingConfirmationPanel->setBounds(popupX, headerHeight + 10,
+  pitchDrawingConfirmationPanel->setBounds(popupX, getHeaderHeight() + 10,
                                      std::min(popupWidth, canvasWidth),
                                      popupHeight);
   pitchDrawingConfirmationPanel->toFront(false);
@@ -4921,6 +5048,302 @@ void PianoRollComponent::showPolyphonicMenu(float worldX, float worldY)
                          safeThis->polyphonicLayer->restoreSelection();
                        safeThis->repaint();
                      });
+}
+
+ChordLane::Hit PianoRollComponent::chordLaneHit(int screenX)
+{
+  return chordLane->hitTest(screenX, getWidth(), APP_SCROLLBAR_THICKNESS, getChordGrid());
+}
+
+std::optional<double> PianoRollComponent::chordSplitTime(double projectSeconds,
+                                                         const polyphonic::ChordSpan &span) const
+{
+  double t = projectSeconds;
+  if (canSnapTimeToTimelineGrid())
+    t = coordMapper->snapProjectTimeToTimelineGrid(t, getTimelineGridSeconds());
+  // A split on (or next to) an edge would make an empty chord.
+  constexpr double minimum = 0.02;
+  if (!(t > span.startSeconds + minimum && t < span.endSeconds - minimum))
+    return std::nullopt;
+  return t;
+}
+
+void PianoRollComponent::splitChordAt(double projectSeconds)
+{
+  const auto grid = getChordGrid();
+  const auto *span = chordLane->chordAt(projectSeconds, grid);
+  if (span == nullptr || chordLane->showsHostChords())
+    return;
+  const auto t = chordSplitTime(projectSeconds, *span);
+  if (!t)
+    return;
+  auto boundaries = chordLane->isSegmentedByUser() ? project->getChordBoundaries()
+                                                   : chordLane->getShownBoundaries(grid);
+  boundaries.insert(std::upper_bound(boundaries.begin(), boundaries.end(), *t), *t);
+  setChordSegmentation(std::move(boundaries), TR("chord_track.split"));
+}
+
+void PianoRollComponent::mergeChordsAt(double boundarySeconds)
+{
+  if (chordLane->showsHostChords())
+    return;
+  const auto grid = getChordGrid();
+  auto boundaries = chordLane->isSegmentedByUser() ? project->getChordBoundaries()
+                                                   : chordLane->getShownBoundaries(grid);
+  const auto it = std::find(boundaries.begin(), boundaries.end(), boundarySeconds);
+  // Only where two chords meet: not the first chord's start or the last one's end.
+  if (it == boundaries.end() || it == boundaries.begin() || std::next(it) == boundaries.end())
+    return;
+  boundaries.erase(it);
+  setChordSegmentation(std::move(boundaries), TR("chord_track.merge"));
+}
+
+void PianoRollComponent::setChordSegmentation(std::vector<double> boundaries,
+                                              const juce::String &name)
+{
+  if (project == nullptr)
+    return;
+  auto before = project->getChordBoundaries();
+  project->setChordBoundaries(std::move(boundaries));
+  auto after = project->getChordBoundaries();
+  if (after == before)
+    return;
+  if (undoManager)
+  {
+    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+    undoManager->addAction(std::make_unique<ChordBoundariesAction>(
+        *project, std::move(before), std::move(after), name, [safeThis]() {
+          if (safeThis != nullptr)
+            safeThis->repaint();
+        }));
+  }
+  chordLane->setHover(std::nullopt, std::nullopt);
+  repaint();
+}
+
+void PianoRollComponent::updateChordLaneHover(const juce::MouseEvent &e)
+{
+  std::optional<double> split, merge;
+  if (coordMapper->isChordLaneVisible() && !chordLane->showsHostChords() &&
+      !polyphonicLayer->isAssignmentMode() && e.x >= pianoKeysWidth &&
+      e.y >= rulerHeight && e.y < getHeaderHeight())
+  {
+    const auto hit = chordLaneHit(e.x);
+    const double time = xToTime(static_cast<float>(e.x - pianoKeysWidth) + static_cast<float>(scrollX));
+    if (hit.kind == ChordLane::Hit::Kind::Boundary)
+      merge = hit.boundarySeconds;
+    else if (hit.kind == ChordLane::Hit::Kind::Chord)
+      if (const auto *span = chordLane->chordAt(time, getChordGrid()))
+        split = chordSplitTime(time, *span);
+  }
+  if (chordLane->setHover(split, merge))
+    repaint();
+}
+
+void PianoRollComponent::showChordEditor(double projectSeconds)
+{
+  if (!isPolyphonicActive() || polyphonicLayer->isAssignmentMode() || project == nullptr)
+    return;
+
+  const auto grid = getChordGrid();
+  const auto *shownSpan = chordLane->chordAt(projectSeconds, grid);
+  if (shownSpan == nullptr)
+    return;
+  const polyphonic::ChordSpan shown = *shownSpan;
+
+  // The notes must play a chord there for anything to move (in host mode
+  // the host's chord can sit over notes that play none).
+  bool playing = false;
+  for (const auto &span : chordLane->getDetectedChords(grid))
+    playing = playing || (span.endSeconds > shown.startSeconds &&
+                          span.startSeconds < shown.endSeconds);
+  if (!playing)
+  {
+    showChordMessage(shown.startSeconds, shown.endSeconds, TR("chord_track.no_chord_played"));
+    return;
+  }
+
+  if (chordEditor == nullptr)
+  {
+    chordEditor = std::make_unique<juce::TextEditor>();
+    addChildComponent(*chordEditor);
+    chordEditor->setLookAndFeel(&chordValueBoxLookAndFeel());
+    chordEditor->setFont(AppFont::getFont(ChordLane::getNameFontHeight()));
+    chordEditor->setJustification(juce::Justification::centredLeft);
+    chordEditor->setBorder({});
+    chordEditor->setIndents(4, 0); // the name where the lane writes it
+    const auto text = chordLane->getNameColour();
+    chordEditor->setColour(juce::TextEditor::textColourId, text);
+    chordEditor->setColour(juce::TextEditor::highlightedTextColourId, text);
+    chordEditor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xFF7A7D8Bu));
+    // its outline in the name's colour: the one difference from the chord box
+    chordEditor->setColour(juce::TextEditor::outlineColourId, text);
+    chordEditor->setColour(juce::TextEditor::focusedOutlineColourId, text);
+    chordEditor->setColour(juce::CaretComponent::caretColourId, text);
+    chordEditor->setSelectAllWhenFocused(true);
+    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+    chordEditor->onReturnKey = [safeThis] {
+      if (safeThis != nullptr)
+        safeThis->commitChordEditor();
+    };
+    chordEditor->onEscapeKey = [safeThis] {
+      if (safeThis != nullptr)
+        safeThis->closeChordEditor(true);
+    };
+    chordEditor->onFocusLost = [safeThis] {
+      if (safeThis != nullptr)
+        safeThis->closeChordEditor(false);
+    };
+  }
+  chordEditor->setTextToShowWhenEmpty(TR("chord_track.type_hint"), APP_COLOR_TEXT_MUTED);
+
+  chordEditStart = shown.startSeconds;
+  chordEditEnd = shown.endSeconds;
+  chordEditInitial = juce::String::fromUTF8(shown.name.c_str());
+  chordEditHost = chordLane->showsHostChords();
+  chordEditor->setText(chordEditInitial, juce::dontSendNotification);
+  layOutChordEditor();
+  chordEditor->setVisible(true);
+  chordEditor->grabKeyboardFocus();
+  chordEditor->selectAll();
+}
+
+void PianoRollComponent::layOutChordEditor()
+{
+  if (chordEditor == nullptr)
+    return;
+  // Exactly over the chord's box, where it is in view.
+  chordEditor->setColour(juce::TextEditor::backgroundColourId, chordLane->getChordFill());
+  const auto lane = juce::Rectangle<float>(static_cast<float>(pianoKeysWidth),
+                                           static_cast<float>(rulerHeight),
+                                           static_cast<float>(getVisibleContentWidth()),
+                                           static_cast<float>(chordLaneHeight));
+  const double t = std::isfinite(chordEditStart)
+                       ? chordEditStart
+                       : (std::isfinite(chordEditEnd) ? chordEditEnd - 1.0e-6 : 0.0);
+  auto box = chordLane->getChordBox(t, getWidth(), APP_SCROLLBAR_THICKNESS, getChordGrid());
+  if (!box && std::isfinite(chordEditEnd))
+    box = chordLane->getChordBox(chordEditEnd - 1.0e-6, getWidth(), APP_SCROLLBAR_THICKNESS,
+                                 getChordGrid());
+  const auto area = box ? box->getIntersection(lane) : lane.reduced(1.0f, 2.0f);
+  chordEditor->setBounds(area.getSmallestIntegerContainer());
+}
+
+void PianoRollComponent::closeChordEditor(bool refocus)
+{
+  if (chordEditor == nullptr || !chordEditor->isVisible())
+    return;
+  chordEditor->setVisible(false);
+  if (refocus && isShowing())
+    grabKeyboardFocus(); // the piano roll's shortcuts again
+}
+
+void PianoRollComponent::commitChordEditor()
+{
+  if (chordEditor == nullptr || !chordEditor->isVisible())
+    return;
+  const auto text = chordEditor->getText().trim();
+  const double start = chordEditStart, end = chordEditEnd;
+  closeChordEditor(true);
+
+  // Return on the name it showed: nothing to do, except over a host chord,
+  // where it fits the notes to the host's chord.
+  if (text.isEmpty() || (text == chordEditInitial && !chordEditHost))
+    return;
+
+  const auto chord = polyphonic::parseChord(text.toStdString());
+  if (!chord)
+  {
+    showChordMessage(start, end, TR("chord_track.unreadable").replace("{text}", text));
+    return;
+  }
+  // As typed, bass included: "Cm" is root position, "Cm/Eb" keeps the inversion.
+  retuneChordSpan(start, end, *chord,
+                  juce::String::fromUTF8(
+                      polyphonic::chordName(*chord, chordLane->prefersFlats()).c_str()));
+}
+
+void PianoRollComponent::retuneChordSpan(double startSeconds, double endSeconds,
+                                         const polyphonic::Chord &to,
+                                         const juce::String &chordName)
+{
+  if (project == nullptr || !isPolyphonicActive())
+    return;
+  const auto take = project->getPolyphonicTake();
+  if (take == nullptr || take->analysis == nullptr)
+    return;
+
+  const auto before = project->getPolyphonicEdits();
+  auto after = before;
+  int moved = 0;
+  std::uint16_t missing = 0;
+  // Each detected chord in the span maps its own tones to the new chord.
+  const auto spans = chordLane->getDetectedChords(getChordGrid());
+  for (const auto &span : spans)
+  {
+    const double s = std::max(startSeconds, span.startSeconds);
+    const double e = std::min(endSeconds, span.endSeconds);
+    if (!(e > s))
+      continue;
+    const auto r = polyphonic::retuneToChord(*take->analysis, after, s, e, span.chord, to);
+    after = r.edits;
+    moved += r.movedNotes;
+    missing = static_cast<std::uint16_t>(missing | r.missing);
+  }
+
+  if (after != before)
+  {
+    project->setPolyphonicEdits(after);
+    const auto &now = project->getPolyphonicEdits();
+    if (now != before && polyphonicLayer->onEditsCommitted)
+      // one undo step and a render, as a note drag commits
+      polyphonicLayer->onEditsCommitted(before, now,
+                                        TR("chord_track.change_chord") + " " + chordName);
+  }
+
+  // Say what the recording could not give.
+  if (missing != 0 && to.root >= 0)
+  {
+    juce::StringArray tones;
+    for (int i = 0; i < 12; ++i)
+      if ((missing >> i) & 1u)
+        tones.add(juce::String::fromUTF8(
+            polyphonic::pitchClassName(to.root + i, chordLane->prefersFlats()).c_str()));
+    showChordMessage(startSeconds, endSeconds,
+                     TR("chord_track.missing_tones").replace("{tones}", tones.joinIntoString(", ")));
+  }
+  else if (moved == 0)
+  {
+    showChordMessage(startSeconds, endSeconds,
+                     TR("chord_track.already_fits").replace("{chord}", chordName));
+  }
+  repaint();
+}
+
+void PianoRollComponent::showChordMessage(double startSeconds, double endSeconds,
+                                          const juce::String &text)
+{
+  if (chordMessage == nullptr)
+  {
+    chordMessage = std::make_unique<juce::BubbleMessageComponent>(300);
+    addChildComponent(*chordMessage);
+  }
+  // Under the chord, where it is in view.
+  const float left = static_cast<float>(pianoKeysWidth);
+  const float right = static_cast<float>(pianoKeysWidth + getVisibleContentWidth());
+  const auto toScreen = [&](double t) {
+    if (!std::isfinite(t))
+      return t < 0.0 ? left : right;
+    return juce::jlimit(left, right, static_cast<float>(pianoKeysWidth) + timeToX(t) -
+                                         static_cast<float>(scrollX));
+  };
+  const float x0 = toScreen(startSeconds), x1 = toScreen(endSeconds);
+  juce::AttributedString message;
+  message.append(text, AppFont::getFont(13.0f), APP_COLOR_TEXT_PRIMARY);
+  chordMessage->showAt(juce::Rectangle<int>(static_cast<int>(x0), rulerHeight,
+                                            std::max(1, static_cast<int>(x1 - x0)),
+                                            chordLaneHeight),
+                       message, 3500, true, false);
 }
 
 void PianoRollComponent::drawSelectionRect(juce::Graphics &g)

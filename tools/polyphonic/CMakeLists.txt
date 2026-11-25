@@ -51,6 +51,10 @@ add_executable(PolyTempoTests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/PolyTempo
 target_link_libraries(PolyTempoTests PRIVATE polyphonic)
 add_test(NAME PolyTempoTests COMMAND PolyTempoTests)
 
+add_executable(PolyChordTests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/PolyChordTests.cpp")
+target_link_libraries(PolyChordTests PRIVATE polyphonic)
+add_test(NAME PolyChordTests COMMAND PolyChordTests)
+
 add_executable(BasicPitchEvidenceTests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/BasicPitchEvidenceTests.cpp")
 target_link_libraries(BasicPitchEvidenceTests PRIVATE polyphonic)
 add_test(NAME BasicPitchEvidenceTests COMMAND BasicPitchEvidenceTests)

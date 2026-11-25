@@ -1,4 +1,13 @@
 {
+  "chord_track.already_fits": "音符已符合 {chord}",
+  "chord_track.change_chord": "更改和弦",
+  "chord_track.missing_tones": "錄音中沒有可變成 {tones} 的音符",
+  "chord_track.no_chord_played": "此處的音符沒有構成和弦",
+  "chord_track.detect_again": "重新偵測和弦",
+  "chord_track.merge": "合併和弦",
+  "chord_track.split": "分割和弦",
+  "chord_track.type_hint": "輸入和弦，例如 Cm7/G",
+  "chord_track.unreadable": "無法將「{text}」讀作和弦",
   "dialog.unsaved_title": "尚未儲存的專案",
   "dialog.unsaved_message": "關閉前是否儲存此專案的變更？",
   "dialog.save": "儲存",

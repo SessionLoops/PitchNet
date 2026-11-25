@@ -1,4 +1,13 @@
 {
+  "chord_track.already_fits": "노트가 이미 {chord}에 맞습니다",
+  "chord_track.change_chord": "코드 변경",
+  "chord_track.missing_tones": "녹음에 {tones}(으)로 바꿀 노트가 없습니다",
+  "chord_track.no_chord_played": "여기의 노트는 코드를 연주하지 않습니다",
+  "chord_track.detect_again": "코드 다시 감지",
+  "chord_track.merge": "코드 병합",
+  "chord_track.split": "코드 분할",
+  "chord_track.type_hint": "코드 입력 (예: Cm7/G)",
+  "chord_track.unreadable": "\"{text}\"을(를) 코드로 읽을 수 없습니다",
   "dialog.unsaved_title": "저장하지 않은 프로젝트",
   "dialog.unsaved_message": "닫기 전에 프로젝트의 변경 사항을 저장하시겠습니까?",
   "dialog.save": "저장",

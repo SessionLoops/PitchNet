@@ -280,6 +280,21 @@ public:
         }
     }
 
+    // The chord track's segmentation once the user has split or merged its
+    // chords: boundaries in project seconds, ascending, a chord between each
+    // pair of neighbours. Empty: the chords' own (detected) segmentation.
+    const std::vector<double> &getChordBoundaries() const { return chordBoundaries; }
+    void setChordBoundaries(std::vector<double> boundaries)
+    {
+        if (boundaries.size() < 2)
+            boundaries.clear();
+        if (boundaries != chordBoundaries)
+        {
+            chordBoundaries = std::move(boundaries);
+            modified = true;
+        }
+    }
+
     // A saved polyphonic take waiting to be rebuilt (set when a project is
     // read, cleared once its analysis is restored); null otherwise.
     std::shared_ptr<const PolyphonicRestore> getPendingPolyphonicRestore() const { return pendingPolyphonicRestore; }
@@ -429,6 +444,7 @@ private:
     AnalysisModeState analysisMode;
     std::shared_ptr<const PolyphonicTake> polyphonicTake;
     PolyphonicEdits polyphonicEdits;
+    std::vector<double> chordBoundaries;
     std::shared_ptr<const PolyphonicRestore> pendingPolyphonicRestore;
     std::shared_ptr<const juce::AudioBuffer<float>> polyphonicPlayback;
 

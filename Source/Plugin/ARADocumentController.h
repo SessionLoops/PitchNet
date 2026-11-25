@@ -2,6 +2,7 @@
 
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
+#include "AraChordTrack.h"
 #include "AraTempoMap.h"
 
 #include <atomic>
@@ -406,8 +407,9 @@ public:
       juce::ARAContentUpdateScopes scopeFlags) override;
   void willDestroyMusicalContext(
       juce::ARAMusicalContext *musicalContext) override;
-  // Re-reads the musical context for the current region and pushes the result
-  // to the editor. Message thread only.
+  // Re-reads the musical context for the current region (tempo, bar
+  // signatures and the chord track) and pushes the result to the editor.
+  // Message thread only.
   void refreshHostMusicalTimeline();
   const std::optional<pitchnet::ara::MusicalTimeline> &
   getHostMusicalTimeline() const {
@@ -511,8 +513,11 @@ private:
   bool hostEditing = false;
   bool hostMusicalTimelineDirty = false;
   std::optional<pitchnet::ara::MusicalTimeline> hostMusicalTimeline;
+  // The host's chord track in timeline seconds; empty when it has none.
+  std::vector<polyphonic::ChordSpan> hostChords;
   juce::ARAMusicalContext *findCurrentMusicalContext() const;
   void pushHostMusicalTimelineToEditor();
+  void pushHostChordsToEditor();
   std::vector<juce::ARAPlaybackRegion *> deferredRegionUpdates;
   void stopAnalysisThread();
 

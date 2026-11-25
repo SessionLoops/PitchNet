@@ -1254,12 +1254,21 @@ juce::var ProjectSerializer::polyphonicToJson(const Project& project) {
         edits.add(juce::var(eo));
     }
     obj->setProperty("edits", edits);
+
+    // The chord track's segmentation, when the user set one.
+    if (const auto& boundaries = project.getChordBoundaries(); !boundaries.empty()) {
+        juce::Array<juce::var> list;
+        for (double b : boundaries)
+            list.add(b);
+        obj->setProperty("chordBoundaries", list);
+    }
     return juce::var(obj);
 }
 
 void ProjectSerializer::polyphonicFromJson(Project& project, const juce::var& json) {
     project.setPendingPolyphonicRestore(nullptr);
     project.setPolyphonicEdits({});
+    project.setChordBoundaries({});
     if (!json.isObject())
         return;
 
@@ -1347,6 +1356,14 @@ void ProjectSerializer::polyphonicFromJson(Project& project, const juce::var& js
     }
     project.setPendingPolyphonicRestore(std::move(restore));
     project.setPolyphonicEdits(std::move(edits));
+
+    std::vector<double> boundaries;
+    if (const auto list = json.getProperty("chordBoundaries", {}); list.isArray())
+        for (const auto& v : *list.getArray())
+            if (const double b = static_cast<double>(v);
+                std::isfinite(b) && (boundaries.empty() || b > boundaries.back()))
+                boundaries.push_back(b);
+    project.setChordBoundaries(std::move(boundaries));
 }
 
 juce::var ProjectSerializer::analysisModeToJson(const AnalysisModeState& state) {

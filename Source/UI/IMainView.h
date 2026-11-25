@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "RegionPreview.h"
+#include "../Audio/Polyphonic/PolyChords.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -190,6 +191,11 @@ public:
   virtual void updateHostMusicalTimeline(bool available, double bpm,
                                          int numerator, int denominator,
                                          bool hasSignature) = 0;
+  // The host's chord track from the ARA musical context
+  // (kARAContentTypeSheetChords), in host timeline seconds. Empty when the
+  // host has none; a polyphonic take's chord track then shows the chords
+  // PitchNet detects.
+  virtual void updateHostChords(const std::vector<polyphonic::ChordSpan> &chords) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
                                    bool enabled, bool hasRange) = 0;
   virtual void notifyHostStopped() = 0;

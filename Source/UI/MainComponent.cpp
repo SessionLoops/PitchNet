@@ -4831,6 +4831,15 @@ void MainComponent::updateHostMusicalTimeline(bool available, double bpm,
   applyEffectiveHostTimelineState();
 }
 
+void MainComponent::updateHostChords(const std::vector<polyphonic::ChordSpan> &chords)
+{
+  if (!isPluginMode())
+    return;
+  // Kept in host timeline seconds; the piano roll places them on the canvas
+  // with the region's timeline offset, which follows the active region.
+  pianoRoll.setHostChords(chords);
+}
+
 void MainComponent::applyEffectiveHostTimelineState()
 {
   // The ARA musical context is authoritative when the host provides one: in

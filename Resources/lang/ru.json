@@ -1,4 +1,13 @@
 {
+  "chord_track.already_fits": "Ноты уже соответствуют {chord}",
+  "chord_track.change_chord": "Изменить аккорд",
+  "chord_track.missing_tones": "В записи нет ноты, которая станет {tones}",
+  "chord_track.no_chord_played": "Ноты здесь не образуют аккорд",
+  "chord_track.detect_again": "Распознать аккорды заново",
+  "chord_track.merge": "Объединить аккорды",
+  "chord_track.split": "Разделить аккорд",
+  "chord_track.type_hint": "Введите аккорд, напр. Cm7/G",
+  "chord_track.unreadable": "Не удаётся прочитать «{text}» как аккорд",
   "dialog.unsaved_title": "Несохранённый проект",
   "dialog.unsaved_message": "Сохранить изменения в проекте перед закрытием?",
   "dialog.save": "Сохранить",

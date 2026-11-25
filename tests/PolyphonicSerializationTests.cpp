@@ -105,6 +105,9 @@ int main()
     project.setPolyphonicTake(take);
     const auto edits = sampleEdits(analysis);
     project.setPolyphonicEdits(edits);
+    // A chord track the user split and merged.
+    const std::vector<double> chordBoundaries{0.5, 1.25, 2.0, 3.75};
+    project.setChordBoundaries(chordBoundaries);
 
     const auto checkLoaded = [&](const Project& loaded, const char* what) {
         const auto pending = loaded.getPendingPolyphonicRestore();
@@ -115,6 +118,7 @@ int main()
         CHECK(pending->params.fftSize == params.fftSize);
         CHECK(pending->params.detectionMode == polyphonic::DetectionMode::NeuralGuided);
         CHECK(loaded.getPolyphonicEdits() == edits);
+        CHECK(loaded.getChordBoundaries() == chordBoundaries);
         CHECK(!loaded.isPolyphonic()); // until it is restored
         // The levels the piano roll draws from, so an opened take looks as it
         // will once restored; the take shown meanwhile carries them.
@@ -205,9 +209,11 @@ int main()
         CHECK(!json.hasProperty("polyphonic"));
         Project loaded;
         loaded.setPolyphonicEdits(edits); // stale state must not survive the load
+        loaded.setChordBoundaries(chordBoundaries);
         CHECK(ProjectSerializer::fromJson(loaded, json));
         CHECK(loaded.getPendingPolyphonicRestore() == nullptr);
         CHECK(loaded.getPolyphonicEdits().empty());
+        CHECK(loaded.getChordBoundaries().empty());
         std::printf("vocal project: no polyphonic section, nothing restored\n");
     }
 

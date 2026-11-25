@@ -435,7 +435,10 @@ instrument-family or source-recording holdout.
 | `PolyRenderer.cpp` | streaming resynthesis with edits (pitch, gain, mute, move, stretch) |
 | `BasicPitchEvidence.*` | Basic Pitch note posteriorgram through ONNX Runtime (needs `HAVE_ONNXRUNTIME`) |
 | `PolyFFT.h` | dependency-free real FFT |
+| `PolyTempo.*` | tempo and downbeat from the notes' onsets |
+| `PolyChords.*` | chords from the notes (the chord track) |
 | `tools/polyphonic/` | `polyphonic_cli`, standalone CMake for the tool and tests, research scripts |
+| `tests/PolyChordTests.cpp` | chords from notes: grid and free time, inversions, silence, a melody over held chords, decaying chords, flat keys, edits, a progression through the engine |
 | `tests/PolyphonicTests.cpp` | synthetic-signal tests: detection, identity, pitch, gain, mute, move, stretch, vibrato, stereo, solo, a note on its own with its edit, untouched frames, repeated notes, unpitched sound left in place, notes taking their background |
 
 ```cpp
@@ -695,6 +698,119 @@ detection, not the sound:
   has landed. There is no note separation tool (starting points) and no
   assignment slider.
 
+## Chord track
+
+A polyphonic take shows its chords in a lane under the ruler. Where they come
+from depends on how PitchNet runs:
+
+| | chords |
+|---|---|
+| standalone app, non-ARA plug-in | detected from the take's notes |
+| ARA plug-in, host with a chord track (Studio One, for example) | the host's (`kARAContentTypeSheetChords`), coloured |
+| ARA plug-in, host without one (or an empty one) | detected, as above |
+
+The host's chords are drawn in the accent colour, detected ones in grey.
+
+**Host chords** (`Source/Plugin/AraChordTrack.h`, read in
+`PitchNetDocumentController::refreshHostMusicalTimeline` next to the tempo
+map). ARA places sheet chords in quarter notes; they are put on the host's
+tempo map in timeline seconds and drawn through the region's timeline offset,
+so they line up with the host whichever region is edited. As ARA defines them,
+each chord lasts until the next, the first also holds before it and the last
+after it, and an undefined chord (no intervals) is a gap. The host's own chord
+name is shown when it gives one (its flat and sharp symbols written as b and
+#); otherwise the name is built from the root and bass as the host spells them
+and the intervals. The controller re-reads them on harmonic and timeline
+content updates.
+
+**Detected chords** (`PolyChords.h`, `detectChords()`). The engine knows every
+note's pitch and level per frame, so the chords are read from the notes, not
+from a chromagram of the audio:
+
+- `chordNotes()` turns the take into notes with their edits: muted notes are
+  left out, a re-pitched note counts at its new pitch, a moved one at its new
+  time, a stretched one over its new length, a re-gained one at its new level.
+  So the track follows editing: lower a C chord's third and it reads Cm.
+- Time is cut into slices: a beat when the timeline is in Beats mode (the
+  host's grid, or the tempo PolyTempo found; a beat under 0.3 s is read two
+  at a time), a quarter of a second in Time mode.
+- Each slice gets a pitch-class profile from the notes sounding in it,
+  weighted by their level (compressed a little, exponent 0.8), by how recent
+  their attack is (a weight that falls to 0.4 over 1.5 s, so what is struck
+  now outweighs what still rings from the previous chord), and less above
+  C5 (a melody's passing notes are not the harmony); and a bass profile from
+  its lowest notes.
+- Each slice is scored against 23 chord templates (major, minor, 7, maj7, m7,
+  dim, m7b5, dim7, aug, sus4, sus2, 7sus4, 6, m6, the power chord, add9, madd9,
+  9, maj9, m9, mMaj7, 6/9 and 7#5) by cosine
+  similarity, with a small prior per quality that favours the simpler reading,
+  a bonus for a bass on the root and a penalty for a bass outside the chord.
+  A silent slice has no chord; a slice with one pitch class lets a chord
+  continue but does not start one.
+- A Viterbi pass with a fixed cost per change picks the sequence (template
+  matching with HMM smoothing: Fujishima 1999, Bello & Pickens 2005).
+- A span whose bass is mostly another chord tone is an inversion (C/E). In
+  Time mode a chord starts at its notes' onset nearest the slice edge.
+- Names are spelled with flats in flat keys (F, Bb, Eb, Ab, Db major; D, G,
+  C, F, Bb, Eb minor), the key from the Krumhansl-Kessler profiles.
+
+Detection runs again only when the take, its edits or the beat grid change
+(`Source/UI/PianoRoll/ChordLane.*`). Chords are not saved; they are rebuilt
+from the notes (or kept, once split or merged; below).
+
+**Splitting and merging chords.** A click on a chord, away from its name,
+splits it: at the nearest grid line in Beats mode (the timeline's grid
+division), where the pointer is in Time mode; a dashed line shows where. A
+click where two chords meet merges them; hovering there highlights the area
+the merged chord will cover. Nothing is retuned: both halves of a
+split play what they played, and a merged chord is read from all its notes.
+From the first split or merge on, the lane keeps that segmentation
+(`Project::getChordBoundaries`, saved with the project and the plug-in state,
+undoable) and names each piece by what its notes play
+(`polyphonic::chordsOver`), so the halves of a split can be given different
+chords; a stretch where the notes play no chord is an empty piece, which can
+be merged too. Right-click the lane and choose Detect Chords Again to go back
+to the detected chords. With a host chord track there is no split or merge:
+that segmentation is the host's.
+
+**Changing a chord retunes the notes.** Click a chord's name, type another
+in place (the chord's own box, outlined while it is edited) and press Return
+(Escape or clicking away cancels). The take is
+retuned there (`polyphonic::retuneToChord`, one undo step, rendered like a note
+edit), and the lane then reads the new chord from the retuned notes.
+
+Any usual chord symbol can be typed (`polyphonic::parseChord`): a root (C, F#,
+Bb, lower case too), then m / min / mi / -, maj / M / ma / triangle, dim / o /
+degree sign, aug / +, m7b5 / o-slash, 5, 6, 6/9, 7, 9, 11, 13, sus / sus2 /
+sus4, add2 / add9 / add4 / add11 / add13, alterations b5 #5 b9 #9 #11 b13 (or
+with + and -), alt, no3 / no5, in or out of brackets (Cm(maj7), C7(#9)), and a
+slash bass (C/E). What cannot be read is reported under the chord. Names are
+written back the same way (`chordSuffix`: a table of common names, then
+general rules for anything else, such as Cmaj9#11 or C7b9b13).
+
+- Only the original chord's tones move: every note whose pitch class is in
+  it, in every octave (bass, inner voices, a melody landing on a chord tone).
+  Passing and neighbour notes, other non-chord tones and muted notes stay.
+- Tones map by the smallest total motion that still sounds every tone of the
+  new chord the recording can give, the root and third counting most
+  (`chordToneMotion`): C to Cm lowers E; C to Am raises G to A; C to F moves E
+  to F and G to A; Dm7 to G7 moves A to G and C to B.
+- No note is added. If the new chord needs a tone nothing maps to (C to C7
+  has no B flat), nothing moves for it, the lane keeps showing what the notes
+  play, and a message under the chord names the missing tone.
+- A note follows the chord it starts in, so a note held into the next chord
+  keeps the pitch of the chord where it began (50 ms tolerance for notes
+  struck just before the beat).
+- The bass is as typed: the span's lowest chord tones move to it. "Cm" over
+  C/E is Cm in root position; type Cm/Eb to keep the inversion. The field
+  starts with the chord's name, inversion included.
+- In an ARA host with a chord track the host's chord is shown, while the
+  original tones come from the chords detected in the notes; each detected
+  chord under the host's is retuned to the typed chord, bass
+  included: Return on the host's chord name (which the field starts with)
+  fits the notes to it. The host's chord track itself is not changed (ARA has
+  no way for a plug-in to write it).
+
 ## Reproducing and retraining
 
 `tools/polyphonic/research/README.md` fetches the samples, rebuilds the corpora
@@ -711,6 +827,10 @@ from features the C++ analyzer itself dumps (`--dump-features`), then rewrites
 - S. Ewert, M. Müller, "Using score-informed constraints for NMF-based source separation", ICASSP 2012.
 - J. Laroche, M. Dolson, "New phase-vocoder techniques for pitch-shifting, harmonizing and other exotic effects", IEEE WASPAA 1999; "Improved phase vocoder time-scale modification of audio", IEEE TSAP 7(3), 1999.
 - R. Bittner, J. J. Bosch, D. Rubinstein, G. Meseguer-Brocal, S. Ewert, "A lightweight instrument-agnostic model for polyphonic note transcription and multipitch estimation", ICASSP 2022.
+- T. Fujishima, "Realtime chord recognition of musical sound: a system using Common Lisp Music", ICMC 1999.
+- J. P. Bello, J. Pickens, "A robust mid-level representation for harmonic content in music signals", ISMIR 2005.
+- B. Pardo, W. P. Birmingham, "Algorithms for chordal analysis", Computer Music Journal 26(2), 2002.
+- C. L. Krumhansl, E. J. Kessler, "Tracing the dynamic changes in perceived tonal organization in a spatial representation of musical keys", Psychological Review 89(4), 1982.
 
 Training and test material: Salamander Grand Piano V3 by Alexander Holm (CC BY
 3.0), VSCO 2 Community Edition by Versilian Studios and Ivy Audio (CC0). The

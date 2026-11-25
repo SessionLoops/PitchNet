@@ -1,4 +1,13 @@
 {
+  "chord_track.already_fits": "The notes already fit {chord}",
+  "chord_track.change_chord": "Change Chord",
+  "chord_track.missing_tones": "No note in the recording to become {tones}",
+  "chord_track.no_chord_played": "The notes here play no chord",
+  "chord_track.detect_again": "Detect Chords Again",
+  "chord_track.merge": "Merge Chords",
+  "chord_track.split": "Split Chord",
+  "chord_track.type_hint": "Type a chord, e.g. Cm7/G",
+  "chord_track.unreadable": "Can't read \"{text}\" as a chord",
   "dialog.unsaved_title": "Unsaved project",
   "dialog.unsaved_message": "Save changes to this project before closing?",
   "dialog.save": "Save",

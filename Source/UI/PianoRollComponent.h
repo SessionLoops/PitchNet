@@ -9,6 +9,7 @@
 #include "../Undo/UndoActions.h"
 #include "Commands.h"
 #include "PianoRoll/BoxSelector.h"
+#include "PianoRoll/ChordLane.h"
 #include "PianoRoll/CoordinateMapper.h"
 #include "PianoRoll/GridRenderer.h"
 #include "PianoRoll/NoteRenderer.h"
@@ -58,7 +59,11 @@ public:
   static constexpr int pianoKeysWidth = 30;
   static constexpr int timelineHeight = 18;
   static constexpr int loopTimelineHeight = 16;
-  static constexpr int headerHeight = timelineHeight + loopTimelineHeight;
+  static constexpr int rulerHeight = timelineHeight + loopTimelineHeight;
+  static constexpr int chordLaneHeight = CoordinateMapper::chordLaneHeight;
+  /** Where the canvas starts: below the ruler, and below the chord track
+   *  when one is shown (polyphonic takes). */
+  int getHeaderHeight() const;
   static constexpr juce::int64 minDragRepaintInterval = 16; // ~60fps max
 
   PianoRollComponent();
@@ -319,6 +324,36 @@ private:
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   // A polyphonic take's right-click menu: Restore Original for the selection.
   void showPolyphonicMenu(float worldX, float worldY);
+  /** A text field over the chord at a project time, holding its name: type
+   *  another chord (polyphonic::parseChord) and press Return to retune the
+   *  take there (retuneChordSpan); Escape or clicking away cancels. */
+  void showChordEditor(double projectSeconds);
+  void commitChordEditor();
+  void closeChordEditor(bool refocus);
+  void layOutChordEditor();
+  std::unique_ptr<juce::TextEditor> chordEditor;
+  double chordEditStart = 0.0, chordEditEnd = 0.0;
+  juce::String chordEditInitial;
+  bool chordEditHost = false;
+  /** Retunes the take's notes from `startSeconds` to `endSeconds` to the
+   *  chord `to` (polyphonic::retuneToChord over each detected chord there):
+   *  the original chords' tones move, other notes stay. One undo step. */
+  void retuneChordSpan(double startSeconds, double endSeconds,
+                       const polyphonic::Chord &to, const juce::String &chordName);
+  void showChordMessage(double startSeconds, double endSeconds, const juce::String &text);
+  // Split / merge in the chord track (a chord's name edits it, see
+  // showChordEditor). Not with a host chord track: its segmentation is the
+  // host's.
+  ChordLane::Hit chordLaneHit(int screenX);
+  /** Where a click at a project time splits its chord: the nearest grid line
+   *  in Beats mode, the time itself in Time mode; none on its edges. */
+  std::optional<double> chordSplitTime(double projectSeconds, const polyphonic::ChordSpan &span) const;
+  void splitChordAt(double projectSeconds);
+  void mergeChordsAt(double boundarySeconds);
+  /** Sets the chord segmentation as one undo step (empty: detect again). */
+  void setChordSegmentation(std::vector<double> boundaries, const juce::String &name);
+  void updateChordLaneHover(const juce::MouseEvent &e);
+  std::unique_ptr<juce::BubbleMessageComponent> chordMessage;
   void drawAudioSourceRegionOverlay(juce::Graphics &g);
   void drawRegionPreviews(juce::Graphics &g);
   // Track mode: inactive regions' notes and pitch curves, drawn with the same
@@ -437,6 +472,14 @@ private:
   // and handles on the canvas.
   std::unique_ptr<PolyphonicNoteLayer> polyphonicLayer =
       std::make_unique<PolyphonicNoteLayer>();
+  // The chord track under the ruler, for polyphonic takes.
+  std::unique_ptr<ChordLane> chordLane = std::make_unique<ChordLane>();
+  /** Shows the chord track exactly when a polyphonic take is active; the
+   *  canvas moves down by its height. */
+  void syncChordLaneVisibility();
+  /** The beat grid chords are detected on: the timeline's beat in Beats
+   *  mode, none (free time) in Time mode. */
+  ChordLane::Grid getChordGrid() const;
 
 public:
   bool isPolyphonicActive() const
@@ -458,6 +501,15 @@ public:
     repaint();
   }
   bool isPolyphonicAssignmentMode() const { return polyphonicLayer->isAssignmentMode(); }
+  /** The host's chord track (ARA), in host timeline seconds; empty: none,
+   *  and the chord track shows the chords detected in the take. */
+  void setHostChords(std::vector<polyphonic::ChordSpan> timelineChords)
+  {
+    chordLane->setHostChords(std::move(timelineChords));
+    repaint();
+  }
+  /** Whether the chord track is shown (a polyphonic take). */
+  bool isChordLaneVisible() const { return coordMapper->isChordLaneVisible(); }
   /** The take's length changed (a polyphonic render grew or shrank it). */
   void refreshTimelineExtent()
   {

@@ -778,7 +778,7 @@ void SelectHandler::mouseMove(const juce::MouseEvent &e, float worldX,
 {
   // Pitch tool handle hover
   if (owner_.pitchToolHandles && !owner_.pitchToolHandles->isEmpty() &&
-      e.y >= PianoRollComponent::headerHeight &&
+      e.y >= owner_.coordMapper->getHeaderHeight() &&
       e.x >= PianoRollComponent::pianoKeysWidth)
   {
     int hitIndex = owner_.pitchToolHandles->hitTest(worldX, worldY);

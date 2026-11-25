@@ -1,4 +1,13 @@
 {
+  "chord_track.already_fits": "ノートはすでに {chord} に合っています",
+  "chord_track.change_chord": "コードを変更",
+  "chord_track.missing_tones": "{tones} にできるノートが録音にありません",
+  "chord_track.no_chord_played": "ここのノートはコードを鳴らしていません",
+  "chord_track.detect_again": "コードを再検出",
+  "chord_track.merge": "コードを結合",
+  "chord_track.split": "コードを分割",
+  "chord_track.type_hint": "コードを入力（例: Cm7/G）",
+  "chord_track.unreadable": "「{text}」をコードとして読み取れません",
   "dialog.unsaved_title": "未保存のプロジェクト",
   "dialog.unsaved_message": "閉じる前にプロジェクトの変更を保存しますか？",
   "dialog.save": "保存",

@@ -1304,8 +1304,11 @@ void PitchNetDocumentController::setMainComponent(IMainView *mc) {
   }
 
   mainComponent = mc;
-  if (mainComponent != nullptr)
+  if (mainComponent != nullptr) {
     refreshHostMusicalTimeline();
+    // A new editor has no chords yet, though the refresh saw no change.
+    pushHostChordsToEditor();
+  }
   if (mainComponent && pendingRestoredProjectData.getSize() > 0 &&
       !restoreProjectStateCallback) {
     juce::String jsonString(
@@ -2164,7 +2167,8 @@ void PitchNetDocumentController::doUpdateMusicalContextContent(
     juce::ARAMusicalContext *musicalContext,
     juce::ARAContentUpdateScopes scopeFlags) {
   juce::ignoreUnused(musicalContext);
-  if (!scopeFlags.affectTimeline())
+  // Tempo and bar signatures are timeline content, the chord track harmonic.
+  if (!scopeFlags.affectTimeline() && !scopeFlags.affectHarmonies())
     return;
 
   // Content updates arrive inside the host's editing cycle; read the map once
@@ -2208,6 +2212,7 @@ void PitchNetDocumentController::refreshHostMusicalTimeline() {
   hostMusicalTimelineDirty = false;
 
   std::optional<pitchnet::ara::MusicalTimeline> timeline;
+  std::vector<polyphonic::ChordSpan> chords;
   if (auto *context = findCurrentMusicalContext()) {
     const ARA::PlugIn::HostContentReader<ARA::kARAContentTypeTempoEntries>
         tempoReader(context);
@@ -2238,8 +2243,34 @@ void PitchNetDocumentController::refreshHostMusicalTimeline() {
               : 0.0;
       timeline = pitchnet::ara::musicalTimelineAt(tempoEntries, barSignatures,
                                                   regionStart);
+
+      // The host's chord track (Studio One, for example), placed on its
+      // tempo map. A host that has none gives no reader or no events; the
+      // chord track then shows the chords PitchNet detects in the take.
+      const ARA::PlugIn::HostContentReader<ARA::kARAContentTypeSheetChords>
+          chordReader(context);
+      if (chordReader && chordReader.getEventCount() > 0) {
+        std::vector<pitchnet::ara::SheetChordEntry> sheet;
+        sheet.reserve(static_cast<size_t>(chordReader.getEventCount()));
+        for (ARA::ARAInt32 i = 0; i < chordReader.getEventCount(); ++i)
+          if (const auto *entry = chordReader.getDataPtrForEvent(i)) {
+            pitchnet::ara::SheetChordEntry chord;
+            chord.quarterPosition = entry->position;
+            chord.root = static_cast<int>(entry->root);
+            chord.bass = static_cast<int>(entry->bass);
+            for (size_t k = 0; k < chord.intervals.size(); ++k)
+              chord.intervals[k] = static_cast<std::uint8_t>(entry->intervals[k]);
+            if (entry->name != nullptr)
+              chord.name = entry->name;
+            sheet.push_back(std::move(chord));
+          }
+        chords = pitchnet::ara::sheetChordSpans(tempoEntries, sheet);
+      }
     }
   }
+
+  const bool chordsChanged = chords != hostChords;
+  hostChords = std::move(chords);
 
   const bool changed =
       timeline.has_value() != hostMusicalTimeline.has_value() ||
@@ -2256,8 +2287,17 @@ void PitchNetDocumentController::refreshHostMusicalTimeline() {
                            juce::String(timeline->denominator)
                      : juce::String("unavailable")));
 
+  ARA_DIAG("sheetChords " + juce::String(static_cast<int>(hostChords.size())));
+
   if (changed)
     pushHostMusicalTimelineToEditor();
+  if (chordsChanged)
+    pushHostChordsToEditor();
+}
+
+void PitchNetDocumentController::pushHostChordsToEditor() {
+  if (mainComponent != nullptr)
+    mainComponent->updateHostChords(hostChords);
 }
 
 void PitchNetDocumentController::pushHostMusicalTimelineToEditor() {

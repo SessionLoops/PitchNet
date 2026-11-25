@@ -1,4 +1,13 @@
 {
+  "chord_track.already_fits": "As notas já se encaixam em {chord}",
+  "chord_track.change_chord": "Alterar acorde",
+  "chord_track.missing_tones": "Nenhuma nota da gravação pode virar {tones}",
+  "chord_track.no_chord_played": "As notas aqui não formam um acorde",
+  "chord_track.detect_again": "Detectar acordes novamente",
+  "chord_track.merge": "Unir acordes",
+  "chord_track.split": "Dividir acorde",
+  "chord_track.type_hint": "Digite um acorde, ex. Cm7/G",
+  "chord_track.unreadable": "Não foi possível ler \"{text}\" como acorde",
   "dialog.unsaved_title": "Projeto não salvo",
   "dialog.unsaved_message": "Salvar as alterações deste projeto antes de fechar?",
   "dialog.save": "Salvar",

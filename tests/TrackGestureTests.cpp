@@ -46,7 +46,7 @@ int main() {
         {&b, {{0, 50}}, [&] { return bAlive; }, [&](bool render) { if (render) ++bRenders; }}};
   };
   const float h = roll.getPixelsPerSemitone();
-  const float header = PianoRollComponent::headerHeight;
+  const float header = static_cast<float>(roll.getHeaderHeight());
   // A newly focused region can be published before its analysis completes.
   // Its canvas then gains notes, but selection must also receive the new
   // source binding without recreating the component/editor.

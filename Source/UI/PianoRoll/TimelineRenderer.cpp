@@ -168,7 +168,7 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
   const int pianoKeysWidth = CoordinateMapper::pianoKeysWidth;
   const int timelineHeight = CoordinateMapper::timelineHeight;
   const int loopTimelineHeight = CoordinateMapper::loopTimelineHeight;
-  const int headerHeight = CoordinateMapper::headerHeight;
+  const int headerHeight = CoordinateMapper::rulerHeight; // the loop gutter's bottom
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
   const int scrollX = static_cast<int>(coordMapper->getScrollX());
 

@@ -15,7 +15,7 @@ bool LoopDragHandler::mouseDown(const juce::MouseEvent &e, float worldX,
 
   // Only handle clicks in the loop timeline area
   if (e.y < PianoRollComponent::timelineHeight ||
-      e.y >= PianoRollComponent::headerHeight ||
+      e.y >= PianoRollComponent::rulerHeight ||
       e.x < PianoRollComponent::pianoKeysWidth)
     return false;
 
@@ -172,7 +172,7 @@ void LoopDragHandler::mouseMove(const juce::MouseEvent &e, float worldX,
     return;
 
   if (!owner_.project || e.y < PianoRollComponent::timelineHeight ||
-      e.y >= PianoRollComponent::headerHeight ||
+      e.y >= PianoRollComponent::rulerHeight ||
       e.x < PianoRollComponent::pianoKeysWidth) {
     return;
   }

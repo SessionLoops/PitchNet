@@ -17,6 +17,7 @@ set(PITCHNET_TEST_SOURCES
     PolyphonicSerializationTests.cpp
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
+    AraChordTrackTests.cpp
     AraTempoMapTests.cpp
     BreathSibilanceTests.cpp
     FormantShiftTests.cpp
@@ -63,6 +64,11 @@ add_executable(PolyphonicTests PolyphonicTests.cpp)
 target_link_libraries(PolyphonicTests PRIVATE pitchnet_core)
 target_compile_features(PolyphonicTests PRIVATE cxx_std_17)
 add_test(NAME PolyphonicTests COMMAND PolyphonicTests)
+
+add_executable(PolyChordTests PolyChordTests.cpp)
+target_link_libraries(PolyChordTests PRIVATE pitchnet_core)
+target_compile_features(PolyChordTests PRIVATE cxx_std_17)
+add_test(NAME PolyChordTests COMMAND PolyChordTests)
 
 add_executable(BasicPitchEvidenceTests BasicPitchEvidenceTests.cpp)
 target_link_libraries(BasicPitchEvidenceTests PRIVATE pitchnet_core)

@@ -299,6 +299,7 @@ public:
                                int denominator) override;
   void updateHostMusicalTimeline(bool available, double bpm, int numerator,
                                  int denominator, bool hasSignature) override;
+  void updateHostChords(const std::vector<polyphonic::ChordSpan> &chords) override;
   void updateHostLoopRange(double startSeconds, double endSeconds,
                            bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback
