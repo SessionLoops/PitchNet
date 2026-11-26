@@ -5114,7 +5114,8 @@ void PianoRollComponent::showPolyphonicMenu(float worldX, float worldY)
   }
   else
   {
-    // Paste puts copies of the copied notes at the playhead, on top of the
+    // Paste puts copies of the copied notes at the playhead (snapped with
+    // Drag Snap, as a dragged note's start is), on top of the
     // take (the originals stay); Cut copies and deletes. Delete, as the
     // Delete key: pasted notes go, other notes are muted (or unmuted when the
     // selection is all muted).
@@ -5158,7 +5159,7 @@ void PianoRollComponent::showPolyphonicMenu(float worldX, float worldY)
                          case deactivateNotes:  l.deactivateSelection(); break;
                          case cutNotes:         l.cutSelection(); break;
                          case copyNotes:        l.copySelection(); break;
-                         case pasteNotes:       l.pasteAt(safeThis->cursorTime); break;
+                         case pasteNotes:       l.pasteAt(safeThis->polyphonicPasteTime()); break;
                          case deleteNotes:      l.toggleMuteSelection(); break;
                          case selectAllNotes:   l.selectAll(); break;
                          case restorePitch:     l.restoreSelection(Aspect::pitch); break;

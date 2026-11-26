@@ -514,8 +514,14 @@ public:
   }
   void pastePolyphonicNotes()
   {
-    polyphonicLayer->pasteAt(cursorTime);
+    polyphonicLayer->pasteAt(polyphonicPasteTime());
     repaint();
+  }
+  /** Where Paste puts the earliest pasted note: the playhead, on the grid
+   *  when Drag Snap is on (Alt held inverts it, as for a drag). */
+  double polyphonicPasteTime() const
+  {
+    return snapDragTime(cursorTime, juce::ModifierKeys::getCurrentModifiers());
   }
   /** Select All for a polyphonic take (its notes are not Project notes). */
   void selectAllPolyphonicNotes()
