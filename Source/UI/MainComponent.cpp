@@ -3843,6 +3843,20 @@ void MainComponent::refreshNoteAuditions()
     const double start = analysis.frameToSeconds(note.startFrame) + edit.timeOffsetSeconds;
     order.emplace_back(std::abs(start - viewCentre), i);
   }
+  // Pasted notes (copies, keyed below zero) are dragged like any other.
+  for (auto it = edits.begin(); it != edits.end() && polyphonic::isCopyKey(it->first); ++it)
+  {
+    const int source = it->second.copyOf;
+    if (it->second.mute || source < 0 || source >= static_cast<int>(analysis.notes.size()) ||
+        !analysis.notes[static_cast<size_t>(source)].active)
+      continue;
+    if (const auto done = noteAuditions.find(it->first);
+        done != noteAuditions.end() && sameButPitchAndTime(done->second.edit, it->second))
+      continue;
+    const double start = analysis.frameToSeconds(analysis.notes[static_cast<size_t>(source)].startFrame) +
+                         it->second.timeOffsetSeconds;
+    order.emplace_back(std::abs(start - viewCentre), it->first);
+  }
   noteAuditionRequestedFor = edits;
   if (order.empty())
     return;
@@ -3931,13 +3945,14 @@ void MainComponent::auditionPolyphonicNotes(const std::vector<int> &notes)
     const auto &analysis = *take->analysis;
     double first = std::numeric_limits<double>::max();
     double last = 0.0;
-    for (const int index : notes)
+    for (const int key : notes)
     {
+      const auto it = edits.find(key);
+      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+      const int index = polyphonic::sourceNote(key, edit); // a copy: its source note
       if (index < 0 || index >= static_cast<int>(analysis.notes.size()))
         continue;
       const auto &note = analysis.notes[static_cast<size_t>(index)];
-      const auto it = edits.find(index);
-      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
       const auto map = polyphonic::stretchMap(analysis, index, edit);
       const double lastOut =
           map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
@@ -5128,6 +5143,9 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::undo,
       CommandIDs::redo,
       CommandIDs::selectAll,
+      CommandIDs::cutNotes,
+      CommandIDs::copyNotes,
+      CommandIDs::pasteNotes,
 
       // View commands
       CommandIDs::showSettings,
@@ -5222,6 +5240,26 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo(TR("command.select_all"), TR("command.select_all.desp"), TR("menu.edit"), 0);
     result.addDefaultKeypress('a', primaryModifier);
     result.setActive(project != nullptr);
+    break;
+
+  // A polyphonic take's notes (a text field being typed in keeps its own
+  // Cmd+X/C/V: it handles the keys before these mappings see them).
+  case CommandIDs::cutNotes:
+    result.setInfo(TR("polyphonic.cut"), TR("command.cut_notes.desp"), TR("menu.edit"), 0);
+    result.addDefaultKeypress('x', primaryModifier);
+    result.setActive(pianoRoll.canCopyPolyphonicNotes());
+    break;
+
+  case CommandIDs::copyNotes:
+    result.setInfo(TR("polyphonic.copy"), TR("command.copy_notes.desp"), TR("menu.edit"), 0);
+    result.addDefaultKeypress('c', primaryModifier);
+    result.setActive(pianoRoll.canCopyPolyphonicNotes());
+    break;
+
+  case CommandIDs::pasteNotes:
+    result.setInfo(TR("polyphonic.paste"), TR("command.paste_notes.desp"), TR("menu.edit"), 0);
+    result.addDefaultKeypress('v', primaryModifier);
+    result.setActive(pianoRoll.canPastePolyphonicNotes());
     break;
 
   // View commands
@@ -5378,6 +5416,26 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
       project->selectAllNotes();
       pianoRoll.repaint();
     }
+    return true;
+
+  case CommandIDs::cutNotes:
+    if (!pianoRoll.canCopyPolyphonicNotes())
+      return false;
+    pianoRoll.cutPolyphonicNotes();
+    return true;
+
+  case CommandIDs::copyNotes:
+    if (!pianoRoll.canCopyPolyphonicNotes())
+      return false;
+    pianoRoll.copyPolyphonicNotes();
+    if (commandManager)
+      commandManager->commandStatusChanged(); // Paste can be used now
+    return true;
+
+  case CommandIDs::pasteNotes:
+    if (!pianoRoll.canPastePolyphonicNotes())
+      return false;
+    pianoRoll.pastePolyphonicNotes();
     return true;
 
   // View commands

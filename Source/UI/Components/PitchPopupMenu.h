@@ -41,6 +41,25 @@ public:
                             const juce::BorderSize<int>&) override
     {
     }
+
+    // Separators as the canvas menu draws its own: a 1 px rule inset 8 px.
+    void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
+                           bool isSeparator, bool isActive, bool isHighlighted,
+                           bool isTicked, bool hasSubMenu, const juce::String& text,
+                           const juce::String& shortcutKeyText,
+                           const juce::Drawable* icon,
+                           const juce::Colour* textColour) override
+    {
+        if (isSeparator)
+        {
+            g.setColour(juce::Colour(0xFF3E3E3Eu));
+            g.fillRect(area.getX() + 8, area.getCentreY(), area.getWidth() - 16, 1);
+            return;
+        }
+        juce::LookAndFeel_V4::drawPopupMenuItem(g, area, isSeparator, isActive,
+                                                isHighlighted, isTicked, hasSubMenu,
+                                                text, shortcutKeyText, icon, textColour);
+    }
 };
 
 inline LookAndFeel& getLookAndFeel()
@@ -64,11 +83,20 @@ public:
         setOpaque(false);
     }
 
+    /** Shown right-aligned and dimmed, as a key hint ("⌘C"). */
+    void setShortcutText(juce::String text) { shortcutText = std::move(text); }
+
     void getIdealSize(int& idealWidth, int& idealHeight) override
     {
         const int textWidth = juce::GlyphArrangement::getStringWidthInt(
             AppFont::getFont(14.0f), itemText);
         idealWidth = textWidth + (reservesSelectionSpace ? 44 : 24);
+        if (shortcutText.isNotEmpty())
+            idealWidth += kShortcutGap + juce::GlyphArrangement::getStringWidthInt(
+                                             AppFont::getFont(13.0f), shortcutText);
+        const auto* menuItem = getItem();
+        if (menuItem != nullptr && menuItem->subMenu != nullptr)
+            idealWidth += kShortcutGap;
         idealHeight = 26;
     }
 
@@ -95,6 +123,27 @@ public:
         g.drawText(itemText, getLocalBounds().withTrimmedLeft(
                                   reservesSelectionSpace ? 22 : 12),
                    juce::Justification::centredLeft, true);
+
+        const auto right = getLocalBounds().withTrimmedRight(12);
+        if (shortcutText.isNotEmpty())
+        {
+            g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(itemEnabled ? 0.5f : 0.25f));
+            g.setFont(AppFont::getFont(13.0f));
+            g.drawText(shortcutText, right, juce::Justification::centredRight, false);
+        }
+        if (menuItem != nullptr && menuItem->subMenu != nullptr)
+        {
+            // A small chevron for a submenu.
+            const float x = static_cast<float>(right.getRight()) - 4.0f;
+            const float cy = area.getCentreY();
+            juce::Path chevron;
+            chevron.startNewSubPath(x - 3.0f, cy - 4.0f);
+            chevron.lineTo(x + 1.0f, cy);
+            chevron.lineTo(x - 3.0f, cy + 4.0f);
+            g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(itemEnabled ? 0.7f : 0.3f));
+            g.strokePath(chevron, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+        }
     }
 
     void mouseEnter(const juce::MouseEvent& event) override
@@ -112,7 +161,9 @@ public:
     }
 
 private:
+    static constexpr int kShortcutGap = 24;
     juce::String itemText;
+    juce::String shortcutText;
     bool isSelected = false;
     std::function<void()> onHover;
     bool reservesSelectionSpace = true;

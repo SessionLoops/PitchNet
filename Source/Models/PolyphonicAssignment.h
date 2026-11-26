@@ -142,15 +142,17 @@ apply(Project &project, std::vector<polyphonic::Note> notes, Project::Polyphonic
 
 /** `edits` without the edits of notes whose assignment changed from `before`
  *  to `after` (a deactivated note, or one moved to another pitch, loses its
- *  edit, as a re-detected note does in Melodyne). */
+ *  edit, as a re-detected note does in Melodyne), and without the copies
+ *  (pasted notes) of those notes. */
 inline Project::PolyphonicEdits editsFor(const std::vector<polyphonic::Note> &before,
                                          const std::vector<polyphonic::Note> &after,
                                          Project::PolyphonicEdits edits)
 {
   for (auto it = edits.begin(); it != edits.end();)
   {
-    const auto i = static_cast<size_t>(it->first);
-    const bool keep = i < after.size() && after[i].active &&
+    const int source = polyphonic::sourceNote(it->first, it->second);
+    const auto i = static_cast<size_t>(source);
+    const bool keep = source >= 0 && i < after.size() && after[i].active &&
                       (i >= before.size() || !noteChanged(before[i], after[i]));
     it = keep ? std::next(it) : edits.erase(it);
   }
@@ -228,6 +230,8 @@ inline Separation split(const PolyphonicTake &take, const Project::PolyphonicEdi
   out.levels.push_back(std::move(secondLevel));
   out.edits = edits;
   out.edits.erase(note);
+  // its copies (pasted notes) go with its edit
+  polyphonic::remapCopies(out.edits, [note](int source) { return source == note ? -1 : source; });
   out.select = {note, static_cast<int>(out.notes.size()) - 1};
   return out;
 }
@@ -308,6 +312,11 @@ inline Separation merge(const PolyphonicTake &take, const Project::PolyphonicEdi
   for (const auto &[index, edit] : edits)
     if (index != first && index != second)
       out.edits[index > second ? index - 1 : index] = edit;
+  // copies (pasted notes, keyed below zero) follow their notes; those of the
+  // merged notes go with their edits
+  polyphonic::remapCopies(out.edits, [first, second](int source) {
+    return source == first || source == second ? -1 : (source > second ? source - 1 : source);
+  });
   out.select = {first < second ? first : first - 1};
   return out;
 }

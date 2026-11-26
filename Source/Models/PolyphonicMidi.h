@@ -49,15 +49,12 @@ inline std::vector<MidiExportNote> exportNotes(const Project& project)
     peaks.resize(analysis.notes.size(), 0.0);
     const double loudest = peaks.empty() ? 0.0 : *std::max_element(peaks.begin(), peaks.end());
 
-    for (size_t i = 0; i < analysis.notes.size(); ++i)
-    {
+    // pasted notes (copies) export as notes of their own
+    polyphonic::forEachNoteAsEdited(analysis, edits, [&](int, int source, const polyphonic::NoteEdit& edit) {
+        const auto i = static_cast<size_t>(source);
         const auto& note = analysis.notes[i];
-        if (!note.active)
-            continue;
-        const auto it = edits.find(static_cast<int>(i));
-        const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
         if (edit.mute)
-            continue;
+            return;
         const auto map = polyphonic::stretchMap(analysis, static_cast<int>(i), edit);
         const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
 
@@ -70,7 +67,7 @@ inline std::vector<MidiExportNote> exportNotes(const Project& project)
                                   : kQuietestDb;
         exported.velocity = velocityForLevelDb(levelDb + edit.gainDb);
         out.push_back(exported);
-    }
+    });
     std::sort(out.begin(), out.end(), [](const MidiExportNote& a, const MidiExportNote& b) {
         return a.startSeconds < b.startSeconds;
     });

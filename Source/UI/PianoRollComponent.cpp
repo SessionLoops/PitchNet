@@ -372,6 +372,8 @@ PianoRollComponent::PianoRollComponent()
               *project, before, after, name, [safeThis]() {
                 if (safeThis != nullptr)
                 {
+                  // An undone paste: its notes leave the selection.
+                  safeThis->polyphonicLayer->dropMissingCopies();
                   safeThis->repaint();
                   if (safeThis->onPolyphonicSelectionChanged)
                     safeThis->onPolyphonicSelectionChanged();
@@ -2096,7 +2098,7 @@ double PianoRollComponent::snapTimeToTimelineGrid(
 bool PianoRollComponent::altControlsDragSnap(float worldX, float worldY)
 {
   if (isPolyphonicActive())
-    return polyphonicLayer->noteAt(worldX, worldY) >= 0 ||
+    return polyphonicLayer->noteAt(worldX, worldY) != -1 ||
            polyphonicLayer->isOverStretchEdge(worldX, worldY);
   if (editMode == EditMode::Select)
     return findNoteAt(worldX, worldY) != nullptr;
@@ -2418,8 +2420,9 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - getHeaderHeight() + static_cast<float>(scrollY);
 
-  // A polyphonic take has its own menu: Restore Original for the selection
-  // (#19). A right-click on an unselected note selects it first.
+  // A polyphonic take has its own menu: Cut, Copy, Delete, Paste, Select All
+  // and Restore Original (#19). A right-click on an unselected note selects
+  // it first.
   if (e.mods.isPopupMenu() && isCanvasPoint(e) && isPolyphonicActive())
   {
     showPolyphonicMenu(adjustedX, adjustedY);
@@ -5028,38 +5031,130 @@ void PianoRollComponent::showPolyphonicMenu(float worldX, float worldY)
 {
   auto &layer = *polyphonicLayer;
   const int hit = layer.noteAt(worldX, worldY);
-  if (hit >= 0 && layer.getSelection().count(hit) == 0)
+  if (hit != -1 && layer.getSelection().count(hit) == 0)
   {
     layer.select(hit, false);
     repaint();
   }
-  if (layer.getSelection().empty())
-    return;
 
-  bool anyEdited = false;
-  const auto &edits = layer.currentEdits();
-  for (int note : layer.getSelection())
-    anyEdited = anyEdited || edits.count(note) > 0;
+  enum MenuItem
+  {
+    restoreOriginal = 1, // All Edits
+    deactivateNotes,
+    cutNotes,
+    copyNotes,
+    pasteNotes,
+    deleteNotes,
+    selectAllNotes,
+    restorePitch,
+    restoreAmplitude,
+    restoreTiming
+  };
+  using Aspect = PolyphonicNoteLayer::RestoreAspect;
 
+  // The vocal editor's popup look (pitchPopupMenu, as its Restore Original
+  // menu): its rounded panel, rows and highlight, with the keys shown.
+  const auto primary = juce::ModifierKeys(
+#if JUCE_MAC
+      juce::ModifierKeys::commandModifier
+#else
+      juce::ModifierKeys::ctrlModifier
+#endif
+  );
+  const auto addItem = [](juce::PopupMenu &to, int id, const juce::String &text, bool enabled,
+                          std::optional<juce::KeyPress> key = std::nullopt,
+                          std::unique_ptr<juce::PopupMenu> subMenu = nullptr) {
+    juce::PopupMenu::Item entry(text);
+    entry.itemID = id;
+    entry.isEnabled = enabled;
+    entry.subMenu = std::move(subMenu);
+    auto row = std::make_unique<pitchPopupMenu::MenuItemComponent>(
+        text, false, std::function<void()>{}, false);
+    if (key)
+      row->setShortcutText(key->getTextDescriptionWithIcons());
+    entry.customComponent = row.release();
+    to.addItem(std::move(entry));
+  };
+
+  const bool hasSelection = !layer.getSelection().empty();
+  // Only deleted (muted) notes selected: Delete becomes Resume (as the
+  // Delete key, it brings them back with their other edits) and there is
+  // nothing to restore.
+  bool allDeleted = hasSelection;
+  {
+    const auto &edits = layer.currentEdits();
+    for (int key : layer.getSelection())
+    {
+      const auto it = edits.find(key);
+      allDeleted = allDeleted && it != edits.end() && it->second.mute;
+    }
+  }
   juce::PopupMenu menu;
-  menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+  menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
   // Assignment mode edits the detection: the selection can be deactivated
-  // (edits are hidden there, so there is nothing to restore).
-  const bool assigning = layer.isAssignmentMode();
-  if (assigning)
-    menu.addItem(2, TR("polyphonic.deactivate_notes"));
+  // (edits are hidden there, so there is nothing to copy, paste or restore).
+  if (layer.isAssignmentMode())
+  {
+    addItem(menu, deactivateNotes, TR("polyphonic.deactivate_notes"), hasSelection,
+            juce::KeyPress(juce::KeyPress::deleteKey));
+    menu.addSeparator();
+    addItem(menu, selectAllNotes, TR("canvas.select_all"), true, juce::KeyPress('a', primary, 0));
+  }
   else
-    menu.addItem(1, TR("tooltip.restore_original"), anyEdited);
+  {
+    // Paste puts copies of the copied notes at the playhead, on top of the
+    // take (the originals stay); Cut copies and deletes. Delete, as the
+    // Delete key: pasted notes go, other notes are muted (or unmuted when the
+    // selection is all muted).
+    addItem(menu, cutNotes, TR("polyphonic.cut"), layer.canCopySelection(),
+            juce::KeyPress('x', primary, 0));
+    addItem(menu, copyNotes, TR("polyphonic.copy"), layer.canCopySelection(),
+            juce::KeyPress('c', primary, 0));
+    addItem(menu, deleteNotes, allDeleted ? TR("polyphonic.resume") : TR("polyphonic.delete"),
+            hasSelection, juce::KeyPress(juce::KeyPress::deleteKey));
+    addItem(menu, pasteNotes, TR("polyphonic.paste"), layer.canPaste(),
+            juce::KeyPress('v', primary, 0));
+    menu.addSeparator();
+    addItem(menu, selectAllNotes, TR("canvas.select_all"), true, juce::KeyPress('a', primary, 0));
+
+    // Restore Original, by what the selected notes have changed (as the
+    // vocal editor's restore menu). Kept, but inactive, for deleted notes only.
+    const bool pitch = layer.selectionHasEdits(Aspect::pitch);
+    const bool amplitude = layer.selectionHasEdits(Aspect::amplitude);
+    const bool timing = layer.selectionHasEdits(Aspect::timing);
+    const bool any = layer.selectionHasEdits(Aspect::all);
+    auto restore = std::make_unique<juce::PopupMenu>();
+    restore->setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
+    addItem(*restore, restorePitch, TR("restore.pitch"), pitch);
+    addItem(*restore, restoreAmplitude, TR("restore.amplitude"), amplitude);
+    addItem(*restore, restoreTiming, TR("restore.timing"), timing);
+    restore->addSeparator();
+    addItem(*restore, restoreOriginal, TR("restore.all"), any);
+    addItem(menu, 0, TR("tooltip.restore_original"), any && !allDeleted, std::nullopt,
+            std::move(restore));
+  }
+
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   menu.showMenuAsync(juce::PopupMenu::Options().withDeletionCheck(*this),
                      [safeThis](int result) {
                        if (safeThis == nullptr || result == 0 ||
                            !safeThis->isPolyphonicActive())
                          return;
-                       if (result == 2)
-                         safeThis->polyphonicLayer->deactivateSelection();
-                       else
-                         safeThis->polyphonicLayer->restoreSelection();
+                       auto &l = *safeThis->polyphonicLayer;
+                       switch (result)
+                       {
+                         case deactivateNotes:  l.deactivateSelection(); break;
+                         case cutNotes:         l.cutSelection(); break;
+                         case copyNotes:        l.copySelection(); break;
+                         case pasteNotes:       l.pasteAt(safeThis->cursorTime); break;
+                         case deleteNotes:      l.toggleMuteSelection(); break;
+                         case selectAllNotes:   l.selectAll(); break;
+                         case restorePitch:     l.restoreSelection(Aspect::pitch); break;
+                         case restoreAmplitude: l.restoreSelection(Aspect::amplitude); break;
+                         case restoreTiming:    l.restoreSelection(Aspect::timing); break;
+                         case restoreOriginal:  l.restoreSelection(Aspect::all); break;
+                         default: break;
+                       }
                        safeThis->repaint();
                      });
 }

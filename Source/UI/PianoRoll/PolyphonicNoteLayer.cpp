@@ -77,6 +77,28 @@ void strokeDashed(juce::Graphics &g, const juce::Path &path, juce::Colour colour
   g.setColour(colour);
   g.fillPath(dashed);
 }
+/** What Cut or Copy took (see the header): the notes, each as its source
+ *  note and the edit it sounded with, and the take they came from. */
+struct NoteClipboard
+{
+  struct Entry
+  {
+    int source = -1;           // analysis note
+    int startFrame = 0;        // the source's frames, to tell it is still the same note
+    int endFrame = 0;
+    polyphonic::NoteEdit edit; // as it sounded (copyOf cleared)
+    double playedStart = 0.0;  // seconds, where it started
+  };
+  const Project *project = nullptr;
+  std::vector<Entry> entries;
+};
+
+NoteClipboard &noteClipboard()
+{
+  static NoteClipboard clipboard;
+  return clipboard;
+}
+
 } // namespace
 
 void PolyphonicNoteLayer::setProject(Project *newProject)
@@ -155,9 +177,22 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
   {
     // A new assignment of the same notes: notes that are no longer active
     // leave the selection (only active notes are selected and edited).
+    // Copies (keys below -1) that are gone or whose source is no longer
+    // active go too.
     for (auto it = selection.begin(); it != selection.end();)
-      it = analysis && !analysis->notes[static_cast<size_t>(*it)].active ? selection.erase(it)
-                                                                          : std::next(it);
+    {
+      const int source = polyphonic::isCopyKey(*it) && project != nullptr
+                             ? [&] {
+                                 const auto &e = project->getPolyphonicEdits();
+                                 const auto f = e.find(*it);
+                                 return f != e.end() ? f->second.copyOf : -1;
+                               }()
+                             : *it;
+      const bool keep = analysis && source >= 0 &&
+                        source < static_cast<int>(analysis->notes.size()) &&
+                        analysis->notes[static_cast<size_t>(source)].active;
+      it = keep ? std::next(it) : selection.erase(it);
+    }
     if (drag == Drag::assign)
       drag = Drag::none;
   }
@@ -244,8 +279,51 @@ void PolyphonicNoteLayer::rebuildIfNeeded()
   buildCandidateShapes(levels, scale, fallback);
 }
 
-const PolyphonicNoteLayer::NoteShape *PolyphonicNoteLayer::shapeFor(int note) const
+int PolyphonicNoteLayer::sourceOf(int key) const
 {
+  if (!polyphonic::isCopyKey(key))
+    return key;
+  const auto &edits = currentEdits();
+  const auto it = edits.find(key);
+  return it != edits.end() ? it->second.copyOf : -1;
+}
+
+std::vector<std::pair<int, const PolyphonicNoteLayer::NoteShape *>>
+PolyphonicNoteLayer::drawnNotes() const
+{
+  std::vector<std::pair<int, const NoteShape *>> out;
+  out.reserve(shapes.size());
+  for (const auto &shape : shapes)
+    out.emplace_back(shape.note, &shape);
+  // The copies (pasted notes) after the notes: drawn on top, picked first.
+  const auto &edits = currentEdits();
+  for (auto it = edits.begin(); it != edits.end() && polyphonic::isCopyKey(it->first); ++it)
+    if (const auto *shape = shapeFor(it->first))
+      out.emplace_back(it->first, shape);
+  return out;
+}
+
+void PolyphonicNoteLayer::dropMissingCopies()
+{
+  bool dropped = false;
+  for (auto it = selection.begin(); it != selection.end() && polyphonic::isCopyKey(*it);)
+  {
+    if (assignmentMode || shapeFor(*it) == nullptr)
+    {
+      it = selection.erase(it);
+      dropped = true;
+    }
+    else
+      ++it;
+  }
+  if (dropped)
+    selectionChanged();
+}
+
+const PolyphonicNoteLayer::NoteShape *PolyphonicNoteLayer::shapeFor(int key) const
+{
+  // A copy is drawn with its source note's shape.
+  const int note = sourceOf(key);
   if (note < 0 || note >= static_cast<int>(shapeIndex.size()))
     return nullptr;
   const int index = shapeIndex[static_cast<size_t>(note)];
@@ -298,7 +376,7 @@ double PolyphonicNoteLayer::playedAt(int note, const polyphonic::NoteEdit &edit,
                                      double frame) const
 {
   return builtFor->frameToSeconds(
-             polyphonic::stretchMap(*builtFor, note, edit).outputFrame(frame)) +
+             polyphonic::stretchMap(*builtFor, sourceOf(note), edit).outputFrame(frame)) +
          edit.timeOffsetSeconds;
 }
 
@@ -312,9 +390,9 @@ float PolyphonicNoteLayer::halfHeightAt(const NoteShape &shape, int frame,
                             height * 0.5f);
 }
 
-juce::Rectangle<float> PolyphonicNoteLayer::noteBounds(const NoteShape &shape) const
+juce::Rectangle<float> PolyphonicNoteLayer::noteBounds(int key, const NoteShape &shape) const
 {
-  const auto edit = editOf(shape.note);
+  const auto edit = editOf(key);
   const auto &note = builtFor->notes[static_cast<size_t>(shape.note)];
   const auto map = polyphonic::stretchMap(*builtFor, shape.note, edit);
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
@@ -391,15 +469,16 @@ void PolyphonicNoteLayer::draw(juce::Graphics &g, int componentWidth)
     return;
   const int pitchReferenceHz = project->getPitchReferenceHz();
 
-  for (const auto &shape : shapes)
+  for (const auto &[key, shapePtr] : drawnNotes())
   {
-    const auto bounds = noteBounds(shape);
+    const auto &shape = *shapePtr;
+    const auto bounds = noteBounds(key, shape);
     if (bounds.getRight() < visibleStart || bounds.getX() > visibleEnd)
       continue;
 
-    const auto edit = editOf(shape.note);
+    const auto edit = editOf(key);
     const auto body = notePath(shape, edit);
-    const bool isSelected = selection.count(shape.note) > 0;
+    const bool isSelected = selection.count(key) > 0;
 
     if (outlineColour)
     {
@@ -465,9 +544,10 @@ int PolyphonicNoteLayer::noteAt(float worldX, float worldY)
 
   int best = -1;
   float bestDistance = 0.0f;
-  for (const auto &shape : shapes)
+  for (const auto &[key, shapePtr] : drawnNotes())
   {
-    const auto edit = editOf(shape.note);
+    const auto &shape = *shapePtr;
+    const auto edit = editOf(key);
     const auto &note = builtFor->notes[static_cast<size_t>(shape.note)];
     const auto map = polyphonic::stretchMap(*builtFor, shape.note, edit);
     const double out = (seconds - edit.timeOffsetSeconds) * framesPerSecond;
@@ -483,17 +563,23 @@ int PolyphonicNoteLayer::noteAt(float worldX, float worldY)
         halfHeightAt(shape, frame, height, displayGain(edit.gainDb)),
         pixelsPerSemitone * 0.5f);
     const float distance = std::abs(worldY - cy);
-    if (distance <= reach && (best < 0 || distance < bestDistance))
+    // A copy over its note (pasted in place) is the one picked: it is drawn on top.
+    if (distance <= reach &&
+        (best == -1 || distance < bestDistance ||
+         (polyphonic::isCopyKey(key) && distance <= bestDistance)))
     {
-      best = shape.note;
+      best = key;
       bestDistance = distance;
     }
   }
   return best;
 }
 
-bool PolyphonicNoteLayer::canStretch(int note, const polyphonic::NoteEdit &edit) const
+bool PolyphonicNoteLayer::canStretch(int key, const polyphonic::NoteEdit &edit) const
 {
+  const int note = sourceOf(key);
+  if (note < 0 || note >= static_cast<int>(builtFor->notes.size()))
+    return false;
   const auto &n = builtFor->notes[static_cast<size_t>(note)];
   // Nothing after the attack to stretch, or nothing to hear.
   return !edit.mute && !n.f0.empty() &&
@@ -509,11 +595,11 @@ PolyphonicNoteLayer::Edge PolyphonicNoteLayer::edgeAt(float worldX, float worldY
   const float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
   float bestDistance = std::numeric_limits<float>::max();
 
-  const auto consider = [&](const NoteShape &shape) {
-    const auto edit = editOf(shape.note);
-    if (!canStretch(shape.note, edit))
+  const auto consider = [&](int key, const NoteShape &shape) {
+    const auto edit = editOf(key);
+    if (!canStretch(key, edit))
       return;
-    const auto bounds = noteBounds(shape);
+    const auto bounds = noteBounds(key, shape);
     const float x0 = bounds.getX();
     const float x1 = bounds.getRight();
     const float inside = std::min(kEdgeInsidePixels, 0.25f * (x1 - x0));
@@ -527,7 +613,7 @@ PolyphonicNoteLayer::Edge PolyphonicNoteLayer::edgeAt(float worldX, float worldY
       if (std::abs(inward) < bestDistance)
       {
         bestDistance = std::abs(inward);
-        best = {shape.note, start};
+        best = {key, start};
       }
     };
     check(x0, true);
@@ -537,11 +623,11 @@ PolyphonicNoteLayer::Edge PolyphonicNoteLayer::edgeAt(float worldX, float worldY
   // A selected note's ends first, so the note just picked is the one stretched.
   for (int note : selection)
     if (const auto *shape = shapeFor(note))
-      consider(*shape);
-  if (best.note >= 0)
+      consider(note, *shape);
+  if (best.note != -1)
     return best;
-  for (const auto &shape : shapes)
-    consider(shape);
+  for (const auto &[key, shape] : drawnNotes())
+    consider(key, *shape);
   return best;
 }
 
@@ -549,11 +635,14 @@ bool PolyphonicNoteLayer::isOverStretchEdge(float worldX, float worldY)
 {
   if (assignmentMode)
     return false; // nothing is stretched there
-  return edgeAt(worldX, worldY).note >= 0;
+  return edgeAt(worldX, worldY).note != -1;
 }
 
-double PolyphonicNoteLayer::clampOffset(int note, double offset) const
+double PolyphonicNoteLayer::clampOffset(int key, double offset) const
 {
+  const int note = sourceOf(key);
+  if (note < 0 || note >= static_cast<int>(builtFor->notes.size()))
+    return offset;
   const double start =
       builtFor->frameToSeconds(builtFor->notes[static_cast<size_t>(note)].startFrame);
   const double latest = std::max(-start, takeSeconds() - start - kEndMarginSeconds);
@@ -583,7 +672,7 @@ void PolyphonicNoteLayer::mouseDown(float worldX, float worldY,
 
   if (!additive)
   {
-    if (const auto edge = edgeAt(worldX, worldY); edge.note >= 0)
+    if (const auto edge = edgeAt(worldX, worldY); edge.note != -1)
     {
       // The end of a selected note stretches the whole selection (every
       // note that can be stretched; deleted ones stay as they are); the end
@@ -605,7 +694,7 @@ void PolyphonicNoteLayer::mouseDown(float worldX, float worldY,
   }
 
   const int hit = noteAt(worldX, worldY);
-  if (hit >= 0)
+  if (hit != -1)
   {
     if (additive)
     {
@@ -628,7 +717,7 @@ void PolyphonicNoteLayer::mouseDown(float worldX, float worldY,
     // not edited: pressing it starts no drag.
     if (editOf(hit).mute)
     {
-      if (!additive && pendingSingle >= 0 && selection != std::set<int>{hit})
+      if (!additive && pendingSingle != -1 && selection != std::set<int>{hit})
       {
         selection = {hit};
         selectionChanged();
@@ -673,9 +762,9 @@ void PolyphonicNoteLayer::mouseDrag(float worldX, float worldY,
     {
       band = juce::Rectangle<float>(dragStart, {worldX, worldY});
       auto next = bandBase;
-      for (const auto &shape : shapes)
-        if (noteBounds(shape).intersects(band))
-          next.insert(shape.note);
+      for (const auto &[key, shape] : drawnNotes())
+        if (noteBounds(key, *shape).intersects(band))
+          next.insert(key);
       if (next != selection)
       {
         selection = std::move(next);
@@ -725,11 +814,11 @@ void PolyphonicNoteLayer::dragNotes(float worldX, float worldY,
   double dt = timeEngaged ? dx / coordMapper->getPixelsPerSecond() : 0.0;
   // Drag Snap puts the pressed note's start on the grid; the rest of the
   // selection moves by the same time.
-  if (timeEngaged && pressedNote >= 0)
+  if (timeEngaged && pressedNote != -1)
   {
     const auto pressedBase =
         pressedIt != before.end() ? pressedIt->second : polyphonic::NoteEdit{};
-    const auto &n = builtFor->notes[static_cast<size_t>(pressedNote)];
+    const auto &n = builtFor->notes[static_cast<size_t>(sourceOf(pressedNote))];
     dt = snappedDelta(playedAt(pressedNote, pressedBase, n.startFrame), dt, mods);
   }
 
@@ -762,11 +851,11 @@ void PolyphonicNoteLayer::dragStretch(float worldX, const juce::ModifierKeys &mo
   // time (the start, for the left end), each within its own limits. Drag Snap
   // puts the grabbed end of the grabbed note on the grid.
   double dt = (worldX - dragStart.x) / coordMapper->getPixelsPerSecond();
-  if (stretchNote >= 0)
+  if (stretchNote != -1)
   {
     const auto baseIt = before.find(stretchNote);
     const auto base = baseIt != before.end() ? baseIt->second : polyphonic::NoteEdit{};
-    const auto &n = builtFor->notes[static_cast<size_t>(stretchNote)];
+    const auto &n = builtFor->notes[static_cast<size_t>(sourceOf(stretchNote))];
     dt = snappedDelta(playedAt(stretchNote, base,
                                stretchFromStart ? n.startFrame : n.endFrame),
                       dt, mods);
@@ -787,10 +876,13 @@ bool PolyphonicNoteLayer::stretchNoteBy(int i, double dt)
   // Made longer, only the part after the attack stretches (the attack keeps
   // its speed); made shorter, the note keeps that share of its length and is
   // cut, down to a single frame. Ported from the Polyphonic Lab.
-  const auto &n = builtFor->notes[static_cast<size_t>(i)];
+  const int source = sourceOf(i); // a copy: the note it plays
+  if (source < 0 || source >= static_cast<int>(builtFor->notes.size()))
+    return false;
+  const auto &n = builtFor->notes[static_cast<size_t>(source)];
   const auto baseIt = before.find(i);
   const auto base = baseIt != before.end() ? baseIt->second : polyphonic::NoteEdit{};
-  const auto map = polyphonic::stretchMap(*builtFor, i, base);
+  const auto map = polyphonic::stretchMap(*builtFor, source, base);
   const double framesPerSecond = 1.0 / secondsPerFrame();
   const double span = n.endFrame - map.anchor;
   const double whole = n.endFrame - n.startFrame;
@@ -877,7 +969,7 @@ void PolyphonicNoteLayer::mouseUp()
     if (moved)
       commit(finished == Drag::stretch ? (several ? "Stretch Notes" : "Stretch Note")
                                        : "Move Notes");
-    else if (finished == Drag::notes && single >= 0 && selection != std::set<int>{single})
+    else if (finished == Drag::notes && single != -1 && selection != std::set<int>{single})
     {
       selection = {single};
       selectionChanged();
@@ -891,7 +983,7 @@ bool PolyphonicNoteLayer::mouseDoubleClick(float worldX, float worldY)
   if (assignmentMode)
     return assignmentDoubleClick(worldX, worldY);
   const int hit = noteAt(worldX, worldY);
-  if (hit < 0 || !doubleClickTarget || project == nullptr)
+  if (hit == -1 || !doubleClickTarget || project == nullptr)
     return false;
   const auto *shape = shapeFor(hit);
   if (shape == nullptr)
@@ -913,7 +1005,7 @@ bool PolyphonicNoteLayer::mouseDoubleClick(float worldX, float worldY)
     toggleMuteSelection();
     return true;
   }
-  const auto bounds = noteBounds(*shape);
+  const auto bounds = noteBounds(hit, *shape);
   const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
   const float pitch = shape->medianMidi + edit.semitones;
   const float target = doubleClickTarget(pitch, bounds.getX() / pixelsPerSecond,
@@ -962,17 +1054,7 @@ void PolyphonicNoteLayer::toggleMuteSelection()
     deactivateSelection(); // Delete removes notes from the detection there
     return;
   }
-  if (project == nullptr || selection.empty() || drag != Drag::none)
-    return;
-  bool allMuted = true;
-  for (int note : selection)
-    allMuted = allMuted && editOf(note).mute;
-  before = project->getPolyphonicEdits();
-  working = before;
-  for (int note : selection)
-    working[note].mute = !allMuted;
-  commit(allMuted ? "Unmute Notes" : "Mute Notes");
-  working.clear();
+  deleteSelection(false, {});
 }
 
 void PolyphonicNoteLayer::restoreSelection()
@@ -981,9 +1063,250 @@ void PolyphonicNoteLayer::restoreSelection()
     return;
   before = project->getPolyphonicEdits();
   working = before;
+  // Pasted notes (copies) go too: the original has none.
   for (int note : selection)
     working.erase(note);
+  for (auto it = selection.begin(); it != selection.end();)
+    it = polyphonic::isCopyKey(*it) ? selection.erase(it) : std::next(it);
   commit("Restore Original");
+  working.clear();
+  selectionChanged();
+}
+
+std::vector<int> PolyphonicNoteLayer::selectionInTimeOrder() const
+{
+  // By where each starts playing (a copy where it was pasted).
+  std::vector<std::pair<double, int>> order;
+  if (builtFor == nullptr)
+    return {};
+  for (int key : selection)
+  {
+    const int source = sourceOf(key);
+    if (source < 0 || source >= static_cast<int>(builtFor->notes.size()))
+      continue;
+    order.emplace_back(playedAt(key, editOf(key), builtFor->notes[static_cast<size_t>(source)].startFrame),
+                       key);
+  }
+  std::stable_sort(order.begin(), order.end(),
+                   [](const auto &a, const auto &b) { return a.first < b.first; });
+  std::vector<int> notes;
+  for (const auto &entry : order)
+    notes.push_back(entry.second);
+  return notes;
+}
+
+bool PolyphonicNoteLayer::canCopySelection() const
+{
+  if (assignmentMode || project == nullptr || builtFor == nullptr || drag != Drag::none)
+    return false;
+  // Deleted (muted) notes are not copied: something that sounds is needed.
+  for (int key : selection)
+    if (!editOf(key).mute && shapeFor(key) != nullptr)
+      return true;
+  return false;
+}
+
+bool PolyphonicNoteLayer::canPaste() const
+{
+  if (assignmentMode || project == nullptr || builtFor == nullptr || drag != Drag::none)
+    return false;
+  // Only into the take the notes were copied from, while they are the same notes.
+  const auto &clipboard = noteClipboard();
+  if (clipboard.project != project)
+    return false;
+  for (const auto &entry : clipboard.entries)
+  {
+    if (entry.source < 0 || entry.source >= static_cast<int>(builtFor->notes.size()))
+      continue;
+    const auto &n = builtFor->notes[static_cast<size_t>(entry.source)];
+    if (n.active && n.startFrame == entry.startFrame && n.endFrame == entry.endFrame)
+      return true;
+  }
+  return false;
+}
+
+void PolyphonicNoteLayer::copySelection()
+{
+  if (!canCopySelection())
+    return;
+  NoteClipboard copied;
+  copied.project = project;
+  for (int key : selectionInTimeOrder())
+  {
+    auto edit = editOf(key);
+    const int source = sourceOf(key);
+    if (edit.mute || source < 0)
+      continue;
+    const auto &n = builtFor->notes[static_cast<size_t>(source)];
+    NoteClipboard::Entry entry;
+    entry.source = source;
+    entry.startFrame = n.startFrame;
+    entry.endFrame = n.endFrame;
+    entry.playedStart = playedAt(key, edit, n.startFrame);
+    edit.copyOf = -1;
+    entry.edit = edit;
+    copied.entries.push_back(std::move(entry));
+  }
+  if (!copied.entries.empty())
+    noteClipboard() = std::move(copied);
+}
+
+void PolyphonicNoteLayer::cutSelection()
+{
+  if (!canCopySelection())
+    return;
+  copySelection();
+  deleteSelection(true, "Cut Notes");
+}
+
+void PolyphonicNoteLayer::deleteSelection(bool muteAll, const juce::String &name)
+{
+  if (assignmentMode || project == nullptr || selection.empty() || drag != Drag::none)
+    return;
+  // Copies (pasted notes) go; the notes themselves are muted (Delete), or
+  // unmuted when every one of them already is.
+  bool allMuted = !muteAll;
+  bool anyNote = false;
+  for (int key : selection)
+    if (!polyphonic::isCopyKey(key))
+    {
+      anyNote = true;
+      allMuted = allMuted && editOf(key).mute;
+    }
+  before = project->getPolyphonicEdits();
+  working = before;
+  bool removedCopies = false;
+  for (int key : selection)
+  {
+    if (polyphonic::isCopyKey(key))
+    {
+      removedCopies = working.erase(key) > 0 || removedCopies;
+      continue;
+    }
+    working[key].mute = !allMuted;
+  }
+  for (auto it = selection.begin(); it != selection.end();)
+    it = polyphonic::isCopyKey(*it) ? selection.erase(it) : std::next(it);
+  const juce::String undoName =
+      name.isNotEmpty() ? name
+                        : (!anyNote ? juce::String("Delete Notes")
+                                    : (allMuted ? "Unmute Notes" : "Mute Notes"));
+  commit(undoName);
+  working.clear();
+  if (removedCopies)
+    selectionChanged();
+}
+
+void PolyphonicNoteLayer::pasteAt(double seconds)
+{
+  if (!canPaste())
+    return;
+  const auto &clipboard = noteClipboard();
+  // The earliest note starts at `seconds`; the others keep their places
+  // from it, their pitches, levels and lengths.
+  std::vector<const NoteClipboard::Entry *> entries;
+  double first = std::numeric_limits<double>::max();
+  for (const auto &entry : clipboard.entries)
+  {
+    if (entry.source < 0 || entry.source >= static_cast<int>(builtFor->notes.size()))
+      continue;
+    const auto &n = builtFor->notes[static_cast<size_t>(entry.source)];
+    if (!n.active || n.startFrame != entry.startFrame || n.endFrame != entry.endFrame)
+      continue;
+    entries.push_back(&entry);
+    first = std::min(first, entry.playedStart);
+  }
+  if (entries.empty())
+    return;
+  const double shift = std::max(0.0, seconds) - first;
+
+  before = project->getPolyphonicEdits();
+  working = before;
+  std::set<int> pasted;
+  for (const auto *entry : entries)
+  {
+    const int key = polyphonic::nextCopyKey(working);
+    auto edit = entry->edit;
+    edit.copyOf = entry->source;
+    edit.mute = false;
+    // kept inside the take, as a dragged note is
+    edit.timeOffsetSeconds = clampOffset(entry->source, edit.timeOffsetSeconds + shift);
+    working[key] = edit;
+    pasted.insert(key);
+  }
+  commit(entries.size() > 1 ? "Paste Notes" : "Paste Note");
+  working.clear();
+  // The pasted notes are selected, to be moved on from there.
+  selection = std::move(pasted);
+  selectionChanged();
+}
+
+namespace
+{
+bool hasAspect(int key, const polyphonic::NoteEdit &edit,
+               PolyphonicNoteLayer::RestoreAspect aspect)
+{
+  using Aspect = PolyphonicNoteLayer::RestoreAspect;
+  switch (aspect)
+  {
+    case Aspect::pitch: return edit.semitones != 0.0f || !edit.pitchCurve.empty();
+    case Aspect::amplitude: return edit.gainDb != 0.0f;
+    case Aspect::timing:
+      return !polyphonic::isCopyKey(key) &&
+             (edit.timeOffsetSeconds != 0.0 || edit.stretch != 1.0f);
+    case Aspect::all: return polyphonic::isCopyKey(key) || !edit.isIdentity();
+  }
+  return false;
+}
+} // namespace
+
+bool PolyphonicNoteLayer::selectionHasEdits(RestoreAspect aspect) const
+{
+  if (assignmentMode || project == nullptr)
+    return false;
+  const auto &edits = project->getPolyphonicEdits();
+  for (int key : selection)
+    if (const auto it = edits.find(key); it != edits.end() && hasAspect(key, it->second, aspect))
+      return true;
+  return false;
+}
+
+void PolyphonicNoteLayer::restoreSelection(RestoreAspect aspect)
+{
+  if (aspect == RestoreAspect::all)
+  {
+    restoreSelection();
+    return;
+  }
+  if (assignmentMode || project == nullptr || selection.empty() || drag != Drag::none)
+    return;
+  before = project->getPolyphonicEdits();
+  working = before;
+  for (int key : selection)
+  {
+    const auto it = working.find(key);
+    if (it == working.end() || !hasAspect(key, it->second, aspect))
+      continue;
+    auto &edit = it->second;
+    if (aspect == RestoreAspect::pitch)
+    {
+      edit.semitones = 0.0f;
+      edit.pitchCurve.clear();
+    }
+    else if (aspect == RestoreAspect::amplitude)
+    {
+      edit.gainDb = 0.0f;
+    }
+    else
+    {
+      edit.timeOffsetSeconds = 0.0;
+      edit.stretch = 1.0f;
+    }
+  }
+  // An edit left with nothing goes (setPolyphonicEdits drops identity edits).
+  commit(aspect == RestoreAspect::pitch       ? "Restore Pitch"
+         : aspect == RestoreAspect::amplitude ? "Restore Amplitude"
+                                              : "Restore Timing");
   working.clear();
 }
 
@@ -1117,7 +1440,7 @@ void PolyphonicNoteLayer::select(int note, bool additive)
 {
   if (!additive)
     selection.clear();
-  if (note >= 0)
+  if (note != -1) // -1: none (a copy's key is below it)
   {
     if (additive && selection.count(note))
       selection.erase(note);
@@ -1131,8 +1454,9 @@ void PolyphonicNoteLayer::selectAll()
 {
   rebuildIfNeeded();
   selection.clear();
-  for (const auto &shape : shapes)
-    selection.insert(shape.note);
+  for (const auto &[key, shape] : drawnNotes())
+    if (!assignmentMode || !polyphonic::isCopyKey(key))
+      selection.insert(key);
   selectionChanged();
 }
 

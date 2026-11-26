@@ -75,6 +75,9 @@ void PolyphonicNoteLayer::setAssignmentMode(bool enabled)
   pendingSingle = -1;
   hoverNote = -1;
   assignTarget = {};
+  // Pasted notes (copies) are not part of the detection: they leave the
+  // selection there.
+  dropMissingCopies();
 }
 
 void PolyphonicNoteLayer::setCandidateThreshold(float probability)
@@ -426,7 +429,7 @@ void PolyphonicNoteLayer::drawAssignment(juce::Graphics &g, float visibleStart, 
   const int pitchReferenceHz = project != nullptr ? project->getPitchReferenceHz() : 440;
   const int focus = assignmentFocus();
   const auto visible = [&](const NoteShape &shape) {
-    const auto bounds = noteBounds(shape);
+    const auto bounds = noteBounds(shape.note, shape);
     return bounds.getRight() >= visibleStart && bounds.getX() <= visibleEnd;
   };
 
@@ -434,7 +437,7 @@ void PolyphonicNoteLayer::drawAssignment(juce::Graphics &g, float visibleStart, 
   // notes and candidates sitting on them can be told apart.
   if (const auto *shape = shapeFor(focus))
   {
-    const auto bounds = noteBounds(*shape);
+    const auto bounds = noteBounds(shape->note, *shape);
     const auto guide = [&](float midi, bool sub) {
       if (midi < static_cast<float>(MIN_MIDI_NOTE) || midi > static_cast<float>(MAX_MIDI_NOTE) + 1.0f)
         return;

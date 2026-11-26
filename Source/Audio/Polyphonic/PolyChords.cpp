@@ -575,15 +575,25 @@ std::vector<ChordNote> chordNotes(const Analysis& analysis, const std::vector<st
     if (!(analysis.params.sampleRate > 0.0) || analysis.params.hop <= 0)
         return out;
     const double hop = analysis.frameToSeconds(1.0);
+    // each note, then each copy (a pasted note) where it plays
+    std::vector<std::pair<size_t, const NoteEdit*>> entries;
     for (size_t i = 0; i < analysis.notes.size(); ++i)
     {
-        const auto& note = analysis.notes[i];
-        if (!note.active || note.f0.empty())
-            continue;
         const NoteEdit* edit = nullptr;
         if (edits != nullptr)
             if (const auto it = edits->find(static_cast<int>(i)); it != edits->end())
                 edit = &it->second;
+        entries.emplace_back(i, edit);
+    }
+    if (edits != nullptr)
+        for (auto it = edits->begin(); it != edits->end() && isCopyKey(it->first); ++it)
+            if (it->second.copyOf >= 0 && static_cast<size_t>(it->second.copyOf) < analysis.notes.size())
+                entries.emplace_back(static_cast<size_t>(it->second.copyOf), &it->second);
+    for (const auto& [i, edit] : entries)
+    {
+        const auto& note = analysis.notes[i];
+        if (!note.active || note.f0.empty())
+            continue;
         if (edit != nullptr && edit->mute)
             continue;
 
@@ -746,12 +756,19 @@ ChordRetune retuneToChord(const Analysis& analysis, const std::map<int, NoteEdit
         int pc;
     };
     std::vector<Tone> tones;
+    // each note, then each copy (a pasted note, retuned by its own edit)
+    std::vector<std::pair<int, size_t>> entries; // (key in edits, analysis note)
     for (size_t i = 0; i < analysis.notes.size(); ++i)
+        entries.emplace_back(static_cast<int>(i), i);
+    for (auto it = edits.begin(); it != edits.end() && isCopyKey(it->first); ++it)
+        if (it->second.copyOf >= 0 && static_cast<size_t>(it->second.copyOf) < analysis.notes.size())
+            entries.emplace_back(it->first, static_cast<size_t>(it->second.copyOf));
+    for (const auto& [key, i] : entries)
     {
         const auto& note = analysis.notes[i];
         if (!note.active || note.f0.empty())
             continue;
-        const auto it = edits.find(static_cast<int>(i));
+        const auto it = edits.find(key);
         const NoteEdit* edit = it != edits.end() ? &it->second : nullptr;
         if (edit != nullptr && edit->mute)
             continue;
@@ -762,7 +779,7 @@ ChordRetune retuneToChord(const Analysis& analysis, const std::map<int, NoteEdit
         const int pc = effectivePitchClass(note, edit);
         if (motion[static_cast<size_t>(pc)] == kNotAChordTone)
             continue;
-        tones.push_back({static_cast<int>(i), note.medianMidi() + (edit != nullptr ? edit->semitones : 0.0f), pc});
+        tones.push_back({key, note.medianMidi() + (edit != nullptr ? edit->semitones : 0.0f), pc});
     }
 
     // An explicit bass: the lowest of them go to it.

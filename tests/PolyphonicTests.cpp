@@ -1320,6 +1320,133 @@ int main()
         std::printf("assignment: deactivate, reactivate and octave move rebuild masks in place\n");
     }
 
+    // ---- 23. copies (NoteEdit::copyOf, a pasted note): the note plays once more where its edit puts
+    //      it, on top of everything, and nothing is taken from the note itself ----
+    {
+        // a tone over a quiet noise floor, with room after it for the copy
+        std::vector<float> x(static_cast<size_t>(2.6 * kRate), 0.0f);
+        uint32_t seed = 777u;
+        for (auto& v : x)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            v = 0.002f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+        }
+        addTone(x, midiToHz(62), 0.2, 0.9, 0.25);
+        const auto A = polyphonic::analyze(x.data(), static_cast<int>(x.size()), params);
+        const int d4 = findNote(A, 62);
+        CHECK(d4 >= 0);
+        auto maxDiff = [&](const std::vector<float>& y, const std::vector<float>& z, const std::vector<float>* w = nullptr) {
+            double err = 0.0;
+            for (size_t i = 0; i < x.size(); ++i)
+                err = std::max(err, std::fabs(static_cast<double>(y[i]) - z[i] - (w != nullptr ? (*w)[i] : 0.0f)));
+            return err;
+        };
+        CHECK(polyphonic::isCopyKey(-2) && !polyphonic::isCopyKey(-1) && !polyphonic::isCopyKey(0));
+
+        for (const bool background : { false, true })
+        {
+            polyphonic::NoteEdit move, mute, copy;
+            move.timeOffsetSeconds = 1.2;
+            move.semitones = 2.0f;
+            move.takeBackground = background;
+            mute.mute = true;
+            mute.takeBackground = background;
+            copy = move;
+            copy.copyOf = d4;
+            CHECK(!copy.isIdentity() && polyphonic::sourceNote(-2, copy) == d4);
+
+            // render(copy) - input == what a move adds where it puts the note
+            const auto withCopy = polyphonic::render(A, {x}, {{-2, copy}})[0];
+            const auto moved = polyphonic::render(A, {x}, {{d4, move}})[0];
+            const auto muted = polyphonic::render(A, {x}, {{d4, mute}})[0];
+            std::vector<float> added(x.size());
+            for (size_t i = 0; i < x.size(); ++i)
+                added[i] = moved[i] - muted[i];
+            const double copyErr = maxDiff(withCopy, x, &added);
+            // the copy with the original muted is the move
+            const auto both = polyphonic::render(A, {x}, {{d4, mute}, {-2, copy}})[0];
+            const double moveErr = maxDiff(both, moved);
+            // the original keeps sounding where it was
+            const int a = static_cast<int>(0.35 * kRate), b = static_cast<int>(0.9 * kRate);
+            const double origBefore = db(toneAmplitude(x, midiToHz(62), a, b));
+            const double origAfter = db(toneAmplitude(withCopy, midiToHz(62), a, b));
+            const int ca = static_cast<int>(1.55 * kRate), cb = static_cast<int>(2.1 * kRate);
+            const double copyLevel = db(toneAmplitude(withCopy, midiToHz(64), ca, cb));
+            std::printf("copy (background %d): differs from a move's share by %.1e, copy + muted original from a move by %.1e; "
+                        "original %.1f -> %.1f dB, copy at E4 %.1f dB\n",
+                        background ? 1 : 0, copyErr, moveErr, origBefore, origAfter, copyLevel);
+            CHECK(copyErr < 1e-4);
+            CHECK(moveErr < 1e-4);
+            CHECK(std::fabs(origAfter - origBefore) < 0.5);
+            CHECK(copyLevel > origBefore - 2.0);
+
+            // on its own, a copy is exactly what it adds, and only where it plays
+            const auto span = polyphonic::renderNotes(A, {x}, {-2}, {{-2, copy}});
+            CHECK(span.channels.size() == 1 && !span.channels[0].empty());
+            CHECK(span.start >= static_cast<int>(1.2 * kRate));
+            std::vector<float> alone(x.size(), 0.0f);
+            std::copy(span.channels[0].begin(), span.channels[0].end(), alone.begin() + span.start);
+            std::vector<float> zero(x.size(), 0.0f);
+            std::vector<float> share(x.size());
+            for (size_t i = 0; i < x.size(); ++i)
+                share[i] = withCopy[i] - x[i];
+            CHECK(maxDiff(alone, share) < 1e-4);
+
+            // renderChange() adds a copy, and takes it away again
+            const auto channels = std::vector<std::vector<float>>{x};
+            const auto change = polyphonic::renderChange(A, channels, {}, {{-2, copy}});
+            CHECK(!change.channels.empty() && !change.channels[0].empty());
+            CHECK(change.start >= static_cast<int>(1.0 * kRate)); // the original's frames are untouched
+            std::vector<float> patched = x;
+            for (size_t i = 0; i < change.channels[0].size(); ++i)
+                patched[static_cast<size_t>(change.start) + i] += change.channels[0][i];
+            CHECK(maxDiff(patched, withCopy) < 1e-4);
+            const auto undo = polyphonic::renderChange(A, channels, {{-2, copy}}, {});
+            std::vector<float> back = withCopy;
+            for (size_t i = 0; i < undo.channels[0].size(); ++i)
+                back[static_cast<size_t>(undo.start) + i] += undo.channels[0][i];
+            CHECK(maxDiff(back, x) < 1e-4);
+
+            // a muted copy plays nothing
+            auto silent = copy;
+            silent.mute = true;
+            CHECK(maxDiff(polyphonic::render(A, {x}, {{-2, silent}})[0], x) < 1e-4);
+            CHECK(polyphonic::renderNotes(A, {x}, {-2}, {{-2, silent}}).channels[0].empty());
+        }
+
+        // an unmoved copy doubles the note: the input plus the note's separated signal
+        polyphonic::NoteEdit twice;
+        twice.copyOf = d4;
+        twice.takeBackground = false;
+        const auto doubled = polyphonic::render(A, {x}, {{-3, twice}})[0];
+        const auto separated = polyphonic::extractNotes(A, {x}, {d4})[0];
+        const double doubleErr = maxDiff(doubled, x, &separated);
+        std::printf("unmoved copy: input + separated note, max difference %.1e\n", doubleErr);
+        CHECK(doubleErr < 1e-4);
+        // a copy of a note that does not exist is nothing
+        auto stray = twice;
+        stray.copyOf = 999;
+        CHECK(maxDiff(polyphonic::render(A, {x}, {{-4, stray}})[0], x) < 1e-4);
+
+        // keys for new copies, and copies following their notes when the notes are renumbered
+        std::map<int, polyphonic::NoteEdit> keyed;
+        CHECK(polyphonic::nextCopyKey(keyed) == polyphonic::kFirstCopyKey);
+        keyed[3] = polyphonic::NoteEdit{};
+        CHECK(polyphonic::nextCopyKey(keyed) == polyphonic::kFirstCopyKey);
+        polyphonic::NoteEdit c1, c2, c3;
+        c1.copyOf = 1;
+        c2.copyOf = 5;
+        c3.copyOf = 7;
+        keyed[-2] = c1;
+        keyed[-3] = c2;
+        keyed[-4] = c3;
+        CHECK(polyphonic::nextCopyKey(keyed) == -5);
+        polyphonic::remapCopies(keyed, [](int source) { return source == 5 ? -1 : (source > 5 ? source - 1 : source); });
+        CHECK(keyed.size() == 3 && keyed.count(-3) == 0 && keyed.count(3) == 1);
+        CHECK(keyed.at(-2).copyOf == 1 && keyed.at(-4).copyOf == 6);
+        std::printf("copy keys: new keys below the others, renumbering keeps copies with their notes\n");
+    }
+
     std::printf("PolyphonicTests passed\n");
     return 0;
 }

@@ -127,7 +127,10 @@ public:
    *  (nullopt: the normal look). */
   void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
 
-  /** The active note under a world-space point (where its edit puts it), or -1. */
+  // Notes are named by their keys in the project's edits: an analysis note's
+  // index, or a copy's key (polyphonic::isCopyKey, below -1). -1 is no note.
+
+  /** The note under a world-space point (where its edit puts it), or -1. */
   int noteAt(float worldX, float worldY);
   /** True over either end of a note that can be stretched (for the cursor). */
   bool isOverStretchEdge(float worldX, float worldY);
@@ -154,10 +157,45 @@ public:
   std::vector<int> getDraggedNotes() const;
 
   // ---- commands on the selection (each one undo step) ----
-  /** Mutes the selection, or unmutes it when every selected note is muted. */
+  /** Delete: removes the selected copies (pasted notes) and mutes the other
+   *  selected notes, or unmutes them when every one of them is muted. */
   void toggleMuteSelection();
-  /** Clears the selected notes' edits. */
+  /** Clears the selected notes' edits and removes the selected copies. */
   void restoreSelection();
+  /** What Restore Original can put back on its own (as the vocal editor's
+   *  restore menu): pitch (shift and pitch curve), amplitude (level) or timing
+   *  (move and stretch; not for copies, whose place is where they were
+   *  pasted); All is restoreSelection(). */
+  enum class RestoreAspect
+  {
+    pitch,
+    amplitude,
+    timing,
+    all
+  };
+  /** True when some selected note has that kind of edit to restore. */
+  bool selectionHasEdits(RestoreAspect aspect) const;
+  void restoreSelection(RestoreAspect aspect);
+  /** Drops copies that no longer exist (an undone paste) from the selection. */
+  void dropMissingCopies();
+
+  // ---- clipboard (the context menu's Cut / Copy / Paste) ----
+  // Copy takes the selected notes that sound (not deleted ones) as they
+  // sound: each its source note and its edit, with where it starts. Paste
+  // puts copies of them (NoteEdit::copyOf, keyed from polyphonic::
+  // kFirstCopyKey down) on top of the take: the earliest at the given time,
+  // the others at their distances from it, each with its pitch, level and
+  // length; the originals stay. The pasted notes are then selected and edited
+  // like any other; Delete and Restore Original remove them. Paste only goes
+  // into the take the notes came from, while they are still the same notes.
+  bool canCopySelection() const;
+  bool canPaste() const;
+  void copySelection();
+  /** Copies the selection, then deletes it (as Delete, but always muting), as one step. */
+  void cutSelection();
+  /** Pastes at `seconds` (project time), as one step. */
+  void pasteAt(double seconds);
+
   void setSelectionGainDb(float gainDb);
   /** Moves every selected (unmuted) note's pitch by `semitones`, keeping their spread. */
   void shiftSelectionSemitones(float semitones, const juce::String &undoName);
@@ -233,7 +271,7 @@ private:
   /** Seconds at which `note`'s (source) frame plays under `edit`. */
   double playedAt(int note, const polyphonic::NoteEdit &edit, double frame) const;
   /** The note's edited extent in world space (for culling and band selection). */
-  juce::Rectangle<float> noteBounds(const NoteShape &shape) const;
+  juce::Rectangle<float> noteBounds(int key, const NoteShape &shape) const;
   juce::Path notePath(const NoteShape &shape, const polyphonic::NoteEdit &edit) const;
   double clampOffset(int note, double offset) const;
   bool canStretch(int note, const polyphonic::NoteEdit &edit) const;
@@ -254,6 +292,14 @@ private:
   /** Hands `working` to the project and reports the change (if any) as one step. */
   void commit(const juce::String &name);
   void selectionChanged();
+  /** The selected notes, by where they start playing. */
+  std::vector<int> selectionInTimeOrder() const;
+  /** Delete (muteAll false) or Cut (true), named `name` (empty: by what it did). */
+  void deleteSelection(bool muteAll, const juce::String &name);
+  /** The analysis note a key plays: itself, or a copy's source (-1 if gone). */
+  int sourceOf(int key) const;
+  /** Every note drawn, as (key, shape): the notes, then the copies on top. */
+  std::vector<std::pair<int, const NoteShape *>> drawnNotes() const;
 
   // ---- note assignment (PolyphonicNoteLayerAssignment.cpp) ----
   /** Where an assignment drag would put the note: on a candidate (its

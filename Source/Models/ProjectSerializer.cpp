@@ -1238,6 +1238,7 @@ juce::var ProjectSerializer::polyphonicToJson(const Project& project) {
     for (const auto& [index, e] : project.getPolyphonicEdits()) {
         auto* eo = new juce::DynamicObject();
         eo->setProperty("note", index);
+        if (e.isCopy()) eo->setProperty("copyOf", e.copyOf); // a pasted note (its key is below zero)
         if (e.semitones != 0.0f) eo->setProperty("semitones", e.semitones);
         if (e.gainDb != 0.0f) eo->setProperty("gainDb", e.gainDb);
         if (e.mute) eo->setProperty("mute", true);
@@ -1338,9 +1339,11 @@ void ProjectSerializer::polyphonicFromJson(Project& project, const juce::var& js
     if (editsVar.isArray()) {
         for (const auto& ev : *editsVar.getArray()) {
             const int index = static_cast<int>(ev.getProperty("note", -1));
-            if (index < 0 || index >= count)
+            const int copyOf = static_cast<int>(ev.getProperty("copyOf", -1));
+            if (polyphonic::isCopyKey(index) ? (copyOf < 0 || copyOf >= count) : (index < 0 || index >= count))
                 continue;
             polyphonic::NoteEdit e;
+            e.copyOf = polyphonic::isCopyKey(index) ? copyOf : -1;
             e.semitones = static_cast<float>(static_cast<double>(ev.getProperty("semitones", 0.0)));
             e.gainDb = static_cast<float>(static_cast<double>(ev.getProperty("gainDb", 0.0)));
             e.mute = static_cast<bool>(ev.getProperty("mute", false));

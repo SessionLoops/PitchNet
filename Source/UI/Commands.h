@@ -24,6 +24,9 @@ namespace CommandIDs
         undo                = 0x2010,
         redo                = 0x2011,
         selectAll           = 0x2012,
+        cutNotes            = 0x2013, // polyphonic takes (PolyphonicNoteLayer's clipboard)
+        copyNotes           = 0x2014,
+        pasteNotes          = 0x2015,
         
         // View Menu Commands (0x2020-0x202F)
         showDeltaPitch      = 0x2020,

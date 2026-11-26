@@ -1961,8 +1961,9 @@ int renderLength(const PolyphonicTake &take, const Project::PolyphonicEdits &edi
   const double rate = analysis.params.sampleRate;
 
   int length = numSamples;
-  for (const auto &[index, edit] : edits)
+  for (const auto &[key, edit] : edits)
   {
+    const int index = polyphonic::sourceNote(key, edit); // a copy: its source note
     if (edit.mute || index < 0 || index >= static_cast<int>(analysis.notes.size()))
       continue;
     const auto &note = analysis.notes[static_cast<size_t>(index)];
@@ -2030,8 +2031,12 @@ juce::AudioBuffer<float> renderAuditionNotes(const PolyphonicTake &take,
   const double rate = analysis.params.sampleRate;
   double first = std::numeric_limits<double>::max();
   double last = 0.0;
-  for (const auto &[index, edit] : edits)
+  for (const auto &[key, edit] : edits)
   {
+    const int index = polyphonic::sourceNote(key, edit); // a copy: its source note
+    if (index < 0 || index >= static_cast<int>(analysis.notes.size()) ||
+        (polyphonic::isCopyKey(key) && edit.mute))
+      continue;
     const auto &note = analysis.notes[static_cast<size_t>(index)];
     const auto map = polyphonic::stretchMap(analysis, index, edit);
     const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);

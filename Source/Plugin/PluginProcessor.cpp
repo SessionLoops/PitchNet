@@ -1434,14 +1434,23 @@ std::unique_ptr<Project> PitchNetAudioProcessor::placePolyphonicCapture(
       levels = noteLevels(*previousTake);
     }
     const auto &previousEdits = previous->getPolyphonicEdits();
+    std::vector<int> kept(notes.size(), -1); // old note -> new note, or -1
     for (size_t i = 0; i < notes.size(); ++i) {
       if (notes[i].startFrame < captureEndFrame && notes[i].endFrame >= offsetFrames)
         continue;
+      kept[i] = static_cast<int>(restore->notes.size());
       if (const auto it = previousEdits.find(static_cast<int>(i)); it != previousEdits.end())
         edits[static_cast<int>(restore->notes.size())] = it->second;
       restore->notes.push_back(notes[i]);
       restore->levels.push_back(i < levels.size() ? levels[i] : std::vector<float>{});
     }
+    // Copies (pasted notes) of the notes kept stay, of the notes recorded over go.
+    for (const auto &[key, edit] : previousEdits)
+      if (polyphonic::isCopyKey(key))
+        edits[key] = edit;
+    polyphonic::remapCopies(edits, [&kept](int source) {
+      return source < static_cast<int>(kept.size()) ? kept[static_cast<size_t>(source)] : -1;
+    });
   }
   const auto captureLevels = noteLevels(*take);
   for (size_t i = 0; i < analysis.notes.size(); ++i) {

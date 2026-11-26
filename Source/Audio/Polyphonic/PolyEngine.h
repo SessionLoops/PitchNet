@@ -231,18 +231,81 @@ struct NoteEdit
     // hammer noise, and a moved note takes its attack along. Off gives the narrower edit that leaves
     // everything outside the note's own partials in place.
     bool takeBackground = true;
+    // A copy of another note (a pasted note): note `copyOf` plays once more, with this edit applied,
+    // on top of everything else, and nothing is taken away from the note itself. Copies sit in an
+    // edits map under keys from kFirstCopyKey down (isCopyKey) and are never identity edits, even unmoved; a muted
+    // copy plays nothing. -1: not a copy (the edit of the note it is keyed by).
+    int copyOf = -1;
+    bool isCopy() const { return copyOf >= 0; }
     bool isIdentity() const
     {
-        return !mute && semitones == 0.0f && pitchCurve.empty() && gainDb == 0.0f && timeOffsetSeconds == 0.0 && stretch == 1.0f;
+        return copyOf < 0 && !mute && semitones == 0.0f && pitchCurve.empty() && gainDb == 0.0f && timeOffsetSeconds == 0.0 && stretch == 1.0f;
     }
     bool operator==(const NoteEdit& o) const
     {
         return semitones == o.semitones && pitchCurve == o.pitchCurve && gainDb == o.gainDb && mute == o.mute
             && preserveFormants == o.preserveFormants && timeOffsetSeconds == o.timeOffsetSeconds
-            && stretch == o.stretch && takeBackground == o.takeBackground;
+            && stretch == o.stretch && takeBackground == o.takeBackground && copyOf == o.copyOf;
     }
     bool operator!=(const NoteEdit& o) const { return !(*this == o); }
 };
+
+/** An edits map's key for a copy (NoteEdit::copyOf): -2 and below. -1 is never a key: it is how
+ *  callers say "no note". */
+constexpr int kFirstCopyKey = -2;
+inline bool isCopyKey(int key) { return key <= kFirstCopyKey; }
+/** The analysis note an edits map's entry is about: its key, or a copy's source (-1 for a copy
+ *  without one, and for key -1). */
+inline int sourceNote(int key, const NoteEdit& edit) { return isCopyKey(key) ? edit.copyOf : key; }
+/** A key for a new copy in `edits`: below every key there (kFirstCopyKey for the first). */
+inline int nextCopyKey(const std::map<int, NoteEdit>& edits)
+{
+    return edits.empty() || edits.begin()->first > kFirstCopyKey ? kFirstCopyKey : edits.begin()->first - 1;
+}
+/**
+ * When the notes are renumbered (a split, a merge, a take replaced): every copy whose source
+ * `newIndexOf(source)` maps to a note (>= 0) points there, every other copy is dropped. Edits
+ * of the notes themselves are left to the caller.
+ */
+template <typename NewIndexOf>
+void remapCopies(std::map<int, NoteEdit>& edits, NewIndexOf&& newIndexOf)
+{
+    for (auto it = edits.begin(); it != edits.end() && isCopyKey(it->first);)
+    {
+        const int to = it->second.copyOf >= 0 ? newIndexOf(it->second.copyOf) : -1;
+        if (to < 0)
+        {
+            it = edits.erase(it);
+            continue;
+        }
+        it->second.copyOf = to;
+        ++it;
+    }
+}
+
+/**
+ * Every note as it sounds, for whatever lists the take's notes (chords, MIDI, overviews): each
+ * active note with its edit (a default one when it has none), then each copy of an active note
+ * with the copy's edit, as f(key, sourceNote, edit). Muted ones are included: the caller decides.
+ */
+template <typename F>
+void forEachNoteAsEdited(const Analysis& analysis, const std::map<int, NoteEdit>& edits, F&& f)
+{
+    const int count = static_cast<int>(analysis.notes.size());
+    for (int i = 0; i < count; ++i)
+    {
+        if (!analysis.notes[static_cast<size_t>(i)].active)
+            continue;
+        const auto it = edits.find(i);
+        f(i, i, it != edits.end() ? it->second : NoteEdit{});
+    }
+    for (auto it = edits.begin(); it != edits.end() && isCopyKey(it->first); ++it)
+    {
+        const int source = it->second.copyOf;
+        if (source >= 0 && source < count && analysis.notes[static_cast<size_t>(source)].active)
+            f(it->first, source, it->second);
+    }
+}
 
 /**
  * Where a stretched note's frames go, in analysis frames before any move. Lengthened (ratio > 1):

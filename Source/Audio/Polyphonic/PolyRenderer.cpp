@@ -154,7 +154,9 @@ private:
 
 struct EditState
 {
-    int note = 0;
+    int note = 0;              // the analysis note it is about (a copy's source)
+    int key = 0;               // its key in the edits map (below zero for a copy)
+    bool copy = false;         // NoteEdit::copyOf: the transformed note is only added, nothing removed
     const NoteEdit* edit = nullptr;
     float gain = 1.0f;
     int D = 0;                 // whole-hop move
@@ -882,14 +884,19 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     if (difference)
         for (const auto& [ni, ed] : *subtract)
             editList.emplace_back(ni, &ed, true);
-    for (const auto& [ni, edp, negative] : editList)
+    for (const auto& [key, edp, negative] : editList)
     {
         const NoteEdit& ed = *edp;
-        if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()) || ed.isIdentity())
+        const int ni = sourceNote(key, ed);
+        const bool copy = isCopyKey(key);
+        if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()) || ed.isIdentity()
+            || (copy && ed.mute))   // a muted copy plays nothing
             continue;
         EditState s;
         s.negative = negative;
         s.note = ni;
+        s.key = key;
+        s.copy = copy;
         s.edit = &ed;
         s.gain = std::pow(10.0f, ed.gainDb / 20.0f);
         s.shifts = ed.semitones != 0.0f;
@@ -914,15 +921,21 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
         s.maskHi = hi;
         s.touchLo = lo;
         s.touchHi = hi;
+        if (s.copy)
+        {
+            // a copy is only added, D frames later: its own frames stay as they are
+            s.touchLo = 0;
+            s.touchHi = -1;
+        }
         if (!ed.mute && hi >= lo)
         {
             const int outHi = s.stretches ? static_cast<int>(std::ceil(s.map.outputFrame(hi))) : hi;
-            s.touchLo = std::min(lo, lo + s.D);
-            s.touchHi = std::max(hi, outHi + s.D);
+            s.touchLo = s.copy ? lo + s.D : std::min(lo, lo + s.D);
+            s.touchHi = s.copy ? outHi + s.D : std::max(hi, outHi + s.D);
         }
         // with its background, the note's part of what no note owns goes too: removed over its
         // claim and, unless muted, added back D frames later (up to its new end when shortened; not
-        // for a lengthened note)
+        // for a lengthened note). A copy only adds it.
         if (ed.takeBackground && (ed.mute || !s.stretches))
         {
             const auto [blo, bhi] = backgroundAt(0).span(ni);
@@ -930,8 +943,16 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             {
                 s.bgLo = blo;
                 s.bgHi = bhi;
-                s.touchLo = std::min({s.touchLo, blo, ed.mute ? blo : blo + s.D});
-                s.touchHi = std::max({s.touchHi, bhi, ed.mute ? bhi : bhi + s.D});
+                if (s.copy)
+                {
+                    s.touchLo = s.touchHi < s.touchLo ? blo + s.D : std::min(s.touchLo, blo + s.D);
+                    s.touchHi = std::max(s.touchHi, bhi + s.D);
+                }
+                else
+                {
+                    s.touchLo = std::min({s.touchLo, blo, ed.mute ? blo : blo + s.D});
+                    s.touchHi = std::max({s.touchHi, bhi, ed.mute ? bhi : bhi + s.D});
+                }
             }
         }
         states.push_back(std::move(s));
@@ -947,13 +968,15 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
     std::vector<std::pair<int, int>> soloClaims(soloNotes.size(), {0, -1});   // unedited notes taking their background
     if (soloMode)
     {
+        // a listed copy comes out as its transformed note (it is never in soloNotes)
         states.erase(std::remove_if(states.begin(), states.end(),
                                     [&](const EditState& s) {
-                                        return std::find(soloNotes.begin(), soloNotes.end(), s.note) == soloNotes.end();
+                                        return std::find(solo.begin(), solo.end(), s.key) == solo.end();
                                     }),
                      states.end());
         for (const auto& s : states)
-            soloEdited[static_cast<size_t>(s.note)] = 1;
+            if (!s.copy)
+                soloEdited[static_cast<size_t>(s.note)] = 1;
         for (size_t j = 0; j < soloNotes.size(); ++j)
         {
             const auto entry = edits.find(soloNotes[j]);
@@ -1121,8 +1144,9 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
             const Note& n = A.notes[static_cast<size_t>(st.note)];
             const NoteMasks& nm = A.masks[static_cast<size_t>(st.note)];
             const NoteEdit& ed = *st.edit;
-            // 1) remove the note's own share at this frame (on its own there is nothing to remove)
-            if (!soloMode && !warm)
+            // 1) remove the note's own share at this frame (on its own there is nothing to remove,
+            // and a copy leaves its note where it is)
+            if (!soloMode && !warm && !st.copy)
             {
                 const auto [b, e] = partialsAt(nm, u);
                 for (int c = 0; c < numCh; ++c)
@@ -1138,7 +1162,7 @@ std::vector<std::vector<float>> synthesize(const Analysis& A, const std::vector<
                 }
             }
             // and its part of what no note owns, when it takes its background
-            if (!soloMode && !warm && st.bgHi >= st.bgLo && u >= st.bgLo && u <= st.bgHi)
+            if (!soloMode && !warm && !st.copy && st.bgHi >= st.bgLo && u >= st.bgLo && u <= st.bgHi)
                 for (int c = 0; c < numCh; ++c)
                     if (backgroundAt(0).part(st.note, u, c, part.data()))
                     {
@@ -1420,14 +1444,18 @@ AudioSpan renderNotes(const Analysis& A, const std::vector<std::vector<float>>& 
     // their background), or where an edit puts their transformed copy
     const int numFrames = 1 + (static_cast<int>(channels[0].size()) + H - 1) / H;
     int lo = std::numeric_limits<int>::max(), hi = std::numeric_limits<int>::min();
-    for (int ni : noteIndices)
+    for (int key : noteIndices)
     {
+        // a copy (NoteEdit::copyOf) sounds only where its edit puts it
+        const auto it = edits.find(key);
+        if (isCopyKey(key) && (it == edits.end() || it->second.mute))
+            continue;
+        const int ni = it != edits.end() ? sourceNote(key, it->second) : key;
         if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()))
             continue;
         auto [a, b] = noteFrameRange(A, ni);
         if (b < a)
             continue;
-        const auto it = edits.find(ni);
         const auto map = it != edits.end() ? stretchMap(A, ni, it->second) : StretchMap{};
         if (it != edits.end() && it->second.takeBackground && (it->second.mute || map.ratio <= 1.0))
         {
@@ -1468,9 +1496,12 @@ namespace
  * touchHi in synthesize(), with the background claim taken as claimSpan() (the claim
  * BackgroundShares gives the note, or wider when it gives none), so it is never narrower.
  */
-std::pair<int, int> touchFrames(const Analysis& A, int ni, const NoteEdit& ed, int numFrames)
+std::pair<int, int> touchFrames(const Analysis& A, int key, const NoteEdit& ed, int numFrames)
 {
-    if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()) || ed.isIdentity())
+    const int ni = sourceNote(key, ed);
+    const bool copy = isCopyKey(key);
+    if (ni < 0 || ni >= static_cast<int>(A.notes.size()) || ni >= static_cast<int>(A.masks.size()) || ed.isIdentity()
+        || (copy && ed.mute))
         return {0, -1};
     const Params& p = A.params;
     const int H = p.hop;
@@ -1478,6 +1509,26 @@ std::pair<int, int> touchFrames(const Analysis& A, int ni, const NoteEdit& ed, i
     const bool stretches = map.ratio > 1.0;
     const int D = static_cast<int>(std::lround(ed.timeOffsetSeconds * p.sampleRate / H));
     const auto [lo, hi] = noteFrameRange(A, ni);
+    if (copy)
+    {
+        // only where the copy is added
+        int tlo = 0, thi = -1;
+        if (hi >= lo)
+        {
+            tlo = lo + D;
+            thi = (stretches ? static_cast<int>(std::ceil(map.outputFrame(hi))) : hi) + D;
+        }
+        if (ed.takeBackground && !stretches)
+        {
+            const auto [blo, bhi] = claimSpan(A, ni, numFrames);
+            if (bhi >= blo)
+            {
+                tlo = thi < tlo ? blo + D : std::min(tlo, blo + D);
+                thi = std::max(thi, bhi + D);
+            }
+        }
+        return {tlo, thi};
+    }
     int tlo = lo, thi = hi;
     if (!ed.mute && hi >= lo)
     {

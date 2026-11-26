@@ -494,6 +494,27 @@ public:
   {
     return polyphonicLayer != nullptr && polyphonicLayer->isActive();
   }
+  /** Cut, Copy and Paste for a polyphonic take (the Edit menu, Cmd+X/C/V
+   *  and the canvas menu); Paste goes to the playhead. */
+  bool canCopyPolyphonicNotes() const
+  {
+    return isPolyphonicActive() && polyphonicLayer->canCopySelection();
+  }
+  bool canPastePolyphonicNotes() const
+  {
+    return isPolyphonicActive() && polyphonicLayer->canPaste();
+  }
+  void copyPolyphonicNotes() { polyphonicLayer->copySelection(); }
+  void cutPolyphonicNotes()
+  {
+    polyphonicLayer->cutSelection();
+    repaint();
+  }
+  void pastePolyphonicNotes()
+  {
+    polyphonicLayer->pasteAt(cursorTime);
+    repaint();
+  }
   /** Select All for a polyphonic take (its notes are not Project notes). */
   void selectAllPolyphonicNotes()
   {

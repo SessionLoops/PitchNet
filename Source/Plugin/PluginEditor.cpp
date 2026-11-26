@@ -199,16 +199,12 @@ MainViewRegionPreview buildRegionPreview(const Project &project,
   {
     const auto &analysis = *take->analysis;
     const auto &edits = project.getPolyphonicEdits();
-    for (size_t i = 0; i < analysis.notes.size(); ++i)
-    {
-      const auto &note = analysis.notes[i];
-      if (!note.active)
-        continue;
-      const auto it = edits.find(static_cast<int>(i));
-      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+    // pasted notes (copies) too, where they play
+    polyphonic::forEachNoteAsEdited(analysis, edits, [&](int, int i, const polyphonic::NoteEdit &edit) {
+      const auto &note = analysis.notes[static_cast<size_t>(i)];
       if (edit.mute)
-        continue;
-      const auto map = polyphonic::stretchMap(analysis, static_cast<int>(i), edit);
+        return;
+      const auto map = polyphonic::stretchMap(analysis, i, edit);
       const double lastOut =
           map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
       const double start = std::max(
@@ -217,7 +213,7 @@ MainViewRegionPreview buildRegionPreview(const Project &project,
           regionEnd, analysis.frameToSeconds(lastOut) + edit.timeOffsetSeconds + shift);
       if (end > start)
         preview.notes.push_back({start, end, note.medianMidi() + edit.semitones});
-    }
+    });
   }
 
   for (const auto &note : project.getNotes())

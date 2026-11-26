@@ -290,12 +290,9 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
   std::vector<PolyLine> polyLines;
   if (polyAnalysis) {
     const auto &edits = project->getPolyphonicEdits();
-    for (size_t i = 0; i < polyAnalysis->notes.size(); ++i) {
-      const auto &note = polyAnalysis->notes[i];
-      if (!note.active)
-        continue;
-      const auto it = edits.find(static_cast<int>(i));
-      const auto edit = it != edits.end() ? it->second : polyphonic::NoteEdit{};
+    // pasted notes (copies) too, where they play
+    polyphonic::forEachNoteAsEdited(*polyAnalysis, edits, [&](int, int i, const polyphonic::NoteEdit &edit) {
+      const auto &note = polyAnalysis->notes[static_cast<size_t>(i)];
       const auto map = polyphonic::stretchMap(*polyAnalysis, static_cast<int>(i), edit);
       const double lastOut = map.cuts() ? map.end + 1.0 : map.outputFrame(note.endFrame + 1.0);
       PolyLine line;
@@ -304,12 +301,12 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       line.midi = note.medianMidi() + edit.semitones;
       line.muted = edit.mute;
       if (line.end <= line.start || !inActiveSpan(line.start, line.end))
-        continue;
+        return;
       minPitch = std::min(minPitch, line.midi);
       maxPitch = std::max(maxPitch, line.midi);
       hasNotePitch = true;
       polyLines.push_back(line);
-    }
+    });
   }
   if (hasPreviews) {
     for (const auto &region : *regionPreviews) {
