@@ -172,6 +172,7 @@
   "panel.ui": "Interface",
   "param.brightness": "Brilho",
   "param.show_breaths_and_sibilance": "Respirações e sibilância",
+  "param.show_chord_track": "Mostrar faixa de acordes",
   "param.beat": "Batida",
   "param.beats": "Batidas",
   "param.chromatic": "Cromática",

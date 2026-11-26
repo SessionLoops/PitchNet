@@ -172,6 +172,7 @@
   "panel.ui": "Интерфейс",
   "param.brightness": "Яркость",
   "param.show_breaths_and_sibilance": "Вдохи и сибилянты",
+  "param.show_chord_track": "Показывать дорожку аккордов",
   "param.beat": "Доля",
   "param.beats": "Доли",
   "param.chromatic": "Хроматическая",

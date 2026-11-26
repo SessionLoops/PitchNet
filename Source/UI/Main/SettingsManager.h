@@ -90,6 +90,8 @@ public:
   }
   bool getShowBreathsAndSibilance() const { return showBreathsAndSibilance; }
   void setNoiseVisibility(bool show) { showBreathsAndSibilance = show; }
+  bool getShowChordTrack() const { return showChordTrack; }
+  void setChordTrackVisibility(bool show) { showChordTrack = show; }
   bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
   // Live Audition for polyphonic takes, on by default; each kind of take
@@ -181,6 +183,7 @@ private:
   juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
   bool showBreathsAndSibilance = true;
+  bool showChordTrack = true;
   bool liveAuditionEnabled = false;
   bool liveAuditionPolyphonicEnabled = true;
   bool followPlayback = true;

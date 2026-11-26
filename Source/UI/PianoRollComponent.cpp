@@ -602,9 +602,16 @@ int PianoRollComponent::getHeaderHeight() const
 
 void PianoRollComponent::syncChordLaneVisibility()
 {
-  const bool visible = isPolyphonicActive();
+  const bool visible = chordTrackEnabled && isPolyphonicActive();
   if (coordMapper == nullptr || coordMapper->isChordLaneVisible() == visible)
     return;
+  if (!visible)
+  {
+    // nothing of the lane's left behind
+    closeChordEditor(false);
+    chordEdgeDragging = false;
+    chordLane->setHover(std::nullopt, std::nullopt);
+  }
   coordMapper->setChordLaneVisible(visible);
   // The canvas, its scroll bar and its visible pitch range move with it.
   resized();
@@ -2486,11 +2493,14 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   }
 
   // The chord track: a chord's name edits it (and the notes follow), a click
-  // elsewhere on a chord splits it, a click where two meet merges them.
+  // elsewhere on a chord splits it, a click where two meet merges them. The
+  // host's chord track is only shown: its chords are edited in the host.
   if (coordMapper->isChordLaneVisible() && e.x >= pianoKeysWidth &&
       e.y >= rulerHeight && e.y < getHeaderHeight())
   {
     swallowGestureUntilMouseUp = true;
+    if (chordLane->showsHostChords())
+      return;
     const double time = xToTime(adjustedX);
     if (e.mods.isPopupMenu())
     {
@@ -2511,19 +2521,18 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     if (!e.mods.isLeftButtonDown() || polyphonicLayer->isAssignmentMode())
       return;
     const auto hit = chordLaneHit(e.x);
-    if ((hit.kind == ChordLane::Hit::Kind::StartEdge ||
-         hit.kind == ChordLane::Hit::Kind::EndEdge) &&
-        !chordLane->showsHostChords())
+    if (hit.kind == ChordLane::Hit::Kind::StartEdge ||
+        hit.kind == ChordLane::Hit::Kind::EndEdge)
     {
       swallowGestureUntilMouseUp = false; // the drag follows
-      beginChordEdgeDrag(hit.kind == ChordLane::Hit::Kind::StartEdge);
+      beginChordEdgeDrag(hit.kind == ChordLane::Hit::Kind::StartEdge, hit.boundarySeconds);
       return;
     }
     if (hit.kind == ChordLane::Hit::Kind::Name)
       showChordEditor(time);
-    else if (hit.kind == ChordLane::Hit::Kind::Chord && !chordLane->showsHostChords())
+    else if (hit.kind == ChordLane::Hit::Kind::Chord)
       splitChordAt(time);
-    else if (hit.kind == ChordLane::Hit::Kind::Boundary && !chordLane->showsHostChords())
+    else if (hit.kind == ChordLane::Hit::Kind::Boundary)
       mergeChordsAt(hit.boundarySeconds);
     return;
   }
@@ -2872,10 +2881,13 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     else if (coordMapper->isChordLaneVisible() && !polyphonicLayer->isAssignmentMode() &&
              e.x >= pianoKeysWidth && e.y >= rulerHeight && e.y < getHeaderHeight())
     {
-      // The chord track: the name edits, the rest splits, a boundary merges.
+      // The chord track: the name edits, the rest splits, a boundary merges;
+      // nothing of the host's chord track.
       const auto hit = chordLaneHit(e.x);
       const bool host = chordLane->showsHostChords();
-      if (hit.kind == ChordLane::Hit::Kind::Name)
+      if (host)
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+      else if (hit.kind == ChordLane::Hit::Kind::Name)
         setMouseCursor(juce::MouseCursor::IBeamCursor);
       else if (hit.kind == ChordLane::Hit::Kind::Boundary && !host)
         setMouseCursor(mergeMouseCursor);
@@ -5230,14 +5242,19 @@ void PianoRollComponent::setChordSegmentation(std::vector<double> boundaries,
   repaint();
 }
 
-void PianoRollComponent::beginChordEdgeDrag(bool start)
+void PianoRollComponent::beginChordEdgeDrag(bool start, double edgeSeconds)
 {
   if (project == nullptr)
     return;
   chordEdgeBefore = project->getChordBoundaries();
   chordEdgeBase = chordLane->isSegmentedByUser() ? chordEdgeBefore
                                                  : chordLane->getShownBoundaries(getChordGrid());
-  if (chordEdgeBase.size() < 2)
+  const auto it = std::find(chordEdgeBase.begin(), chordEdgeBase.end(), edgeSeconds);
+  if (chordEdgeBase.size() < 2 || it == chordEdgeBase.end())
+    return;
+  chordEdgeIndex = static_cast<size_t>(it - chordEdgeBase.begin());
+  // The chord lies after its start, before its end.
+  if ((start && chordEdgeIndex + 1 >= chordEdgeBase.size()) || (!start && chordEdgeIndex == 0))
     return;
   chordEdgeDragging = true;
   chordEdgeIsStart = start;
@@ -5249,13 +5266,24 @@ void PianoRollComponent::dragChordEdge(const juce::MouseEvent &e)
   if (project == nullptr || chordEdgeBase.size() < 2)
     return;
   const float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-  double t = snapDragTime(xToTime(adjustedX), e.mods);
+  const double t = snapDragTime(xToTime(adjustedX), e.mods);
   constexpr double minimum = 0.05; // the chord keeps some length
+  const size_t i = chordEdgeIndex;
   auto working = chordEdgeBase;
   if (chordEdgeIsStart)
-    working.front() = std::min(working[1] - minimum, std::max(getTimelineStart(), t));
+  {
+    // As far back as the gap before it goes (closing it), or the track's start.
+    const double lo = i > 0 ? working[i - 1] : getTimelineStart();
+    working[i] = std::min(working[i + 1] - minimum, std::max(lo, t));
+  }
   else
-    working.back() = std::max(working[working.size() - 2] + minimum, t);
+  {
+    const double hi = i + 1 < working.size() ? working[i + 1]
+                                             : std::numeric_limits<double>::max();
+    working[i] = std::max(working[i - 1] + minimum, std::min(hi, t));
+  }
+  // A gap closed: its two ends are one boundary now.
+  working.erase(std::unique(working.begin(), working.end()), working.end());
   project->setChordBoundaries(std::move(working));
   repaint();
 }
@@ -5299,7 +5327,8 @@ void PianoRollComponent::updateChordLaneHover(const juce::MouseEvent &e)
 
 void PianoRollComponent::showChordEditor(double projectSeconds)
 {
-  if (!isPolyphonicActive() || polyphonicLayer->isAssignmentMode() || project == nullptr)
+  if (!isPolyphonicActive() || polyphonicLayer->isAssignmentMode() || project == nullptr ||
+      chordLane->showsHostChords())
     return;
 
   const auto grid = getChordGrid();
@@ -5357,7 +5386,6 @@ void PianoRollComponent::showChordEditor(double projectSeconds)
   chordEditStart = shown.startSeconds;
   chordEditEnd = shown.endSeconds;
   chordEditInitial = juce::String::fromUTF8(shown.name.c_str());
-  chordEditHost = chordLane->showsHostChords();
   chordEditor->setText(chordEditInitial, juce::dontSendNotification);
   layOutChordEditor();
   chordEditor->setVisible(true);
@@ -5403,9 +5431,8 @@ void PianoRollComponent::commitChordEditor()
   const double start = chordEditStart, end = chordEditEnd;
   closeChordEditor(true);
 
-  // Return on the name it showed: nothing to do, except over a host chord,
-  // where it fits the notes to the host's chord.
-  if (text.isEmpty() || (text == chordEditInitial && !chordEditHost))
+  // Return on the name it showed: nothing to do.
+  if (text.isEmpty() || text == chordEditInitial)
     return;
 
   const auto chord = polyphonic::parseChord(text.toStdString());

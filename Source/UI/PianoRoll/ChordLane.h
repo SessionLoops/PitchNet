@@ -77,8 +77,9 @@ public:
     double boundarySeconds = 0; // Boundary: where the two chords meet; an edge: where it is
   };
   /** What a screen x in the lane is over. Boundaries are where two chords
-   *  meet (a few pixels either side); the edges are the first chord's start
-   *  and the last one's end; a chord's name is its text. */
+   *  meet (a few pixels either side); edges are a chord's start or end with
+   *  no chord beside it (a gap or the ends of the track); a chord's name is
+   *  its text. */
   Hit hitTest(int screenX, int componentWidth, int scrollBarSize, const Grid &grid);
 
   /** The outline of the chord drawn at a project time (screen coordinates),

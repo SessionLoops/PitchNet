@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <limits>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -42,6 +43,16 @@ struct ChordNote
     std::vector<float> levels;
     double levelStepSeconds = 0.0;
     double gain = 1.0; // linear, from the note's gain edit
+    // `levels` holds one constant level (the note's energy), not a measured
+    // envelope: where the note rings on into the next chord it is taken to
+    // fade, see tailFromSeconds.
+    bool constantLevel = false;
+    // Where the note's own chord ends. Set by detectChords and chordsOver (any
+    // value given is replaced). A note without a measured envelope (empty or
+    // constant levels) counts in full up to there, and from there on, where it
+    // rings into the next chord, as fading steadily from its attack to -20 dB
+    // at its end, so a ringing chord does not colour the one struck over it.
+    double tailFromSeconds = std::numeric_limits<double>::infinity();
 };
 
 /** A chord symbol: root, bass and the intervals above the root. */

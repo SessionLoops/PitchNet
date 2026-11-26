@@ -172,6 +172,7 @@
   "panel.ui": "UI",
   "param.brightness": "밝기",
   "param.show_breaths_and_sibilance": "숨소리와 치찰음 표시",
+  "param.show_chord_track": "코드 트랙 표시",
   "param.beat": "박자",
   "param.beats": "박자",
   "param.chromatic": "크로매틱",

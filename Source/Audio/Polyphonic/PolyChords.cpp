@@ -18,6 +18,9 @@ constexpr int kNoChordState = -1;
 constexpr double kLevelExponent = 0.8;   // compresses levels a little, so a loud note does not drown the rest
 constexpr double kRecentShare = 0.6;     // a note's weight falls to 1 - this share as its attack recedes ...
 constexpr double kRecentSeconds = 1.5;   // ... over this time: what is struck now outweighs what still rings
+constexpr double kTailFloor = 0.1;       // a ringing note's tail fades to -20 dB at its end (-40 dB lost too much of
+                                         // the tones chords share and hold over; -12 dB no longer fades enough)
+constexpr double kOwnChordLead = 0.1;    // a note struck this soon before a chord belongs to it
 constexpr float kMelodyMidi = 72.0f;     // above C5, notes weigh less (a melody's passing notes are not the harmony)
 constexpr double kMinGridSlice = 0.3;    // a faster beat is read two beats at a time
 constexpr double kSignificant = 0.12;    // a pitch class counts at this share of the slice's strongest
@@ -162,13 +165,13 @@ std::vector<Slice> profile(const std::vector<ChordNote>& notes, const std::vecto
 
     // per slice: (midi, weight) of each note sounding in it, for the bass
     std::vector<std::vector<std::pair<float, double>>> sounding(slices.size());
-    const double first = edges.front();
-    const double width = (edges.back() - first) / static_cast<double>(slices.size());
-
+    // The slice a time falls in, by its edges: slices can be of any width
+    // (chordsOver's are the user's segmentation), so not by division.
     auto sliceIndex = [&](double t)
     {
-        const double k = std::floor((t - first) / width);
-        return static_cast<int>(std::clamp(k, 0.0, static_cast<double>(slices.size() - 1)));
+        const auto it = std::upper_bound(edges.begin(), edges.end(), t);
+        const auto k = static_cast<long>(it - edges.begin()) - 1;
+        return static_cast<int>(std::clamp(k, 0L, static_cast<long>(slices.size()) - 1));
     };
 
     for (const auto& n : notes)
@@ -181,6 +184,15 @@ std::vector<Slice> profile(const std::vector<ChordNote>& notes, const std::vecto
             / (1.0 + std::max(0.0, static_cast<double>(n.midi - kMelodyMidi)) / 12.0);
         auto recency = [&](double t)
         { return 1.0 - kRecentShare + kRecentShare * std::exp(-std::max(0.0, t - n.startSeconds) / kRecentSeconds); };
+        // Past its own chord, a note without a measured envelope fades.
+        const bool modelTail = n.levels.empty() || n.constantLevel;
+        auto tail = [&](double t)
+        {
+            if (!modelTail || t < n.tailFromSeconds)
+                return 1.0;
+            const double through = (t - n.startSeconds) / (n.endSeconds - n.startSeconds);
+            return std::pow(std::pow(kTailFloor, std::clamp(through, 0.0, 1.0)), kLevelExponent);
+        };
         std::vector<double> weight(slices.size(), 0.0);
         int lo = sliceIndex(n.startSeconds), hi = sliceIndex(n.endSeconds);
 
@@ -188,7 +200,7 @@ std::vector<Slice> profile(const std::vector<ChordNote>& notes, const std::vecto
         {
             if (b <= a || level <= 0.0)
                 return;
-            level *= recency(0.5 * (a + b));
+            level *= recency(0.5 * (a + b)) * tail(0.5 * (a + b));
             for (int s = sliceIndex(a); s < static_cast<int>(slices.size()); ++s)
             {
                 const double o = std::min(b, slices[static_cast<size_t>(s)].end)
@@ -332,7 +344,50 @@ double correlation(const std::array<double, 12>& x, const std::array<double, 12>
 
 // ---------------------------------------------------------------------------
 
+namespace
+{
+std::vector<ChordSpan> detectOnce(const std::vector<ChordNote>& notes, const ChordOptions& options);
+
+/** Each note's own chord ends where the span its start (or, struck just
+ *  before one, the next) falls in ends; `spans` ascending. */
+std::vector<ChordNote> withTails(std::vector<ChordNote> notes, const std::vector<std::pair<double, double>>& spans)
+{
+    for (auto& n : notes)
+    {
+        n.tailFromSeconds = std::numeric_limits<double>::infinity();
+        const double t = n.startSeconds + kOwnChordLead;
+        for (const auto& [start, end] : spans)
+        {
+            if (t < start)
+            {
+                n.tailFromSeconds = start; // in no chord: its sound is a tail from the next
+                break;
+            }
+            if (t < end)
+            {
+                n.tailFromSeconds = end;
+                break;
+            }
+        }
+    }
+    return notes;
+}
+} // namespace
+
 std::vector<ChordSpan> detectChords(const std::vector<ChordNote>& notes, const ChordOptions& options)
+{
+    // Twice: the first pass finds the chords, which say where each note's own
+    // chord ends; the second reads them again with the notes' tails faded.
+    const auto first = detectOnce(withTails(notes, {}), options);
+    std::vector<std::pair<double, double>> spans;
+    for (const auto& s : first)
+        spans.emplace_back(s.startSeconds, s.endSeconds);
+    return detectOnce(withTails(notes, spans), options);
+}
+
+namespace
+{
+std::vector<ChordSpan> detectOnce(const std::vector<ChordNote>& notes, const ChordOptions& options)
 {
     double first = std::numeric_limits<double>::max(), last = std::numeric_limits<double>::lowest();
     for (const auto& n : notes)
@@ -502,6 +557,8 @@ std::vector<ChordSpan> detectChords(const std::vector<ChordNote>& notes, const C
     return spans;
 }
 
+} // namespace
+
 std::vector<ChordSpan> chordsOver(const std::vector<ChordNote>& notes, const std::vector<double>& boundaries)
 {
     std::vector<double> edges;
@@ -510,7 +567,10 @@ std::vector<ChordSpan> chordsOver(const std::vector<ChordNote>& notes, const std
             edges.push_back(b);
     if (edges.size() < 2)
         return {};
-    const auto slices = profile(notes, edges);
+    std::vector<std::pair<double, double>> pieces;
+    for (size_t i = 0; i + 1 < edges.size(); ++i)
+        pieces.emplace_back(edges[i], edges[i + 1]);
+    const auto slices = profile(withTails(notes, pieces), edges);
     const bool flats = keyPrefersFlats(notes);
 
     // Silence by level per second: the spans can be of any length.
@@ -605,9 +665,12 @@ std::vector<ChordNote> chordNotes(const Analysis& analysis, const std::vector<st
         if (levels != nullptr && i < levels->size())
             n.levels = (*levels)[i];
         if (n.levels.empty() && note.energy > 0.0)
+        {
             // no levels: a constant one from the energy the note took out of the mix
             n.levels.assign(static_cast<size_t>(note.numFrames()),
                             static_cast<float>(std::sqrt(note.energy / note.numFrames())));
+            n.constantLevel = true;
+        }
         if (edit != nullptr)
         {
             float curve = 0.0f;

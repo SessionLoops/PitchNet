@@ -172,6 +172,7 @@
   "panel.ui": "介面",
   "param.brightness": "亮度",
   "param.show_breaths_and_sibilance": "顯示呼吸聲和齒音",
+  "param.show_chord_track": "顯示和弦軌",
   "param.beat": "拍號",
   "param.beats": "節拍",
   "param.chromatic": "半音階",

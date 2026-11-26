@@ -270,6 +270,38 @@ int main()
         CHECK(at(spans, 2.0) == "G");
     }
 
+    // ---- 4b. no measured levels: a chord ringing into the next fades there ----
+    {
+        // An F left ringing (to 4.0 s) under a G struck at 1.0, as the chord
+        // track sees notes: one constant level each. Without the faded tail
+        // the F's notes count in full under the G and make it G7.
+        std::vector<ChordNote> notes;
+        for (int m : {41, 57, 60, 65})
+            notes.push_back({0.0, 4.0, static_cast<float>(m), {}, 0.0, 1.0});
+        for (int m : {43, 59, 62, 67})
+            notes.push_back({1.0, 4.0, static_cast<float>(m), {}, 0.0, 1.0});
+        polyphonic::ChordOptions options;
+        options.beatSeconds = 0.5;
+        auto spans = polyphonic::detectChords(notes, options);
+        print("ringing, constant", spans);
+        CHECK(at(spans, 0.5) == "F");
+        CHECK(at(spans, 2.0) == "G" && at(spans, 3.5) == "G");
+        // the same in a segmentation the user set
+        spans = polyphonic::chordsOver(notes, {0.0, 1.0, 4.0});
+        print("ringing, segmented", spans);
+        CHECK(names(spans) == (std::vector<std::string>{"F", "G"}));
+        // A note held on steadily from its own chord is still fading in the next.
+        // But a note struck just before a chord belongs to it, not to the one before.
+        std::vector<ChordNote> early;
+        for (int m : {36, 60, 64, 67})
+            early.push_back({0.0, 2.0, static_cast<float>(m), {}, 0.0, 1.0});
+        for (int m : {41, 57, 60, 65})
+            early.push_back({1.96, 4.0, static_cast<float>(m), {}, 0.0, 1.0}); // 40 ms early
+        spans = polyphonic::chordsOver(early, {0.0, 2.0, 4.0});
+        print("struck early", spans);
+        CHECK(names(spans) == (std::vector<std::string>{"C", "F"}));
+    }
+
     // ---- 5. flat keys spell with flats ----
     {
         std::vector<ChordNote> notes;
@@ -489,6 +521,22 @@ int main()
         std::vector<ChordNote> inv;
         addChord(inv, {40, 60, 67}, 0.0, 2.0);
         CHECK(names(polyphonic::chordsOver(inv, {0.0, 2.0})) == (std::vector<std::string>{"C/E"}));
+        // Spans of very different lengths (a split leaves a short one among
+        // long ones): every chord keeps its notes. Spans used to be looked up
+        // as if all were the same width, which put notes in later spans and
+        // left the chords before a split empty.
+        std::vector<ChordNote> uneven;
+        addChord(uneven, {36, 60, 64, 67}, 0.0, 4.0);    // C
+        addChord(uneven, {45, 60, 64, 69}, 4.0, 8.0);    // Am
+        addChord(uneven, {41, 60, 65, 69}, 8.0, 12.0);   // F
+        addChord(uneven, {43, 59, 62, 67}, 12.0, 16.0);  // G, split near its end
+        spans = polyphonic::chordsOver(uneven, {0.0, 4.0, 8.0, 12.0, 15.5, 16.0});
+        print("uneven", spans);
+        CHECK(names(spans) == (std::vector<std::string>{"C", "Am", "F", "G", "G"}));
+        // long chords, then the last one split into short pieces
+        spans = polyphonic::chordsOver(uneven, {0.0, 4.0, 8.0, 12.0, 12.25, 12.5, 12.75, 13.0, 16.0});
+        print("uneven 2", spans);
+        CHECK(names(spans) == (std::vector<std::string>{"C", "Am", "F", "G", "G", "G", "G", "G"}));
         CHECK(polyphonic::chordsOver(notes, {1.0}).empty());
         CHECK(polyphonic::chordsOver(notes, {2.0, 1.0}).empty()); // not ascending: no span
     }
@@ -537,6 +585,16 @@ int main()
         std::printf("engine: %d / 8 bars right (%d without levels)\n", right, plainRight);
         CHECK(right >= 7);
         CHECK(plainRight >= 6);
+
+        // What the chord track reads (no per-frame levels: each note's energy)
+        // is the same before the masks are built (detect) and after (restore):
+        // the chords do not change when the masks land.
+        const auto detected = polyphonic::detect(x.data(), static_cast<int>(x.size()), params);
+        const auto restored = polyphonic::restore(x.data(), static_cast<int>(x.size()), params, detected.notes);
+        const auto before = polyphonic::detectChords(polyphonic::chordNotes(detected, nullptr, nullptr), options);
+        const auto after = polyphonic::detectChords(polyphonic::chordNotes(restored, nullptr, nullptr), options);
+        CHECK(!before.empty() && before == after);
+        std::printf("engine: chords before and after the masks are identical\n");
     }
 
     std::printf("PolyChordTests passed\n");

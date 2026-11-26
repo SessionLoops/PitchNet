@@ -251,6 +251,8 @@ void SettingsManager::loadConfig()
           showBreathsAndSibilance =
               static_cast<bool>(config.getProperty("showBreaths", true)) &&
               static_cast<bool>(config.getProperty("showSibilance", true));
+        if (configObj->hasProperty("showChordTrack"))
+          showChordTrack = static_cast<bool>(configObj->getProperty("showChordTrack"));
         if (configObj->hasProperty("overviewVisible"))
           overviewVisible =
               static_cast<bool>(configObj->getProperty("overviewVisible"));
@@ -321,6 +323,7 @@ void SettingsManager::saveConfig()
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("showBreathsAndSibilance", showBreathsAndSibilance);
+  config->setProperty("showChordTrack", showChordTrack);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
   config->setProperty("liveAuditionPolyphonicEnabled", liveAuditionPolyphonicEnabled);
   config->setProperty("followPlayback", followPlayback);

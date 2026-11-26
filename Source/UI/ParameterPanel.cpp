@@ -50,7 +50,7 @@ constexpr int kPitchCardHeight =
     ((kRowGap + 1) + kControlRowHeight) * 3 + kInnerPadY;
 constexpr int kUiCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap +
-    kControlRowHeight * 2 + kRowGap + kInnerPadY;
+    kControlRowHeight * 3 + kRowGap * 2 + kInnerPadY;
 constexpr int kLanguageCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
 constexpr int kMidiReferenceCardHeight =
@@ -477,6 +477,15 @@ ParameterPanel::ParameterPanel()
             onNoiseVisibilityChanged(showBreathsAndSibilanceToggle.getToggleState());
     };
 
+    addAndMakeVisible(showChordTrackToggle);
+    showChordTrackToggle.setClickingTogglesState(true);
+    showChordTrackToggle.setToggleState(true, juce::dontSendNotification);
+    showChordTrackToggle.onClick = [this]()
+    {
+        if (onChordTrackVisibilityChanged)
+            onChordTrackVisibilityChanged(showChordTrackToggle.getToggleState());
+    };
+
     timelineBeatButton.setButtonText(getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
@@ -794,6 +803,8 @@ void ParameterPanel::resized()
     bounds.removeFromTop(kSectionLabelGap);
     showBreathsAndSibilanceToggle.setBounds(bounds.removeFromTop(kControlRowHeight));
     bounds.removeFromTop(rowGap);
+    showChordTrackToggle.setBounds(bounds.removeFromTop(kControlRowHeight));
+    bounds.removeFromTop(rowGap);
 
     auto brightnessRow = bounds.removeFromTop(kControlRowHeight);
     constexpr int minBrightnessSliderWidth = 64;
@@ -996,6 +1007,7 @@ void ParameterPanel::refreshLocalisedText()
     brightnessLabel.setText(TR("param.brightness"), juce::dontSendNotification);
     brightnessSlider.setName(TR("param.brightness"));
     showBreathsAndSibilanceToggle.setButtonText(TR("param.show_breaths_and_sibilance"));
+    showChordTrackToggle.setButtonText(TR("param.show_chord_track"));
     midiDragButton.setButtonText(TR("param.midi_drag"));
     midiDragButton.setTooltip(TR("tooltip.midi_drag"));
     midiReferenceSectionLabel.setText(TR("panel.midi"), juce::dontSendNotification);
@@ -1239,6 +1251,11 @@ void ParameterPanel::setUiBrightness(double brightnessPercent)
 void ParameterPanel::setNoiseVisibility(bool show)
 {
     showBreathsAndSibilanceToggle.setToggleState(show, juce::dontSendNotification);
+}
+
+void ParameterPanel::setChordTrackVisibility(bool show)
+{
+    showChordTrackToggle.setToggleState(show, juce::dontSendNotification);
 }
 
 void ParameterPanel::setHostTimelineState(double bpm, int numerator, int denominator)

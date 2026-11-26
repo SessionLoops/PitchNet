@@ -872,6 +872,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   const bool showBreathsAndSibilance = settingsManager->getShowBreathsAndSibilance();
   parameterPanel.setNoiseVisibility(showBreathsAndSibilance);
   pianoRoll.setNoiseVisibility(showBreathsAndSibilance);
+  parameterPanel.setChordTrackVisibility(settingsManager->getShowChordTrack());
+  pianoRoll.setChordTrackEnabled(settingsManager->getShowChordTrack());
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);
@@ -907,6 +909,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     settingsManager->setNoiseVisibility(show);
     pianoRoll.setNoiseVisibility(show);
+    settingsManager->saveConfig();
+  };
+  parameterPanel.onChordTrackVisibilityChanged = [this](bool show)
+  {
+    settingsManager->setChordTrackVisibility(show);
+    pianoRoll.setChordTrackEnabled(show);
     settingsManager->saveConfig();
   };
   parameterPanel.onCreateMidiDragFile = [this]() { return createMidiDragFile(); };

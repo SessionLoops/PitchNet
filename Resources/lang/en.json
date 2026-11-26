@@ -172,6 +172,7 @@
   "panel.ui": "UI",
   "param.brightness": "Brightness",
   "param.show_breaths_and_sibilance": "Show Breaths & Sibilance",
+  "param.show_chord_track": "Show Chord Track",
   "param.beat": "Beat",
   "param.beats": "Beats",
   "param.chromatic": "Chromatic",

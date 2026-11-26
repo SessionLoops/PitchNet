@@ -334,7 +334,6 @@ private:
   std::unique_ptr<juce::TextEditor> chordEditor;
   double chordEditStart = 0.0, chordEditEnd = 0.0;
   juce::String chordEditInitial;
-  bool chordEditHost = false;
   /** Retunes the take's notes from `startSeconds` to `endSeconds` to the
    *  chord `to` (polyphonic::retuneToChord over each detected chord there):
    *  the original chords' tones move, other notes stay. One undo step. */
@@ -353,13 +352,15 @@ private:
   /** Sets the chord segmentation as one undo step (empty: detect again). */
   void setChordSegmentation(std::vector<double> boundaries, const juce::String &name);
   void updateChordLaneHover(const juce::MouseEvent &e);
-  // Dragging the first chord's start or the last chord's end (one undo step
-  // at mouse up; the segmentation follows the pointer meanwhile).
-  void beginChordEdgeDrag(bool start);
+  // Dragging a chord's start or end where no chord is beside it (one undo
+  // step at mouse up; the segmentation follows the pointer meanwhile). It
+  // can reach the next chord, closing the gap, but not cross it.
+  void beginChordEdgeDrag(bool start, double edgeSeconds);
   void dragChordEdge(const juce::MouseEvent &e);
   void finishChordEdgeDrag();
   bool chordEdgeDragging = false;
   bool chordEdgeIsStart = false;
+  size_t chordEdgeIndex = 0; // into chordEdgeBase
   std::vector<double> chordEdgeBefore, chordEdgeBase;
   std::unique_ptr<juce::BubbleMessageComponent> chordMessage;
   void drawAudioSourceRegionOverlay(juce::Graphics &g);
@@ -482,6 +483,7 @@ private:
       std::make_unique<PolyphonicNoteLayer>();
   // The chord track under the ruler, for polyphonic takes.
   std::unique_ptr<ChordLane> chordLane = std::make_unique<ChordLane>();
+  bool chordTrackEnabled = true;
   /** Shows the chord track exactly when a polyphonic take is active; the
    *  canvas moves down by its height. */
   void syncChordLaneVisibility();
@@ -535,10 +537,24 @@ public:
   void setHostChords(std::vector<polyphonic::ChordSpan> timelineChords)
   {
     chordLane->setHostChords(std::move(timelineChords));
+    if (chordLane->showsHostChords())
+    {
+      // shown only: nothing of an edit in progress stays
+      closeChordEditor(false);
+      chordEdgeDragging = false;
+      chordLane->setHover(std::nullopt, std::nullopt);
+    }
     repaint();
   }
-  /** Whether the chord track is shown (a polyphonic take). */
+  /** Whether the chord track is shown (a polyphonic take, with the side
+   *  panel's Show Chord Track on). */
   bool isChordLaneVisible() const { return coordMapper->isChordLaneVisible(); }
+  /** The side panel's Show Chord Track. */
+  void setChordTrackEnabled(bool enabled)
+  {
+    chordTrackEnabled = enabled;
+    syncChordLaneVisibility();
+  }
   /** The take's length changed (a polyphonic render grew or shrank it). */
   void refreshTimelineExtent()
   {

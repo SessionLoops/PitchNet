@@ -172,6 +172,7 @@
   "panel.ui": "UI",
   "param.brightness": "明るさ",
   "param.show_breaths_and_sibilance": "ブレスと歯擦音を表示",
+  "param.show_chord_track": "コードトラックを表示",
   "param.beat": "拍子",
   "param.beats": "拍",
   "param.chromatic": "クロマチック",

@@ -45,8 +45,12 @@ bool ChordLane::isSegmentedByUser() const
 
 std::vector<polyphonic::ChordNote> ChordLane::notesOf(const PolyphonicTake &t) const
 {
-  const auto levels = noteLevels(t);
-  return polyphonic::chordNotes(*t.analysis, &levels, &project->getPolyphonicEdits());
+  // Each note at a constant level from its energy, not its level per frame:
+  // the per-frame levels are estimates until the masks are built and the
+  // model's afterwards, so the chords would change when the masks land. The
+  // energy comes with the notes, the same before and after (and in a saved
+  // project), and reads chords as well (docs/polyphonic-editing.md).
+  return polyphonic::chordNotes(*t.analysis, nullptr, &project->getPolyphonicEdits());
 }
 
 const std::vector<polyphonic::ChordSpan> &ChordLane::getChords(const Grid &grid)
@@ -194,43 +198,58 @@ ChordLane::Hit ChordLane::hitTest(int screenX, int componentWidth, int scrollBar
   const auto &spans = getChords(grid);
   const float x = static_cast<float>(screenX);
 
+  const auto touching = [&](int i, int j) {
+    return i >= 0 && j < static_cast<int>(spans.size()) &&
+           spans[static_cast<size_t>(i)].endSeconds == spans[static_cast<size_t>(j)].startSeconds;
+  };
+  const auto isChord = [&](int i) {
+    return i >= 0 && i < static_cast<int>(spans.size()) &&
+           !spans[static_cast<size_t>(i)].chord.isNone();
+  };
+
   // Where two chords meet comes first: the edges of both chords are there.
   for (size_t i = 0; i + 1 < boxes.size(); ++i)
   {
-    const auto &a = spans[static_cast<size_t>(boxes[i].span)];
-    const auto &b = spans[static_cast<size_t>(boxes[i + 1].span)];
-    if (boxes[i + 1].span != boxes[i].span + 1 || a.endSeconds != b.startSeconds)
+    const int a = boxes[i].span, b = boxes[i + 1].span;
+    if (b != a + 1 || !touching(a, b) || !isChord(a) || !isChord(b))
       continue;
     if (std::abs(x - boxes[i].x1) <= kBoundaryPixels)
     {
       hit.kind = Hit::Kind::Boundary;
-      hit.span = boxes[i].span;
-      hit.boundarySeconds = a.endSeconds;
+      hit.span = a;
+      hit.boundarySeconds = spans[static_cast<size_t>(a)].endSeconds;
       return hit;
     }
   }
-  // The outer edges: the first chord's start, the last chord's end.
-  if (!boxes.empty())
+
+  // A chord's edge with no chord beside it (a gap, or the ends of the track)
+  // changes its length. The nearest such edge wins.
+  float nearest = kBoundaryPixels + 1.0f;
+  for (const auto &l : boxes)
   {
-    const auto &first = boxes.front();
-    const auto &last = boxes.back();
-    if (first.span == 0 && std::isfinite(spans.front().startSeconds) &&
-        std::abs(x - first.x0) <= kBoundaryPixels)
+    if (!isChord(l.span))
+      continue;
+    const auto &span = spans[static_cast<size_t>(l.span)];
+    const bool freeStart = !(touching(l.span - 1, l.span) && isChord(l.span - 1));
+    const bool freeEnd = !(touching(l.span, l.span + 1) && isChord(l.span + 1));
+    if (freeStart && std::isfinite(span.startSeconds) && std::abs(x - l.x0) < nearest)
     {
+      nearest = std::abs(x - l.x0);
       hit.kind = Hit::Kind::StartEdge;
-      hit.span = 0;
-      hit.boundarySeconds = spans.front().startSeconds;
-      return hit;
+      hit.span = l.span;
+      hit.boundarySeconds = span.startSeconds;
     }
-    if (last.span == static_cast<int>(spans.size()) - 1 && std::isfinite(spans.back().endSeconds) &&
-        std::abs(x - last.x1) <= kBoundaryPixels)
+    if (freeEnd && std::isfinite(span.endSeconds) && std::abs(x - l.x1) < nearest)
     {
+      nearest = std::abs(x - l.x1);
       hit.kind = Hit::Kind::EndEdge;
-      hit.span = last.span;
-      hit.boundarySeconds = spans.back().endSeconds;
-      return hit;
+      hit.span = l.span;
+      hit.boundarySeconds = span.endSeconds;
     }
   }
+  if (hit.kind != Hit::Kind::None)
+    return hit;
+
   for (const auto &l : boxes)
   {
     if (x < l.x0 || x >= l.x1)

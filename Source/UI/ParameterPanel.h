@@ -37,6 +37,7 @@ public:
 
     void setUiBrightness(double brightnessPercent);
     void setNoiseVisibility(bool show);
+    void setChordTrackVisibility(bool show);
     void setHostTimelineState(double bpm, int numerator, int denominator);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
@@ -80,6 +81,7 @@ public:
     std::function<void(bool)> onTimelineDragSnapChanged;
     std::function<void(double)> onUiBrightnessChanged;
     std::function<void(bool)> onNoiseVisibilityChanged;
+    std::function<void(bool)> onChordTrackVisibilityChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
     // The Input menu or the Analysis card asks for another analysis mode or
@@ -214,6 +216,7 @@ private:
     FloatingZoomSliderLookAndFeel brightnessSliderLookAndFeel;
     juce::Slider brightnessSlider;
     StyledToggleButton showBreathsAndSibilanceToggle;
+    StyledToggleButton showChordTrackToggle;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Chromatic;

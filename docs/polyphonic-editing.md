@@ -709,7 +709,8 @@ from depends on how PitchNet runs:
 | ARA plug-in, host with a chord track (Studio One, for example) | the host's (`kARAContentTypeSheetChords`), coloured |
 | ARA plug-in, host without one (or an empty one) | detected, as above |
 
-The host's chords are drawn in the accent colour, detected ones in grey.
+The host's chords are drawn in the accent colour, detected ones in grey. Show Chord Track,
+in the side panel's UI card, hides the lane (an app setting, on by default).
 
 **Host chords** (`Source/Plugin/AraChordTrack.h`, read in
 `PitchNetDocumentController::refreshHostMusicalTimeline` next to the tempo
@@ -739,7 +740,27 @@ from a chromagram of the audio:
   their attack is (a weight that falls to 0.4 over 1.5 s, so what is struck
   now outweighs what still rings from the previous chord), and less above
   C5 (a melody's passing notes are not the harmony); and a bass profile from
-  its lowest notes.
+  its lowest notes. The chord track gives each note a constant level from its
+  energy (and gain edit), not its level per frame: the per-frame levels are
+  estimates from the spectral peaks until the masks are built and the sound
+  model's afterwards, so reading them changed the chords when the masks
+  landed (standalone, where notes come first). The energy comes with the
+  notes, the same before and after the masks and in a saved project. Where
+  a note rings on past its own chord (the chord its start falls in, or the
+  next one if it is struck within 0.1 s of it), it is taken to fade
+  steadily from its attack to -20 dB at its end, so a chord left ringing
+  does not colour the one struck over it (an F ringing under a G reads G,
+  not G7). This needs the chords to know where each note's chord ends:
+  detection runs twice, the second time with the tails from the first; in
+  a segmentation the user set, the pieces say it. The fade uses only the
+  note's start, end and energy, so the chords still do not change when the
+  masks land. On four rendered progressions (96 points) this reads 64
+  right, against 68 with the model's levels, 67 with the energy and no
+  fade, and 56 with the peak estimates: the fade costs where chords share
+  tones held over the change (a held note cannot be told from a ringing
+  one without its level per frame); -40 dB cost more (61), -12 dB no longer
+  fixed the ringing case. `detectChords` still takes per-frame levels when
+  given (`chordNotes`); notes with them get no modelled fade.
 - Each slice is scored against 23 chord templates (major, minor, 7, maj7, m7,
   dim, m7b5, dim7, aug, sus4, sus2, 7sus4, 6, m6, the power chord, add9, madd9,
   9, maj9, m9, mMaj7, 6/9 and 7#5) by cosine
@@ -762,16 +783,17 @@ from the notes (or kept, once split or merged; below).
 splits it: at the nearest grid line in Beats mode (the timeline's grid
 division), where the pointer is in Time mode; a dashed line shows where. A
 click where two chords meet merges them; hovering there highlights the area
-the merged chord will cover. Dragging the first chord's start or the last
-chord's end (a resize cursor shows them) changes its length, snapping as
-Drag Snap says (Alt inverts). Nothing is retuned: both halves of a
+the merged chord will cover. Dragging a chord's start or end where no chord
+is beside it (a gap, or the ends of the track; a resize cursor shows them)
+changes its length, snapping as Drag Snap says (Alt inverts); it can grow up
+to the next chord, closing the gap, but not into it. Nothing is retuned: both halves of a
 split play what they played, and a merged chord is read from all its notes.
 From the first split or merge on, the lane keeps that segmentation
 (`Project::getChordBoundaries`, saved with the project and the plug-in state,
 undoable) and names each piece by what its notes play
 (`polyphonic::chordsOver`), so the halves of a split can be given different
-chords; a stretch where the notes play no chord is an empty piece, which can
-be merged too. Right-click the lane and choose Detect Chords Again to go back
+chords; a stretch where the notes play no chord is a gap, which the chords
+beside it can be stretched over. Right-click the lane and choose Detect Chords Again to go back
 to the detected chords. With a host chord track there is no split or merge:
 that segmentation is the host's.
 
@@ -806,12 +828,9 @@ general rules for anything else, such as Cmaj9#11 or C7b9b13).
 - The bass is as typed: the span's lowest chord tones move to it. "Cm" over
   C/E is Cm in root position; type Cm/Eb to keep the inversion. The field
   starts with the chord's name, inversion included.
-- In an ARA host with a chord track the host's chord is shown, while the
-  original tones come from the chords detected in the notes; each detected
-  chord under the host's is retuned to the typed chord, bass
-  included: Return on the host's chord name (which the field starts with)
-  fits the notes to it. The host's chord track itself is not changed (ARA has
-  no way for a plug-in to write it).
+- With a host chord track the lane only shows the host's chords: nothing in
+  it can be clicked, typed, split, merged or resized. They are edited in the
+  host (ARA has no way for a plug-in to write them).
 
 ## Reproducing and retraining
 
