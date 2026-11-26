@@ -31,6 +31,7 @@ endif()
 
 include(FetchContent)
 include(cmake/Asio.cmake)
+include(cmake/FetchOnnxRuntimeNuGet.cmake)
 
 # Ensure static libs are built with PIC for shared plugin targets (Linux).
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -52,7 +53,8 @@ option(PITCHNET_BUILD_TESTS "Build the unit tests in tests/ and register them wi
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND USE_CUDA)
-    # The CUDA 13 archive requested below is not published for 1.19.2.
+    # USE_CUDA targets CUDA 13. The 1.19.2 CUDA package is built for CUDA 12;
+    # the 1.31.0 one links libcudart.so.13.
     set(ONNXRUNTIME_VERSION "1.31.0" CACHE STRING "ONNX Runtime version" FORCE)
 else()
     set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
@@ -137,43 +139,40 @@ if(EXISTS "${ONNXRUNTIME_CACHE_HEADER}")
     message(STATUS "ONNX Runtime already downloaded, skipping download")
     set(ONNXRUNTIME_ROOT ${ONNXRUNTIME_CACHE_DIR})
 else()
-    # Detect platform and set download URL
-    if(WIN32)
-        if(USE_CUDA)
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.zip")
-            message(STATUS "Downloading ONNX Runtime GPU CUDA13 package (Windows)")
-        elseif(USE_DIRECTML)
-            set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/${ONNXRUNTIME_VERSION}")
-            message(STATUS "Downloading ONNX Runtime DirectML package from NuGet (Windows)")
-        else()
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip")
-            message(STATUS "Downloading ONNX Runtime CPU package (Windows)")
+    if(WIN32 AND USE_DIRECTML)
+        set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/${ONNXRUNTIME_VERSION}")
+        message(STATUS "Downloading ONNX Runtime DirectML package from NuGet: ${ONNXRUNTIME_URL}")
+
+        FetchContent_Declare(
+            onnxruntime
+            URL ${ONNXRUNTIME_URL}
+            SOURCE_DIR ${ONNXRUNTIME_CACHE_DIR}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+        FetchContent_MakeAvailable(onnxruntime)
+        set(ONNXRUNTIME_ROOT ${onnxruntime_SOURCE_DIR})
+    else()
+        # github.com/microsoft/onnxruntime (and its release downloads) has
+        # returned 404 since 2026-11-18, so every other build gets ONNX Runtime
+        # from NuGet. See cmake/FetchOnnxRuntimeNuGet.cmake.
+        if(WIN32 AND USE_CUDA)
+            message(FATAL_ERROR
+                "USE_CUDA on Windows is not supported: the ONNX Runtime CUDA package "
+                "it needs was only published on GitHub, which is no longer available.")
         endif()
-    elseif(APPLE)
-        if(USE_GPU)
+        if(APPLE AND USE_GPU)
             message(WARNING "GPU acceleration is not supported on macOS, falling back to CPU")
         endif()
-        set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-${ONNXRUNTIME_MACOS_PACKAGE}-${ONNXRUNTIME_VERSION}.tgz")
-    else()
-        if(USE_CUDA)
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.tgz")
-        elseif(USE_GPU)
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz")
-        else()
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz")
+
+        set(PITCHNET_ORT_NUGET_ARGS DEST "${ONNXRUNTIME_CACHE_DIR}" VERSION "${ONNXRUNTIME_VERSION}")
+        if(APPLE)
+            list(APPEND PITCHNET_ORT_NUGET_ARGS MACOS_PACKAGE "${ONNXRUNTIME_MACOS_PACKAGE}")
+        elseif(NOT WIN32 AND (USE_CUDA OR USE_GPU))
+            list(APPEND PITCHNET_ORT_NUGET_ARGS GPU)
         endif()
+        pitchnet_fetch_onnxruntime_nuget(${PITCHNET_ORT_NUGET_ARGS})
+        set(ONNXRUNTIME_ROOT ${ONNXRUNTIME_CACHE_DIR})
     endif()
-
-    message(STATUS "Downloading ONNX Runtime from: ${ONNXRUNTIME_URL}")
-
-    FetchContent_Declare(
-        onnxruntime
-        URL ${ONNXRUNTIME_URL}
-        SOURCE_DIR ${ONNXRUNTIME_CACHE_DIR}
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(onnxruntime)
-    set(ONNXRUNTIME_ROOT ${onnxruntime_SOURCE_DIR})
 endif()
 
 # Handle different directory structures for DirectML NuGet package vs regular packages
