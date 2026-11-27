@@ -484,6 +484,7 @@ private:
   // The chord track under the ruler, for polyphonic takes.
   std::unique_ptr<ChordLane> chordLane = std::make_unique<ChordLane>();
   bool chordTrackEnabled = true;
+  bool chordTrackHostOnly = false;
   /** Shows the chord track exactly when a polyphonic take is active; the
    *  canvas moves down by its height. */
   void syncChordLaneVisibility();
@@ -550,6 +551,7 @@ public:
       chordEdgeDragging = false;
       chordLane->setHover(std::nullopt, std::nullopt);
     }
+    syncChordLaneVisibility(); // the plug-in shows the lane only with them
     repaint();
   }
   /** Whether the chord track is shown (a polyphonic take, with the side
@@ -559,6 +561,13 @@ public:
   void setChordTrackEnabled(bool enabled)
   {
     chordTrackEnabled = enabled;
+    syncChordLaneVisibility();
+  }
+  /** The plug-in: the chord track is shown only with the host's chords
+   *  (setHostChords); the standalone app shows the chords it detects. */
+  void setChordTrackHostOnly(bool hostOnly)
+  {
+    chordTrackHostOnly = hostOnly;
     syncChordLaneVisibility();
   }
   /** The take's length changed (a polyphonic render grew or shrank it). */

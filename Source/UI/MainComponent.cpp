@@ -874,6 +874,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRoll.setNoiseVisibility(showBreathsAndSibilance);
   parameterPanel.setChordTrackVisibility(settingsManager->getShowChordTrack());
   pianoRoll.setChordTrackEnabled(settingsManager->getShowChordTrack());
+  // In a host, chords come only from its chord track (ARA): none, no lane.
+  pianoRoll.setChordTrackHostOnly(isPluginMode());
   parameterPanel.onProjectBound = [this](Project* project)
   {
     toolbar.setProject(project);

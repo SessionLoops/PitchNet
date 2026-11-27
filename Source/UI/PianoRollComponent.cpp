@@ -602,7 +602,8 @@ int PianoRollComponent::getHeaderHeight() const
 
 void PianoRollComponent::syncChordLaneVisibility()
 {
-  const bool visible = chordTrackEnabled && isPolyphonicActive();
+  const bool visible = chordTrackEnabled && isPolyphonicActive() &&
+                       (!chordTrackHostOnly || chordLane->showsHostChords());
   if (coordMapper == nullptr || coordMapper->isChordLaneVisible() == visible)
     return;
   if (!visible)

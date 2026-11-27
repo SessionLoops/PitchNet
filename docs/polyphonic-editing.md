@@ -705,9 +705,9 @@ from depends on how PitchNet runs:
 
 | | chords |
 |---|---|
-| standalone app, non-ARA plug-in | detected from the take's notes |
-| ARA plug-in, host with a chord track (Studio One, for example) | the host's (`kARAContentTypeSheetChords`), coloured |
-| ARA plug-in, host without one (or an empty one) | detected, as above |
+| standalone app | detected from the take's notes |
+| ARA plug-in, host with a chord track (Studio One, for example) | the host's (`kARAContentTypeSheetChords`), coloured, read-only |
+| ARA plug-in, host without one (or an empty one); non-ARA plug-in | none: the lane is not shown |
 
 The host's chords are drawn in the accent colour, detected ones in grey. Show Chord Track,
 in the side panel's UI card, hides the lane (an app setting, on by default).

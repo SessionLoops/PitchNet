@@ -2246,7 +2246,7 @@ void PitchNetDocumentController::refreshHostMusicalTimeline() {
 
       // The host's chord track (Studio One, for example), placed on its
       // tempo map. A host that has none gives no reader or no events; the
-      // chord track then shows the chords PitchNet detects in the take.
+      // plug-in then shows no chord track.
       const ARA::PlugIn::HostContentReader<ARA::kARAContentTypeSheetChords>
           chordReader(context);
       if (chordReader && chordReader.getEventCount() > 0) {

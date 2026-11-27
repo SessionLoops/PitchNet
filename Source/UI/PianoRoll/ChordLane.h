@@ -14,9 +14,9 @@
  * take's chords.
  *
  * In an ARA host that has a chord track (Studio One, for example) the chords
- * are the host's (setHostChords, from kARAContentTypeSheetChords). Otherwise -
- * the standalone app, the non-ARA plug-in, or an ARA host without chords - they
- * come from the take's notes with their edits, so re-pitching, moving or
+ * are the host's (setHostChords, from kARAContentTypeSheetChords); a plug-in
+ * without them shows no chord track (PianoRollComponent::setChordTrackHostOnly).
+ * In the standalone app they come from the take's notes with their edits, so re-pitching, moving or
  * deleting notes changes the chords shown: detected and segmented by
  * polyphonic::detectChords, or, once the user has split or merged chords
  * (Project::getChordBoundaries), one chord per span of that segmentation
