@@ -685,16 +685,27 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
       mask[s] = frameMask[i];
   }
 
-  // Step 3: smooth transitions with linear ramp at frame boundaries
+  // Step 3: smooth transitions with a linear ramp at frame boundaries.
+  // The ramp lies entirely inside the kept unvoiced run, never in the voiced
+  // frames beside it: there it would mix the original voice with the
+  // shifted one, which combs (the same rule as BreathSibilanceProtection.h).
+  // A kept run is at least kKeepOriginalUnvoicedFrames long, so it has room.
   constexpr int kMinRampSamples = 512;
   const int kRampSamples = std::max(kMinRampSamples, hopSize * 2);
   for (int i = 0; i < numFrames - 1; ++i) {
     if (frameMask[i] == frameMask[i + 1])
       continue;
     // Transition at frame boundary
-    int center = (i + 1) * hopSize;
-    int rampStart = std::max(0, center - kRampSamples / 2);
-    int rampEnd = std::min(numSamples, center + kRampSamples / 2);
+    const int center = (i + 1) * hopSize;
+    // Synthesized -> original: the run starts here, ramp after the boundary.
+    // Original -> synthesized: the run ends here, ramp before it.
+    const bool intoOriginal = frameMask[i + 1] < frameMask[i];
+    int rampStart = intoOriginal ? center : center - kRampSamples;
+    int rampEnd = intoOriginal ? center + kRampSamples : center;
+    rampStart = std::clamp(rampStart, 0, numSamples);
+    rampEnd = std::clamp(rampEnd, 0, numSamples);
+    if (rampEnd <= rampStart)
+      continue;
     float fromVal = frameMask[i];
     float toVal = frameMask[i + 1];
     for (int s = rampStart; s < rampEnd; ++s) {
