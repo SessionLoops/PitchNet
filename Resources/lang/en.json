@@ -132,6 +132,8 @@
   "handle.amplitude": "Amplitude",
   "handle.fine_pitch": "Fine Pitch (cents)",
   "handle.formant": "Formant Shift",
+  "handle.hold_alt_for_slopes": "Hold Alt for Left/Right Slope",
+  "handle.hold_option_for_slopes": "Hold Option for Left/Right Slope",
   "handle.pitch_drift": "Pitch Drift",
   "handle.sibilant_balance": "Sibilant Balance",
   "handle.tilt_left": "Left Slope",

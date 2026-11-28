@@ -34,7 +34,10 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   handles.clear();
 
   if (selectedNotes.empty())
+  {
+    showTilt = false;
     return;
+  }
 
   int minStartFrame = std::numeric_limits<int>::max();
   int maxEndFrame = std::numeric_limits<int>::min();
@@ -86,9 +89,13 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   };
 
   // Pitch above the note, level and tone below it.
-  addButtonHandle(HandleType::PitchDrift, 0, groupTop);
+  // Holding Alt over this row swaps the outer slots for the slopes, each on
+  // the side of the note it bends.
+  addButtonHandle(showTilt ? HandleType::TiltLeft : HandleType::PitchDrift,
+                  0, groupTop);
   addButtonHandle(HandleType::Vibrato, 1, groupTop);
-  addButtonHandle(HandleType::FinePitch, 2, groupTop);
+  addButtonHandle(showTilt ? HandleType::TiltRight : HandleType::FinePitch,
+                  2, groupTop);
   addButtonHandle(HandleType::SibilantBalance, 0, bottomRowY);
   addButtonHandle(HandleType::Amplitude, 1, bottomRowY);
   addButtonHandle(HandleType::Formant, 2, bottomRowY);
@@ -164,6 +171,21 @@ bool PitchToolHandles::containsLayoutPoint(float worldX, float worldY) const
       return true;
   }
   return false;
+}
+
+bool PitchToolHandles::topRowContains(float worldX, float worldY) const
+{
+  if (handles.empty())
+    return false;
+
+  // The pitch row is laid out first; the level and tone row follows it.
+  const float topY = handles.front().bounds.getY();
+  juce::Rectangle<float> rowBounds;
+  for (const auto& handle : handles)
+    if (handle.bounds.getY() == topY)
+      rowBounds = rowBounds.isEmpty() ? handle.bounds
+                                      : rowBounds.getUnion(handle.bounds);
+  return rowBounds.expanded(3.0f).contains(worldX, worldY);
 }
 
 juce::Rectangle<float> PitchToolHandles::getLayoutBounds() const

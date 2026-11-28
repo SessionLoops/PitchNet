@@ -132,6 +132,8 @@
   "handle.amplitude": "Amplitude",
   "handle.fine_pitch": "Afinação fina (cents)",
   "handle.formant": "Deslocamento de formante",
+  "handle.hold_alt_for_slopes": "Segure Alt para as inclinações esquerda e direita",
+  "handle.hold_option_for_slopes": "Segure Option para as inclinações esquerda e direita",
   "handle.pitch_drift": "Deriva de afinação",
   "handle.sibilant_balance": "Equilíbrio de sibilantes",
   "handle.tilt_left": "Inclinação esquerda",

@@ -2115,6 +2115,31 @@ bool PianoRollComponent::altControlsDragSnap(float worldX, float worldY)
   return false;
 }
 
+bool PianoRollComponent::altOverPitchHandles(float worldX, float worldY) const
+{
+  return editMode == EditMode::Select && pitchToolHandles &&
+         !pitchToolHandles->isEmpty() &&
+         pitchToolHandles->containsLayoutPoint(worldX, worldY);
+}
+
+void PianoRollComponent::updateTiltHandleSwap(bool altDown, float worldX,
+                                              float worldY)
+{
+  if (!pitchToolHandles || isMouseButtonDown())
+    return;
+
+  const bool showTilt = altDown && editMode == EditMode::Select &&
+                        pitchToolHandles->topRowContains(worldX, worldY);
+  if (showTilt == pitchToolHandles->isShowingTilt())
+    return;
+
+  pitchToolHandles->setShowTilt(showTilt);
+  updatePitchToolHandlesFromSelection();
+  hoveredPitchToolHandle = pitchToolHandles->hitTest(worldX, worldY);
+  pitchToolHandles->setHoveredHandleIndex(hoveredPitchToolHandle);
+  repaint();
+}
+
 bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
 {
   return e.x >= pianoKeysWidth && e.y >= getHeaderHeight() &&
@@ -2562,7 +2587,8 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   }
   // Alt inverts drag snapping over a note, a note end or a timing boundary.
   // Keep Alt-drag panning available when the gesture begins anywhere else.
-  const bool altNoteDrag = altControlsDragSnap(adjustedX, adjustedY);
+  const bool altNoteDrag = altControlsDragSnap(adjustedX, adjustedY) ||
+                           altOverPitchHandles(adjustedX, adjustedY);
   if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
   {
     modifierPanDragActive = true;
@@ -2855,6 +2881,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
       e.x - pianoKeysWidth + static_cast<float>(scrollX);
   const float adjustedY =
       e.y - getHeaderHeight() + static_cast<float>(scrollY);
+  updateTiltHandleSwap(e.mods.isAltDown() && isCanvasPoint(e), adjustedX,
+                       adjustedY);
 
   if (isPolyphonicActive())
   {
@@ -2914,7 +2942,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 
   const bool altControlsNoteSnap =
       (editMode == EditMode::Select && noteAtPointer != nullptr) ||
-      altControlsDragSnap(adjustedX, adjustedY);
+      altControlsDragSnap(adjustedX, adjustedY) ||
+      altOverPitchHandles(adjustedX, adjustedY);
   if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
       !altControlsNoteSnap)
   {
@@ -3093,10 +3122,12 @@ void PianoRollComponent::modifierKeysChanged(
                        static_cast<float>(scrollX);
   const float worldY = mousePosition.y - getHeaderHeight() +
                        static_cast<float>(scrollY);
+  updateTiltHandleSwap(modifiers.isAltDown() && mouseOverCanvas, worldX, worldY);
   // A drag in progress keeps its cursor while Alt toggles its snapping.
   const bool pointerOverNote =
       mouseOverCanvas &&
-      (isMouseButtonDown() || altControlsDragSnap(worldX, worldY));
+      (isMouseButtonDown() || altControlsDragSnap(worldX, worldY) ||
+       altOverPitchHandles(worldX, worldY));
 
   const bool zoomModifierDown = isZoomModifierDown(modifiers);
 
@@ -3140,12 +3171,20 @@ juce::String PianoRollComponent::getTooltip()
   if (handleIndex < 0)
     return {};
 
+#if JUCE_MAC
+  const juce::String holdForSlopes = TR("handle.hold_option_for_slopes");
+#else
+  const juce::String holdForSlopes = TR("handle.hold_alt_for_slopes");
+#endif
+
   switch (pitchToolHandles->getHandle(handleIndex).type)
   {
     case PitchToolHandles::HandleType::TiltLeft: return TR("handle.tilt_left");
     case PitchToolHandles::HandleType::Vibrato: return TR("handle.vibrato");
-    case PitchToolHandles::HandleType::PitchDrift: return TR("handle.pitch_drift");
-    case PitchToolHandles::HandleType::FinePitch: return TR("handle.fine_pitch");
+    case PitchToolHandles::HandleType::PitchDrift:
+      return TR("handle.pitch_drift") + "\n" + holdForSlopes;
+    case PitchToolHandles::HandleType::FinePitch:
+      return TR("handle.fine_pitch") + "\n" + holdForSlopes;
     case PitchToolHandles::HandleType::SibilantBalance: return TR("handle.sibilant_balance");
     case PitchToolHandles::HandleType::Amplitude: return TR("handle.amplitude");
     case PitchToolHandles::HandleType::Formant: return TR("handle.formant");
@@ -4339,6 +4378,7 @@ void PianoRollComponent::updatePitchToolHandlesFromSelection()
   if (!project || editMode != EditMode::Select)
   {
     pitchToolHandles->clear();
+    pitchToolHandles->setShowTilt(false);
     hoveredPitchToolHandle = -1;
     pitchToolHandles->setHoveredHandleIndex(-1);
     return;

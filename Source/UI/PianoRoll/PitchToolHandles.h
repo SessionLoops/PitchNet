@@ -64,6 +64,16 @@ public:
   /** Whether a point lies inside a handle row, including gaps within that row. */
   bool containsLayoutPoint(float worldX, float worldY) const;
 
+  /** Whether a point lies on the top (pitch) handle row. */
+  bool topRowContains(float worldX, float worldY) const;
+
+  /**
+   * Show Left/Right Slope in place of Pitch Drift and Fine Pitch.
+   * Takes effect on the next updateHandles() call.
+   */
+  void setShowTilt(bool shouldShow) { showTilt = shouldShow; }
+  bool isShowingTilt() const { return showTilt; }
+
   /** Bounding box of all handles. */
   juce::Rectangle<float> getLayoutBounds() const;
 
@@ -96,6 +106,7 @@ public:
 private:
   std::vector<Handle> handles;
   int hoveredHandleIndex = -1;
+  bool showTilt = false;
   // Keep decoded icon data scoped to the component instead of function-local
   // statics, which can outlive the plug-in editor in Windows hosts.
   juce::Image leftTiltIcon;

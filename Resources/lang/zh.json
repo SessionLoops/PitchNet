@@ -132,6 +132,8 @@
   "handle.amplitude": "振幅",
   "handle.fine_pitch": "音高微调（音分）",
   "handle.formant": "共振峰偏移",
+  "handle.hold_alt_for_slopes": "按住 Alt 显示左侧/右侧斜率",
+  "handle.hold_option_for_slopes": "按住 Option 显示左侧/右侧斜率",
   "handle.pitch_drift": "音高漂移",
   "handle.sibilant_balance": "齿音平衡",
   "handle.tilt_left": "左侧斜率",

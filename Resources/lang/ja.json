@@ -132,6 +132,8 @@
   "handle.amplitude": "振幅",
   "handle.fine_pitch": "ピッチ微調整（セント）",
   "handle.formant": "フォルマントシフト",
+  "handle.hold_alt_for_slopes": "Altキーを押している間、左右の傾きを表示",
+  "handle.hold_option_for_slopes": "Optionキーを押している間、左右の傾きを表示",
   "handle.pitch_drift": "ピッチドリフト",
   "handle.sibilant_balance": "歯擦音バランス",
   "handle.tilt_left": "左の傾き",
