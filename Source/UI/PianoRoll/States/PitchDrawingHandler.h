@@ -83,6 +83,18 @@ private:
   std::vector<OriginalNoteState> originalNoteStates;
   std::vector<float> originalMidiCurve;
   std::vector<float> previewMidiCurve;
+  // Exact project curves at the first anchor. Cancel copies these back
+  // instead of rebuilding, so a cancelled drawing leaves the curve
+  // bit-identical to what it was.
+  struct CurveSnapshot
+  {
+    std::vector<float> basePitch;
+    std::vector<float> deltaPitch;
+    std::vector<float> baseF0;
+    std::vector<float> f0;
+  };
+  CurveSnapshot originalCurves;
+  bool restoreCurveSnapshot();
   int nextAnchorId = 1;
   int hoveredAnchorId = -1;
   int activeAnchorId = -1;

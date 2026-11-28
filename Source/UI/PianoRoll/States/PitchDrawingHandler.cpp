@@ -221,6 +221,7 @@ void PitchDrawingHandler::clearState(bool restoreNoteStates)
   originalNoteStates.clear();
   originalMidiCurve.clear();
   previewMidiCurve.clear();
+  originalCurves = {};
   hoveredAnchorId = -1;
   pointerOverPitchRegion = false;
   activeAnchorId = -1;
@@ -373,6 +374,8 @@ void PitchDrawingHandler::captureOriginalCurveIfNeeded()
     originalMidiCurve[i] = base + delta;
   }
   previewMidiCurve = originalMidiCurve;
+  originalCurves = {audioData.basePitch, audioData.deltaPitch,
+                    audioData.baseF0, audioData.f0};
 
   originalNoteStates.clear();
   originalNoteStates.reserve(owner_.project->getNotes().size());
@@ -561,7 +564,10 @@ void PitchDrawingHandler::restoreOriginalNoteStates(bool requestRender)
   if (!requestRender)
     return;
 
-  PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
+  // The notes are back as they were; put the curves back exactly too. A
+  // rebuild should give the same result, but only the snapshot guarantees it.
+  if (!restoreCurveSnapshot())
+    PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
   if (previewDirtyStart >= 0 && previewDirtyEnd > previewDirtyStart)
     owner_.project->markNoteEditDirtyRange(previewDirtyStart, previewDirtyEnd);
   owner_.invalidateBasePitchCache();
@@ -569,6 +575,27 @@ void PitchDrawingHandler::restoreOriginalNoteStates(bool requestRender)
     owner_.onPitchEdited();
   if (previewDirtyStart >= 0 && owner_.onPitchPreviewRenderRequested)
     owner_.onPitchPreviewRenderRequested();
+}
+
+bool PitchDrawingHandler::restoreCurveSnapshot()
+{
+  if (!owner_.project || originalCurves.f0.empty())
+    return false;
+
+  auto& audioData = owner_.project->getAudioData();
+  const size_t frames = originalCurves.f0.size();
+  // The timeline cannot change mid-drawing, but never write back curves
+  // of a different length than the project now has.
+  if (audioData.f0.size() != frames ||
+      originalCurves.basePitch.size() != frames ||
+      originalCurves.deltaPitch.size() != frames)
+    return false;
+
+  audioData.basePitch = originalCurves.basePitch;
+  audioData.deltaPitch = originalCurves.deltaPitch;
+  audioData.baseF0 = originalCurves.baseF0;
+  audioData.f0 = originalCurves.f0;
+  return true;
 }
 
 const PitchDrawingHandler::OriginalNoteState*

@@ -27,6 +27,7 @@ set(PITCHNET_TEST_SOURCES
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
     PitchDrawingTests.cpp
+    PitchCurveGapTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
     ProjectModificationRangeTests.cpp

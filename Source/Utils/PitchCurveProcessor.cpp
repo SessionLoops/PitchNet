@@ -26,6 +26,22 @@ namespace
             audioData.deltaPitch.assign(static_cast<size_t>(totalFrames), 0.0f);
     }
 
+    // Delta for a frame that no note covers (gaps between notes, rests):
+    // the analysed pitch relative to the current base, exactly as
+    // rebuildCurvesFromSource() lays it down. Zeroing these frames instead
+    // snaps the curve onto the base transition between neighbouring notes,
+    // which shows up as one- or two-frame spikes at note boundaries.
+    float uncoveredDelta(const AudioData& audioData, int frame)
+    {
+        const auto index = static_cast<size_t>(frame);
+        if (index >= audioData.denseF0.size() || index >= audioData.basePitch.size())
+            return 0.0f;
+        const float hz = audioData.denseF0[index];
+        if (!(hz > 0.0f) || !std::isfinite(hz))
+            return 0.0f;
+        return freqToMidi(hz) - audioData.basePitch[index];
+    }
+
     const std::vector<float>& sourceDeltaFor(const Note& note)
     {
         return note.getActiveDeltaPitch();
@@ -293,8 +309,11 @@ namespace PitchCurveProcessor
         }
 
         // CRITICAL: Rebuild deltaPitch from Note objects NON-DESTRUCTIVELY
-        // Clear global deltaPitch first
+        // Start from the analysed delta so frames outside every note keep
+        // their pitch; note frames are overwritten below.
         audioData.deltaPitch.assign(static_cast<size_t>(totalFrames), 0.0f);
+        for (int i = 0; i < totalFrames; ++i)
+            audioData.deltaPitch[static_cast<size_t>(i)] = uncoveredDelta(audioData, i);
         
         // Composite each note's deltaPitch curve (WITH transformations applied) into audioData.deltaPitch
         const auto& allNotes = project.getNotes();
@@ -386,7 +405,8 @@ namespace PitchCurveProcessor
         }
 
         // 2. Only rebuild deltaPitch for the affected notes (not all notes)
-        //    First, zero the affected range in the global deltaPitch array
+        //    First, reset the affected range to the analysed delta (gaps
+        //    between the affected notes keep their pitch, see uncoveredDelta)
         int minFrame = totalFrames;
         int maxFrame = 0;
         for (auto* note : affectedNotes)
@@ -399,7 +419,7 @@ namespace PitchCurveProcessor
         minFrame = std::max(0, minFrame);
         maxFrame = std::min(totalFrames, maxFrame);
         for (int i = minFrame; i < maxFrame; ++i)
-            audioData.deltaPitch[static_cast<size_t>(i)] = 0.0f;
+            audioData.deltaPitch[static_cast<size_t>(i)] = uncoveredDelta(audioData, i);
 
         const auto& allNotes = project.getNotes();
         for (auto* note : affectedNotes)
