@@ -2115,11 +2115,9 @@ bool PianoRollComponent::altControlsDragSnap(float worldX, float worldY)
   return false;
 }
 
-bool PianoRollComponent::altOverPitchHandles(float worldX, float worldY) const
+bool PianoRollComponent::altPansCanvas() const
 {
-  return editMode == EditMode::Select && pitchToolHandles &&
-         !pitchToolHandles->isEmpty() &&
-         pitchToolHandles->containsLayoutPoint(worldX, worldY);
+  return hoveredNote == nullptr && !hasMultiSelectableSelection();
 }
 
 void PianoRollComponent::updateTiltHandleSwap(bool altDown, float worldX,
@@ -2129,7 +2127,7 @@ void PianoRollComponent::updateTiltHandleSwap(bool altDown, float worldX,
     return;
 
   const bool showTilt = altDown && editMode == EditMode::Select &&
-                        pitchToolHandles->topRowContains(worldX, worldY);
+                        !pitchToolHandles->isEmpty();
   if (showTilt == pitchToolHandles->isShowingTilt())
     return;
 
@@ -2586,9 +2584,10 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     }
   }
   // Alt inverts drag snapping over a note, a note end or a timing boundary.
-  // Keep Alt-drag panning available when the gesture begins anywhere else.
+  // Keep Alt-drag panning available when the gesture begins anywhere else,
+  // unless a note is hovered or selected.
   const bool altNoteDrag = altControlsDragSnap(adjustedX, adjustedY) ||
-                           altOverPitchHandles(adjustedX, adjustedY);
+                           !altPansCanvas();
   if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
   {
     modifierPanDragActive = true;
@@ -2942,8 +2941,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 
   const bool altControlsNoteSnap =
       (editMode == EditMode::Select && noteAtPointer != nullptr) ||
-      altControlsDragSnap(adjustedX, adjustedY) ||
-      altOverPitchHandles(adjustedX, adjustedY);
+      altControlsDragSnap(adjustedX, adjustedY) || !altPansCanvas();
   if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
       !altControlsNoteSnap)
   {
@@ -3032,6 +3030,10 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     setHoveredNote(splitHandler_ && splitHandler_->isHoveringMergeBoundary()
                        ? nullptr
                        : noteUnderMouse);
+
+  // The hover above may have just shown a note's handles with Alt held.
+  updateTiltHandleSwap(e.mods.isAltDown() && isCanvasPoint(e), adjustedX,
+                       adjustedY);
 
   // Pitch tool handle hover (uses raw event coordinates, not world-adjusted)
   if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty() &&
@@ -3127,7 +3129,7 @@ void PianoRollComponent::modifierKeysChanged(
   const bool pointerOverNote =
       mouseOverCanvas &&
       (isMouseButtonDown() || altControlsDragSnap(worldX, worldY) ||
-       altOverPitchHandles(worldX, worldY));
+       !altPansCanvas());
 
   const bool zoomModifierDown = isZoomModifierDown(modifiers);
 

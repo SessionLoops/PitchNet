@@ -64,11 +64,8 @@ public:
   /** Whether a point lies inside a handle row, including gaps within that row. */
   bool containsLayoutPoint(float worldX, float worldY) const;
 
-  /** Whether a point lies on the top (pitch) handle row. */
-  bool topRowContains(float worldX, float worldY) const;
-
   /**
-   * Show Left/Right Slope in place of Pitch Drift and Fine Pitch.
+   * Show Left/Right Slope in place of Pitch Drift and Fine Pitch (Alt held).
    * Takes effect on the next updateHandles() call.
    */
   void setShowTilt(bool shouldShow) { showTilt = shouldShow; }

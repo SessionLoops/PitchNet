@@ -413,11 +413,13 @@ private:
   /** Alt over something it snaps (a note, a note end, a timing boundary)
    *  controls that drag's snapping instead of starting an Alt-drag pan. */
   bool altControlsDragSnap(float worldX, float worldY);
-  /** Alt over the pitch handles belongs to them, not to Alt-drag panning. */
-  bool altOverPitchHandles(float worldX, float worldY) const;
-  /** Holding Alt over the top handle row shows Left/Right Slope in place of
-   *  Pitch Drift and Fine Pitch. The row is left alone while a button is
-   *  down, so a drag never changes handles under the pointer. */
+  /** Alt pans the canvas only with no note hovered and none selected; with
+   *  either, Alt belongs to the notes (Drag Snap, the slope handles), as
+   *  Cmd/Ctrl does to the selection instead of zooming. */
+  bool altPansCanvas() const;
+  /** Holding Alt while a note's handles show swaps Pitch Drift and Fine
+   *  Pitch for Left/Right Slope. The handles are left alone while a button
+   *  is down, so a drag never changes them under the pointer. */
   void updateTiltHandleSwap(bool altDown, float worldX, float worldY);
   bool isCanvasPoint(const juce::MouseEvent &e) const;
   /** Whether any note is selected where Cmd/Ctrl-click multi-selects (the
