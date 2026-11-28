@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search - PitchNet Manual</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="images/icon-128.png" type="image/png">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html"><img src="images/icon-128.png" alt="">PitchNet <span>Manual</span></a>
+  <form class="search" action="search.html"><input id="q" name="q" type="search" placeholder="Search the manual" aria-label="Search the manual"></form>
+</header>
+<div class="wrap"><main>
+<div class="crumbs"><a href="index.html">Manual Home</a> &rsaquo; Search</div>
+<h1>Search the Manual</h1>
+<p id="summary"></p>
+<ol id="results"></ol>
+</main></div>
+<script src="search-index.js"></script>
+<script>
+(function(){
+  var q=(new URLSearchParams(location.search).get('q')||'').trim();
+  document.getElementById('q').value=q;
+  var sum=document.getElementById('summary'), list=document.getElementById('results');
+  if(!q){sum.textContent='Type a word or phrase in the search box above.';return;}
+  var terms=q.toLowerCase().split(/\s+/).filter(Boolean);
+  function esc(s){return s.replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  var hits=window.MANUAL_INDEX.map(function(p){
+    var t=p.text.toLowerCase(), title=p.title.toLowerCase(), score=0;
+    for(var i=0;i<terms.length;i++){
+      var n=t.split(terms[i]).length-1;
+      if(!n && title.indexOf(terms[i])<0) return null;
+      score+=n+(title.indexOf(terms[i])>=0?20:0);
+    }
+    var at=Math.max(0,t.indexOf(terms[0])-80);
+    var snip=esc(p.text.substr(at,220));
+    terms.forEach(function(w){snip=snip.replace(new RegExp('('+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig'),'<mark>$1</mark>');});
+    return {p:p,score:score,snip:snip};
+  }).filter(Boolean).sort(function(a,b){return b.score-a.score;});
+  sum.textContent=hits.length+' page'+(hits.length==1?'':'s')+' found for \u201c'+q+'\u201d.';
+  list.innerHTML=hits.map(function(h){return '<li><a href="'+h.p.slug+'.html">'+esc(h.p.title)+'</a><span class="snip">\u2026'+h.snip+'\u2026</span></li>';}).join('');
+})();
+</script>
+</body>
+</html>
